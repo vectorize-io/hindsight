@@ -225,6 +225,25 @@ class TemporalSemanticMemory(
         """
         task_type = task_dict.get('type')
         operation_id = task_dict.get('operation_id')
+        retry_count = task_dict.get('retry_count', 0)
+        max_retries = 3
+
+        # Check if operation was cancelled (only for tasks with operation_id)
+        if operation_id:
+            try:
+                pool = await self._get_pool()
+                async with pool.acquire() as conn:
+                    result = await conn.fetchrow(
+                        "SELECT id FROM async_operations WHERE id = $1",
+                        uuid.UUID(operation_id)
+                    )
+                    if not result:
+                        # Operation was cancelled, skip processing
+                        logger.info(f"Skipping cancelled operation: {operation_id}")
+                        return
+            except Exception as e:
+                logger.error(f"Failed to check operation status {operation_id}: {e}")
+                # Continue with processing if we can't check status
 
         try:
             if task_type == 'access_count_update':
@@ -237,19 +256,67 @@ class TemporalSemanticMemory(
                 await self._handle_batch_put(task_dict)
             else:
                 logger.error(f"Unknown task type: {task_type}")
-        finally:
-            # Delete operation record if operation_id is present
+                # Don't retry unknown task types
+                if operation_id:
+                    await self._delete_operation_record(operation_id)
+                return
+
+            # Task succeeded - delete operation record
             if operation_id:
-                try:
-                    pool = await self._get_pool()
-                    async with pool.acquire() as conn:
-                        await conn.execute(
-                            "DELETE FROM async_operations WHERE id = $1",
-                            uuid.UUID(operation_id)
-                        )
-                    logger.debug(f"Deleted async operation record: {operation_id}")
-                except Exception as e:
-                    logger.error(f"Failed to delete async operation record {operation_id}: {e}")
+                await self._delete_operation_record(operation_id)
+
+        except Exception as e:
+            # Task failed - check if we should retry
+            logger.error(f"Task execution failed (attempt {retry_count + 1}/{max_retries + 1}): {task_type}, error: {e}")
+            import traceback
+            error_traceback = traceback.format_exc()
+            traceback.print_exc()
+
+            if retry_count < max_retries:
+                # Reschedule with incremented retry count
+                task_dict['retry_count'] = retry_count + 1
+                logger.info(f"Rescheduling task {task_type} (retry {retry_count + 1}/{max_retries})")
+                await self._task_backend.submit_task(task_dict)
+            else:
+                # Max retries exceeded - mark operation as failed
+                logger.error(f"Max retries exceeded for task {task_type}, marking as failed")
+                if operation_id:
+                    await self._mark_operation_failed(operation_id, str(e), error_traceback)
+
+    async def _delete_operation_record(self, operation_id: str):
+        """Helper to delete an operation record from the database."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE id = $1",
+                    uuid.UUID(operation_id)
+                )
+            logger.debug(f"Deleted async operation record: {operation_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete async operation record {operation_id}: {e}")
+
+    async def _mark_operation_failed(self, operation_id: str, error_message: str, error_traceback: str):
+        """Helper to mark an operation as failed in the database."""
+        try:
+            pool = await self._get_pool()
+            # Truncate error message to avoid extremely long strings
+            full_error = f"{error_message}\n\nTraceback:\n{error_traceback}"
+            truncated_error = full_error[:5000] if len(full_error) > 5000 else full_error
+
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE async_operations
+                    SET status = 'failed', error_message = $2
+                    WHERE id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                    truncated_error
+                )
+            logger.info(f"Marked async operation as failed: {operation_id}")
+        except Exception as e:
+            logger.error(f"Failed to mark operation as failed {operation_id}: {e}")
 
     async def initialize(self):
         """Initialize the connection pool and background workers."""
@@ -1681,7 +1748,8 @@ class TemporalSemanticMemory(
                 SELECT id, text, event_date, context
                 FROM memory_units
                 {where_clause}
-                ORDER BY event_date
+                ORDER BY event_date DESC
+                LIMIT 1000
             """, *query_params)
 
             # Get links, filtering to only include links between units of the selected agent
@@ -1807,6 +1875,298 @@ class TemporalSemanticMemory(
             "table_rows": table_rows,
             "total_units": len(units)
         }
+
+    async def list_memory_units(
+        self,
+        agent_id: Optional[str] = None,
+        fact_type: Optional[str] = None,
+        search_query: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ):
+        """
+        List memory units for table view with optional full-text search.
+
+        Args:
+            agent_id: Filter by agent ID
+            fact_type: Filter by fact type (world, agent, opinion)
+            search_query: Full-text search query (searches text and context fields)
+            limit: Maximum number of results to return
+            offset: Offset for pagination
+
+        Returns:
+            Dict with items (list of memory units) and total count
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Build query conditions
+            query_conditions = []
+            query_params = []
+            param_count = 0
+
+            if agent_id:
+                param_count += 1
+                query_conditions.append(f"agent_id = ${param_count}")
+                query_params.append(agent_id)
+
+            if fact_type:
+                param_count += 1
+                query_conditions.append(f"fact_type = ${param_count}")
+                query_params.append(fact_type)
+
+            if search_query:
+                # Full-text search on text and context fields using ILIKE
+                param_count += 1
+                query_conditions.append(f"(text ILIKE ${param_count} OR context ILIKE ${param_count})")
+                query_params.append(f"%{search_query}%")
+
+            where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
+
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM memory_units
+                {where_clause}
+            """
+            count_result = await conn.fetchrow(count_query, *query_params)
+            total = count_result['total']
+
+            # Get units with limit and offset
+            param_count += 1
+            limit_param = f"${param_count}"
+            query_params.append(limit)
+
+            param_count += 1
+            offset_param = f"${param_count}"
+            query_params.append(offset)
+
+            units = await conn.fetch(f"""
+                SELECT id, text, event_date, context, fact_type
+                FROM memory_units
+                {where_clause}
+                ORDER BY event_date DESC
+                LIMIT {limit_param} OFFSET {offset_param}
+            """, *query_params)
+
+            # Get entity information for these units
+            if units:
+                unit_ids = [row['id'] for row in units]
+                unit_entities = await conn.fetch("""
+                    SELECT ue.unit_id, e.canonical_name, e.entity_type
+                    FROM unit_entities ue
+                    JOIN entities e ON ue.entity_id = e.id
+                    WHERE ue.unit_id = ANY($1::uuid[])
+                    ORDER BY ue.unit_id
+                """, unit_ids)
+            else:
+                unit_entities = []
+
+            # Build entity mapping
+            entity_map = {}
+            for row in unit_entities:
+                unit_id = row['unit_id']
+                entity_name = row['canonical_name']
+                entity_type = row['entity_type']
+                if unit_id not in entity_map:
+                    entity_map[unit_id] = []
+                entity_map[unit_id].append(f"{entity_name} ({entity_type})")
+
+            # Build result items
+            items = []
+            for row in units:
+                unit_id = row['id']
+                entities = entity_map.get(unit_id, [])
+
+                items.append({
+                    "id": str(unit_id),
+                    "text": row['text'],
+                    "context": row['context'] if row['context'] else "",
+                    "date": row['event_date'].isoformat() if row['event_date'] else "",
+                    "fact_type": row['fact_type'],
+                    "entities": ", ".join(entities) if entities else ""
+                })
+
+            return {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset
+            }
+
+    async def list_documents(
+        self,
+        agent_id: Optional[str] = None,
+        search_query: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ):
+        """
+        List documents with optional search and pagination.
+
+        Args:
+            agent_id: Filter by agent ID
+            search_query: Search in metadata (JSON text search)
+            limit: Maximum number of results
+            offset: Offset for pagination
+
+        Returns:
+            Dict with items (list of documents without original_text) and total count
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Build query conditions
+            query_conditions = []
+            query_params = []
+            param_count = 0
+
+            if agent_id:
+                param_count += 1
+                query_conditions.append(f"agent_id = ${param_count}")
+                query_params.append(agent_id)
+
+            if search_query:
+                # Search in document ID and metadata (as text)
+                param_count += 1
+                query_conditions.append(f"(id ILIKE ${param_count} OR metadata::text ILIKE ${param_count})")
+                query_params.append(f"%{search_query}%")
+
+            where_clause = "WHERE " + " AND ".join(query_conditions) if query_conditions else ""
+
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM documents
+                {where_clause}
+            """
+            count_result = await conn.fetchrow(count_query, *query_params)
+            total = count_result['total']
+
+            # Get documents with limit and offset (without original_text for performance)
+            param_count += 1
+            limit_param = f"${param_count}"
+            query_params.append(limit)
+
+            param_count += 1
+            offset_param = f"${param_count}"
+            query_params.append(offset)
+
+            documents = await conn.fetch(f"""
+                SELECT
+                    id,
+                    agent_id,
+                    content_hash,
+                    metadata,
+                    created_at,
+                    updated_at,
+                    LENGTH(original_text) as text_length
+                FROM documents
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT {limit_param} OFFSET {offset_param}
+            """, *query_params)
+
+            # Get memory unit count for each document
+            if documents:
+                doc_ids = [(row['id'], row['agent_id']) for row in documents]
+
+                # Create placeholders for the query
+                placeholders = []
+                params_for_count = []
+                for i, (doc_id, agent_id_val) in enumerate(doc_ids):
+                    idx_doc = i * 2 + 1
+                    idx_agent = i * 2 + 2
+                    placeholders.append(f"(document_id = ${idx_doc} AND agent_id = ${idx_agent})")
+                    params_for_count.extend([doc_id, agent_id_val])
+
+                where_clause_count = " OR ".join(placeholders)
+
+                unit_counts = await conn.fetch(f"""
+                    SELECT document_id, agent_id, COUNT(*) as unit_count
+                    FROM memory_units
+                    WHERE {where_clause_count}
+                    GROUP BY document_id, agent_id
+                """, *params_for_count)
+            else:
+                unit_counts = []
+
+            # Build count mapping
+            count_map = {(row['document_id'], row['agent_id']): row['unit_count'] for row in unit_counts}
+
+            # Build result items
+            items = []
+            for row in documents:
+                doc_id = row['id']
+                agent_id_val = row['agent_id']
+                unit_count = count_map.get((doc_id, agent_id_val), 0)
+
+                items.append({
+                    "id": doc_id,
+                    "agent_id": agent_id_val,
+                    "content_hash": row['content_hash'],
+                    "metadata": row['metadata'] if row['metadata'] else {},
+                    "created_at": row['created_at'].isoformat() if row['created_at'] else "",
+                    "updated_at": row['updated_at'].isoformat() if row['updated_at'] else "",
+                    "text_length": row['text_length'] or 0,
+                    "memory_unit_count": unit_count
+                })
+
+            return {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset
+            }
+
+    async def get_document(
+        self,
+        document_id: str,
+        agent_id: str
+    ):
+        """
+        Get a specific document including its original_text.
+
+        Args:
+            document_id: Document ID
+            agent_id: Agent ID
+
+        Returns:
+            Dict with document details including original_text, or None if not found
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            doc = await conn.fetchrow("""
+                SELECT
+                    id,
+                    agent_id,
+                    original_text,
+                    content_hash,
+                    metadata,
+                    created_at,
+                    updated_at
+                FROM documents
+                WHERE id = $1 AND agent_id = $2
+            """, document_id, agent_id)
+
+            if not doc:
+                return None
+
+            # Get memory unit count
+            unit_count_row = await conn.fetchrow("""
+                SELECT COUNT(*) as unit_count
+                FROM memory_units
+                WHERE document_id = $1 AND agent_id = $2
+            """, document_id, agent_id)
+
+            return {
+                "id": doc['id'],
+                "agent_id": doc['agent_id'],
+                "original_text": doc['original_text'],
+                "content_hash": doc['content_hash'],
+                "metadata": doc['metadata'] if doc['metadata'] else {},
+                "created_at": doc['created_at'].isoformat() if doc['created_at'] else "",
+                "updated_at": doc['updated_at'].isoformat() if doc['updated_at'] else "",
+                "memory_unit_count": unit_count_row['unit_count'] if unit_count_row else 0
+            }
 
     async def _evaluate_opinion_update_async(
         self,

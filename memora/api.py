@@ -233,6 +233,88 @@ class GraphDataResponse(BaseModel):
         }
 
 
+class ListMemoryUnitsResponse(BaseModel):
+    """Response model for list memory units endpoint."""
+    items: List[Dict[str, Any]]
+    total: int
+    limit: int
+    offset: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "items": [
+                    {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "text": "Alice works at Google on the AI team",
+                        "context": "Work conversation",
+                        "date": "2024-01-15T10:30:00Z",
+                        "fact_type": "world",
+                        "entities": "Alice (PERSON), Google (ORGANIZATION)"
+                    }
+                ],
+                "total": 150,
+                "limit": 100,
+                "offset": 0
+            }
+        }
+
+
+class ListDocumentsResponse(BaseModel):
+    """Response model for list documents endpoint."""
+    items: List[Dict[str, Any]]
+    total: int
+    limit: int
+    offset: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "items": [
+                    {
+                        "id": "session_1",
+                        "agent_id": "user123",
+                        "content_hash": "abc123",
+                        "metadata": {"source": "conversation"},
+                        "created_at": "2024-01-15T10:30:00Z",
+                        "updated_at": "2024-01-15T10:30:00Z",
+                        "text_length": 5420,
+                        "memory_unit_count": 15
+                    }
+                ],
+                "total": 50,
+                "limit": 100,
+                "offset": 0
+            }
+        }
+
+
+class DocumentResponse(BaseModel):
+    """Response model for get document endpoint."""
+    id: str
+    agent_id: str
+    original_text: str
+    content_hash: Optional[str]
+    metadata: Dict[str, Any]
+    created_at: str
+    updated_at: str
+    memory_unit_count: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "session_1",
+                "agent_id": "user123",
+                "original_text": "Full document text here...",
+                "content_hash": "abc123",
+                "metadata": {"source": "conversation"},
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:30:00Z",
+                "memory_unit_count": 15
+            }
+        }
+
+
 def create_app(memory: TemporalSemanticMemory) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -315,7 +397,7 @@ def _register_routes(app: FastAPI):
         response_model=GraphDataResponse,
         tags=["Visualization"],
         summary="Get memory graph data",
-        description="Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion)"
+        description="Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion). Limited to 1000 most recent items."
     )
     async def api_graph(
         agent_id: Optional[str] = None,
@@ -329,6 +411,46 @@ def _register_routes(app: FastAPI):
             import traceback
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             print(f"Error in /api/graph: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.get(
+        "/api/list",
+        response_model=ListMemoryUnitsResponse,
+        tags=["Visualization"],
+        summary="List memory units",
+        description="List memory units with pagination and optional full-text search. Supports filtering by agent_id and fact_type."
+    )
+    async def api_list(
+        agent_id: Optional[str] = None,
+        fact_type: Optional[str] = None,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ):
+        """
+        List memory units for table view with optional full-text search.
+
+        Args:
+            agent_id: Filter by agent ID
+            fact_type: Filter by fact type (world, agent, opinion)
+            q: Search query for full-text search (searches text and context)
+            limit: Maximum number of results (default: 100)
+            offset: Offset for pagination (default: 0)
+        """
+        try:
+            data = await app.state.memory.list_memory_units(
+                agent_id=agent_id,
+                fact_type=fact_type,
+                search_query=q,
+                limit=limit,
+                offset=offset
+            )
+            return data
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/list: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -475,16 +597,30 @@ def _register_routes(app: FastAPI):
                     agent_id
                 )
 
-                # Get pending operations count
-                pending_ops_result = await conn.fetchrow(
+                # Get pending and failed operations counts
+                ops_stats = await conn.fetch(
+                    """
+                    SELECT status, COUNT(*) as count
+                    FROM async_operations
+                    WHERE agent_id = $1
+                    GROUP BY status
+                    """,
+                    agent_id
+                )
+                ops_by_status = {row['status']: row['count'] for row in ops_stats}
+                pending_operations = ops_by_status.get('pending', 0)
+                failed_operations = ops_by_status.get('failed', 0)
+
+                # Get document count
+                doc_count_result = await conn.fetchrow(
                     """
                     SELECT COUNT(*) as count
-                    FROM async_operations
+                    FROM documents
                     WHERE agent_id = $1
                     """,
                     agent_id
                 )
-                pending_operations = pending_ops_result['count'] if pending_ops_result else 0
+                total_documents = doc_count_result['count'] if doc_count_result else 0
 
                 # Format results
                 nodes_by_type = {row['fact_type']: row['count'] for row in node_stats}
@@ -497,9 +633,11 @@ def _register_routes(app: FastAPI):
                     "agent_id": agent_id,
                     "total_nodes": total_nodes,
                     "total_links": total_links,
+                    "total_documents": total_documents,
                     "nodes_by_type": nodes_by_type,
                     "links_by_type": links_by_type,
-                    "pending_operations": pending_operations
+                    "pending_operations": pending_operations,
+                    "failed_operations": failed_operations
                 }
 
         except Exception as e:
@@ -507,6 +645,75 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             print(f"Error in /api/stats/{agent_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/api/documents",
+        response_model=ListDocumentsResponse,
+        tags=["Documents"],
+        summary="List documents",
+        description="List documents with pagination and optional search. Documents are the source content from which memory units are extracted."
+    )
+    async def api_list_documents(
+        agent_id: Optional[str] = None,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ):
+        """
+        List documents for an agent with optional search.
+
+        Args:
+            agent_id: Filter by agent ID
+            q: Search query (searches document ID and metadata)
+            limit: Maximum number of results (default: 100)
+            offset: Offset for pagination (default: 0)
+        """
+        try:
+            data = await app.state.memory.list_documents(
+                agent_id=agent_id,
+                search_query=q,
+                limit=limit,
+                offset=offset
+            )
+            return data
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/documents: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.get(
+        "/api/documents/{document_id}",
+        response_model=DocumentResponse,
+        tags=["Documents"],
+        summary="Get document details",
+        description="Get a specific document including its original text"
+    )
+    async def api_get_document(
+        document_id: str,
+        agent_id: str
+    ):
+        """
+        Get a specific document with its original text.
+
+        Args:
+            document_id: Document ID
+            agent_id: Agent ID (required as query parameter)
+        """
+        try:
+            document = await app.state.memory.get_document(document_id, agent_id)
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found")
+            return document
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/documents/{document_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
 
     @app.post(
         "/api/memories/batch",
@@ -664,6 +871,98 @@ def _register_routes(app: FastAPI):
             import traceback
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             print(f"Error in /api/memories/batch_async: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.get(
+        "/api/operations/{agent_id}",
+        tags=["Memory Storage"],
+        summary="List async operations",
+        description="Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations"
+    )
+    async def api_list_operations(agent_id: str):
+        """List all async operations (pending and failed) for an agent."""
+        try:
+            pool = await app.state.memory._get_pool()
+            async with pool.acquire() as conn:
+                operations = await conn.fetch(
+                    """
+                    SELECT id, agent_id, task_type, items_count, document_id, created_at, status, error_message
+                    FROM async_operations
+                    WHERE agent_id = $1
+                    ORDER BY created_at ASC
+                    """,
+                    agent_id
+                )
+
+                return {
+                    "agent_id": agent_id,
+                    "operations": [
+                        {
+                            "id": str(row['id']),
+                            "task_type": row['task_type'],
+                            "items_count": row['items_count'],
+                            "document_id": row['document_id'],
+                            "created_at": row['created_at'].isoformat(),
+                            "status": row['status'],
+                            "error_message": row['error_message']
+                        }
+                        for row in operations
+                    ]
+                }
+
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/operations/{agent_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+    @app.delete(
+        "/api/operations/{operation_id}",
+        tags=["Memory Storage"],
+        summary="Cancel a pending async operation",
+        description="Cancel a pending async operation by removing it from the queue"
+    )
+    async def api_cancel_operation(operation_id: str):
+        """Cancel a pending async operation."""
+        try:
+            # Validate UUID format
+            try:
+                op_uuid = uuid.UUID(operation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
+
+            pool = await app.state.memory._get_pool()
+            async with pool.acquire() as conn:
+                # Check if operation exists
+                result = await conn.fetchrow(
+                    "SELECT agent_id FROM async_operations WHERE id = $1",
+                    op_uuid
+                )
+
+                if not result:
+                    raise HTTPException(status_code=404, detail=f"Operation {operation_id} not found")
+
+                # Delete the operation
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE id = $1",
+                    op_uuid
+                )
+
+                return {
+                    "success": True,
+                    "message": f"Operation {operation_id} cancelled",
+                    "operation_id": operation_id,
+                    "agent_id": result['agent_id']
+                }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/operations/{operation_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
 

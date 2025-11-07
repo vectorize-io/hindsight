@@ -77,10 +77,12 @@ class LoComoDataset(BenchmarkDataset):
 
             # Add to batch
             session_content = "\n".join(session_parts)
+            document_id = f"{item['sample_id']}_{session_key}"
             batch_contents.append({
                 "content": session_content,
                 "context": f"Conversation session between {speaker_a} and {speaker_b} (conversation {item['sample_id']} session {session_key})",
-                "event_date": session_date
+                "event_date": session_date,
+                "document_id": document_id
             })
 
         return batch_contents

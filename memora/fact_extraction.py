@@ -107,287 +107,189 @@ async def _extract_facts_from_chunk(
     # Format event_date for the prompt
     event_date_str = event_date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    prompt = f"""You are extracting facts from text for an AI memory system. Each fact will be stored and retrieved later.
+    prompt = f"""You are extracting comprehensive, narrative facts from conversations for an AI memory system.
 
 ## CONTEXT INFORMATION
 - Current reference date/time: {event_date_str}
 - Context: {context if context else 'no context provided'}
 
-## CRITICAL: Facts must be DETAILED, COMPREHENSIVE, and CONTEXT-RICH
+## CORE PRINCIPLE: Extract FEWER, MORE COMPREHENSIVE Facts
+
+**GOAL**: Extract 2-5 comprehensive facts per conversation, NOT dozens of small fragments.
 
 Each fact should:
-1. Be SELF-CONTAINED - readable without the original context
-2. Include ALL relevant details: WHO, WHAT, WHERE, WHEN, WHY, HOW
-3. **CRITICAL: ALWAYS include the SUBJECT (who is doing/saying/experiencing)**
-4. **Preserve ALL context**: photos/images, "new" things, visual elements, medium of communication
-5. Preserve specific names, dates, numbers, locations, relationships, modifiers (new, old, first, etc.)
-6. Resolve pronouns to actual names/entities (I → speaker name, their → possessor name)
-7. **CRITICAL: Preserve possessive relationships** (their kids → whose kids, his car → whose car)
-8. Capture nuances, reasons, causes, implications, and surrounding context
+1. **CAPTURE ENTIRE CONVERSATIONS OR EXCHANGES** - Include the full back-and-forth discussion
+2. **BE NARRATIVE AND COMPREHENSIVE** - Tell the complete story with all context
+3. **BE SELF-CONTAINED** - Readable without the original text
+4. **INCLUDE ALL PARTICIPANTS** - WHO said/did WHAT, with their reasoning
+5. **PRESERVE THE FLOW** - Keep related exchanges together in one fact
 
-**COMMON MISTAKES TO AVOID:**
-- ❌ "The kids were excited" → Missing WHO the kids belong to
-- ✅ "Melanie's kids were excited" or "Melanie took her kids who were excited"
-- ❌ "Nate chose his hair color because it's bright and bold" → Missing that it's NEW and in a PHOTO
-- ✅ "Nate shared a photo of his new hair color, which he chose because it's bright and bold"
-- ❌ "Alice started a job at Google" → Missing that it's NEW
-- ✅ "Alice started a new job at Google"
+## HOW TO COMBINE INFORMATION INTO COMPREHENSIVE FACTS
 
-## TEMPORAL INFORMATION (VERY IMPORTANT)
-For each fact, extract the ABSOLUTE date/time when it occurred:
-- If text mentions ABSOLUTE dates ("on March 15, 2024", "last Tuesday"), use that date
-- If text mentions RELATIVE times ("yesterday", "last week", "last month", "last year", "this morning", "3 days ago", "next year"), calculate the absolute date using the reference date above
-- **CRITICAL**: Transform relative temporal expressions in the FACT TEXT to absolute context:
-  - "last year" → "in [calculated year]" (e.g., if reference is 2023, "last year" becomes "in 2022")
-  - "last month" → "in [month name] [year]" (e.g., if reference is March 2024, "last month" becomes "in February 2024")
-  - "last week" → "week of [date]" or keep as "last week" with absolute date field
-  - "yesterday" → can stay as "yesterday" with absolute date field
-- If NO specific time is mentioned, use the reference date
-- Always output dates in ISO format: YYYY-MM-DDTHH:MM:SSZ
+**✅ GOOD APPROACH**: One comprehensive fact capturing the entire discussion
+"Alice and Bob discussed playlist names for the summer party. Bob suggested 'Summer Vibes' because it's catchy and seasonal. Alice liked it but wanted something more unique. They considered 'Sunset Sessions' and 'Beach Beats', with Alice favoring 'Beach Beats' for its playful tone. They ultimately decided on 'Beach Beats' as the final name."
 
-Examples of date extraction and fact text transformation:
-- Reference: 2024-03-20T10:00:00Z
-- "Yesterday I went hiking" → fact: "Yesterday I went hiking", date: 2024-03-19T10:00:00Z
-- "Last week I joined Google" → fact: "Last week I joined Google", date: 2024-03-13T10:00:00Z (approximately)
-- "Last year we visited Paris" → fact: "In 2023 we visited Paris", date: 2023-03-20T10:00:00Z
-- "Last month I started a new job" → fact: "In February 2024 I started a new job", date: 2024-02-20T10:00:00Z
-- "This morning I had coffee" → fact: "This morning I had coffee", date: 2024-03-20T08:00:00Z
-- "I work at Google" (no time mentioned) → date: 2024-03-20T10:00:00Z (use reference)
+**❌ BAD APPROACH**: Multiple fragmented facts
+- "Bob suggested Summer Vibes"
+- "Alice wanted something unique"
+- "They considered Sunset Sessions"
+- "Alice likes Beach Beats"
+- "They chose Beach Beats"
 
-## What to EXTRACT (BE EXHAUSTIVE - DO NOT SKIP ANYTHING):
-- **Biographical information (CRITICAL - NEVER MISS)**:
-  - Origins: home country, birthplace, where someone is from ("my home country Sweden" = Caroline is from Sweden)
-  - Current location: where they live now
-  - Jobs, roles, backgrounds, experiences, skills
-  - Family background, heritage, cultural identity
-  - Education, training, certifications
-- **Events (NEVER MISS THESE)**:
-  - ANY action that happened (went, did, attended, joined, started, finished, etc.)
-  - Photos, images, videos shared or taken ("here's a photo", "took a picture", "captured")
-  - Social activities (meetups, gatherings, meals, conversations)
-  - Achievements, milestones, accomplishments
-  - Travels, visits, locations visited
-  - Purchases, acquisitions, creations
-- **Identity and personal details**:
-  - Origins, nationality, home country, roots
-  - Cultural background, heritage
-  - Family connections (grandmother from X, parents in Y)
-- **Opinions and beliefs**: who believes what and why
-- **Recommendations and advice**: specific suggestions with reasoning
-- **Descriptions**: detailed explanations of how things work
-- **Social relationships and nicknames (CRITICAL - ALWAYS EXTRACT)**:
-  - Nicknames: how different people refer to someone ("Andrey calls Joanne 'Jo'", "Everyone calls him Bobby")
-  - Terms of address: how people address each other (formal names, nicknames, titles)
-  - Relationship indicators: how people describe their relationships ("considers X as a mentor", "refers to Y as their best friend")
-  - Social dynamics: who knows whom, who interacts with whom
-  - Even if not an "event", these are FACTS about social relationships
-  - Extract BOTH the person using the name AND the person being referred to
-- **Relationships**: connections between people, organizations, concepts
-- **States and conditions**: current status, ongoing situations
+## WHAT TO COMBINE INTO SINGLE FACTS
 
-## CRITICAL: Extract EVERY event with FULL CONTEXT
-- "here's a photo of my new car" = shared a photo of their NEW car (preserve "new")
-- "I was with friends last week" = meetup/gathering with friends last week
-- "sent you that link" = action of sending a link
-- "got a new job" = preserve "new" - it's important context
-- DO NOT skip events just because they seem minor or casual
-- DO NOT drop modifiers like "new", "first", "old", "favorite" - they're critical context
+1. **FULL DISCUSSIONS** - Entire conversations about a topic (playlist names, travel plans, decisions)
+2. **MULTI-STEP EVENTS** - Connected actions that form a complete story
+3. **DECISIONS WITH REASONING** - The full decision-making process and rationale
+4. **EXCHANGES WITH CONTEXT** - Questions, answers, and follow-up all together
+5. **RELATED ACTIONS** - Multiple related activities in sequence
 
-## What to SKIP (ONLY these):
-- Greetings, thank yous, acknowledgments (unless they reveal information)
+## ESSENTIAL DETAILS TO PRESERVE IN COMPREHENSIVE FACTS
+
+While combining related content into comprehensive facts, you MUST preserve:
+
+1. **ALL PARTICIPANTS** - Who said/did what
+2. **FULL REASONING** - Why decisions were made, motivations, explanations
+3. **TEMPORAL CONTEXT** - When things happened (transform relative dates like "last year" → "in 2023")
+4. **VISUAL/MEDIA ELEMENTS** - Photos, images, videos shared
+5. **MODIFIERS** - "new", "first", "old", "favorite" (critical context)
+6. **POSSESSIVE RELATIONSHIPS** - "their kids" → "Person's kids"
+7. **BIOGRAPHICAL DETAILS** - Origins, locations, jobs, family background
+8. **SOCIAL DYNAMICS** - Nicknames, how people address each other, relationships
+
+## TEMPORAL INFORMATION
+- Extract the ABSOLUTE date/time for when the fact/conversation occurred
+- Transform relative times in the fact text:
+  - "last year" → "in [year]" (e.g., "in 2023")
+  - "last month" → "in [month year]" (e.g., "in February 2024")
+- Use ISO format for dates: YYYY-MM-DDTHH:MM:SSZ
+- If no specific time mentioned, use the reference date
+
+## WHEN TO SPLIT INTO SEPARATE FACTS
+
+Only split into separate facts when topics are COMPLETELY UNRELATED:
+- Different subjects discussed (playlist names vs. vacation plans)
+- Biographical facts vs. events (where someone is from vs. what they did)
+- Different time periods (something last year vs. today)
+
+## What to SKIP
+- Greetings, thank yous (unless they reveal information)
 - Filler words ("um", "uh", "like")
-- Pure reactions without content ("wow", "cool", "nice")
-- Incomplete thoughts or sentence fragments with no meaning
+- Pure reactions without content ("wow", "cool")
+- Incomplete fragments with no meaning
 
-## FACT TYPE CLASSIFICATION (CRITICAL):
-For EACH fact, classify it as either 'world' or 'agent':
+## FACT TYPE CLASSIFICATION
+Classify each fact as either 'world' or 'agent':
+- **'world'**: General facts about people, events, conversations (most facts)
+- **'agent'**: Only for AI agent's own actions
 
-- **'world'**: General facts about the world, events, people, things that happen
-  - Examples: "Alice works at Google", "Bob went hiking in Yosemite", "The meeting is scheduled for Monday"
-  - Most facts will be 'world' type
+## ENTITY EXTRACTION
+Extract ALL important entities with types:
+- **PERSON**: Names of individuals
+- **ORG**: Companies, institutions, teams
+- **PLACE**: Cities, countries, locations
+- **PRODUCT**: Products, tools, technologies
+- **CONCEPT**: Topics, projects, subjects
+- **OTHER**: Entities that don't fit above
 
-- **'agent'**: Facts specifically about what the AI agent did or actions the agent took
-  - Examples: "The AI agent helped the user debug their code", "The agent answered a question about Python", "The agent created a new file"
-  - ONLY use 'agent' if the fact is explicitly about the AI agent's actions
-  - Conversations with the user where the agent participated are 'agent' type
-  - Tasks performed BY the agent are 'agent' type
+Extract proper nouns and key identifying terms. Skip pronouns and generic terms.
 
-When in doubt, classify as 'world'.
+## EXAMPLES - COMPREHENSIVE VS FRAGMENTED FACTS:
 
-## ENTITY EXTRACTION (CRITICAL):
-For EACH fact, extract ALL important entities mentioned with their types:
-- **PERSON**: Names of individuals (Alice, Bob, Dr. Smith)
-- **ORG**: Companies, institutions, teams (Google, MIT, AI Team)
-- **PLACE**: Cities, countries, locations, venues (Mountain View, Yosemite, The Coffee Shop)
-- **PRODUCT**: Specific products, tools, technologies (iPhone, Python, TensorFlow)
-- **CONCEPT**: Important topics, projects, subjects (AI, machine learning, Project Phoenix)
-- **OTHER**: Entities that don't fit the above categories (events, time periods, etc.)
+### Example 1: Playlist Discussion
+**Input Conversation:**
+"Alice: Hey, what should we name our summer party playlist?
+Bob: How about 'Summer Vibes'? It's catchy and seasonal.
+Alice: I like it, but want something more unique.
+Bob: What about 'Sunset Sessions' or 'Beach Beats'?
+Alice: Ooh, I love 'Beach Beats'! It's playful and fun.
+Bob: Perfect, let's go with that!"
 
-Entity extraction rules:
-- Use the EXACT form as it appears in the fact (preserve capitalization)
-- Assign the correct type to distinguish ambiguous entities (Apple the company = ORG, apple the fruit = PRODUCT/CONCEPT)
-- Use OTHER only for entities that truly don't fit the other categories
-- Include both full names and commonly used short forms if both appear
-- Extract proper nouns and key identifying terms
-- Skip generic terms (the, a, some) and pronouns (he, she, they)
-- Each entity must have both text and type
+**❌ BAD (fragmented into many small facts):**
+1. "Alice asked about playlist names"
+2. "Bob suggested Summer Vibes"
+3. "Alice wanted something unique"
+4. "Bob suggested Sunset Sessions"
+5. "Bob suggested Beach Beats"
+6. "Alice likes Beach Beats"
+7. "They chose Beach Beats"
 
-## EXAMPLES of GOOD facts (detailed, comprehensive):
+**✅ GOOD (one comprehensive fact):**
+"Alice and Bob discussed naming their summer party playlist. Bob suggested 'Summer Vibes' because it's catchy and seasonal, but Alice wanted something more unique. Bob then proposed 'Sunset Sessions' and 'Beach Beats', with Alice favoring 'Beach Beats' for its playful and fun tone. They ultimately decided on 'Beach Beats' as the final name."
+- fact_type: "world"
+- entities: [{{"text": "Alice", "type": "PERSON"}}, {{"text": "Bob", "type": "PERSON"}}]
 
-Input: "Alice mentioned she works at Google in Mountain View. She joined the AI team last year."
-GOOD fact: "Alice works at Google in Mountain View on the AI team, which she joined in 2023"
-GOOD fact_type: "world"
-GOOD date: 2023-03-20T10:00:00Z (if reference is 2024-03-20, "last year" = 2023)
-GOOD entities: [
-  {{"text": "Alice", "type": "PERSON"}},
-  {{"text": "Google", "type": "ORG"}},
-  {{"text": "Mountain View", "type": "PLACE"}},
-  {{"text": "AI team", "type": "ORG"}}
-]
-NOTE: "last year" was transformed to "in 2023" in the fact text
+### Example 2: Photo Sharing with Context
+**Input:**
+"Nate: Here's a photo of my new hair!
+Friend: Whoa! Why that color?
+Nate: I picked bright orange because it's bold and makes me feel confident. Plus it matches my personality!"
 
-Input: "Yesterday Bob went hiking in Yosemite because it helps him clear his mind."
-GOOD fact: "Bob went hiking in Yosemite because it helps him clear his mind"
-GOOD fact_type: "world"
-GOOD date: Reference date minus 1 day
-GOOD entities: [
-  {{"text": "Bob", "type": "PERSON"}},
-  {{"text": "Yosemite", "type": "PLACE"}}
-]
+**❌ BAD (loses context):**
+"Nate chose orange hair because it's bold"
 
-Input: "Here's a photo of me with my friends taken last week at the beach."
-GOOD fact: "Someone shared a photo taken last week showing them with their friends at the beach"
-GOOD date: Reference date minus 7 days (last week)
-GOOD entities: []
-NOTE: Include that it's a PHOTO being shared, when it was taken, and who/what/where is in it
+**✅ GOOD (comprehensive with all context):**
+"Nate shared a photo of his new bright orange hair. When asked why he chose that color, Nate explained he picked it because it's bold and makes him feel confident, and it matches his personality."
+- fact_type: "world"
+- entities: [{{"text": "Nate", "type": "PERSON"}}]
+- NOTE: Preserves that it's a PHOTO, it's NEW hair, the COLOR, and the FULL reasoning
 
-Input: "Nate: Here's a photo of my new hair! Friend: Why that color? Nate: I picked this color because it's bright and bold"
-BAD fact: "Nate chose his hair color because it's bright and bold"
-PROBLEM: Missing that it's NEW hair and he SHARED A PHOTO of it!
-GOOD fact: "Nate shared a photo of his new hair color, which he chose because it's bright and bold"
-GOOD entities: [{{"text": "Nate", "type": "PERSON"}}]
-NOTE: Preserve "new" and "photo" - critical context about what happened
+### Example 3: Travel Planning
+**Input:**
+"Sarah: I'm thinking of visiting Japan next spring.
+Mike: That's perfect timing for cherry blossoms! You should definitely visit Kyoto.
+Sarah: Why Kyoto specifically?
+Mike: It has the most beautiful temples and the cherry blossoms there are spectacular. I went in 2019.
+Sarah: Sounds amazing! I'll add it to my itinerary."
 
-Input: "I sent you that article about AI last Tuesday."
-GOOD fact: "Someone sent an article about AI"
-GOOD fact_type: "world"
-GOOD date: Calculate last Tuesday from reference date
-GOOD entities: [
-  {{"text": "AI", "type": "CONCEPT"}}
-]
+**❌ BAD (fragmented):**
+1. "Sarah is planning to visit Japan"
+2. "Mike suggested Kyoto"
+3. "Kyoto has beautiful temples"
+4. "Mike visited in 2019"
 
-Input: "The AI agent helped me write a Python script to analyze my data."
-GOOD fact: "The AI agent helped someone write a Python script to analyze their data"
-GOOD fact_type: "agent"
-GOOD date: Reference date (no specific time mentioned)
-GOOD entities: [
-  {{"text": "Python", "type": "PRODUCT"}},
-  {{"text": "data analysis", "type": "CONCEPT"}}
-]
+**✅ GOOD (comprehensive conversation):**
+"Sarah is planning to visit Japan next spring, and Mike recommended Kyoto as the perfect destination for cherry blossom season. Mike explained that Kyoto has the most beautiful temples and spectacular cherry blossoms, based on his visit there in 2019. Sarah decided to add Kyoto to her itinerary."
+- fact_type: "world"
+- date: Next spring from reference date
+- entities: [{{"text": "Sarah", "type": "PERSON"}}, {{"text": "Mike", "type": "PERSON"}}, {{"text": "Japan", "type": "PLACE"}}, {{"text": "Kyoto", "type": "PLACE"}}]
 
-Input: "I bought an Apple laptop and some apples from the store."
-GOOD fact: "Someone bought an Apple laptop and some apples from the store"
-GOOD entities: [
-  {{"text": "Apple", "type": "ORG"}},
-  {{"text": "apples", "type": "PRODUCT"}}
-]
-NOTE: Use type to distinguish "Apple" the company from "apples" the fruit
+### Example 4: Job News
+**Input:**
+"Alice mentioned she works at Google in Mountain View. She joined the AI team last year and loves the culture there."
 
-Input: "The conference starts on Monday at the convention center."
-GOOD fact: "The conference starts on Monday at the convention center"
-GOOD entities: [
-  {{"text": "conference", "type": "OTHER"}},
-  {{"text": "Monday", "type": "OTHER"}},
-  {{"text": "convention center", "type": "PLACE"}}
-]
-NOTE: Use OTHER for entities like events (conference) or time references (Monday) that don't fit other categories
+**✅ GOOD (combined into one comprehensive fact):**
+"Alice works at Google in Mountain View on the AI team, which she joined in 2023, and she loves the company culture there."
+- fact_type: "world"
+- date: 2023 (if reference is 2024)
+- entities: [{{"text": "Alice", "type": "PERSON"}}, {{"text": "Google", "type": "ORG"}}, {{"text": "Mountain View", "type": "PLACE"}}, {{"text": "AI team", "type": "ORG"}}]
 
-Input: "Melanie said 'Yesterday I took the kids to the museum - it was so cool seeing their eyes light up!'"
-BAD fact: "The kids were excited about the museum"
-BAD entities: [{{"text": "museum", "type": "PLACE"}}]
-PROBLEM: Missing WHO (Melanie) and whose kids!
+### Example 5: When to Split into Multiple Facts
+**Input:**
+"Caroline said 'This necklace is from my grandma in Sweden. I'm planning to visit Stockholm next month for a tech conference.'"
 
-GOOD fact: "Melanie took her kids to the museum yesterday and they were excited, with their eyes lighting up"
-GOOD date: Reference date minus 1 day
-GOOD entities: [
-  {{"text": "Melanie", "type": "PERSON"}},
-  {{"text": "museum", "type": "PLACE"}}
-]
-NOTE: Preserved the subject (Melanie) and possessive relationship (her kids)
-
-Input: "Caroline said 'This necklace is from my grandma in my home country, Sweden. She gave it to me when I was young.'"
-BAD fact: "Caroline received a necklace as a gift from her grandmother when she was young"
-BAD entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "necklace", "type": "PRODUCT"}}]
-PROBLEM: Missing the CRITICAL biographical info that Caroline is from Sweden!
-
-GOOD facts (extract MULTIPLE facts):
-1. "Caroline is from Sweden, which is her home country"
-   entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "Sweden", "type": "PLACE"}}]
-2. "Caroline's grandmother is from Sweden"
-   entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "Sweden", "type": "PLACE"}}]
-3. "Caroline received a necklace as a gift from her grandmother in Sweden when she was young"
-   entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "Sweden", "type": "PLACE"}}, {{"text": "necklace", "type": "PRODUCT"}}]
-NOTE: Extract SEPARATE facts for biographical details (home country) AND events (gift received)
-
-## EXAMPLES of SOCIAL RELATIONSHIPS and NICKNAMES (CRITICAL):
-
-Input: "Joanne was referred to as 'Jo' by Andrey during the meeting."
-GOOD fact: "Andrey calls Joanne 'Jo'"
-GOOD fact_type: "world"
-GOOD date: Reference date (no specific time mentioned)
-GOOD entities: [
-  {{"text": "Andrey", "type": "PERSON"}},
-  {{"text": "Joanne", "type": "PERSON"}}
-]
-NOTE: This is a FACT about their social relationship, even if it's not an "event"
-
-Input: "Everyone calls him Bobby, but his real name is Robert."
-GOOD facts (extract MULTIPLE facts):
-1. "People call Robert by the nickname 'Bobby'"
-   entities: [{{"text": "Robert", "type": "PERSON"}}]
-2. "Robert's real name is Robert (goes by Bobby)"
-   entities: [{{"text": "Robert", "type": "PERSON"}}]
-NOTE: Extract the social fact about how people refer to him
-
-Input: "Sarah introduced me to Dr. Chen, but she told me to just call him Michael."
-GOOD facts (extract MULTIPLE facts):
-1. "Sarah introduced someone to Dr. Chen (Michael)"
-   entities: [{{"text": "Sarah", "type": "PERSON"}}, {{"text": "Dr. Chen", "type": "PERSON"}}, {{"text": "Michael", "type": "PERSON"}}]
-2. "Sarah told someone to call Dr. Chen by his first name Michael"
-   entities: [{{"text": "Sarah", "type": "PERSON"}}, {{"text": "Dr. Chen", "type": "PERSON"}}, {{"text": "Michael", "type": "PERSON"}}]
-NOTE: Extract both the event (introduction) AND the social relationship fact (how to address him)
-
-Input: "Alex considers Maria his mentor and always refers to her as 'the expert'."
-GOOD facts (extract MULTIPLE facts):
-1. "Alex considers Maria his mentor"
-   entities: [{{"text": "Alex", "type": "PERSON"}}, {{"text": "Maria", "type": "PERSON"}}]
-2. "Alex refers to Maria as 'the expert'"
-   entities: [{{"text": "Alex", "type": "PERSON"}}, {{"text": "Maria", "type": "PERSON"}}]
-NOTE: Capture both the relationship and how Alex refers to Maria
-
-Input: "My grandmother - we call her Nana - lives in Boston."
-GOOD facts (extract MULTIPLE facts):
-1. "Someone's grandmother lives in Boston"
-   entities: [{{"text": "Boston", "type": "PLACE"}}]
-2. "Someone and their family call their grandmother 'Nana'"
-   entities: []
-NOTE: Extract both the biographical fact AND the nickname/term of address
+**✅ GOOD (split into 2 facts - different topics):**
+1. "Caroline received a necklace from her grandmother in Sweden"
+   - entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "Sweden", "type": "PLACE"}}]
+2. "Caroline is planning to visit Stockholm next month to attend a tech conference"
+   - date: Next month from reference
+   - entities: [{{"text": "Caroline", "type": "PERSON"}}, {{"text": "Stockholm", "type": "PLACE"}}]
+- NOTE: Split because one is about the past (necklace) and one is future plans (conference) - completely different topics
 
 ## TEXT TO EXTRACT FROM:
 {chunk}
 
-Remember:
-1. BE EXHAUSTIVE - Extract EVERY event, action, and fact with FULL CONTEXT
-2. **PRESERVE ALL CONTEXT** - photos, visual elements, "new" things, modifiers (new/old/first/favorite)
-3. **ALWAYS include the SUBJECT** - never say "the kids" without saying whose kids
-4. **Preserve possessive relationships** - "their kids" must become "Person's kids"
-5. **Extract biographical details as SEPARATE facts** - "my home country Sweden" → "Person is from Sweden"
-6. **Extract SOCIAL RELATIONSHIPS and NICKNAMES** - even if not events, these are facts
-7. DO NOT drop modifiers or context - "new hair" stays "new hair", "photo of X" stays "photo of X"
-8. Extract absolute dates by calculating relative times from the reference date
-9. **CLASSIFY EACH FACT**: 'world' for general facts, 'agent' for AI agent actions
-10. Extract ALL entities with types (PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER)
-11. When in doubt, EXTRACT IT with MORE CONTEXT rather than less"""
+## CRITICAL REMINDERS:
+1. **EXTRACT 2-5 COMPREHENSIVE FACTS** - Not dozens of fragments
+2. **COMBINE RELATED EXCHANGES** - Keep full discussions together in one fact
+3. **PRESERVE ALL CONTEXT** - Photos, "new" things, visual elements, reasoning, modifiers
+4. **INCLUDE ALL PARTICIPANTS** - Who said/did what with full reasoning
+5. **MAINTAIN NARRATIVE FLOW** - Tell the complete story in each fact
+6. **ONLY SPLIT** when topics are completely unrelated or different time periods
+7. **TRANSFORM RELATIVE DATES** - "last year" → "in 2023" in the fact text
+8. **EXTRACT ALL ENTITIES** - PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER
+9. **CLASSIFY FACTS** - 'world' for general facts, 'agent' for AI agent actions
+10. When combining, prefer MORE comprehensive facts over fragmenting"""
 
     import time
     import logging
@@ -406,7 +308,7 @@ Remember:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an EXHAUSTIVE fact and entity extractor. CRITICAL RULES: 1) ALWAYS include the SUBJECT (never 'the kids' without whose kids), 2) **PRESERVE ALL CONTEXT** - photos, 'new' things, modifiers (new/old/first/favorite), visual elements - DO NOT drop these details, 3) Extract biographical details as SEPARATE facts ('my home country Sweden' → 'Person is from Sweden'), 4) **Extract SOCIAL RELATIONSHIPS and NICKNAMES** as facts even if not events ('Andrey calls Joanne Jo'), 5) Extract EVERY event with FULL CONTEXT - 'photo of my new hair' must preserve 'photo' AND 'new', 6) **TRANSFORM RELATIVE DATES IN FACT TEXT**: 'last year' → 'in [year]', 'last month' → 'in [month year]'. Extract ALL entities with types: PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER. Preserve possessive relationships (their→whose). When in doubt, include MORE context rather than less - missing context loses critical information."
+                        "content": "You are a comprehensive fact extractor that creates narrative, self-contained facts. CRITICAL: Extract 2-5 COMPREHENSIVE facts per conversation, NOT dozens of fragments. COMBINE related exchanges into single narrative facts that tell the complete story. For example, a discussion about playlist names should be ONE fact capturing the entire back-and-forth with all reasoning, not multiple small facts. PRESERVE all context (photos, 'new' things, visual elements, full reasoning), INCLUDE all participants and what they said/did, MAINTAIN narrative flow. ONLY SPLIT into separate facts when topics are completely unrelated or different time periods. Transform relative dates in fact text ('last year' → 'in 2023'). Extract entities (PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER). When in doubt, prefer MORE COMPREHENSIVE over fragmenting."
                     },
                     {
                         "role": "user",

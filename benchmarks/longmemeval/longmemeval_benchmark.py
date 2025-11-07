@@ -83,10 +83,13 @@ class LongMemEvalDataset(BenchmarkDataset):
             # Add session to batch
             if session_content_parts:
                 session_content = "\n".join(session_content_parts)
+                question_id = item.get("question_id", "unknown")
+                document_id = f"{question_id}_{session_id}"
                 batch_contents.append({
                     "content": session_content,
                     "context": f"Session {session_id}",
-                    "event_date": session_date
+                    "event_date": session_date,
+                    "document_id": document_id
                 })
 
         return batch_contents
@@ -127,6 +130,10 @@ class LongMemEvalDataset(BenchmarkDataset):
             return datetime.now(timezone.utc)
 
 
+class QuestionAnswer(pydantic.BaseModel):
+    answer: str
+    reasoning: str
+
 class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
     """LongMemEval-specific answer generator using configurable LLM provider."""
 
@@ -137,48 +144,87 @@ class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
         self.model = self.llm_config.model
 
     async def generate_answer(
-        self,
-        question: str,
-        memories: List[Dict[str, Any]]
-    ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
-        """
-        Generate answer from retrieved memories using OpenAI.
+                self,
+                question: str,
+                memories: List[Dict[str, Any]]
+        ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
+            """
+            Generate answer from retrieved memories using Groq.
 
-        Returns:
-            Tuple of (answer, reasoning, retrieved_memories_override)
-        """
-        # Format memories as context
-        context_parts = []
-        for i, mem in enumerate(memories, 1):
-            context_parts.append(f"[Memory {i}] {mem['text']}")
+            Returns:
+                Tuple of (answer, reasoning, None)
+                - None indicates to use the memories passed in
+            """
+            # Format context
+            context_parts = []
+            for result in memories:
+                context_parts.append({"text": result.get("text"), "context": result.get("context"),
+                                      "event_date": result.get("event_date")})
 
-        context = "\n".join(context_parts) if context_parts else "No relevant memories found."
+            context = json.dumps(context_parts)
 
-        prompt = f"""You are a helpful assistant. Based on the following memories from past conversations, answer the question.
+            # Use LLM to generate answer
+            try:
+                answer_obj = await self.llm_config.call(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful expert assistant answering questions from lme_experiment users based on the provided context."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"""
+    # CONTEXT:
+    You have access to facts and entities from a conversation.
 
-Memories:
-{context}
+    # INSTRUCTIONS:
+    1. Carefully analyze all provided memories
+    2. Pay special attention to the timestamps to determine the answer
+    3. If the question asks about a specific event or fact, look for direct evidence in the memories
+    4. If the memories contain contradictory information, prioritize the most recent memory
+    5. Always convert relative time references to specific dates, months, or years.
+    6. Be as specific as possible when talking about people, places, and events
+    7. Timestamps in memories represent the actual time the event occurred, not the time the event was mentioned in a message.
 
-Question: {question}
+    Clarification:
+    When interpreting memories, use the timestamp to determine when the described event happened, not when someone talked about the event.
 
-Instructions:
-- Answer based ONLY on the provided memories
-- If the memories don't contain the answer, say "I don't have enough information to answer this question"
-- Be concise and direct
-- If asked to abstain (e.g., for unanswerable questions), explicitly say you cannot answer
+    Example:
 
-Answer:"""
+    Memory: (2023-03-15T16:33:00Z) I went to the vet yesterday.
+    Question: What day did I go to the vet?
+    Correct Answer: March 15, 2023
+    Explanation:
+    Even though the phrase says "yesterday," the timestamp shows the event was recorded as happening on March 15th. Therefore, the actual vet visit happened on that date, regardless of the word "yesterday" in the text.
 
-        try:
-            answer = await self.llm_config.call(
-                messages=[{"role": "user", "content": prompt}],
-                scope="memory",
-                temperature=0.0,
-                max_tokens=300
-            )
-            return answer.strip(), "", None  # LongMemEval doesn't use reasoning or override memories
-        except Exception as e:
-            return f"Error generating answer: {str(e)}", "", None
+
+    # APPROACH (Think step by step):
+    1. First, examine all memories that contain information related to the question
+    2. Examine the timestamps and content of these memories carefully
+    3. Look for explicit mentions of dates, times, locations, or events that answer the question
+    4. If the answer requires calculation (e.g., converting relative time references), show your work
+    5. Formulate a precise, concise answer based solely on the evidence in the memories
+    6. Double-check that your answer directly addresses the question asked
+    7. Ensure your final answer is specific and avoids vague time references
+    8. If you're not exactly sure, still try to attempt an answer. Sometimes the terms are sligtly different from the question, so it's better to try with the current evidence than just say you don't know. 
+    9. Say that you cannot answer if no evidence is related to the question.
+
+    Context:
+
+    {context}
+
+    Question: {question}
+    Answer:
+
+    """
+                        }
+                    ],
+                    response_format=QuestionAnswer,
+                    scope="memory"
+                )
+                return answer_obj.answer, answer_obj.reasoning, None
+            except Exception as e:
+                return f"Error generating answer: {str(e)}", "Error occurred during answer generation.", None
 
 
 async def run_benchmark(

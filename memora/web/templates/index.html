@@ -62,6 +62,10 @@
                         <div class="stat-label">Entity Links</div>
                         <div class="stat-value" id="stat-entity-links">-</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Documents</div>
+                        <div class="stat-value" id="stat-documents">-</div>
+                    </div>
                 </div>
             </div>
 
@@ -69,6 +73,7 @@
                 <button class="data-sub-tab-button active" onclick="switchDataSubTab('world')">World</button>
                 <button class="data-sub-tab-button" onclick="switchDataSubTab('agent')">Agent</button>
                 <button class="data-sub-tab-button" onclick="switchDataSubTab('opinion')">Opinions</button>
+                <button class="data-sub-tab-button" onclick="switchDataSubTab('documents')">Documents</button>
             </div>
 
             <!-- World, Agent, and Opinions subtabs share the same structure -->
@@ -117,7 +122,7 @@
                         </div>
                     </div>
                     <div id="world-table-view" class="data-view" style="display: none;">
-                        <input type="text" id="world-table-filter" placeholder="Filter by text, context, or entities..." class="table-filter">
+                        <input type="text" id="world-table-filter" placeholder="Search memories (text, context)..." class="table-filter">
                         <div class="table-container">
                             <table class="memory-table">
                                 <thead>
@@ -177,7 +182,7 @@
                         </div>
                     </div>
                     <div id="agent-table-view" class="data-view" style="display: none;">
-                        <input type="text" id="agent-table-filter" placeholder="Filter by text, context, or entities..." class="table-filter">
+                        <input type="text" id="agent-table-filter" placeholder="Search memories (text, context)..." class="table-filter">
                         <div class="table-container">
                             <table class="memory-table">
                                 <thead>
@@ -237,7 +242,7 @@
                         </div>
                     </div>
                     <div id="opinion-table-view" class="data-view" style="display: none;">
-                        <input type="text" id="opinion-table-filter" placeholder="Filter by text, context, or entities..." class="table-filter">
+                        <input type="text" id="opinion-table-filter" placeholder="Search memories (text, context)..." class="table-filter">
                         <div class="table-container">
                             <table class="memory-table">
                                 <thead>
@@ -245,6 +250,41 @@
                                 </thead>
                                 <tbody id="opinion-table-body">
                                     <tr><td colspan="6" class="empty-message">Click "Load Opinions" to view data</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="documents-subtab" class="data-subtab-content">
+                <div id="documents-no-agent-message" class="no-agent-message">
+                    <h3>No Agent Selected</h3>
+                    <p>Please select an agent from the dropdown above to view documents.</p>
+                </div>
+                <div id="documents-content" style="display: none;">
+                    <div class="data-controls" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                        <button onclick="loadDocumentsView()" class="load-button">📄 Load Documents</button>
+                        <button onclick="loadDocumentsView()" class="refresh-button">🔄 Refresh</button>
+                        <span id="documents-count" class="node-count"></span>
+                    </div>
+                    <div class="data-view">
+                        <input type="text" id="documents-filter" placeholder="Search documents (ID, metadata)..." class="table-filter">
+                        <div class="table-container">
+                            <table class="memory-table">
+                                <thead>
+                                    <tr>
+                                        <th>Document ID</th>
+                                        <th>Created</th>
+                                        <th>Updated</th>
+                                        <th>Text Length</th>
+                                        <th>Memory Units</th>
+                                        <th>Metadata</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="documents-table-body">
+                                    <tr><td colspan="7" class="empty-message">Click "Load Documents" to view data</td></tr>
                                 </tbody>
                             </table>
                         </div>

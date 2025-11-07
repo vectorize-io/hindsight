@@ -172,6 +172,137 @@ window.loadDataView = async function(factType) {
     }
 }
 
+// Load documents view
+window.loadDocumentsView = async function() {
+    if (!currentAgentId) {
+        alert('Please select an agent first');
+        return;
+    }
+
+    await loadDocumentsTable();
+}
+
+// Load documents table from API
+async function loadDocumentsTable(searchQuery = '', limit = 100, offset = 0) {
+    if (!currentAgentId) return;
+
+    const tbody = document.getElementById('documents-table-body');
+    const countSpan = document.getElementById('documents-count');
+    if (!tbody) return;
+
+    try {
+        // Build URL with filters
+        let url = `api/documents?agent_id=${encodeURIComponent(currentAgentId)}&limit=${limit}&offset=${offset}`;
+        if (searchQuery) {
+            url += `&q=${encodeURIComponent(searchQuery)}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (countSpan) {
+            countSpan.textContent = `(${data.total})`;
+        }
+
+        if (data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-message">No documents found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.items.map(doc => `
+            <tr>
+                <td title="${doc.id}">${doc.id.length > 30 ? doc.id.substring(0, 30) + '...' : doc.id}</td>
+                <td>${doc.created_at ? new Date(doc.created_at).toLocaleString() : 'N/A'}</td>
+                <td>${doc.updated_at ? new Date(doc.updated_at).toLocaleString() : 'N/A'}</td>
+                <td>${doc.text_length.toLocaleString()} chars</td>
+                <td>${doc.memory_unit_count}</td>
+                <td title="${JSON.stringify(doc.metadata)}">${Object.keys(doc.metadata).length > 0 ? JSON.stringify(doc.metadata).substring(0, 50) + '...' : 'None'}</td>
+                <td>
+                    <button onclick="viewDocumentText('${doc.id.replace(/'/g, "\\'")}', '${doc.agent_id.replace(/'/g, "\\'")}')"
+                            class="load-button"
+                            style="padding: 5px 10px; font-size: 12px;"
+                            title="View original text">
+                        View Text
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+
+        // Setup table filter with debounced API calls
+        const filterInput = document.getElementById('documents-filter');
+        if (filterInput) {
+            filterInput.removeEventListener('input', filterInput._filterHandler);
+            filterInput._filterHandler = debounce(async function() {
+                const filterValue = this.value.trim();
+                await loadDocumentsTable(filterValue);
+            }, 500);
+            filterInput.addEventListener('input', filterInput._filterHandler);
+        }
+
+    } catch (error) {
+        console.error('Error loading documents:', error);
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-message">Error loading documents</td></tr>';
+    }
+}
+
+// View document text in a modal
+window.viewDocumentText = async function(documentId, agentId) {
+    try {
+        const url = `api/documents/${encodeURIComponent(documentId)}?agent_id=${encodeURIComponent(agentId)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const doc = await response.json();
+
+        // Create modal overlay
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 20px;';
+
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = 'background: white; border-radius: 8px; max-width: 900px; max-height: 90vh; overflow: auto; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);';
+
+        modalContent.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px;">
+                <div>
+                    <h2 style="margin: 0 0 10px 0;">Document: ${doc.id}</h2>
+                    <div style="color: #666; font-size: 14px;">
+                        <div>Created: ${new Date(doc.created_at).toLocaleString()}</div>
+                        <div>Memory Units: ${doc.memory_unit_count}</div>
+                        ${Object.keys(doc.metadata).length > 0 ? `<div>Metadata: ${JSON.stringify(doc.metadata, null, 2)}</div>` : ''}
+                    </div>
+                </div>
+                <button onclick="this.closest('[style*=fixed]').remove()"
+                        style="padding: 8px 16px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                    ✕
+                </button>
+            </div>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 4px; border-left: 4px solid #2196F3; white-space: pre-wrap; font-family: monospace; max-height: 60vh; overflow: auto; line-height: 1.6;">
+${doc.original_text}
+            </div>
+        `;
+
+        modal.appendChild(modalContent);
+        document.body.appendChild(modal);
+
+        // Close on background click
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+
+    } catch (error) {
+        console.error('Error loading document:', error);
+        alert('Error loading document: ' + error.message);
+    }
+}
+
 // Reload graph for a specific fact type
 window.reloadDataGraph = function(factType) {
     const data = dataCache[factType];
@@ -308,24 +439,62 @@ window.reloadDataGraph = function(factType) {
 }
 
 // Update table for a specific fact type
-function updateDataTable(factType, data) {
+async function updateDataTable(factType, data) {
     if (!data) return;
 
-    const tbody = document.getElementById(`${factType}-table-body`);
     const countSpan = document.getElementById(`${factType}-table-count`);
-
     if (countSpan) {
         countSpan.textContent = `(${data.total_units})`;
     }
 
-    if (tbody) {
-        tbody.innerHTML = data.table_rows.map(row => `
+    // Load initial table data from the new /api/list endpoint
+    await loadTableData(factType);
+
+    // Setup table filter with debounced API calls
+    const filterInput = document.getElementById(`${factType}-table-filter`);
+    if (filterInput) {
+        filterInput.removeEventListener('input', filterInput._filterHandler);
+        filterInput._filterHandler = debounce(async function() {
+            const filterValue = this.value.trim();
+            await loadTableData(factType, filterValue);
+        }, 500); // 500ms debounce
+        filterInput.addEventListener('input', filterInput._filterHandler);
+    }
+}
+
+// Load table data from /api/list endpoint
+async function loadTableData(factType, searchQuery = '', limit = 100, offset = 0) {
+    if (!currentAgentId) return;
+
+    const tbody = document.getElementById(`${factType}-table-body`);
+    if (!tbody) return;
+
+    try {
+        // Build URL with filters
+        let url = `api/list?agent_id=${encodeURIComponent(currentAgentId)}&fact_type=${factType}&limit=${limit}&offset=${offset}`;
+        if (searchQuery) {
+            url += `&q=${encodeURIComponent(searchQuery)}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-message">No results found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.items.map(row => `
             <tr>
-                <td>${row.id}</td>
+                <td>${row.id.substring(0, 8)}...</td>
                 <td>${row.text}</td>
-                <td>${row.context}</td>
-                <td>${row.date}</td>
-                <td>${row.entities}</td>
+                <td>${row.context || 'N/A'}</td>
+                <td>${row.date ? new Date(row.date).toLocaleString() : 'N/A'}</td>
+                <td>${row.entities || 'None'}</td>
                 <td>
                     <button onclick="deleteRecord('${factType}', '${row.id}')"
                             class="delete-button"
@@ -335,27 +504,24 @@ function updateDataTable(factType, data) {
                 </td>
             </tr>
         `).join('');
+
+    } catch (error) {
+        console.error('Error loading table data:', error);
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-message">Error loading data</td></tr>';
     }
+}
 
-    // Setup table filter
-    const filterInput = document.getElementById(`${factType}-table-filter`);
-    if (filterInput) {
-        filterInput.removeEventListener('input', filterInput._filterHandler);
-        filterInput._filterHandler = function() {
-            const filterValue = this.value.toLowerCase();
-            const rows = document.querySelectorAll(`#${factType}-table-body tr`);
-
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                if (text.includes(filterValue)) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
-            });
+// Debounce function to limit API calls
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func.apply(this, args);
         };
-        filterInput.addEventListener('input', filterInput._filterHandler);
-    }
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
 }
 
 // Delete a record and all its links
@@ -1925,7 +2091,7 @@ function updateUIForAgentSelection() {
     }
 
     // Update each data subtab
-    ['world', 'agent', 'opinion'].forEach(factType => {
+    ['world', 'agent', 'opinion', 'documents'].forEach(factType => {
         const noAgentMsg = document.getElementById(`${factType}-no-agent-message`);
         const content = document.getElementById(`${factType}-content`);
 
@@ -1960,11 +2126,14 @@ async function loadStats() {
         document.getElementById('stat-semantic-links').textContent = (stats.links_by_type.semantic || 0).toLocaleString();
         document.getElementById('stat-entity-links').textContent = (stats.links_by_type.entity || 0).toLocaleString();
 
+        // Update documents count
+        document.getElementById('stat-documents').textContent = (stats.total_documents || 0).toLocaleString();
+
     } catch (e) {
         console.error('Error loading stats:', e);
         // Reset to dashes on error
         ['stat-total-nodes', 'stat-world-nodes', 'stat-agent-nodes', 'stat-opinion-nodes',
-         'stat-total-links', 'stat-temporal-links', 'stat-semantic-links', 'stat-entity-links'].forEach(id => {
+         'stat-total-links', 'stat-temporal-links', 'stat-semantic-links', 'stat-entity-links', 'stat-documents'].forEach(id => {
             document.getElementById(id).textContent = '-';
         });
     }

@@ -19,7 +19,7 @@
           "Visualization"
         ],
         "summary": "Get memory graph data",
-        "description": "Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion)",
+        "description": "Retrieve graph data for visualization, optionally filtered by agent_id and fact_type (world/agent/opinion). Limited to 1000 most recent items.",
         "operationId": "api_graph_api_graph_get",
         "parameters": [
           {
@@ -62,6 +62,108 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GraphDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/list": {
+      "get": {
+        "tags": [
+          "Visualization"
+        ],
+        "summary": "List memory units",
+        "description": "List memory units with pagination and optional full-text search. Supports filtering by agent_id and fact_type.",
+        "operationId": "api_list_api_list_get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "fact_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fact Type"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMemoryUnitsResponse"
                 }
               }
             }
@@ -226,6 +328,144 @@
         }
       }
     },
+    "/api/documents": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "List documents",
+        "description": "List documents with pagination and optional search. Documents are the source content from which memory units are extracted.",
+        "operationId": "api_list_documents_api_documents_get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDocumentsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get document details",
+        "description": "Get a specific document including its original text",
+        "operationId": "api_get_document_api_documents__document_id__get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/memories/batch": {
       "post": {
         "tags": [
@@ -294,6 +534,88 @@
                 "schema": {
                   "$ref": "#/components/schemas/BatchPutAsyncResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/operations/{agent_id}": {
+      "get": {
+        "tags": [
+          "Memory Storage"
+        ],
+        "summary": "List async operations",
+        "description": "Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
+        "operationId": "api_list_operations_api_operations__agent_id__get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/operations/{operation_id}": {
+      "delete": {
+        "tags": [
+          "Memory Storage"
+        ],
+        "summary": "Cancel a pending async operation",
+        "description": "Cancel a pending async operation by removing it from the queue",
+        "operationId": "api_cancel_operation_api_operations__operation_id__delete",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -543,6 +865,75 @@
           "success": true
         }
       },
+      "DocumentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "original_text": {
+            "type": "string",
+            "title": "Original Text"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "memory_unit_count": {
+            "type": "integer",
+            "title": "Memory Unit Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "original_text",
+          "content_hash",
+          "metadata",
+          "created_at",
+          "updated_at",
+          "memory_unit_count"
+        ],
+        "title": "DocumentResponse",
+        "description": "Response model for get document endpoint.",
+        "example": {
+          "agent_id": "user123",
+          "content_hash": "abc123",
+          "created_at": "2024-01-15T10:30:00Z",
+          "id": "session_1",
+          "memory_unit_count": 15,
+          "metadata": {
+            "source": "conversation"
+          },
+          "original_text": "Full document text here...",
+          "updated_at": "2024-01-15T10:30:00Z"
+        }
+      },
       "GraphDataResponse": {
         "properties": {
           "nodes": {
@@ -628,6 +1019,106 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ListDocumentsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ListDocumentsResponse",
+        "description": "Response model for list documents endpoint.",
+        "example": {
+          "items": [
+            {
+              "agent_id": "user123",
+              "content_hash": "abc123",
+              "created_at": "2024-01-15T10:30:00Z",
+              "id": "session_1",
+              "memory_unit_count": 15,
+              "metadata": {
+                "source": "conversation"
+              },
+              "text_length": 5420,
+              "updated_at": "2024-01-15T10:30:00Z"
+            }
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
+        }
+      },
+      "ListMemoryUnitsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ListMemoryUnitsResponse",
+        "description": "Response model for list memory units endpoint.",
+        "example": {
+          "items": [
+            {
+              "context": "Work conversation",
+              "date": "2024-01-15T10:30:00Z",
+              "entities": "Alice (PERSON), Google (ORGANIZATION)",
+              "fact_type": "world",
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "text": "Alice works at Google on the AI team"
+            }
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 150
+        }
       },
       "MemoryItem": {
         "properties": {
