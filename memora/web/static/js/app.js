@@ -1127,7 +1127,7 @@ window.runSearchInPane = async function(paneId) {
         return;
     }
 
-    try:
+    try {
         // Prepare request body with optional fact_type
         const requestBody = {
             query: query,

@@ -476,6 +476,7 @@ class TemporalSemanticMemory(
         - Extracts facts from all contents in parallel
         - Generates ALL embeddings in ONE batch
         - Does ALL database operations in ONE transaction
+        - Automatically chunks large batches to prevent timeouts
 
         Args:
             agent_id: Unique identifier for the agent
@@ -505,14 +506,101 @@ class TemporalSemanticMemory(
             # Returns: [["unit-id-1"], ["unit-id-2"]]
         """
         start_time = time.time()
-        log_buffer = []  # Buffer all logs to avoid interleaving
-        log_buffer.append(f"{'='*60}")
-        log_buffer.append(f"PUT_BATCH_ASYNC START: {agent_id}")
-        log_buffer.append(f"Batch size: {len(contents)} content items")
-        log_buffer.append(f"{'='*60}")
 
         if not contents:
             return []
+
+        # Auto-chunk large batches by character count to avoid timeouts and memory issues
+        # Calculate total character count
+        total_chars = sum(len(item.get("content", "")) for item in contents)
+
+        # Threshold: 50,000 characters per sub-batch (roughly 12k tokens with average 4 chars/token)
+        CHARS_PER_BATCH = 50_000
+
+        if total_chars > CHARS_PER_BATCH:
+            # Split into smaller batches based on character count
+            logger.info(f"Large batch detected ({total_chars:,} chars from {len(contents)} items). Splitting into sub-batches of ~{CHARS_PER_BATCH:,} chars each...")
+
+            sub_batches = []
+            current_batch = []
+            current_batch_chars = 0
+
+            for item in contents:
+                item_chars = len(item.get("content", ""))
+
+                # If adding this item would exceed the limit, start a new batch
+                # (unless current batch is empty - then we must include it even if it's large)
+                if current_batch and current_batch_chars + item_chars > CHARS_PER_BATCH:
+                    sub_batches.append(current_batch)
+                    current_batch = [item]
+                    current_batch_chars = item_chars
+                else:
+                    current_batch.append(item)
+                    current_batch_chars += item_chars
+
+            # Add the last batch
+            if current_batch:
+                sub_batches.append(current_batch)
+
+            logger.info(f"Split into {len(sub_batches)} sub-batches: {[len(b) for b in sub_batches]} items each")
+
+            # Process each sub-batch using internal method (skip chunking check)
+            all_results = []
+            for i, sub_batch in enumerate(sub_batches, 1):
+                sub_batch_chars = sum(len(item.get("content", "")) for item in sub_batch)
+                logger.info(f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_chars:,} chars")
+
+                sub_results = await self._put_batch_async_internal(
+                    agent_id=agent_id,
+                    contents=sub_batch,
+                    document_id=document_id,
+                    document_metadata=document_metadata,
+                    upsert=upsert and i == 1,  # Only upsert on first batch
+                    fact_type_override=fact_type_override,
+                    confidence_score=confidence_score
+                )
+                all_results.extend(sub_results)
+
+            total_time = time.time() - start_time
+            logger.info(f"PUT_BATCH_ASYNC (chunked) COMPLETE: {len(all_results)} results from {len(contents)} contents in {total_time:.3f}s")
+            return all_results
+
+        # Small batch - use internal method directly
+        return await self._put_batch_async_internal(
+            agent_id=agent_id,
+            contents=contents,
+            document_id=document_id,
+            document_metadata=document_metadata,
+            upsert=upsert,
+            fact_type_override=fact_type_override,
+            confidence_score=confidence_score
+        )
+
+    async def _put_batch_async_internal(
+        self,
+        agent_id: str,
+        contents: List[Dict[str, Any]],
+        document_id: Optional[str] = None,
+        document_metadata: Optional[Dict[str, Any]] = None,
+        upsert: bool = False,
+        fact_type_override: Optional[str] = None,
+        confidence_score: Optional[float] = None,
+    ) -> List[List[str]]:
+        """
+        Internal method for batch processing without chunking logic.
+
+        Assumes contents are already appropriately sized (< 50k chars).
+        Called by put_batch_async after chunking large batches.
+        """
+        start_time = time.time()
+        total_chars = sum(len(item.get("content", "")) for item in contents)
+
+        # Buffer all logs to avoid interleaving
+        log_buffer = []
+        log_buffer.append(f"{'='*60}")
+        log_buffer.append(f"PUT_BATCH_ASYNC START: {agent_id}")
+        log_buffer.append(f"Batch size: {len(contents)} content items, {total_chars:,} chars")
+        log_buffer.append(f"{'='*60}")
 
         # Step 1: Extract facts from ALL contents in parallel
         step_start = time.time()

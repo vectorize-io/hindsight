@@ -718,25 +718,23 @@ class BenchmarkRunner:
             await self.memory.delete_agent(agent_id)
             console.print(f"    [green]✓[/green] Cleared agent data")
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                console=console
-            ) as progress:
-                task = progress.add_task(
-                    f"[cyan]Ingesting {len(items)} items...",
-                    total=len(items)
-                )
+            # Collect all sessions from all items into one large batch
+            console.print(f"    [yellow]Collecting sessions from all items...[/yellow]")
+            all_sessions = []
+            for item in items:
+                item_sessions = self.dataset.prepare_sessions_for_ingestion(item)
+                all_sessions.extend(item_sessions)
 
-                total_sessions = 0
-                for item in items:
-                    num_sessions = await self.ingest_conversation(item, agent_id)
-                    total_sessions += num_sessions
-                    progress.update(task, advance=1)
+            console.print(f"    [cyan]Collected {len(all_sessions)} sessions from {len(items)} items[/cyan]")
+            console.print(f"    [yellow]Ingesting in one batch (auto-chunks if needed)...[/yellow]")
 
-            console.print(f"    [green]✓[/green] Ingested {total_sessions} sessions from {len(items)} items")
+            # Ingest all sessions in one batch call (will auto-chunk if too large)
+            await self.memory.put_batch_async(
+                agent_id=agent_id,
+                contents=all_sessions
+            )
+
+            console.print(f"    [green]✓[/green] Ingested {len(all_sessions)} sessions from {len(items)} items")
         else:
             console.print(f"\n[3] Skipping ingestion (using existing data)")
 

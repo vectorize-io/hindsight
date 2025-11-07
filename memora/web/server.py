@@ -22,7 +22,7 @@ from memora.embeddings import Embeddings
 
 import logging
 
-logging.basicConfig(level=logging.INFO)
+
 
 # Environment variables are loaded by the shell script that calls this module
 # No need to load .env files here as they're sourced by start-server.sh
@@ -621,6 +621,7 @@ def _register_routes(app: FastAPI):
                 document_metadata=request.document_metadata,
                 upsert=request.upsert
             )
+            logging.info(f"Batch put result: {result}")
 
             return BatchPutResponse(
                 success=True,
@@ -662,33 +663,21 @@ def _register_routes(app: FastAPI):
 
 
 
-def _create_default_app():
-    """Create app instance with default environment configuration."""
-    _memory = TemporalSemanticMemory(
-        db_url=os.getenv("DATABASE_URL"),
-        memory_llm_provider=os.getenv("MEMORY_LLM_PROVIDER", "groq"),
-        memory_llm_api_key=os.getenv("MEMORY_LLM_API_KEY"),
-        memory_llm_model=os.getenv("MEMORY_LLM_MODEL", "openai/gpt-oss-120b"),
-        memory_llm_base_url=os.getenv("MEMORY_LLM_BASE_URL") or None,
-    )
-    return create_app(_memory)
-
-
-# Module-level app instance (lazy initialization)
-_app_instance = None
-
-
-def _get_app():
-    """Get or create the app instance."""
-    global _app_instance
-    if _app_instance is None:
-        _app_instance = _create_default_app()
-    return _app_instance
+# Create app at module level (required for uvicorn import string)
+_memory = TemporalSemanticMemory(
+    db_url=os.getenv("DATABASE_URL"),
+    memory_llm_provider=os.getenv("MEMORY_LLM_PROVIDER", "groq"),
+    memory_llm_api_key=os.getenv("MEMORY_LLM_API_KEY"),
+    memory_llm_model=os.getenv("MEMORY_LLM_MODEL", "openai/gpt-oss-120b"),
+    memory_llm_base_url=os.getenv("MEMORY_LLM_BASE_URL") or None,
+)
+app = create_app(_memory)
 
 
 if __name__ == "__main__":
     import uvicorn
     import argparse
+    logging.basicConfig(level=logging.INFO)
 
     # Parse CLI arguments
     parser = argparse.ArgumentParser(description="Memory Graph API Server")
@@ -708,9 +697,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Create app after parsing args (so --help works without DB connection)
-    app = _create_default_app()
-
     print("\n" + "=" * 80)
     print("Memory Graph API Server")
     print("=" * 80)
@@ -721,9 +707,12 @@ if __name__ == "__main__":
     print(f"Log Level: {args.log_level}")
     print("=" * 80 + "\n")
 
+    # Always use import string for uvicorn (required for reload and workers)
+    app_ref = "memora.web.server:app"
+
     # Prepare uvicorn config
     uvicorn_config = {
-        "app": app,
+        "app": app_ref,
         "host": args.host,
         "port": args.port,
         "reload": args.reload,

@@ -423,8 +423,6 @@ Remember:
             # Convert to dict format
             chunk_facts = [fact.model_dump() for fact in extraction_response.facts]
 
-            logger.info(f"          [1.3.{chunk_index + 1}] Chunk {chunk_index + 1}/{total_chunks} LLM call: {len(chunk_facts)} facts from {len(chunk)} chars in {llm_call_time:.3f}s")
-
             return chunk_facts
 
         except BadRequestError as e:
