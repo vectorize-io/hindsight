@@ -2,9 +2,83 @@
 sidebar_position: 6
 ---
 
-# Server Administration
+# Server Deployment
 
-Guide to deploying and configuring the Hindsight server.
+Guide to deploying the Hindsight server in production.
+
+## Deployment Options
+
+### Docker Compose (Recommended)
+
+The simplest way to deploy Hindsight with all dependencies:
+
+```bash
+# Clone the repository
+git clone https://github.com/vectorize-io/hindsight.git
+cd hindsight
+
+# Create environment file
+cp .env.example .env
+# Edit .env with your LLM API key
+
+# Start all services
+cd docker
+./start.sh
+```
+
+Services will be available at:
+- **API Server**: http://localhost:8888
+- **Control Plane**: http://localhost:3000
+- **Swagger UI**: http://localhost:8888/docs
+
+#### Docker Compose Commands
+
+```bash
+# Start all services
+cd docker && ./start.sh
+
+# Stop services
+cd docker && ./stop.sh
+
+# Clean all data
+cd docker && ./clean.sh
+
+# View logs
+docker-compose logs -f api
+docker-compose logs -f control-plane
+```
+
+### Helm Chart (Kubernetes)
+
+For Kubernetes deployments, use the Hindsight Helm chart:
+
+```bash
+helm repo add hindsight https://vectorize-io.github.io/hindsight
+helm install hindsight hindsight/hindsight \
+  --set api.llm.provider=groq \
+  --set api.llm.apiKey=gsk_xxxxxxxxxxxx
+```
+
+See the [Helm chart documentation](https://github.com/vectorize-io/hindsight/tree/main/deploy/helm) for configuration options.
+
+### Bare Metal / pip install
+
+For custom deployments, install the API server directly:
+
+```bash
+pip install hindsight-api
+```
+
+Run the server:
+
+```bash
+python -m hindsight_api.web.server --host 0.0.0.0 --port 8888
+```
+
+You'll need to:
+1. Provision PostgreSQL with pgvector extension
+2. Set environment variables (see [Configuration](#environment-variables))
+3. Handle process management (systemd, supervisor, etc.)
 
 ## Architecture Overview
 
@@ -16,24 +90,21 @@ Guide to deploying and configuring the Hindsight server.
 │  hindsight-client  │  @hindsight/client │   hindsight-cli    │  (Claude, etc.)       │
 └────────┬────────┴────────┬────────┴────────┬────────┴───────────┬───────────┘
          │                 │                 │                     │
-         │                 │                 │                     │
          ▼                 ▼                 ▼                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           HINDSIGHT API SERVER                                  │
+│                           HINDSIGHT API SERVER                               │
 │                          (localhost:8888)                                    │
 ├─────────────────────────────────┬───────────────────────────────────────────┤
 │          HTTP API               │              MCP API                       │
 │    /api/memories/*              │         MCP Server (stdio)                 │
-│    /api/agents/*                │      hindsight_search, hindsight_think,          │
-│    /api/search, /api/think      │      hindsight_store, hindsight_agents           │
+│    /api/agents/*                │      hindsight_search, hindsight_think,    │
+│    /api/search, /api/think      │      hindsight_store, hindsight_agents     │
 └─────────────────────────────────┴───────────────────────────────────────────┘
-         │                                           │
          │                                           │
          ▼                                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          PROCESSING PIPELINE                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
 │  │   INGESTION  │    │  RETRIEVAL   │    │  REASONING   │                   │
 │  │              │    │   (TEMPR)    │    │   (CARA)     │                   │
@@ -41,7 +112,6 @@ Guide to deploying and configuring the Hindsight server.
 │  │  Entity Res. │    │  4-way Search│    │  Personality │                   │
 │  │  Graph Build │    │  RRF Fusion  │    │  Opinion Gen │                   │
 │  └──────────────┘    └──────────────┘    └──────────────┘                   │
-│                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
          │                      │                      │
          ▼                      ▼                      ▼
@@ -73,42 +143,6 @@ Guide to deploying and configuring the Hindsight server.
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
-
-### Docker (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/hindsight/hindsight.git
-cd hindsight
-
-# Create environment file
-cp .env.example .env
-# Edit .env with your LLM API key
-
-# Start all services
-cd docker
-./start.sh
-```
-
-Services will be available at:
-- **API Server**: http://localhost:8888
-- **Control Plane**: http://localhost:3000
-- **Swagger UI**: http://localhost:8888/docs
-
-### Local Development
-
-```bash
-# Install dependencies
-uv sync
-
-# Start PostgreSQL only (via Docker)
-cd docker && docker-compose up -d postgres
-
-# Start the API server
-./scripts/start-server.sh --env local
-```
-
 ## Environment Variables
 
 ### API Server (`HINDSIGHT_API_*`)
@@ -118,7 +152,7 @@ cd docker && docker-compose up -d postgres
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | Required |
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `groq`, `ollama` | `groq` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | Required (except ollama) |
-| `HINDSIGHT_API_LLM_MODEL` | Model name | `openai/gpt-oss-20b` |
+| `HINDSIGHT_API_LLM_MODEL` | Model name | `llama-3.1-70b-versatile` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
 | `HINDSIGHT_API_HOST` | Server bind address | `0.0.0.0` |
 | `HINDSIGHT_API_PORT` | Server port | `8888` |
@@ -161,7 +195,7 @@ HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888
 
 ## ML Models
 
-Hindsight uses several ML models for different stages of the pipeline:
+Hindsight uses several ML models that are downloaded automatically on first run:
 
 ### Embedding Model
 
@@ -169,10 +203,7 @@ Hindsight uses several ML models for different stages of the pipeline:
 |-------|------------|---------|
 | `all-MiniLM-L6-v2` | 384 | Semantic vector embeddings |
 
-Downloaded automatically on first run. Used for:
-- Memory vectorization
-- Query embedding
-- Semantic similarity search
+Used for memory vectorization, query embedding, and semantic similarity search.
 
 ### Cross-Encoder (Reranking)
 
@@ -180,7 +211,7 @@ Downloaded automatically on first run. Used for:
 |-------|---------|
 | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Neural reranking |
 
-Reranks search results for precision after initial retrieval. Includes temporal context in input.
+Reranks search results for precision after initial retrieval.
 
 ### Temporal Parser
 
@@ -192,11 +223,7 @@ Parses natural language time expressions like "last spring" or "in June 2024".
 
 ### LLM (Configurable)
 
-Used for:
-- Fact extraction from raw content
-- Entity extraction and resolution
-- Opinion generation with personality
-- Think/reasoning responses
+Used for fact extraction, entity resolution, opinion generation, and think responses.
 
 Supported providers:
 - **OpenAI**: GPT-4, GPT-4o, GPT-3.5-turbo
@@ -257,32 +284,6 @@ CREATE TABLE agent_profiles (
 - **GIN Index**: Full-text search with BM25 ranking
 - **B-tree Indexes**: Agent ID, timestamps, entity lookups
 
-## Docker Services
-
-```yaml
-services:
-  postgres:     # pgvector/pgvector:pg16
-  api:          # Hindsight API server
-  control-plane: # Admin UI (optional)
-```
-
-### Commands
-
-```bash
-# Start all services
-cd docker && ./start.sh
-
-# Stop services
-cd docker && ./stop.sh
-
-# Clean all data
-cd docker && ./clean.sh
-
-# View logs
-docker-compose logs -f api
-docker-compose logs -f control-plane
-```
-
 ## Health Checks
 
 ### API Server
@@ -297,11 +298,11 @@ curl http://localhost:8888/api/v1/agents
 curl http://localhost:3000/
 ```
 
-## Production Deployment
+## Production Considerations
 
 For production deployments:
 
-1. **Use managed PostgreSQL** with pgvector extension
+1. **Use managed PostgreSQL** with pgvector extension (AWS RDS, Google Cloud SQL, Supabase)
 2. **Set proper secrets** via environment variables or secrets manager
 3. **Configure resource limits** for ML model inference
 4. **Set up monitoring** for API latency and error rates

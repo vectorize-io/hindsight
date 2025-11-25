@@ -67,9 +67,9 @@ def create_app(
             # Create MCP server with shared memory instance
             mcp_server = create_mcp_server(memory=memory)
 
-            # Mount at specified path
-            app.mount(mcp_mount_path, mcp_server.sse_app())
-            logger.info(f"MCP server enabled at {mcp_mount_path}/sse")
+            # Mount at specified path using http_app (modern non-SSE alternative)
+            app.mount(mcp_mount_path, mcp_server.http_app())
+            logger.info(f"MCP server enabled at {mcp_mount_path}")
         except ImportError as e:
             logger.error(f"MCP server requested but dependencies not available: {e}")
             logger.error("Install with: pip install hindsight-api[mcp]")

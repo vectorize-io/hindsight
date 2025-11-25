@@ -186,29 +186,9 @@ sequenceDiagram
     A-->>C: Response + sources
 ```
 
-## Quick Start
-
-```bash
-pip install hindsight-client
-```
-
-```python
-from hindsight_client import Hindsight
-
-client = Hindsight(base_url="http://localhost:8888")
-
-# Store
-client.store(agent_id="my-agent", content="Alice works at Google")
-
-# Search
-results = client.search(agent_id="my-agent", query="What does Alice do?")
-
-# Think (personality-aware response)
-answer = client.think(agent_id="my-agent", query="Tell me about Alice")
-print(answer["text"])
-```
-
 ## Next Steps
+
+- [Quick Start](/developer/api/quickstart) — Get up and running in 60 seconds
 
 - [Architecture](./developer/architecture) — Deep dive into ingestion, storage, and graph construction
 - [Retrieval](./developer/retrieval) — How TEMPR's 4-way search works
@@ -216,4 +196,5 @@ print(answer["text"])
 - [Ingest Data](./developer/api/ingest) — Store memories, conversations, and documents
 - [Search Facts](./developer/api/search) — Multi-strategy retrieval
 - [Think](./developer/api/think) — Personality-aware response generation
-- [Server Administration](./developer/server) — Deployment and configuration
+- [Server Deployment](./developer/server) — Deploy with Docker Compose, Helm, or pip
+- [Development Guide](./developer/development) — Set up a local development environment

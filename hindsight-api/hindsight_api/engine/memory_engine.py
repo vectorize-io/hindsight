@@ -39,6 +39,7 @@ from .llm_wrapper import LLMConfig
 from .response_models import SearchResult as SearchResultModel, ThinkResult, MemoryFact
 from .task_backend import TaskBackend, AsyncIOQueueBackend
 from .search.reranking import CrossEncoderReranker
+from ..pg0 import EmbeddedPostgres
 
 
 def utcnow():
@@ -51,8 +52,8 @@ logger = logging.getLogger(__name__)
 
 from .db_utils import acquire_with_retry, retry_with_backoff
 
-# Tiktoken for token budget filtering
 import tiktoken
+from dateutil import parser as date_parser
 
 # Cache tiktoken encoding for token budget filtering (module-level singleton)
 _TIKTOKEN_ENCODING = None
@@ -109,8 +110,15 @@ class MemoryEngine:
                           Increase for parallel think/search operations (e.g., 200-300 for 100+ parallel thinks)
             task_backend: Custom task backend for async task execution. If not provided, uses AsyncIOQueueBackend
         """
+        # Track pg0 instance (if used)
+        self._pg0: Optional[EmbeddedPostgres] = None
+
         # Initialize PostgreSQL connection URL
-        self.db_url = db_url
+        # "pg0" or "embedded-pg" are special values that trigger embedded PostgreSQL via pg0
+        # The actual URL will be set during initialize() after starting the server
+        self._use_pg0 = db_url in ("pg0", "embedded-pg")
+        self.db_url = db_url if not self._use_pg0 else None
+
 
         # Set default base URL if not provided
         if memory_llm_base_url is None:
@@ -338,6 +346,13 @@ class MemoryEngine:
         if self._initialized:
             return
 
+        # Start pg0 embedded PostgreSQL if configured
+        if self._use_pg0:
+            logger.info("Starting pg0 embedded PostgreSQL...")
+            self._pg0 = EmbeddedPostgres()
+            self.db_url = await self._pg0.ensure_running()
+            logger.info(f"pg0 PostgreSQL running at: {self.db_url}")
+
         # Create connection pool
         # For read-heavy workloads with many parallel think/search operations,
         # we need a larger pool. Read operations don't need strong isolation.
@@ -399,6 +414,14 @@ class MemoryEngine:
             logger.debug("no pool to close")
 
         self._initialized = False
+
+        # Stop pg0 if we started it
+        if self._pg0 is not None:
+            logger.info("Stopping pg0...")
+            await self._pg0.stop()
+            self._pg0 = None
+            logger.info("pg0 stopped")
+
         logger.debug("close() completed")
 
     async def wait_for_background_tasks(self):
@@ -795,7 +818,7 @@ class MemoryEngine:
                     all_fact_texts.append(fact_dict['fact'])
 
                     # Extract temporal fields (new schema with ranges)
-                    from dateutil import parser as date_parser
+
                     try:
                         # Try new schema first (occurred_start/end)
                         occurred_start = date_parser.isoparse(fact_dict['occurred_start'])

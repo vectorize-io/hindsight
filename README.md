@@ -11,45 +11,38 @@ AI assistants forget everything between sessions. Hindsight fixes that with a me
 - **Agent opinions** — Agents form and recall beliefs with confidence scores
 - **Personality** — Big Five traits influence how agents process and respond to information
 
-## 5-Minute Setup
+## 60-seconds step
 
-### 1. Start the server
 
-```bash
-# Clone and start with Docker
-git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/docker
-./start.sh
-```
-
-Server runs at `http://localhost:8888`
-
-### 2. Install the Python client
+### 1. Install the Hindsight All package (client + API)
 
 ```bash
-pip install hindsight-client
+pip install hindsight-all
 ```
 
-### 3. Use it
+### 2. Import your OpenAI API key
+```bash
+export OPENAI_API_KEY=xx
+```
+
+### 3. Run embedded server and client
 
 ```python
-from hindsight_client import Hindsight
+import os
+from hindsight import HindsightServer, HindsightClient
 
-client = Hindsight(base_url="http://localhost:8888")
+with HindsightServer(llm_provider="openai", llm_model="gpt-5.1-mini", llm_api_key=os.environ["OPENAI_API_KEY"]) as server:
+    client = HindsightClient(base_url=server.url)
 
-# Store memories
-client.store(agent_id="my-agent", content="Alice works at Google")
-client.store(agent_id="my-agent", content="Bob prefers Python over JavaScript")
-
-# Search memories
-results = client.search(agent_id="my-agent", query="What does Alice do?")
-for r in results:
-    print(f"{r['text']} ({r['weight']:.2f})")
-
-# Generate personality-aware responses
-answer = client.think(agent_id="my-agent", query="Tell me about Alice")
-print(answer["text"])
+    client.put(agent_id="my-agent", content="Alice works at Google")
+    client.put(agent_id="my-agent", content="Bob prefers Python over JavaScript")
+    
+    client.search(agent_id="my-agent", query="What does Alice do?")
+    
+    client.think(agent_id="my-agent", query="Tell me about Alice")
 ```
+
+
 
 ## Documentation
 

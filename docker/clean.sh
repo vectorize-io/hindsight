@@ -3,7 +3,7 @@ set -e
 
 cd "$(dirname "$0")"
 
-echo "🧹 Cleaning Memora Services"
+echo "🧹 Cleaning Services"
 echo "============================"
 echo ""
 echo "This will:"
@@ -20,7 +20,7 @@ fi
 
 echo ""
 echo "🗑️  Removing services and data..."
-docker-compose down -v
+docker compose down -v
 
 echo ""
 echo "✅ All services and data removed"

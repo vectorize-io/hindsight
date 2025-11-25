@@ -6,13 +6,63 @@ sidebar_position: 1
 
 Official Python client for the Hindsight API.
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 ## Installation
+
+<Tabs>
+<TabItem value="all-in-one" label="All-in-One (Recommended)">
+
+The `hindsight-all` package includes embedded PostgreSQL, HTTP API server, and client:
+
+```bash
+pip install hindsight-all
+```
+
+</TabItem>
+<TabItem value="client-only" label="Client Only">
+
+If you already have a Hindsight server running:
 
 ```bash
 pip install hindsight-client
 ```
 
+</TabItem>
+</Tabs>
+
 ## Quick Start
+
+<Tabs>
+<TabItem value="all-in-one" label="All-in-One">
+
+```python
+import os
+from hindsight import HindsightServer, HindsightClient
+
+with HindsightServer(
+    llm_provider="openai",
+    llm_model="gpt-4.1-mini",
+    llm_api_key=os.environ["OPENAI_API_KEY"]
+) as server:
+    client = HindsightClient(base_url=server.url)
+
+    # Store a memory
+    client.put(agent_id="my-agent", content="Alice works at Google")
+
+    # Search memories
+    results = client.search(agent_id="my-agent", query="What does Alice do?")
+    for r in results:
+        print(r["text"], r["weight"])
+
+    # Generate response with personality
+    answer = client.think(agent_id="my-agent", query="Tell me about Alice")
+    print(answer["text"])
+```
+
+</TabItem>
+<TabItem value="client-only" label="Client Only">
 
 ```python
 from hindsight_client import Hindsight
@@ -20,7 +70,7 @@ from hindsight_client import Hindsight
 client = Hindsight(base_url="http://localhost:8888")
 
 # Store a memory
-client.store(agent_id="my-agent", content="Alice works at Google")
+client.put(agent_id="my-agent", content="Alice works at Google")
 
 # Search memories
 results = client.search(agent_id="my-agent", query="What does Alice do?")
@@ -31,6 +81,9 @@ for r in results:
 answer = client.think(agent_id="my-agent", query="Tell me about Alice")
 print(answer["text"])
 ```
+
+</TabItem>
+</Tabs>
 
 ## Client Initialization
 

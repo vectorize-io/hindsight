@@ -551,14 +551,16 @@ def create_app(memory: MemoryEngine, run_migrations: bool = True, initialize_mem
         Note: This only fires when running the app standalone, not when mounted.
         """
         # Startup: Initialize database and memory system
+        if initialize_memory:
+            await memory.initialize()
+            logging.info("Memory system initialized")
+
         if run_migrations:
             from hindsight_api.migrations import run_migrations as do_migrations
             do_migrations(memory.db_url)
             logging.info("Database migrations applied")
 
-        if initialize_memory:
-            await memory.initialize()
-            logging.info("Memory system initialized")
+
 
         yield
 

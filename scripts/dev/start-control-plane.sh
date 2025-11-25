@@ -20,14 +20,9 @@ if [ -f "$ROOT_DIR/.env" ]; then
   source "$ROOT_DIR/.env"
   set +a
 fi
-PORT=3000
-echo ""
-echo "Control plane will be available at: http://localhost:${PORT}"
-echo ""
 
 # Map prefixed env vars to Next.js standard vars
 export HOSTNAME="${HINDSIGHT_CP_HOSTNAME:-0.0.0.0}"
-export PORT="${HINDSIGHT_CP_PORT:-$PORT}"
 
 # Run dev server
 npm run dev

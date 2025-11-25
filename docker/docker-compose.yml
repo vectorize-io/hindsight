@@ -27,10 +27,10 @@ services:
       HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:hindsight_dev@postgres:5432/hindsight
       HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-groq}
       HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_API_LLM_API_KEY}
-      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_API_LLM_MODEL:-openai/gpt-oss-120b}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_API_LLM_MODEL:-openai/gpt-oss-20b}
       HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_API_LLM_BASE_URL}
-      HINDSIGHT_API_HOST: ${HINDSIGHT_API_HOST:-0.0.0.0}
-      HINDSIGHT_API_PORT: ${HINDSIGHT_API_PORT:-8888}
+      HINDSIGHT_API_HOST: 0.0.0.0
+      HINDSIGHT_API_PORT: 8888
     ports:
       - "8888:8888"
     depends_on:
@@ -53,16 +53,16 @@ services:
     container_name: hindsight-control-plane
     environment:
       NODE_ENV: production
-      HINDSIGHT_CP_HOSTNAME: ${HINDSIGHT_CP_HOSTNAME:-0.0.0.0}
-      HINDSIGHT_CP_PORT: ${HINDSIGHT_CP_PORT:-3000}
-      HINDSIGHT_CP_DATAPLANE_API_URL: ${HINDSIGHT_CP_DATAPLANE_API_URL:-http://api:8888}
+      HOSTNAME: 0.0.0.0
+      PORT: 9999
+      HINDSIGHT_CP_DATAPLANE_API_URL: http://api:8888
     ports:
-      - "3000:3000"
+      - "9999:9999"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/"]
       interval: 10s
       timeout: 5s
       retries: 5

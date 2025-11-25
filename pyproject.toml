@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["hindsight-api", "hindsight-dev", "hindsight-dev/benchmarks", "hindsight-mcp-server", "hindsight-openai", "hindsight-langmem", "hindsight-clients/python"]
+members = ["hindsight", "hindsight-api", "hindsight-dev", "hindsight-dev/benchmarks", "hindsight-mcp-server", "hindsight-openai", "hindsight-langmem", "hindsight-clients/python"]
 
 [tool.uv]
 dev-dependencies = []

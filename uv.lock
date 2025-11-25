@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "benchmarks",
+    "hindsight-all",
     "hindsight-api",
     "hindsight-client",
     "hindsight-dev",
@@ -1113,6 +1114,30 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/92/68/89ac4e5b12a9ff6286a12174c8538a5930e2ed662091dd2572bbe0a18c8a/hf_xet-1.2.0-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a55558084c16b09b5ed32ab9ed38421e2d87cf3f1f89815764d1177081b99865", size = 3508920 },
     { url = "https://files.pythonhosted.org/packages/cb/44/870d44b30e1dcfb6a65932e3e1506c103a8a5aea9103c337e7a53180322c/hf_xet-1.2.0-cp37-abi3-win_amd64.whl", hash = "sha256:e6584a52253f72c9f52f9e549d5895ca7a471608495c4ecaa6cc73dba2b24d69", size = 2905735 },
 ]
+
+[[package]]
+name = "hindsight-all"
+version = "0.0.7"
+source = { editable = "hindsight" }
+dependencies = [
+    { name = "hindsight-api" },
+    { name = "hindsight-client" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "hindsight-api", editable = "hindsight-api" },
+    { name = "hindsight-client", editable = "hindsight-clients/python" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-api"

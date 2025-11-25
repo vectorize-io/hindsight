@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hindsight-all"
+version = "0.0.7"
+description = "All-in-one package for Hindsight - Semantic memory system with personality-driven thinking"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "hindsight-api>=0.0.7",
+    "hindsight-client>=0.0.7",
+]
+
+[tool.uv.sources]
+hindsight-api = { workspace = true }
+hindsight-client = { workspace = true }
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
