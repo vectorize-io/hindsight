@@ -143,43 +143,58 @@ async def retrieve_graph(
     if not entry_points:
         return []
 
-    # Simple BFS-style spreading activation
+    # BFS-style spreading activation with batched neighbor fetching
     visited = set()
     results = []
     queue = [(dict(r), r["similarity"]) for r in entry_points]
     budget_remaining = budget
 
+    # Process nodes in batches to reduce DB roundtrips
+    batch_size = 20  # Fetch neighbors for up to 20 nodes at once
+
     while queue and budget_remaining > 0:
-        current, activation = queue.pop(0)
-        unit_id = str(current["id"])
+        # Collect a batch of nodes to process
+        batch_nodes = []
+        batch_activations = {}
 
-        if unit_id in visited:
-            continue
+        while queue and len(batch_nodes) < batch_size and budget_remaining > 0:
+            current, activation = queue.pop(0)
+            unit_id = str(current["id"])
 
-        visited.add(unit_id)
-        budget_remaining -= 1
-        results.append((unit_id, current))
+            if unit_id not in visited:
+                visited.add(unit_id)
+                budget_remaining -= 1
+                results.append((unit_id, current))
+                batch_nodes.append(current["id"])
+                batch_activations[unit_id] = activation
 
-        # Get neighbors
-        if budget_remaining > 0:
+        # Batch fetch neighbors for all nodes in this batch
+        # Fetch top weighted neighbors (batch_size * 10 = ~200 for good distribution)
+        if batch_nodes and budget_remaining > 0:
+            max_neighbors = len(batch_nodes) * 10
             neighbors = await conn.fetch(
                 """
-                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.access_count, mu.embedding, mu.fact_type, mu.document_id,
-                       ml.weight, ml.link_type
+                SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.occurred_end, mu.mentioned_at,
+                       mu.access_count, mu.embedding, mu.fact_type, mu.document_id,
+                       ml.weight, ml.link_type, ml.from_unit_id
                 FROM memory_links ml
                 JOIN memory_units mu ON ml.to_unit_id = mu.id
-                WHERE ml.from_unit_id = $1
+                WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.weight >= 0.1
                   AND mu.fact_type = $2
                 ORDER BY ml.weight DESC
-                LIMIT 10
+                LIMIT $3
                 """,
-                current["id"], fact_type
+                batch_nodes, fact_type, max_neighbors
             )
 
             for n in neighbors:
                 neighbor_id = str(n["id"])
                 if neighbor_id not in visited:
+                    # Get parent activation
+                    parent_id = str(n["from_unit_id"])
+                    activation = batch_activations.get(parent_id, 0.5)
+
                     # Boost activation for causal links (they're high-value relationships)
                     link_type = n["link_type"]
                     base_weight = n["weight"]
@@ -408,7 +423,7 @@ async def retrieve_parallel(
     thinking_budget: int,
     question_date: Optional[datetime] = None,
     query_analyzer: Optional["QueryAnalyzer"] = None
-) -> Tuple[List, List, List, Optional[List]]:
+) -> Tuple[List, List, List, Optional[List], Dict[str, float]]:
     """
     Run 3-way or 4-way parallel retrieval (adds temporal if detected).
 
@@ -423,17 +438,26 @@ async def retrieve_parallel(
         query_analyzer: Query analyzer to use (defaults to TransformerQueryAnalyzer)
 
     Returns:
-        Tuple of (semantic_results, bm25_results, graph_results, temporal_results)
+        Tuple of (semantic_results, bm25_results, graph_results, temporal_results, timings)
         temporal_results is None if no temporal constraint detected
+        timings is a dict with per-method latencies in seconds
     """
     # Detect temporal constraint
     from .temporal_extraction import extract_temporal_constraint
     import logging
+    import time
     logger = logging.getLogger(__name__)
 
     temporal_constraint = extract_temporal_constraint(
         query_text, reference_date=question_date, analyzer=query_analyzer
     )
+
+    # Wrapper to track timing for each retrieval method
+    async def timed_retrieval(name: str, coro):
+        start = time.time()
+        result = await coro
+        duration = time.time() - start
+        return result, name, duration
 
     async def run_semantic():
         async with acquire_with_retry(pool) as conn:
@@ -454,16 +478,29 @@ async def retrieve_parallel(
                 start_date, end_date, budget=thinking_budget, semantic_threshold=0.4
             )
 
-    # Run retrievals in parallel
+    # Run retrievals in parallel with timing
+    timings = {}
     if temporal_constraint:
         start_date, end_date = temporal_constraint
-        semantic_results, bm25_results, graph_results, temporal_results = await asyncio.gather(
-            run_semantic(), run_bm25(), run_graph(), run_temporal(start_date, end_date)
+        results = await asyncio.gather(
+            timed_retrieval("semantic", run_semantic()),
+            timed_retrieval("bm25", run_bm25()),
+            timed_retrieval("graph", run_graph()),
+            timed_retrieval("temporal", run_temporal(start_date, end_date))
         )
+        semantic_results, _, timings["semantic"] = results[0]
+        bm25_results, _, timings["bm25"] = results[1]
+        graph_results, _, timings["graph"] = results[2]
+        temporal_results, _, timings["temporal"] = results[3]
     else:
-        semantic_results, bm25_results, graph_results = await asyncio.gather(
-            run_semantic(), run_bm25(), run_graph()
+        results = await asyncio.gather(
+            timed_retrieval("semantic", run_semantic()),
+            timed_retrieval("bm25", run_bm25()),
+            timed_retrieval("graph", run_graph())
         )
+        semantic_results, _, timings["semantic"] = results[0]
+        bm25_results, _, timings["bm25"] = results[1]
+        graph_results, _, timings["graph"] = results[2]
         temporal_results = None
 
-    return semantic_results, bm25_results, graph_results, temporal_results
+    return semantic_results, bm25_results, graph_results, temporal_results, timings

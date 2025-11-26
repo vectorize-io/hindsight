@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from benchmarks.common.benchmark_runner import BenchmarkRunner
-from hindsight_api import TemporalSemanticMemory
+from hindsight_api import MemoryEngine
 
 import json
 from datetime import datetime, timezone
@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 import os
 
 from benchmarks.common.benchmark_runner import BenchmarkDataset, LLMAnswerGenerator, LLMAnswerEvaluator
-from hindsight_api.llm_wrapper import LLMConfig
+from hindsight_api.engine.llm_wrapper import LLMConfig
 
 class LoComoDataset(BenchmarkDataset):
     """LoComo dataset implementation."""
@@ -64,24 +64,14 @@ class LoComoDataset(BenchmarkDataset):
             # Get session date
             date_key = f"{session_key}_date_time"
             session_date = self._parse_date(conv.get(date_key, "n/a"))
-
-            # Build session content from all turns
-            session_parts = []
-            for turn in session_data:
-                speaker = turn['speaker']
-                text = turn['text']
-                session_parts.append(f"{speaker}: {text}")
-
-            if session_parts:
-                session_content = "\n".join(session_parts)
-                document_id = f"{item['sample_id']}_{session_key}"
-
-                session_items.append({
-                    "content": session_content,
-                    "context": f"Conversation between {speaker_a} and {speaker_b} ({session_key} of {item['sample_id']})",
-                    "event_date": session_date,
-                    "document_id": document_id
-                })
+            session_content = json.dumps(session_data)
+            document_id = f"{item['sample_id']}_{session_key}"
+            session_items.append({
+                "content": session_content,
+                "context": f"Conversation between {speaker_a} and {speaker_b} ({session_key} of {item['sample_id']})",
+                "event_date": session_date,
+                "document_id": document_id
+            })
 
         return session_items
 
@@ -137,12 +127,7 @@ class LoComoAnswerGenerator(LLMAnswerGenerator):
             Tuple of (answer, reasoning, None)
             - None indicates to use the memories passed in
         """
-        # Format context
-        context_parts = []
-        for result in memories:
-            context_parts.append({"text": result.get("text"), "context": result.get("context"), "event_date": result.get("event_date")})
-
-        context = json.dumps(context_parts)
+        context = json.dumps(memories)
 
         # Format question date if provided
         question_date_str = ""
@@ -171,30 +156,8 @@ You have access to facts and entities from a conversation.
 5. Always convert relative time references to specific dates, months, or years.
 6. Be as specific as possible when talking about people, places, and events
 7. Timestamps in memories represent the actual time the event occurred, not the time the event was mentioned in a message.
-
-Clarification:
-When interpreting memories, use the timestamp to determine when the described event happened, not when someone talked about the event.
-
-Example:
-
-Memory: (2023-03-15T16:33:00Z) I went to the vet yesterday.
-Question: What day did I go to the vet?
-Correct Answer: March 15, 2023
-Explanation:
-Even though the phrase says "yesterday," the timestamp shows the event was recorded as happening on March 15th. Therefore, the actual vet visit happened on that date, regardless of the word "yesterday" in the text.
-
-
-# APPROACH (Think step by step):
-1. First, examine all memories that contain information related to the question
-2. Examine the timestamps and content of these memories carefully
-3. Look for explicit mentions of dates, times, locations, or events that answer the question
-4. If the answer requires calculation (e.g., converting relative time references), show your work
-5. Formulate a precise, concise answer based solely on the evidence in the memories
-6. Double-check that your answer directly addresses the question asked
-7. Ensure your final answer is specific and avoids vague time references
-8. If you're not exactly sure, still try to attempt an answer. Sometimes the terms are sligtly different from the question, so it's better to try with the current evidence than just say you don't know. 
-9. Say that you cannot answer if no evidence is related to the question.
-
+8. Include wider range of information and provide a complete answer, including all the dimensions of the question (emotional, factual..)
+9. If the answer is not explicitly stated in the memories, use logical reasoning based on the information available to answer (e.g. calculate duration of an event from different memories).
 Context:
 
 {context}
@@ -220,11 +183,11 @@ class LoComoThinkAnswerGenerator(LLMAnswerGenerator):
     so it doesn't need external search to be performed by the benchmark runner.
     """
 
-    def __init__(self, memory: 'TemporalSemanticMemory', agent_id: str, thinking_budget: int = 500):
+    def __init__(self, memory: 'MemoryEngine', agent_id: str, thinking_budget: int = 500):
         """Initialize with memory instance and agent_id.
 
         Args:
-            memory: TemporalSemanticMemory instance
+            memory: MemoryEngine instance
             agent_id: Agent identifier for think queries
             thinking_budget: Budget for memory exploration
         """
@@ -368,7 +331,7 @@ async def run_benchmark(
         from benchmarks.common.benchmark_runner import HindsightClientAdapter
         memory = HindsightClientAdapter(base_url=api_url)
     else:
-        memory = TemporalSemanticMemory(
+        memory = MemoryEngine(
             db_url=os.getenv("HINDSIGHT_API_DATABASE_URL"),
             memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
             memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),

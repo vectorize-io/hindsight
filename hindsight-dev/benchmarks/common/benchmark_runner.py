@@ -30,7 +30,7 @@ from rich.table import Table
 from rich import box
 import pydantic
 
-from hindsight_api import TemporalSemanticMemory
+from hindsight_api import MemoryEngine
 from openai import AsyncOpenAI
 
 console = Console()
@@ -381,7 +381,7 @@ class LLMAnswerEvaluator:
 
     def __init__(self):
         """Initialize with LLM configuration for judge/evaluator."""
-        from hindsight_api.llm_wrapper import LLMConfig
+        from hindsight_api.engine.llm_wrapper import LLMConfig
         self.llm_config = LLMConfig.for_judge()
         self.client = self.llm_config._client
         self.model = self.llm_config.model
@@ -470,7 +470,7 @@ class BenchmarkRunner:
         dataset: BenchmarkDataset,
         answer_generator: LLMAnswerGenerator,
         answer_evaluator: LLMAnswerEvaluator,
-        memory: Optional[TemporalSemanticMemory] = None
+        memory: Optional[MemoryEngine] = None
     ):
         """
         Initialize benchmark runner.
@@ -485,7 +485,7 @@ class BenchmarkRunner:
         self.dataset = dataset
         self.answer_generator = answer_generator
         self.answer_evaluator = answer_evaluator
-        self.memory = memory or TemporalSemanticMemory(
+        self.memory = memory or MemoryEngine(
             db_url=os.getenv("HINDSIGHT_API_DATABASE_URL"),
             memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
             memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
@@ -582,7 +582,8 @@ class BenchmarkRunner:
                 thinking_budget=thinking_budget,
                 max_tokens=max_tokens,
                 fact_type=["world", "agent"],
-                question_date=question_date
+                question_date=question_date,
+                include_entities=True
             )
 
             # Convert MemoryFact objects to dictionaries for compatibility

@@ -5,7 +5,7 @@ Uses spaCy for entity extraction and implements resolution logic
 to disambiguate entities across memory units.
 """
 import asyncpg
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from .db_utils import acquire_with_retry
@@ -63,9 +63,6 @@ class EntityResolver:
             return await self._resolve_entities_batch_impl(conn, agent_id, entities_data, context, unit_event_date)
 
     async def _resolve_entities_batch_impl(self, conn, agent_id: str, entities_data: List[Dict], context: str, unit_event_date) -> List[str]:
-        import time
-        start = time.time()
-
         # Query ALL candidates for this agent
         all_entities = await conn.fetch(
             """
@@ -75,6 +72,36 @@ class EntityResolver:
             """,
             agent_id
         )
+
+        # Build entity ID to name mapping for co-occurrence lookups
+        entity_id_to_name = {row['id']: row['canonical_name'].lower() for row in all_entities}
+
+        # Query ALL co-occurrences for this agent's entities in one query
+        # This builds a map of entity_id -> set of co-occurring entity names
+        all_cooccurrences = await conn.fetch(
+            """
+            SELECT ec.entity_id_1, ec.entity_id_2, ec.cooccurrence_count
+            FROM entity_cooccurrences ec
+            WHERE ec.entity_id_1 IN (SELECT id FROM entities WHERE agent_id = $1)
+               OR ec.entity_id_2 IN (SELECT id FROM entities WHERE agent_id = $1)
+            """,
+            agent_id
+        )
+
+        # Build co-occurrence map: entity_id -> set of co-occurring entity names (lowercase)
+        cooccurrence_map: Dict[str, Set[str]] = {}
+        for row in all_cooccurrences:
+            eid1, eid2 = row['entity_id_1'], row['entity_id_2']
+            # Add both directions
+            if eid1 not in cooccurrence_map:
+                cooccurrence_map[eid1] = set()
+            if eid2 not in cooccurrence_map:
+                cooccurrence_map[eid2] = set()
+            # Map to canonical names for comparison with nearby_entities
+            if eid2 in entity_id_to_name:
+                cooccurrence_map[eid1].add(entity_id_to_name[eid2])
+            if eid1 in entity_id_to_name:
+                cooccurrence_map[eid2].add(entity_id_to_name[eid1])
 
         # Build candidate map for each entity text
         all_candidates = {}  # Maps entity_text -> list of candidates
@@ -113,17 +140,16 @@ class EntityResolver:
                 entities_to_create.append((idx, entity_data))
                 continue
 
-            # Score candidates (same logic as before but with pre-fetched data)
+            # Score candidates
             best_candidate = None
             best_score = 0.0
-            best_name_similarity = 0.0
 
             nearby_entity_set = {e['text'].lower() for e in nearby_entities if e['text'] != entity_text}
 
             for candidate_id, canonical_name, metadata, last_seen, mention_count in candidates:
                 score = 0.0
 
-                # Name similarity
+                # 1. Name similarity (0-0.5)
                 name_similarity = SequenceMatcher(
                     None,
                     entity_text.lower(),
@@ -131,9 +157,19 @@ class EntityResolver:
                 ).ratio()
                 score += name_similarity * 0.5
 
-                # Temporal proximity
+                # 2. Co-occurring entities (0-0.3)
+                if nearby_entity_set:
+                    co_entities = cooccurrence_map.get(candidate_id, set())
+                    overlap = len(nearby_entity_set & co_entities)
+                    co_entity_score = overlap / len(nearby_entity_set)
+                    score += co_entity_score * 0.3
+
+                # 3. Temporal proximity (0-0.2)
                 if last_seen:
-                    days_diff = abs((unit_event_date - last_seen).total_seconds() / 86400)
+                    # Normalize timezone awareness for comparison
+                    event_date_utc = unit_event_date if unit_event_date.tzinfo else unit_event_date.replace(tzinfo=timezone.utc)
+                    last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=timezone.utc)
+                    days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
                     if days_diff < 7:
                         temporal_score = max(0, 1.0 - (days_diff / 7))
                         score += temporal_score * 0.2
@@ -141,7 +177,6 @@ class EntityResolver:
                 if score > best_score:
                     best_score = score
                     best_candidate = candidate_id
-                    best_name_similarity = name_similarity
 
             # Apply unified threshold
             threshold = 0.6
@@ -164,39 +199,29 @@ class EntityResolver:
                 entities_to_update
             )
 
-        # Batch create new entities using multi-row VALUES
+        # Create new entities using INSERT ... ON CONFLICT to handle race conditions
+        # This ensures that if two concurrent transactions try to create the same entity,
+        # only one succeeds and the other gets the existing ID
         if entities_to_create:
-            import logging
-            # Build multi-row VALUES statement
-            # VALUES ($1, $2, ...), ($N+1, $N+2, ...), ...
-            values_clauses = []
-            params = []
-            param_idx = 1
-
             for idx, entity_data in entities_to_create:
-                values_clauses.append(f"(${param_idx}, ${param_idx+1}, ${param_idx+2}, ${param_idx+3}, ${param_idx+4})")
-                params.extend([
+                # Use INSERT ... ON CONFLICT to atomically get-or-create
+                # The unique index is on (agent_id, LOWER(canonical_name))
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO entities (agent_id, canonical_name, first_seen, last_seen, mention_count)
+                    VALUES ($1, $2, $3, $4, 1)
+                    ON CONFLICT (agent_id, LOWER(canonical_name))
+                    DO UPDATE SET
+                        mention_count = entities.mention_count + 1,
+                        last_seen = EXCLUDED.last_seen
+                    RETURNING id
+                    """,
                     agent_id,
                     entity_data['text'],
                     unit_event_date,
-                    unit_event_date,
-                    1
-                ])
-                param_idx += 5
-
-            # Single INSERT with multiple VALUES rows
-            query = f"""
-                INSERT INTO entities (agent_id, canonical_name, first_seen, last_seen, mention_count)
-                VALUES {', '.join(values_clauses)}
-                RETURNING id
-            """
-
-            created_rows = await conn.fetch(query, *params)
-
-            # Map created IDs back to original indices
-            for i, (idx, entity_data) in enumerate(entities_to_create):
-                entity_ids[idx] = created_rows[i]['id']
-
+                    unit_event_date
+                )
+                entity_ids[idx] = row['id']
 
         return entity_ids
 
@@ -337,7 +362,10 @@ class EntityResolver:
         event_date,
     ) -> str:
         """
-        Create a new entity.
+        Create a new entity or get existing one if it already exists.
+
+        Uses INSERT ... ON CONFLICT to handle race conditions where
+        two concurrent transactions try to create the same entity.
 
         Args:
             conn: Database connection
@@ -352,6 +380,10 @@ class EntityResolver:
             """
             INSERT INTO entities (agent_id, canonical_name, first_seen, last_seen, mention_count)
             VALUES ($1, $2, $3, $4, 1)
+            ON CONFLICT (agent_id, LOWER(canonical_name))
+            DO UPDATE SET
+                mention_count = entities.mention_count + 1,
+                last_seen = EXCLUDED.last_seen
             RETURNING id
             """,
             agent_id, entity_text, event_date, event_date

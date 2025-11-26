@@ -116,7 +116,11 @@ class LLMConfig:
             **kwargs
         }
         if self.provider == "groq":
-            call_params["extra_body"] = {"service_tier": "auto"}
+            call_params["extra_body"] = {
+                "service_tier": "auto",
+                "reasoning_effort": "low",  # Reduce reasoning overhead
+                "include_reasoning": False,  # Disable hidden reasoning tokens
+            }
 
         last_exception = None
 
@@ -137,11 +141,22 @@ class LLMConfig:
                 # Log call details on success
                 duration = time.time() - start_time
                 usage = response.usage
-                logger.info(
-                    f"model={self.provider}/{self.model}, "
-                    f"input_tokens={usage.prompt_tokens}, output_tokens={usage.completion_tokens}, "
-                    f"total_tokens={usage.total_tokens}, time={duration:.3f}s"
-                )
+                ratio = max(1, usage.completion_tokens) / usage.prompt_tokens
+                if ratio > 3:
+                    raw_content = response.choices[0].message.content
+                    raw_len = len(raw_content) if raw_content else 0
+                    logger.info(
+                        f"model={self.provider}/{self.model}, "
+                        f"input_tokens={usage.prompt_tokens}, output_tokens={usage.completion_tokens}, "
+                        f"total_tokens={usage.total_tokens}, time={duration:.3f}s, ratio out/in={ratio:.2f}, HIGH RATIO - raw_content_chars={raw_len}, \n\nin={messages}\n\nout={result}\n\nraw={raw_content}\n\n"
+                    )
+                else:
+
+                    logger.info(
+                        f"model={self.provider}/{self.model}, "
+                        f"input_tokens={usage.prompt_tokens}, output_tokens={usage.completion_tokens}, "
+                        f"total_tokens={usage.total_tokens}, time={duration:.3f}s, ratio out/in={ratio:.2f}, "
+                    )
 
                 return result
 

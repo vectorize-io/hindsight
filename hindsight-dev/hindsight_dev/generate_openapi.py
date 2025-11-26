@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from hindsight_api.api import create_app
-from hindsight_api import TemporalSemanticMemory
+from hindsight_api import MemoryEngine
 
 def generate_openapi_spec(output_path: str = None):
     """Generate OpenAPI spec and save to file."""
@@ -21,7 +21,7 @@ def generate_openapi_spec(output_path: str = None):
         output_path = str(root_dir / "openapi.json")
 
     # Create a temporary memory instance for OpenAPI generation
-    _memory = TemporalSemanticMemory(
+    _memory = MemoryEngine(
         db_url="mock",
         memory_llm_provider="ollama",
         memory_llm_api_key="mock",

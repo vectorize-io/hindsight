@@ -315,9 +315,20 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
         original_idx = all_results.index(item)
         item_id = item.get("item_id", item.get("sample_id", f"item-{original_idx}"))
         metrics = item.get("metrics", {})
-        accuracy = metrics.get("accuracy", 0)
-        correct = metrics.get("correct", 0)
-        total = metrics.get("total", 0)
+
+        # Calculate accuracy for filtered category
+        if category_filter != "all":
+            detailed_results = metrics.get("detailed_results", [])
+            category_id = int(category_filter)
+            filtered_correct = sum(1 for r in detailed_results if r.get("category") == category_id and r.get("is_correct") and not r.get("is_invalid"))
+            filtered_total = sum(1 for r in detailed_results if r.get("category") == category_id and not r.get("is_invalid"))
+            accuracy = (filtered_correct / filtered_total * 100) if filtered_total > 0 else 0
+            correct = filtered_correct
+            total = filtered_total
+        else:
+            accuracy = metrics.get("accuracy", 0)
+            correct = metrics.get("correct", 0)
+            total = metrics.get("total", 0)
 
         color = "🟢" if accuracy >= 70 else ("🟡" if accuracy >= 50 else "🔴")
 

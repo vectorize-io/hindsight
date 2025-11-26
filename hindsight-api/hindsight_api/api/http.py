@@ -4,6 +4,7 @@ FastAPI application factory and API routes for memory system.
 This module provides the create_app function to create and configure
 the FastAPI application with all API endpoints.
 """
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -12,6 +13,22 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
+
+
+def _parse_metadata(metadata: Any) -> Dict[str, Any]:
+    """Parse metadata that may be a dict, JSON string, or None."""
+    if metadata is None:
+        return {}
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, str):
+        try:
+            return json.loads(metadata)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ConfigDict
@@ -45,7 +62,9 @@ class SearchRequest(BaseModel):
             "max_tokens": 4096,
             "trace": True,
             "question_date": "2023-05-30T23:40:00",
-            "metadata_filter": [{"key": "source", "value": "slack", "match_unset": True}]
+            "metadata_filter": [{"key": "source", "value": "slack", "match_unset": True}],
+            "include_entities": True,
+            "max_entity_tokens": 500
         }
     })
 
@@ -56,6 +75,8 @@ class SearchRequest(BaseModel):
     trace: bool = False
     question_date: Optional[str] = None  # ISO format date string (e.g., "2023-05-30T23:40:00")
     metadata_filter: Optional[List[MetadataFilter]] = Field(default=None, description="Filter by metadata. Multiple filters are ANDed together.")
+    include_entities: bool = Field(default=False, description="Whether to include entity observations in the response")
+    max_entity_tokens: int = Field(default=500, description="Maximum tokens for entity observations")
 
 
 class SearchResult(BaseModel):
@@ -67,8 +88,11 @@ class SearchResult(BaseModel):
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "text": "Alice works at Google on the AI team",
                 "type": "world",
+                "entities": ["Alice", "Google"],
                 "context": "work info",
-                "event_date": "2024-01-15T10:30:00Z",
+                "occurred_start": "2024-01-15T10:30:00Z",
+                "occurred_end": "2024-01-15T10:30:00Z",
+                "mentioned_at": "2024-01-15T10:30:00Z",
                 "document_id": "session_abc123",
                 "metadata": {"source": "slack"}
             }
@@ -77,11 +101,90 @@ class SearchResult(BaseModel):
 
     id: str
     text: str
-    type: Optional[str] = None  # fact type: world, agent, opinion
+    type: Optional[str] = None  # fact type: world, agent, opinion, observation
+    entities: Optional[List[str]] = None  # Entity names mentioned in this fact
     context: Optional[str] = None
-    event_date: Optional[str] = None  # ISO format date string
+    occurred_start: Optional[str] = None  # ISO format date when the event started
+    occurred_end: Optional[str] = None  # ISO format date when the event ended
+    mentioned_at: Optional[str] = None  # ISO format date when the fact was mentioned
     document_id: Optional[str] = None  # Document this memory belongs to
     metadata: Optional[Dict[str, str]] = None  # User-defined metadata
+
+
+class EntityObservationResponse(BaseModel):
+    """An observation about an entity."""
+    text: str
+    mentioned_at: Optional[str] = None
+
+
+class EntityStateResponse(BaseModel):
+    """Current mental model of an entity."""
+    entity_id: str
+    canonical_name: str
+    observations: List[EntityObservationResponse]
+
+
+class EntityListItem(BaseModel):
+    """Entity list item with summary."""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "canonical_name": "John",
+            "mention_count": 15,
+            "first_seen": "2024-01-15T10:30:00Z",
+            "last_seen": "2024-02-01T14:00:00Z"
+        }
+    })
+
+    id: str
+    canonical_name: str
+    mention_count: int
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class EntityListResponse(BaseModel):
+    """Response model for entity list endpoint."""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "entities": [
+                {
+                    "id": "123e4567-e89b-12d3-a456-426614174000",
+                    "canonical_name": "John",
+                    "mention_count": 15,
+                    "first_seen": "2024-01-15T10:30:00Z",
+                    "last_seen": "2024-02-01T14:00:00Z"
+                }
+            ]
+        }
+    })
+
+    entities: List[EntityListItem]
+
+
+class EntityDetailResponse(BaseModel):
+    """Response model for entity detail endpoint."""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "canonical_name": "John",
+            "mention_count": 15,
+            "first_seen": "2024-01-15T10:30:00Z",
+            "last_seen": "2024-02-01T14:00:00Z",
+            "observations": [
+                {"text": "John works at Google", "mentioned_at": "2024-01-15T10:30:00Z"}
+            ]
+        }
+    })
+
+    id: str
+    canonical_name: str
+    mention_count: int
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    observations: List[EntityObservationResponse]
 
 
 class SearchResponse(BaseModel):
@@ -93,20 +196,32 @@ class SearchResponse(BaseModel):
                     "id": "123e4567-e89b-12d3-a456-426614174000",
                     "text": "Alice works at Google on the AI team",
                     "type": "world",
+                    "entities": ["Alice", "Google"],
                     "context": "work info",
-                    "event_date": "2024-01-15T10:30:00Z"
+                    "occurred_start": "2024-01-15T10:30:00Z",
+                    "occurred_end": "2024-01-15T10:30:00Z"
                 }
             ],
             "trace": {
                 "query": "What did Alice say about machine learning?",
                 "num_results": 1,
                 "time_seconds": 0.123
+            },
+            "entities": {
+                "Alice": {
+                    "entity_id": "123e4567-e89b-12d3-a456-426614174001",
+                    "canonical_name": "Alice",
+                    "observations": [
+                        {"text": "Alice works at Google on the AI team", "mentioned_at": "2024-01-15T10:30:00Z"}
+                    ]
+                }
             }
         }
     })
 
     results: List[SearchResult]
     trace: Optional[Dict[str, Any]] = None
+    entities: Optional[Dict[str, EntityStateResponse]] = Field(default=None, description="Entity states for entities mentioned in results")
 
 
 class MemoryItem(BaseModel):
@@ -219,7 +334,8 @@ class ThinkFact(BaseModel):
             "text": "AI is used in healthcare",
             "type": "world",
             "context": "healthcare discussion",
-            "event_date": "2024-01-15T10:30:00Z"
+            "occurred_start": "2024-01-15T10:30:00Z",
+            "occurred_end": "2024-01-15T10:30:00Z"
         }
     })
 
@@ -227,7 +343,8 @@ class ThinkFact(BaseModel):
     text: str
     type: Optional[str] = None  # fact type: world, agent, opinion
     context: Optional[str] = None
-    event_date: Optional[str] = None
+    occurred_start: Optional[str] = None
+    occurred_end: Optional[str] = None
 
 
 class ThinkResponse(BaseModel):
@@ -691,6 +808,9 @@ def _register_routes(app: FastAPI):
     - 'world': General knowledge about people, places, events, and things that happen
     - 'agent': Memories about what the AI agent did, actions taken, and tasks performed
     - 'opinion': The agent's formed beliefs, perspectives, and viewpoints
+    - 'observation': Synthesized observations about entities (generated automatically)
+
+    Set include_entities=true to get entity observations alongside search results.
         """,
         operation_id="search_memories"
     )
@@ -698,11 +818,11 @@ def _register_routes(app: FastAPI):
         """Run a search and return results with trace."""
         try:
             # Validate fact_type(s)
-            valid_fact_types = ["world", "agent", "opinion"]
+            valid_fact_types = ["world", "agent", "opinion", "observation"]
 
-            # Default to all fact types if not specified
+            # Default to world, agent, opinion if not specified (exclude observation by default)
             if not request.fact_type:
-                request.fact_type = valid_fact_types
+                request.fact_type = ["world", "agent", "opinion"]
             else:
                 for ft in request.fact_type:
                     if ft not in valid_fact_types:
@@ -730,7 +850,9 @@ def _register_routes(app: FastAPI):
                 max_tokens=request.max_tokens,
                 enable_trace=request.trace,
                 fact_type=request.fact_type,
-                question_date=question_date
+                question_date=question_date,
+                include_entities=request.include_entities,
+                max_entity_tokens=request.max_entity_tokens
             )
 
             # Convert core MemoryFact objects to API SearchResult objects (excluding internal metrics)
@@ -739,15 +861,34 @@ def _register_routes(app: FastAPI):
                     id=fact.id,
                     text=fact.text,
                     type=fact.fact_type,
+                    entities=fact.entities,
                     context=fact.context,
-                    event_date=fact.event_date
+                    occurred_start=fact.occurred_start,
+                    occurred_end=fact.occurred_end,
+                    mentioned_at=fact.mentioned_at,
+                    document_id=fact.document_id
                 )
                 for fact in core_result.results
             ]
 
+            # Convert core EntityState objects to API EntityStateResponse objects
+            entities_response = None
+            if core_result.entities:
+                entities_response = {}
+                for name, state in core_result.entities.items():
+                    entities_response[name] = EntityStateResponse(
+                        entity_id=state.entity_id,
+                        canonical_name=state.canonical_name,
+                        observations=[
+                            EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
+                            for obs in state.observations
+                        ]
+                    )
+
             return SearchResponse(
                 results=search_results,
-                trace=core_result.trace
+                trace=core_result.trace,
+                entities=entities_response
             )
         except HTTPException:
             raise
@@ -795,7 +936,8 @@ def _register_routes(app: FastAPI):
                         text=fact.text,
                         type=fact.fact_type,
                         context=fact.context,
-                        event_date=fact.event_date
+                        occurred_start=fact.occurred_start,
+                        occurred_end=fact.occurred_end
                     ))
 
             return ThinkResponse(
@@ -949,6 +1091,139 @@ def _register_routes(app: FastAPI):
             import traceback
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             print(f"Error in /api/v1/agents/{agent_id}/stats: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/api/v1/agents/{agent_id}/entities",
+        response_model=EntityListResponse,
+        tags=["Entities"],
+        summary="List entities",
+        description="List all entities (people, organizations, etc.) known by the agent, ordered by mention count.",
+        operation_id="list_entities"
+    )
+    async def api_list_entities(
+        agent_id: str,
+        limit: int = Query(default=100, description="Maximum number of entities to return")
+    ):
+        """List entities for an agent."""
+        try:
+            entities = await app.state.memory.list_entities(agent_id, limit=limit)
+            return EntityListResponse(
+                entities=[EntityListItem(**e) for e in entities]
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/v1/agents/{agent_id}/entities: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/api/v1/agents/{agent_id}/entities/{entity_id}",
+        response_model=EntityDetailResponse,
+        tags=["Entities"],
+        summary="Get entity details",
+        description="Get detailed information about an entity including observations (mental model).",
+        operation_id="get_entity"
+    )
+    async def api_get_entity(agent_id: str, entity_id: str):
+        """Get entity details with observations."""
+        try:
+            # First get the entity metadata
+            pool = await app.state.memory._get_pool()
+            async with acquire_with_retry(pool) as conn:
+                entity_row = await conn.fetchrow(
+                    """
+                    SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+                    FROM entities
+                    WHERE agent_id = $1 AND id = $2
+                    """,
+                    agent_id, uuid.UUID(entity_id)
+                )
+
+            if not entity_row:
+                raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+
+            # Get observations for the entity
+            observations = await app.state.memory.get_entity_observations(
+                agent_id, entity_id, limit=20
+            )
+
+            return EntityDetailResponse(
+                id=str(entity_row['id']),
+                canonical_name=entity_row['canonical_name'],
+                mention_count=entity_row['mention_count'],
+                first_seen=entity_row['first_seen'].isoformat() if entity_row['first_seen'] else None,
+                last_seen=entity_row['last_seen'].isoformat() if entity_row['last_seen'] else None,
+                metadata=_parse_metadata(entity_row['metadata']),
+                observations=[
+                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
+                    for obs in observations
+                ]
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/v1/agents/{agent_id}/entities/{entity_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/api/v1/agents/{agent_id}/entities/{entity_id}/regenerate",
+        response_model=EntityDetailResponse,
+        tags=["Entities"],
+        summary="Regenerate entity observations",
+        description="Regenerate observations for an entity based on all facts mentioning it.",
+        operation_id="regenerate_entity_observations"
+    )
+    async def api_regenerate_entity_observations(agent_id: str, entity_id: str):
+        """Regenerate observations for an entity."""
+        try:
+            # First get the entity metadata
+            pool = await app.state.memory._get_pool()
+            async with acquire_with_retry(pool) as conn:
+                entity_row = await conn.fetchrow(
+                    """
+                    SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+                    FROM entities
+                    WHERE agent_id = $1 AND id = $2
+                    """,
+                    agent_id, uuid.UUID(entity_id)
+                )
+
+            if not entity_row:
+                raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+
+            # Regenerate observations
+            await app.state.memory.regenerate_entity_observations(
+                agent_id=agent_id,
+                entity_id=entity_id,
+                entity_name=entity_row['canonical_name']
+            )
+
+            # Get updated observations
+            observations = await app.state.memory.get_entity_observations(
+                agent_id, entity_id, limit=20
+            )
+
+            return EntityDetailResponse(
+                id=str(entity_row['id']),
+                canonical_name=entity_row['canonical_name'],
+                mention_count=entity_row['mention_count'],
+                first_seen=entity_row['first_seen'].isoformat() if entity_row['first_seen'] else None,
+                last_seen=entity_row['last_seen'].isoformat() if entity_row['last_seen'] else None,
+                metadata=_parse_metadata(entity_row['metadata']),
+                observations=[
+                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
+                    for obs in observations
+                ]
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            print(f"Error in /api/v1/agents/{agent_id}/entities/{entity_id}/regenerate: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

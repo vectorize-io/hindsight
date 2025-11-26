@@ -4,13 +4,14 @@ import { useState } from 'react';
 import { AgentSelector } from '@/components/agent-selector';
 import { DataView } from '@/components/data-view';
 import { DocumentsView } from '@/components/documents-view';
+import { EntitiesView } from '@/components/entities-view';
 import { ThinkView } from '@/components/think-view';
 import { AddMemoryView } from '@/components/add-memory-view';
 import { StatsView } from '@/components/stats-view';
 import { SearchDebugView } from '@/components/search-debug-view';
 import { useAgent } from '@/lib/agent-context';
 
-type MainTab = 'data' | 'documents' | 'search' | 'stats' | 'think' | 'add';
+type MainTab = 'data' | 'documents' | 'entities' | 'search' | 'stats' | 'think' | 'add';
 type DataSubTab = 'world' | 'agent' | 'opinion';
 
 export default function DashboardPage() {
@@ -59,6 +60,7 @@ export default function DashboardPage() {
       <div className="bg-muted border-b-2 border-primary">
         <TabButton tab="data" label="Data" />
         <TabButton tab="documents" label="Documents" />
+        <TabButton tab="entities" label="Entities" />
         <TabButton tab="search" label="Search Debug" />
         <TabButton tab="stats" label="Stats & Operations" />
         <TabButton tab="think" label="Think" />
@@ -103,6 +105,16 @@ export default function DashboardPage() {
             <NoAgentMessage message="Please select an agent from the dropdown above to view documents." />
           ) : (
             <DocumentsView />
+          )}
+        </div>
+
+        {/* Entities Tab */}
+        <div className={mainTab !== 'entities' ? 'hidden' : ''}>
+          <h2 className="text-2xl font-bold mb-4">Entities</h2>
+          {!currentAgent ? (
+            <NoAgentMessage message="Please select an agent from the dropdown above to view entities." />
+          ) : (
+            <EntitiesView />
           )}
         </div>
 

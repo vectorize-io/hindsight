@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from benchmarks.common.benchmark_runner import BenchmarkRunner
-from hindsight_api import TemporalSemanticMemory
+from hindsight_api import MemoryEngine
 
 import json
 from datetime import datetime, timezone
@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 import os
 
 from benchmarks.common.benchmark_runner import BenchmarkDataset, LLMAnswerGenerator, LLMAnswerEvaluator
-from hindsight_api.llm_wrapper import LLMConfig
+from hindsight_api.engine.llm_wrapper import LLMConfig
 
 
 class LongMemEvalDataset(BenchmarkDataset):
@@ -330,7 +330,7 @@ async def run_benchmark(
         from benchmarks.common.benchmark_runner import HindsightClientAdapter
         memory = HindsightClientAdapter(base_url=api_url)
     else:
-        memory = TemporalSemanticMemory(
+        memory = MemoryEngine(
             db_url=os.getenv("HINDSIGHT_API_DATABASE_URL"),
             memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
             memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),

@@ -34,9 +34,10 @@ from . import (
     link_utils,
     think_utils,
     agent_utils,
+    observation_utils,
 )
 from .llm_wrapper import LLMConfig
-from .response_models import SearchResult as SearchResultModel, ThinkResult, MemoryFact
+from .response_models import SearchResult as SearchResultModel, ThinkResult, MemoryFact, EntityState, EntityObservation
 from .task_backend import TaskBackend, AsyncIOQueueBackend
 from .search.reranking import CrossEncoderReranker
 from ..pg0 import EmbeddedPostgres
@@ -277,6 +278,8 @@ class MemoryEngine:
                 await self._handle_form_opinion(task_dict)
             elif task_type == 'batch_put':
                 await self._handle_batch_put(task_dict)
+            elif task_type == 'regenerate_observations':
+                await self._handle_regenerate_observations(task_dict)
             else:
                 logger.error(f"Unknown task type: {task_type}")
                 # Don't retry unknown task types
@@ -348,7 +351,6 @@ class MemoryEngine:
 
         # Start pg0 embedded PostgreSQL if configured
         if self._use_pg0:
-            logger.info("Starting pg0 embedded PostgreSQL...")
             self._pg0 = EmbeddedPostgres()
             self.db_url = await self._pg0.ensure_running()
             logger.info(f"pg0 PostgreSQL running at: {self.db_url}")
@@ -1153,6 +1155,62 @@ class MemoryEngine:
                             })
                             logger.debug("[PUT_BATCH_ASYNC] Opinion reinforcement task queued in background")
 
+                        # Trigger observation regeneration for entities in new units
+                        # Only regenerate for top-N entities with at least min_facts
+                        TOP_N_ENTITIES = 5
+                        MIN_FACTS_THRESHOLD = 5
+
+                        if all_entity_links:
+                            unique_entity_ids = set()
+                            for link in all_entity_links:
+                                # links are tuples: (from_unit_id, to_unit_id, link_type, weight, entity_id)
+                                if len(link) >= 5 and link[4]:
+                                    unique_entity_ids.add(str(link[4]))
+
+                            if unique_entity_ids:
+                                # Query entities with their fact counts and whether they have observations
+                                # Only consider entities that:
+                                # 1. Are in top-N by mention count AND have >= min_facts, OR
+                                # 2. Already have observations (to keep them updated)
+                                entity_rows = await conn.fetch(
+                                    """
+                                    WITH entity_fact_counts AS (
+                                        SELECT
+                                            e.id,
+                                            e.canonical_name,
+                                            e.last_seen,
+                                            e.mention_count,
+                                            COUNT(DISTINCT mu.id) FILTER (WHERE mu.fact_type IN ('world', 'agent')) as fact_count,
+                                            COUNT(DISTINCT mu.id) FILTER (WHERE mu.fact_type = 'observation') as obs_count,
+                                            RANK() OVER (ORDER BY e.mention_count DESC) as rank
+                                        FROM entities e
+                                        LEFT JOIN unit_entities ue ON e.id = ue.entity_id
+                                        LEFT JOIN memory_units mu ON ue.unit_id = mu.id AND mu.agent_id = $1
+                                        WHERE e.agent_id = $1 AND e.id = ANY($2::uuid[])
+                                        GROUP BY e.id, e.canonical_name, e.last_seen, e.mention_count
+                                    )
+                                    SELECT id, canonical_name, last_seen, fact_count, obs_count
+                                    FROM entity_fact_counts
+                                    WHERE (rank <= $3 AND fact_count >= $4) OR obs_count > 0
+                                    """,
+                                    agent_id,
+                                    [uuid.UUID(eid) for eid in unique_entity_ids],
+                                    TOP_N_ENTITIES,
+                                    MIN_FACTS_THRESHOLD
+                                )
+
+                                # Submit observation regeneration tasks for qualifying entities
+                                for row in entity_rows:
+                                    await self._task_backend.submit_task({
+                                        'type': 'regenerate_observations',
+                                        'agent_id': agent_id,
+                                        'entity_id': str(row['id']),
+                                        'entity_name': row['canonical_name'],
+                                        'version': row['last_seen'].isoformat() if row['last_seen'] else None
+                                    })
+                                if entity_rows:
+                                    logger.debug(f"[PUT_BATCH_ASYNC] Observation regeneration tasks queued for {len(entity_rows)} entities (top-{TOP_N_ENTITIES}, min {MIN_FACTS_THRESHOLD} facts)")
+
                         return result_unit_ids
 
                     except Exception as e:
@@ -1201,6 +1259,8 @@ class MemoryEngine:
         max_tokens: int = 4096,
         enable_trace: bool = False,
         question_date: Optional[datetime] = None,
+        include_entities: bool = False,
+        max_entity_tokens: int = 1024,
     ) -> SearchResultModel:
         """
         Search memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -1222,11 +1282,14 @@ class MemoryEngine:
                        including a fact that would exceed the limit
             enable_trace: Whether to return search trace for debugging (deprecated)
             question_date: Optional date when question was asked (for temporal filtering)
+            include_entities: Whether to include entity observations in the response
+            max_entity_tokens: Maximum tokens for entity observations (default 500)
 
         Returns:
             SearchResultModel containing:
             - results: List of MemoryFact objects
             - trace: Optional trace information for debugging
+            - entities: Optional dict of entity states (if include_entities=True)
         """
         # Backpressure: limit concurrent searches to prevent overwhelming the database
         async with self._search_semaphore:
@@ -1235,7 +1298,8 @@ class MemoryEngine:
             for attempt in range(max_retries + 1):
                 try:
                     return await self._search_with_retries(
-                        agent_id, query, fact_type, thinking_budget, max_tokens, enable_trace, question_date
+                        agent_id, query, fact_type, thinking_budget, max_tokens, enable_trace, question_date,
+                        include_entities, max_entity_tokens
                     )
                 except Exception as e:
                     # Check if it's a connection error
@@ -1266,7 +1330,9 @@ class MemoryEngine:
         max_tokens: int,
         enable_trace: bool,
         question_date: Optional[datetime] = None,
-    ) -> tuple[List[Dict[str, Any]], Optional[Any]]:
+        include_entities: bool = False,
+        max_entity_tokens: int = 500,
+    ) -> SearchResultModel:
         """
         Search implementation with modular retrieval and reranking.
 
@@ -1284,9 +1350,11 @@ class MemoryEngine:
             thinking_budget: Nodes to explore in graph traversal
             max_tokens: Maximum tokens to return (counts only 'text' field)
             enable_trace: Whether to return search trace (deprecated)
+            include_entities: Whether to include entity observations
+            max_entity_tokens: Maximum tokens for entity observations
 
         Returns:
-            (results, trace) tuple where trace is None (tracing removed)
+            SearchResultModel with results, trace, and optional entities
         """
         # Initialize tracer if requested
         from .search_tracer import SearchTracer
@@ -1332,18 +1400,22 @@ class MemoryEngine:
             ]
             all_retrievals = await asyncio.gather(*retrieval_tasks)
 
-            # Combine all results from all fact types
+            # Combine all results from all fact types and aggregate timings
             semantic_results = []
             bm25_results = []
             graph_results = []
             temporal_results = []
+            aggregated_timings = {"semantic": 0.0, "bm25": 0.0, "graph": 0.0, "temporal": 0.0}
 
-            for ft_semantic, ft_bm25, ft_graph, ft_temporal in all_retrievals:
+            for ft_semantic, ft_bm25, ft_graph, ft_temporal, ft_timings in all_retrievals:
                 semantic_results.extend(ft_semantic)
                 bm25_results.extend(ft_bm25)
                 graph_results.extend(ft_graph)
                 if ft_temporal:
                     temporal_results.extend(ft_temporal)
+                # Track max timing for each method (since they run in parallel across fact types)
+                for method, duration in ft_timings.items():
+                    aggregated_timings[method] = max(aggregated_timings[method], duration)
 
             # If no temporal results from any fact type, set to None
             if not temporal_results:
@@ -1353,21 +1425,23 @@ class MemoryEngine:
 
             step_duration = time.time() - step_start
             total_retrievals = len(fact_type) * (4 if temporal_results else 3)
+            # Format per-method timings
+            timing_parts = [
+                f"semantic={len(semantic_results)}({aggregated_timings['semantic']:.3f}s)",
+                f"bm25={len(bm25_results)}({aggregated_timings['bm25']:.3f}s)",
+                f"graph={len(graph_results)}({aggregated_timings['graph']:.3f}s)"
+            ]
             if temporal_results:
-                log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): semantic={len(semantic_results)}, bm25={len(bm25_results)}, graph={len(graph_results)}, temporal={len(temporal_results)} in {step_duration:.3f}s")
-            else:
-                log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): semantic={len(semantic_results)}, bm25={len(bm25_results)}, graph={len(graph_results)} in {step_duration:.3f}s")
+                timing_parts.append(f"temporal={len(temporal_results)}({aggregated_timings['temporal']:.3f}s)")
+            log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {step_duration:.3f}s")
 
             # Record retrieval results for tracer
             if tracer:
-                # Estimate duration for each method (since they run in parallel)
-                estimated_duration = retrieval_duration
-
                 # Add semantic retrieval results
                 tracer.add_retrieval_results(
                     method_name="semantic",
                     results=semantic_results,
-                    duration_seconds=estimated_duration,
+                    duration_seconds=aggregated_timings["semantic"],
                     score_field="similarity",
                     metadata={"limit": thinking_budget}
                 )
@@ -1376,7 +1450,7 @@ class MemoryEngine:
                 tracer.add_retrieval_results(
                     method_name="bm25",
                     results=bm25_results,
-                    duration_seconds=estimated_duration,
+                    duration_seconds=aggregated_timings["bm25"],
                     score_field="bm25_score",
                     metadata={"limit": thinking_budget}
                 )
@@ -1385,7 +1459,7 @@ class MemoryEngine:
                 tracer.add_retrieval_results(
                     method_name="graph",
                     results=graph_results,
-                    duration_seconds=estimated_duration,
+                    duration_seconds=aggregated_timings["graph"],
                     score_field="similarity",  # Graph uses similarity for activation
                     metadata={"budget": thinking_budget}
                 )
@@ -1395,7 +1469,7 @@ class MemoryEngine:
                     tracer.add_retrieval_results(
                         method_name="temporal",
                         results=temporal_results,
-                        duration_seconds=estimated_duration,
+                        duration_seconds=aggregated_timings["temporal"],
                         score_field="temporal_score",
                         metadata={"budget": thinking_budget}
                     )
@@ -1452,7 +1526,10 @@ class MemoryEngine:
                     "id": doc_id,
                     "text": data["text"],
                     "context": data.get("context", ""),
-                    "event_date": data["event_date"],  # Keep as datetime for now
+                    "occurred_start": data.get("occurred_start"),
+                    "occurred_end": data.get("occurred_end"),
+                    "mentioned_at": data.get("mentioned_at"),
+                    "document_id": data.get("document_id"),
                     "fact_type": data.get("fact_type"),  # Include fact type for filtering
                     "access_count": data.get("access_count", 0),
                     "semantic_similarity": semantic_sim,
@@ -1487,6 +1564,56 @@ class MemoryEngine:
                     "candidates_reranked": len(results)
                 })
 
+            # Step 4.5: Combine cross-encoder score with retrieval signals
+            # This preserves retrieval work (RRF, temporal, recency) instead of pure cross-encoder ranking
+            if results:
+                # Normalize RRF scores to [0, 1] range
+                rrf_scores = [r.get("rrf_score", 0) for r in results]
+                max_rrf = max(rrf_scores) if rrf_scores else 1.0
+                min_rrf = min(rrf_scores) if rrf_scores else 0.0
+                rrf_range = max_rrf - min_rrf if max_rrf > min_rrf else 1.0
+
+                # Calculate recency based on occurred_start (more recent = higher score)
+                now = utcnow()
+                for r in results:
+                    # Normalize RRF score
+                    rrf_normalized = (r.get("rrf_score", 0) - min_rrf) / rrf_range if rrf_range > 0 else 0.5
+
+                    # Calculate recency (decay over 365 days, minimum 0.1)
+                    recency = 0.5  # default for missing dates
+                    if r.get("occurred_start"):
+                        occurred = r["occurred_start"]
+                        if hasattr(occurred, 'tzinfo') and occurred.tzinfo is None:
+                            from datetime import timezone
+                            occurred = occurred.replace(tzinfo=timezone.utc)
+                        days_ago = (now - occurred).total_seconds() / 86400
+                        recency = max(0.1, 1.0 - (days_ago / 365))  # Linear decay over 1 year
+
+                    # Get temporal proximity if available (already 0-1)
+                    temporal = r.get("temporal_proximity", 0.5)
+
+                    # Weighted combination
+                    # Cross-encoder: 60% (semantic relevance)
+                    # RRF: 20% (retrieval consensus)
+                    # Temporal proximity: 10% (time relevance for temporal queries)
+                    # Recency: 10% (prefer recent facts)
+                    cross_encoder_score = r.get("cross_encoder_score_normalized", 0)
+                    combined_score = (
+                        0.6 * cross_encoder_score +
+                        0.2 * rrf_normalized +
+                        0.1 * temporal +
+                        0.1 * recency
+                    )
+
+                    r["rrf_normalized"] = rrf_normalized
+                    r["recency"] = recency
+                    r["combined_score"] = combined_score
+                    r["weight"] = combined_score  # Update weight for final ranking
+
+                # Re-sort by combined score
+                results.sort(key=lambda x: x["weight"], reverse=True)
+                log_buffer.append(f"  [4.6] Combined scoring: cross_encoder(0.6) + rrf(0.2) + temporal(0.1) + recency(0.1)")
+
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
             top_results = results[:rerank_limit]
@@ -1517,7 +1644,7 @@ class MemoryEngine:
                         node_id=result["id"],
                         text=result["text"],
                         context=result.get("context", ""),
-                        event_date=result["event_date"],
+                        event_date=result.get("occurred_start"),
                         access_count=result.get("access_count", 0),
                         is_entry_point=(result["id"] in [ep.node_id for ep in tracer.entry_points]),
                         parent_node_id=None,  # In parallel retrieval, there's no clear parent
@@ -1547,9 +1674,6 @@ class MemoryEngine:
 
             # Convert datetime objects to ISO strings for JSON serialization
             for result in top_results:
-                if result.get("event_date"):
-                    event_date = result["event_date"]
-                    result["event_date"] = event_date.isoformat() if hasattr(event_date, 'isoformat') else event_date
                 if result.get("occurred_start"):
                     occurred_start = result["occurred_start"]
                     result["occurred_start"] = occurred_start.isoformat() if hasattr(occurred_start, 'isoformat') else occurred_start
@@ -1560,20 +1684,90 @@ class MemoryEngine:
                     mentioned_at = result["mentioned_at"]
                     result["mentioned_at"] = mentioned_at.isoformat() if hasattr(mentioned_at, 'isoformat') else mentioned_at
 
+            # Get entities for each fact if include_entities is requested
+            fact_entity_map = {}  # unit_id -> list of (entity_id, entity_name)
+            if include_entities and top_results:
+                unit_ids = [uuid.UUID(str(r.get("id"))) for r in top_results if r.get("id")]
+                if unit_ids:
+                    async with acquire_with_retry(pool) as entity_conn:
+                        entity_rows = await entity_conn.fetch(
+                            """
+                            SELECT ue.unit_id, e.id as entity_id, e.canonical_name
+                            FROM unit_entities ue
+                            JOIN entities e ON ue.entity_id = e.id
+                            WHERE ue.unit_id = ANY($1::uuid[])
+                            """,
+                            unit_ids
+                        )
+                        for row in entity_rows:
+                            unit_id = str(row['unit_id'])
+                            if unit_id not in fact_entity_map:
+                                fact_entity_map[unit_id] = []
+                            fact_entity_map[unit_id].append({
+                                'entity_id': str(row['entity_id']),
+                                'canonical_name': row['canonical_name']
+                            })
+
             # Convert results to MemoryFact objects
             memory_facts = []
             for result in top_results:
+                result_id = str(result.get("id"))
+                # Get entity names for this fact
+                entity_names = None
+                if include_entities and result_id in fact_entity_map:
+                    entity_names = [e['canonical_name'] for e in fact_entity_map[result_id]]
+
                 memory_facts.append(MemoryFact(
-                    id=str(result.get("id")),
+                    id=result_id,
                     text=result.get("text"),
                     fact_type=result.get("fact_type", "world"),
+                    entities=entity_names,
                     context=result.get("context"),
-                    event_date=result.get("event_date"),
                     occurred_start=result.get("occurred_start"),
                     occurred_end=result.get("occurred_end"),
                     mentioned_at=result.get("mentioned_at"),
+                    document_id=result.get("document_id"),
                     activation=result.get("activation")
                 ))
+
+            # Fetch entity observations if requested
+            entities_dict = None
+            if include_entities and fact_entity_map:
+                # Collect unique entities from top results
+                unique_entities = {}  # entity_id -> entity_name
+                for entity_list in fact_entity_map.values():
+                    for entity in entity_list:
+                        unique_entities[entity['entity_id']] = entity['canonical_name']
+
+                # Fetch observations for each entity (respect token budget)
+                entities_dict = {}
+                total_entity_tokens = 0
+                encoding = _get_tiktoken_encoding()
+
+                for entity_id, entity_name in unique_entities.items():
+                    if total_entity_tokens >= max_entity_tokens:
+                        break
+
+                    observations = await self.get_entity_observations(agent_id, entity_id, limit=5)
+
+                    # Calculate tokens for this entity's observations
+                    entity_tokens = 0
+                    included_observations = []
+                    for obs in observations:
+                        obs_tokens = len(encoding.encode(obs.text))
+                        if total_entity_tokens + entity_tokens + obs_tokens <= max_entity_tokens:
+                            included_observations.append(obs)
+                            entity_tokens += obs_tokens
+                        else:
+                            break
+
+                    if included_observations:
+                        entities_dict[entity_name] = EntityState(
+                            entity_id=entity_id,
+                            canonical_name=entity_name,
+                            observations=included_observations
+                        )
+                        total_entity_tokens += entity_tokens
 
             # Finalize trace if enabled
             trace_dict = None
@@ -1581,7 +1775,7 @@ class MemoryEngine:
                 trace = tracer.finalize(top_results)
                 trace_dict = trace.to_dict() if trace else None
 
-            return SearchResultModel(results=memory_facts, trace=trace_dict)
+            return SearchResultModel(results=memory_facts, trace=trace_dict, entities=entities_dict)
 
         except Exception as e:
             log_buffer.append(f"[SEARCH {search_id}] ERROR after {time.time() - search_start:.3f}s: {str(e)}")
@@ -2591,7 +2785,8 @@ Guidelines:
             thinking_budget=thinking_budget,
             max_tokens=4096,
             enable_trace=False,
-            fact_type=['agent', 'world', 'opinion']
+            fact_type=['agent', 'world', 'opinion'],
+            include_entities=True
         )
 
         all_results = search_result.results
@@ -2708,4 +2903,295 @@ Guidelines:
                 logger.debug(f"[THINK] Extracted and stored {len(new_opinions)} new opinions")
         except Exception as e:
             logger.warning(f"[THINK] Failed to extract/store opinions: {str(e)}")
+
+    async def get_entity_observations(
+        self,
+        agent_id: str,
+        entity_id: str,
+        limit: int = 10
+    ) -> List[EntityObservation]:
+        """
+        Get observations linked to an entity.
+
+        Args:
+            agent_id: Agent identifier
+            entity_id: Entity UUID to get observations for
+            limit: Maximum number of observations to return
+
+        Returns:
+            List of EntityObservation objects
+        """
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT mu.text, mu.mentioned_at
+                FROM memory_units mu
+                JOIN unit_entities ue ON mu.id = ue.unit_id
+                WHERE mu.agent_id = $1
+                  AND mu.fact_type = 'observation'
+                  AND ue.entity_id = $2
+                ORDER BY mu.mentioned_at DESC
+                LIMIT $3
+                """,
+                agent_id, uuid.UUID(entity_id), limit
+            )
+
+            observations = []
+            for row in rows:
+                mentioned_at = row['mentioned_at'].isoformat() if row['mentioned_at'] else None
+                observations.append(EntityObservation(
+                    text=row['text'],
+                    mentioned_at=mentioned_at
+                ))
+            return observations
+
+    async def list_entities(
+        self,
+        agent_id: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        List all entities for an agent.
+
+        Args:
+            agent_id: Agent identifier
+            limit: Maximum number of entities to return
+
+        Returns:
+            List of entity dicts with id, canonical_name, mention_count, first_seen, last_seen
+        """
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+                FROM entities
+                WHERE agent_id = $1
+                ORDER BY mention_count DESC, last_seen DESC
+                LIMIT $2
+                """,
+                agent_id, limit
+            )
+
+            entities = []
+            for row in rows:
+                # Handle metadata - may be dict, JSON string, or None
+                metadata = row['metadata']
+                if metadata is None:
+                    metadata = {}
+                elif isinstance(metadata, str):
+                    import json
+                    try:
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        metadata = {}
+
+                entities.append({
+                    'id': str(row['id']),
+                    'canonical_name': row['canonical_name'],
+                    'mention_count': row['mention_count'],
+                    'first_seen': row['first_seen'].isoformat() if row['first_seen'] else None,
+                    'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
+                    'metadata': metadata
+                })
+            return entities
+
+    async def get_entity_state(
+        self,
+        agent_id: str,
+        entity_id: str,
+        entity_name: str,
+        limit: int = 10
+    ) -> EntityState:
+        """
+        Get the current state (mental model) of an entity.
+
+        Args:
+            agent_id: Agent identifier
+            entity_id: Entity UUID
+            entity_name: Canonical name of the entity
+            limit: Maximum number of observations to include
+
+        Returns:
+            EntityState with observations
+        """
+        observations = await self.get_entity_observations(agent_id, entity_id, limit)
+        return EntityState(
+            entity_id=entity_id,
+            canonical_name=entity_name,
+            observations=observations
+        )
+
+    async def regenerate_entity_observations(
+        self,
+        agent_id: str,
+        entity_id: str,
+        entity_name: str,
+        version: str | None = None
+    ) -> List[str]:
+        """
+        Regenerate observations for an entity by:
+        1. Checking version for deduplication (if provided)
+        2. Searching all facts mentioning the entity
+        3. Using LLM to synthesize observations (no personality)
+        4. Deleting old observations for this entity
+        5. Storing new observations linked to the entity
+
+        Args:
+            agent_id: Agent identifier
+            entity_id: Entity UUID
+            entity_name: Canonical name of the entity
+            version: Entity's last_seen timestamp when task was created (for deduplication)
+
+        Returns:
+            List of created observation IDs
+        """
+        pool = await self._get_pool()
+
+        # Step 1: Check version for deduplication
+        if version:
+            async with acquire_with_retry(pool) as conn:
+                current_last_seen = await conn.fetchval(
+                    """
+                    SELECT last_seen
+                    FROM entities
+                    WHERE id = $1 AND agent_id = $2
+                    """,
+                    uuid.UUID(entity_id), agent_id
+                )
+
+                if current_last_seen and current_last_seen.isoformat() != version:
+                    logger.debug(f"[OBSERVATIONS] Skipping {entity_name} - version mismatch (newer task pending)")
+                    return []
+
+        # Step 2: Get all facts mentioning this entity (exclude observations themselves)
+        async with acquire_with_retry(pool) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
+                FROM memory_units mu
+                JOIN unit_entities ue ON mu.id = ue.unit_id
+                WHERE mu.agent_id = $1
+                  AND ue.entity_id = $2
+                  AND mu.fact_type IN ('world', 'agent')
+                ORDER BY mu.occurred_start DESC
+                LIMIT 50
+                """,
+                agent_id, uuid.UUID(entity_id)
+            )
+
+        if not rows:
+            logger.debug(f"[OBSERVATIONS] No facts found for entity {entity_name}")
+            return []
+
+        # Convert to MemoryFact objects for the observation extraction
+        facts = []
+        for row in rows:
+            occurred_start = row['occurred_start'].isoformat() if row['occurred_start'] else None
+            facts.append(MemoryFact(
+                id=str(row['id']),
+                text=row['text'],
+                fact_type=row['fact_type'],
+                context=row['context'],
+                occurred_start=occurred_start
+            ))
+
+        # Step 3: Extract observations using LLM (no personality)
+        observations = await observation_utils.extract_observations_from_facts(
+            self._llm_config,
+            entity_name,
+            facts
+        )
+
+        if not observations:
+            logger.debug(f"[OBSERVATIONS] No observations extracted for entity {entity_name}")
+            return []
+
+        # Step 4: Delete old observations and insert new ones in a transaction
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                # Delete old observations for this entity
+                await conn.execute(
+                    """
+                    DELETE FROM memory_units
+                    WHERE id IN (
+                        SELECT mu.id
+                        FROM memory_units mu
+                        JOIN unit_entities ue ON mu.id = ue.unit_id
+                        WHERE mu.agent_id = $1
+                          AND mu.fact_type = 'observation'
+                          AND ue.entity_id = $2
+                    )
+                    """,
+                    agent_id, uuid.UUID(entity_id)
+                )
+
+                # Generate embeddings for new observations
+                embeddings = await embedding_utils.generate_embeddings_batch(
+                    self.embeddings, observations
+                )
+
+                # Insert new observations
+                current_time = utcnow()
+                created_ids = []
+
+                for obs_text, embedding in zip(observations, embeddings):
+                    result = await conn.fetchrow(
+                        """
+                        INSERT INTO memory_units (
+                            agent_id, text, embedding, context, event_date,
+                            occurred_start, occurred_end, mentioned_at,
+                            fact_type, access_count
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'observation', 0)
+                        RETURNING id
+                        """,
+                        agent_id,
+                        obs_text,
+                        str(embedding),
+                        f"observation about {entity_name}",
+                        current_time,
+                        current_time,
+                        current_time,
+                        current_time
+                    )
+                    obs_id = str(result['id'])
+                    created_ids.append(obs_id)
+
+                    # Link observation to entity
+                    await conn.execute(
+                        """
+                        INSERT INTO unit_entities (unit_id, entity_id)
+                        VALUES ($1, $2)
+                        """,
+                        uuid.UUID(obs_id), uuid.UUID(entity_id)
+                    )
+
+        # Single consolidated log line
+        logger.info(f"[OBSERVATIONS] {entity_name}: {len(facts)} facts -> {len(created_ids)} observations")
+        return created_ids
+
+    async def _handle_regenerate_observations(self, task_dict: Dict[str, Any]):
+        """
+        Handler for regenerate_observations tasks.
+
+        Args:
+            task_dict: Dict with 'agent_id', 'entity_id', 'entity_name', 'version'
+        """
+        try:
+            agent_id = task_dict.get('agent_id')
+            entity_id = task_dict.get('entity_id')
+            entity_name = task_dict.get('entity_name')
+            version = task_dict.get('version')  # last_seen timestamp for deduplication
+
+            if not all([agent_id, entity_id, entity_name]):
+                logger.error(f"[OBSERVATIONS] Missing required fields in task: {task_dict}")
+                return
+
+            await self.regenerate_entity_observations(agent_id, entity_id, entity_name, version)
+        except Exception as e:
+            logger.error(f"[OBSERVATIONS] Error regenerating observations: {e}")
+            import traceback
+            traceback.print_exc()
 

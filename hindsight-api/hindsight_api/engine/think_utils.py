@@ -70,13 +70,13 @@ def format_facts_for_prompt(facts: List[MemoryFact]) -> str:
         if fact.context:
             fact_obj["context"] = fact.context
 
-        # Add event_date if available
-        if fact.event_date:
-            event_date = fact.event_date
-            if isinstance(event_date, str):
-                fact_obj["event_date"] = event_date
-            elif isinstance(event_date, datetime):
-                fact_obj["event_date"] = event_date.strftime('%Y-%m-%d %H:%M:%S')
+        # Add occurred_start if available (when the fact occurred)
+        if fact.occurred_start:
+            occurred_start = fact.occurred_start
+            if isinstance(occurred_start, str):
+                fact_obj["occurred_start"] = occurred_start
+            elif isinstance(occurred_start, datetime):
+                fact_obj["occurred_start"] = occurred_start.strftime('%Y-%m-%d %H:%M:%S')
 
         # Add activation if available
         if fact.activation is not None:

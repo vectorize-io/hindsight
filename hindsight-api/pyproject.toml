@@ -57,3 +57,14 @@ filterwarnings = [
     "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning",
     "ignore::RuntimeWarning:asyncio",
 ]
+
+[dependency-groups]
+dev = [
+    "filelock>=3.20.0",
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "python-dotenv>=1.2.1",
+    "testcontainers>=4.13.3",
+]

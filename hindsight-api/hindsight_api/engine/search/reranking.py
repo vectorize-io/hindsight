@@ -46,15 +46,15 @@ class CrossEncoderReranker:
                 doc_text = f"{c['context']}: {doc_text}"
 
             # Add formatted date information for temporal awareness
-            if c.get("event_date"):
-                event_date = c["event_date"]
+            if c.get("occurred_start"):
+                occurred_start = c["occurred_start"]
 
                 # Format in two styles for better model understanding
                 # 1. ISO format: YYYY-MM-DD
-                date_iso = event_date.strftime("%Y-%m-%d")
+                date_iso = occurred_start.strftime("%Y-%m-%d")
 
                 # 2. Human-readable: "June 5, 2022"
-                date_readable = event_date.strftime("%B %d, %Y")
+                date_readable = occurred_start.strftime("%B %d, %Y")
 
                 # Prepend date to document text
                 doc_text = f"[Date: {date_readable} ({date_iso})] {doc_text}"

@@ -19,7 +19,7 @@ from .llm_wrapper import OutputTooLongError, LLMConfig
 class Entity(BaseModel):
     """An entity extracted from text."""
     text: str = Field(
-        description="The entity name as it appears in the fact"
+        description="The specific, named entity as it appears in the fact. Must be a proper noun or specific identifier."
     )
 
 
@@ -46,36 +46,86 @@ class CausalRelation(BaseModel):
 
 
 class ExtractedFact(BaseModel):
-    """A single extracted fact from text with temporal range and causal relationships."""
-    fact: str = Field(
-        description="Self-contained factual statement with subject + action + context"
+    """A single extracted fact with structured dimensions for comprehensive capture."""
+
+    # Core factual dimension (required)
+    factual_core: str = Field(
+        description="ACTUAL FACTS - what literally happened/was said. Capture WHAT was said, not just THAT something was said! 'Gina said Jon is the perfect mentor with positivity and determination' NOT 'Jon received encouragement'. Preserve: compliments, assessments, descriptions, key phrases. Be specific!"
     )
-    occurred_start: str = Field(
-        description="When the fact/event started (ISO format YYYY-MM-DDTHH:MM:SSZ). "
-                   "For point-in-time events (single day), same as occurred_end. "
-                   "For periods/ranges (month, season, year), the start of that period. "
-                   "Calculate absolute dates from relative references like 'yesterday', 'last week'."
+
+    # Optional dimensions - only include if present in the text
+    emotional_significance: Optional[str] = Field(
+        default=None,
+        description="Emotions, feelings, personal meaning, AND qualitative descriptors if present. Include ALL experiential/evaluative terms like 'magical', 'wonderful', 'amazing', 'thrilling'. Examples: 'felt thrilled', 'was her favorite memory', 'it was magical', 'devastating experience', 'proudest moment'"
     )
-    occurred_end: str = Field(
-        description="When the fact/event ended (ISO format YYYY-MM-DDTHH:MM:SSZ). "
-                   "For point-in-time events (single day), same as occurred_start. "
-                   "For periods/ranges (month, season, year), the end of that period. "
-                   "For ongoing facts, use the conversation date or a reasonable future date."
+    reasoning_motivation: Optional[str] = Field(
+        default=None,
+        description="WHY it happened, intentions, goals, causes if present. Examples: 'because she wanted to celebrate', 'in order to cope with grief', 'motivated by curiosity'"
     )
+    preferences_opinions: Optional[str] = Field(
+        default=None,
+        description="Likes, dislikes, beliefs, values if present. Examples: 'loves coffee', 'thinks AI is transformative', 'prefers working remotely'"
+    )
+    sensory_details: Optional[str] = Field(
+        default=None,
+        description="Visual, auditory, physical descriptions AND all descriptive adjectives - USE EXACT WORDS from the text! Don't paraphrase adjectives. If they said 'awesome' write 'awesome' not 'amazing'. Examples: 'bright orange hair', 'so graceful', 'awesome beach', 'epic visuals', 'freezing cold'."
+    )
+    observations: Optional[str] = Field(
+        default=None,
+        description="Observations and inferences from the conversation - things that can be deduced but weren't explicitly stated. Includes: travel (if someone is 'shooting in Miami' → they went/will go to Miami), possession implies achievement ('my trophy' → won it), actions imply location/travel ('doing the shoot in Miami' → traveled to Miami), capabilities ('she coded it' → knows programming). Examples: 'Calvin traveled to Miami', 'Gina won dance trophies', 'knows programming'"
+    )
+
+    # Fact kind - determines temporal handling (used for prompt engineering, not stored in DB)
+    fact_kind: Literal["conversation", "event", "other"] = Field(
+        description="Determines if occurred dates should be set. 'conversation' = general info, activities, preferences (NO occurred dates). 'event' = specific datable occurrence like competition, wedding, meeting (HAS occurred_start/end). 'other' = anything else (NO occurred dates). Only 'event' gets occurred dates!"
+    )
+
+    # Temporal fields - ONLY for fact_kind='event'
+    occurred_start: Optional[str] = Field(
+        default=None,
+        description="ONLY set when fact_kind='event'. ISO format. Leave null for fact_kind='conversation'."
+    )
+    occurred_end: Optional[str] = Field(
+        default=None,
+        description="ONLY set when fact_kind='event'. ISO format. Leave null for fact_kind='conversation'."
+    )
+
+    # Classification
     fact_type: Literal["world", "agent", "opinion"] = Field(
-        description="Type of fact: 'world' for facts about others that don't involve you (the agent) directly, 'agent' for facts that involve YOU (the agent whose memory this is) - what you did, said, experienced, or participated in - MUST be written in FIRST PERSON ('I did...', 'I said...', 'I met...'), 'opinion' for YOUR formed opinions and perspectives - also in first person"
+        description="'world' = facts about others (third person), 'agent' = facts about YOU the memory owner (FIRST PERSON: 'I did...'), 'opinion' = your beliefs (first person)"
     )
+
+    # Entities and relations
     entities: List[Entity] = Field(
         default_factory=list,
-        description="List of important entities mentioned in this fact with their types"
+        description="ONLY specific, named entities worth tracking: people's names (e.g., 'Sarah', 'Dr. Smith'), organizations (e.g., 'Google', 'MIT'), specific places (e.g., 'Paris', 'Central Park'). DO NOT include: generic relations (mom, friend, boss, colleague), common nouns (apple, car, house), pronouns (he, she), or vague references (someone, a guy)."
     )
     causal_relations: Optional[List[CausalRelation]] = Field(
         default=None,
-        description="List of causal relationships to other facts in this extraction batch. "
-                   "Use this to link facts that have cause-effect relationships, enabling relationships, etc. "
-                   "Example: If fact 0 is 'It rained' and fact 1 is 'Game was cancelled', "
-                   "fact 0 would have causal_relations=[{{target_fact_index: 1, relation_type: 'causes', strength: 1.0}}]"
+        description="Causal links to other facts in this batch. Example: fact about rain causes fact about cancelled game."
     )
+
+    def build_fact_text(self) -> str:
+        """Combine all dimensions into a single comprehensive fact string."""
+        parts = [self.factual_core]
+
+        if self.emotional_significance:
+            parts.append(self.emotional_significance)
+        if self.reasoning_motivation:
+            parts.append(self.reasoning_motivation)
+        if self.preferences_opinions:
+            parts.append(self.preferences_opinions)
+        if self.sensory_details:
+            parts.append(self.sensory_details)
+        if self.observations:
+            parts.append(self.observations)
+
+        # Join with appropriate connectors
+        if len(parts) == 1:
+            return parts[0]
+
+        # Combine: "Core fact - emotional/significance context"
+        return f"{parts[0]} - {' - '.join(parts[1:])}"
 
 
 class FactExtractionResponse(BaseModel):
@@ -162,689 +212,207 @@ async def _extract_facts_from_chunk(
 - Current document date/time: {event_date_str}
 - Context: {context if context else 'no additional context provided'}{agent_context}
 
-## CORE PRINCIPLE: Extract FEWER, MORE COMPREHENSIVE Facts
+## CORE PRINCIPLE: Extract ALL Meaningful Information Efficiently
 
-**GOAL**: Extract 2-5 comprehensive facts per conversation, NOT dozens of small fragments.
+**GOAL**: Capture ALL meaningful information, but combine related exchanges efficiently. Don't create separate facts for questions - merge Q&A into single facts.
 
 Each fact should:
-1. **CAPTURE ENTIRE CONVERSATIONS OR EXCHANGES** - Include the full back-and-forth discussion
-2. **BE NARRATIVE AND COMPREHENSIVE** - Tell the complete story with all context
-3. **BE SELF-CONTAINED** - Readable without the original text
-4. **INCLUDE ALL PARTICIPANTS** - WHO said/did WHAT, with their reasoning
-5. **PRESERVE THE FLOW** - Keep related exchanges together in one fact
+1. **CAPTURE ALL MEANINGFUL CONTENT** - Activities, projects, preferences, recommendations, encouragement WITH specific content
+2. **BE SELF-CONTAINED** - Readable without the original text
+3. **PRESERVE SPECIFIC CONTENT** - Capture WHAT was said, not just THAT something was said
+4. **COMBINE Q&A** - A question and its answer = ONE fact, not two separate facts
 
-## HOW TO COMBINE INFORMATION INTO COMPREHENSIVE FACTS
+## COMBINE Q&A - CRITICAL!
 
-**✅ GOOD APPROACH**: One comprehensive fact capturing the entire discussion
-"Alice and Bob discussed playlist names for the summer party. Bob suggested 'Summer Vibes' because it's catchy and seasonal. Alice liked it but wanted something more unique. They considered 'Sunset Sessions' and 'Beach Beats', with Alice favoring 'Beach Beats' for its playful tone. They ultimately decided on 'Beach Beats' as the final name."
+**❌ BAD (2 separate facts):**
+- "James asks what projects John is working on"
+- "John is working on a website for a local small business"
 
-**❌ BAD APPROACH**: Multiple fragmented facts
-- "Bob suggested Summer Vibes"
-- "Alice wanted something unique"
-- "They considered Sunset Sessions"
-- "Alice likes Beach Beats"
-- "They chose Beach Beats"
+**✅ GOOD (1 combined fact):**
+- "John is working on a website for a local small business; it's his first professional project outside of class"
 
-## WHAT TO COMBINE INTO SINGLE FACTS
+**❌ BAD (question as standalone fact):**
+- "James asks John what challenges he has encountered"
 
-1. **FULL DISCUSSIONS** - Entire conversations about a topic (playlist names, travel plans, decisions)
-2. **MULTI-STEP EVENTS** - Connected actions that form a complete story
-3. **DECISIONS WITH REASONING** - The full decision-making process and rationale
-4. **EXCHANGES WITH CONTEXT** - Questions, answers, and follow-up all together
-5. **RELATED ACTIONS** - Multiple related activities in sequence
+**✅ GOOD (merged with answer):**
+- "John says payment integration was challenging; he used resources to understand the process and is getting closer to a solution"
 
-## ESSENTIAL DETAILS TO PRESERVE IN COMPREHENSIVE FACTS
+## WHAT TO SKIP (only these!)
 
-While combining related content into comprehensive facts, you MUST preserve:
+- **Standalone questions** - merge with answers instead
+- **Pure filler with no content** - "Always happy to help", "Sounds good", "Thanks!"
+- **Greetings** - "Hey!", "What's up?"
+
+## WHAT TO ALWAYS EXTRACT
+
+- Specific encouragement WITH content: "James says hiccups are normal, use them to learn and grow, push through"
+- Reactions that reveal preferences: "John says the art is awesome, takes him back to reading fantasy books"
+- Recommendations: "John recommends 'The Name of the Wind' - great novel with awesome writing"
+- Plans/intentions: "James will check out 'The Name of the Wind'"
+- All activities, projects, purchases, events with details
+
+## ESSENTIAL DETAILS TO PRESERVE - NEVER LOSE THESE
+
+When extracting facts, you MUST preserve:
 
 1. **ALL PARTICIPANTS** - Who said/did what
-2. **FULL REASONING** - Why decisions were made, motivations, explanations
-3. **TEMPORAL CONTEXT** - When things happened (transform relative dates like "last year" → "in 2023")
-4. **VISUAL/MEDIA ELEMENTS** - Photos, images, videos shared
-5. **MODIFIERS** - "new", "first", "old", "favorite" (critical context)
-6. **POSSESSIVE RELATIONSHIPS** - "their kids" → "Person's kids"
-7. **BIOGRAPHICAL DETAILS** - Origins, locations, jobs, family background
-8. **SOCIAL DYNAMICS** - Nicknames, how people address each other, relationships
+2. **INDIVIDUAL PREFERENCES** - Each person's specific likes/favorites! "Jon's favorite is contemporary because it's expressive" - DO NOT LOSE THIS!
+3. **FULL REASONING** - Why decisions were made, motivations, explanations
+4. **TEMPORAL CONTEXT - CRITICAL** - ALWAYS convert relative time references to SPECIFIC ABSOLUTE dates in the fact text!
+   - "last week" (doc date Aug 23) → "around August 16, 2023" (NOT just "in August 2023"!)
+   - "last month" (doc date Aug 2023) → "in July 2023"
+   - "yesterday" (doc date Aug 19) → "on August 18, 2023"
+   - "next week" (doc date Aug 19) → "around August 26, 2023"
+   - "three days ago" (doc date Aug 19) → "on August 16, 2023"
+   - "last year" → "in 2022"
+   - BE SPECIFIC! "last week" is NOT "in August" - calculate the actual week!
+5. **VISUAL/MEDIA ELEMENTS** - Photos, images, videos shared
+6. **MODIFIERS** - "new", "first", "old", "favorite" (critical context)
+7. **POSSESSIVE RELATIONSHIPS** - "their kids" → "Person's kids"
+8. **BIOGRAPHICAL DETAILS** - Origins, locations, jobs, family background
+9. **SOCIAL DYNAMICS** - Nicknames, how people address each other, relationships
 
-## INFORMATION DIMENSIONS TO CAPTURE
+## STRUCTURED FACT DIMENSIONS - CRITICAL ⚠️
 
-Extract facts that preserve ALL relevant dimensions of information. Do NOT strip away important qualitative details:
+Each fact MUST be extracted into structured dimensions. This ensures no important context is lost.
 
-### 1. EMOTIONAL/AFFECTIVE Dimension - CRITICAL ⚠️
-**Capture feelings, emotions, moods, and emotional reactions with their intensity:**
-- Emotions: thrilled, frustrated, excited, disappointed, anxious, relieved, proud, embarrassed
-- Intensity: very upset, slightly annoyed, extremely happy, moderately concerned
-- Emotional reactions: shocked, delighted, devastated, surprised
-- Moods: cheerful, gloomy, irritable, energetic
+### Required field:
+- **factual_core**: ACTUAL FACTS - capture WHAT was said, not just THAT something was said!
+  - ❌ BAD: "Jon received encouragement from Gina" (loses what Gina actually said)
+  - ✅ GOOD: "Gina said Jon is the perfect mentor with positivity and determination; his studio will be a hit"
+  - ❌ BAD: "Jon supports Gina" (generic)
+  - ✅ GOOD: "Gina found the perfect spot for her store; Jon says her hard work is paying off"
+  - Preserve: compliments, assessments, descriptions, predictions, key phrases
 
-**Examples:**
-- ❌ BAD: "I received positive feedback"
-- ✅ GOOD: "I was thrilled to receive positive feedback"
-- ❌ BAD: "She got the promotion"
-- ✅ GOOD: "She was ecstatic when she got the promotion"
+### Optional fields (include when present in text):
+- **emotional_significance**: Emotions, feelings, personal meaning, AND qualitative descriptors
+  - Examples: "felt thrilled", "was her favorite memory", "it's magical", "devastating experience", "proudest moment"
+  - Captures: emotions, intensity, personal significance, AND experiential descriptors ("magical", "wonderful", "amazing", "thrilling", "beautiful")
 
-### 2. SENSORY/EXPERIENTIAL Dimension
-**Preserve sensory details and physical experiences:**
-- Visual: colors, appearances ("bright orange hair", "dark room", "beautiful sunset")
-- Auditory: sounds, voices ("loud music", "whispered", "screeching brakes")
-- Tactile: textures, temperatures ("soft fabric", "freezing cold", "rough surface")
-- Olfactory: smells, scents ("fresh coffee", "musty odor")
-- Gustatory: tastes, flavors ("bitter coffee", "sweet dessert")
-- Physical sensations: pain, fatigue, energy ("my back hurt", "I felt exhausted", "energized")
+- **reasoning_motivation**: WHY it happened, intentions, goals, causes
+  - Examples: "because she wanted to celebrate", "in order to cope with grief", "motivated by curiosity"
+  - Captures: reasons, intentions, goals, causal explanations
 
-### 3. COGNITIVE/EPISTEMIC Dimension
-**Capture thoughts, beliefs, knowledge, and certainty levels:**
-- Beliefs: "I believe...", "she thinks...", "he's convinced that..."
-- Knowledge: "I know how to...", "she learned that...", "he discovered..."
-- Understanding: "I realized...", "she understood that...", "it became clear that..."
-- Certainty: "I'm sure that...", "probably...", "definitely..."
-- Uncertainty: "I'm not sure if...", "maybe...", "I wonder whether...", "she doubts that..."
-- Questions/Doubts: unresolved questions, things people are wondering about
+- **preferences_opinions**: Likes, dislikes, beliefs, values, ideals - CAPTURE EACH PERSON'S SPECIFIC PREFERENCES
+  - Examples: "Jon's ideal dance studio is by the water", "Jon's favorite dance is contemporary", "loves coffee", "prefers remote work"
+  - Captures: preferences, opinions, beliefs, judgments, ideals, dreams
+  - PREFERENCE INDICATORS: "ideal", "favorite", "dream", "perfect", "love", "hate", "prefer" → MUST capture in this dimension!
+  - CRITICAL: Never lose individual preferences! "Jon's ideal studio is by the water" must be captured!
 
-### 4. INTENTIONAL/MOTIVATIONAL Dimension
-**Preserve goals, plans, intentions, and motivations:**
-- Goals: "I want to...", "she aims to...", "his goal is..."
-- Plans: "I'm planning to...", "they intend to...", "she's going to..."
-- Motivations: "I did X because I wanted Y", "her motivation was..."
-- Desires: "I wish...", "she hopes...", "he longs to..."
-- Aspirations: "I aspire to...", "her dream is..."
+- **sensory_details**: Visual, auditory, physical descriptions AND all descriptive adjectives - USE EXACT WORDS!
+  - Examples: "bright orange hair", "loud music", "freezing cold", "so graceful", "awesome beach", "epic visuals"
+  - Captures: colors, sounds, textures, temperatures, appearances, AND adjectives describing people/things/performances
+  - CRITICAL: Use the EXACT adjectives from the text! If they said "awesome" don't write "amazing". If they said "epic" don't write "perfect"!
 
-### 5. EVALUATIVE/PREFERENTIAL Dimension
-**Capture preferences, values, likes/dislikes, and judgments:**
-- Preferences: "I prefer X to Y", "she likes coffee better than tea"
-- Likes/dislikes: "I love...", "he hates...", "she enjoys..."
-- Values: "I value honesty above all", "family is most important to her"
-- Judgments: "that was wrong", "this is the best option", "it's unfair that..."
-- Priorities: "X is more important than Y", "first priority is..."
+- **observations**: Things that can be inferred/deduced from the conversation - not explicitly stated but clearly implied
+  - TRAVEL: "doing the shoot in Miami" → "Calvin traveled/will travel to Miami"
+  - POSSESSION: "my trophy" → "won the trophy"
+  - CAPABILITIES: "she coded it" → "knows programming"
+  - Examples: "Calvin traveled to Miami for the shoot", "Gina won dance trophies", "knows programming"
 
-### 6. CAPABILITY/SKILL Dimension
-**Preserve abilities, skills, expertise, and limitations:**
-- Abilities: "I can speak French", "she's able to...", "he knows how to..."
-- Skills: "I'm good at programming", "she's skilled in...", "he's proficient at..."
-- Expertise: "I'm an expert in AI", "she specializes in...", "he's experienced with..."
-- Limitations: "I can't swim", "she struggles with public speaking", "he's unable to..."
-- Competence levels: "beginner", "intermediate", "advanced", "expert"
+### Example extraction:
 
-### 7. ATTITUDINAL/REACTIVE Dimension
-**Capture attitudes, reactions, and behavioral responses:**
-- Attitudes: "she's skeptical about...", "he's enthusiastic about...", "I'm optimistic that..."
-- Reactions: "I was surprised when...", "she gasped", "he rolled his eyes"
-- Behavioral responses: "I jumped up", "she turned away", "he slammed the door"
-- Dispositions: "she tends to...", "he's usually...", "I typically..."
+**Input**: "I used to compete in dance competitions - my fav memory was when my team won first place at regionals at age fifteen. It was an awesome feeling of accomplishment!"
 
-### 8. COMPARATIVE/RELATIVE Dimension
-**Preserve comparisons, contrasts, and changes:**
-- Comparisons: "better than last time", "worse than expected", "similar to..."
-- Superlatives: "the best", "the worst", "the most important"
-- Changes: "improved since...", "declined from...", "different than before"
-- Contrasts: "unlike his previous approach", "in contrast to...", "rather than..."
-- Relative positions: "more than", "less than", "as much as"
-
-### 9. CAUSAL/EXPLANATORY Dimension
-**Preserve causes, effects, and explanations:**
-- Causes: "because...", "due to...", "as a result of..."
-- Effects: "therefore...", "which led to...", "resulting in..."
-- Explanations: reasoning, rationales, why things happened
-- Conditions: "if...", "when...", "unless..."
-
-**CRITICAL REMINDER**: When extracting facts, preserve ALL these dimensions that are present in the text. Do NOT reduce rich, emotionally-laden statements to bare facts. The goal is comprehensive, nuanced memory capture.
-
-## TEMPORAL INFORMATION - CRITICAL ⚠️
-
-**ABSOLUTE RULE**: NEVER use vague temporal terms in extracted facts. ALL relative time expressions MUST be converted to absolute dates or specific relative references.
-
-### PROHIBITED VAGUE TERMS ❌
-NEVER use these in facts: "recently", "soon", "lately", "a while ago", "some time ago", "in the near future", "in the past"
-
-### REQUIRED TRANSFORMATIONS
-
-You have two context dates:
-1. **event_date** (when the conversation/document occurred)
-2. **today** (current processing time)
-
-Transform ALL relative temporal expressions in the fact text based on **event_date**:
-
-**Examples** (assuming event_date = 2024-03-15):
-- "yesterday" → "on March 14, 2024" OR "the day before" (if referring to day before event_date)
-- "today" → "on March 15, 2024" (event_date itself)
-- "tomorrow" → "on March 16, 2024"
-- "last week" → "in the week of March 4-10, 2024" OR "in early March 2024"
-- "next week" → "in the week of March 18-24, 2024"
-- "last month" → "in February 2024"
-- "next month" → "in April 2024"
-- "last year" → "in 2023"
-- "this morning" → "on the morning of March 15, 2024"
-- "three days ago" → "on March 12, 2024"
-- "in two weeks" → "around March 29, 2024"
-
-### TRANSFORMING THE USER'S EXAMPLE
-**Input**: "And yesterday I went for a morning jog for the first time in a nearby park."
-**event_date**: 2024-03-15
-
-❌ **WRONG**: "recently added a morning jog in a nearby park to her schedule"
-- Uses prohibited vague term "recently"
-- Lost the specificity of "yesterday"
-
-✅ **CORRECT**: "went for a morning jog for the first time in a nearby park on March 14, 2024"
-- Converts "yesterday" to absolute date
-- Preserves "first time" (important!)
-
-### DATE FIELD CALCULATION - CRITICAL ⚠️
-
-**ABSOLUTE RULE**: The `date` field must be when the FACT occurred, NOT when it was mentioned in conversation.
-
-**You have access to:**
-- **event_date**: When the conversation/document occurred (e.g., "2023-08-14")
-- Your job: Calculate when the fact ACTUALLY happened based on temporal references
-
-**Examples:**
-
-1. **"Last night" reference**
-   - Conversation date (event_date): August 14, 2023
-   - Text: "Last night was amazing! We celebrated my daughter's birthday"
-   - ❌ WRONG date field: 2023-08-14 (conversation date)
-   - ✅ CORRECT date field: 2023-08-13T20:00:00Z (last night = previous evening)
-
-2. **"Yesterday" reference**
-   - Conversation date: March 15, 2024
-   - Text: "Yesterday I went jogging"
-   - ❌ WRONG date field: 2024-03-15
-   - ✅ CORRECT date field: 2024-03-14 (previous day)
-
-3. **"Last week" reference**
-   - Conversation date: November 13, 2024
-   - Text: "I started a project last week"
-   - ❌ WRONG date field: 2024-11-13
-   - ✅ CORRECT date field: 2024-11-06 (approximately a week before)
-
-4. **"Next month" reference**
-   - Conversation date: March 15, 2024
-   - Text: "I'm visiting Tokyo next month"
-   - ❌ WRONG date field: 2024-03-15
-   - ✅ CORRECT date field: 2024-04-15 (approximately a month later)
-
-5. **No specific time mentioned**
-   - Conversation date: November 13, 2024
-   - Text: "I work at Google"
-   - ✅ CORRECT date field: 2024-11-13 (use event_date when no time reference)
-
-### CALCULATION GUIDELINES
-
-- "last night" → subtract 1 day from event_date, set time to evening (~20:00)
-- "yesterday" → subtract 1 day from event_date
-- "today" → use event_date
-- "tomorrow" → add 1 day to event_date
-- "last week" → subtract 7 days from event_date
-- "next week" → add 7 days to event_date
-- "last month" → subtract 1 month from event_date
-- "next month" → add 1 month to event_date
-- "X days ago" → subtract X days from event_date
-- "in X days" → add X days to event_date
-
-### DATE FIELD vs FACT TEXT
-
-- **date field**: ISO format (YYYY-MM-DDTHH:MM:SSZ) for when the fact OCCURRED (calculated as above)
-- **fact text**: Readable format (e.g., "on August 13, 2024", "in February 2024")
-
-### IF NO SPECIFIC TIME MENTIONED
-ONLY use event_date when the text doesn't specify a time reference (e.g., "I work at Google", "She lives in Paris")
-
-## TEMPORAL RANGES: occurred_start and occurred_end - CRITICAL ⚠️
-
-**ABSOLUTE RULE**: Facts have temporal extent - they can be points or ranges in time.
-
-### POINT-IN-TIME EVENTS (Single Day)
-When an event happens on a specific day, set start = end:
-
+**Output**:
 ```
-"I went jogging on August 13, 2023"
-occurred_start: 2023-08-13T00:00:00Z
-occurred_end:   2023-08-13T23:59:59Z
+factual_core: "Gina's team won first place at a regional dance competition when she was 15"
+emotional_significance: "this was her favorite memory; felt an awesome sense of accomplishment"
+reasoning_motivation: null
+preferences_opinions: null
+sensory_details: null
 ```
 
-```
-"Yesterday I visited the museum"  (if event_date = Aug 14)
-occurred_start: 2023-08-13T00:00:00Z
-occurred_end:   2023-08-13T23:59:59Z
-```
+### CRITICAL: Never strip away dimensions!
+- ❌ BAD: Only extracting factual_core and ignoring emotional context
+- ✅ GOOD: Capturing ALL dimensions present in the text
 
-### PERIOD/RANGE EVENTS (Multiple Days/Months/Years)
-When an event spans time, set start and end to the full range:
+## FACT KIND AND TEMPORAL RULES
 
-```
-"I visited Paris in February 2023"
-occurred_start: 2023-02-01T00:00:00Z
-occurred_end:   2023-02-28T23:59:59Z
-```
+### fact_kind determines if occurred dates are set:
 
-```
-"I worked at Google from 2020 to 2023"
-occurred_start: 2020-01-01T00:00:00Z
-occurred_end:   2023-12-31T23:59:59Z
-```
+**`conversation`** - General info, activities, preferences, ongoing things
+- NO occurred_start/end (leave null)
+- Examples: "Jon is expanding his studio", "Jon loves dance", "Gina's ideal studio is by water"
 
-```
-"We've been painting together lately"  (vague, estimate reasonable range)
-occurred_start: 2023-07-01T00:00:00Z  (estimate past weeks/months)
-occurred_end:   2023-07-14T23:59:59Z  (conversation date)
-```
+**`event`** - Specific datable occurrence (competition, wedding, meeting, trip, loss, start/end of something)
+- MUST set occurred_start/end
+- Ask: "Is this a SPECIFIC EVENT with a DATE?"
+- Examples: "Dance competition on May 15", "Lost job in January 2023", "Wedding next Saturday"
 
-### ONGOING/PRESENT FACTS
-For current/ongoing states, use conversation date as end:
+**`other`** - Anything else that doesn't fit above
+- NO occurred_start/end (leave null)
+- Catch-all to not lose information
 
-```
-"I currently work at Google"  (started 2020)
-occurred_start: 2020-01-01T00:00:00Z
-occurred_end:   [conversation_date]  (ongoing)
-```
+### Rules:
+1. **ALWAYS include dates in fact text** - "in January 2023", "on May 15, 2024"
+2. **Only 'event' gets occurred dates** - conversation and other = null
+3. **SPLIT events from conversation facts** - "Jon is expanding his studio (conversation) and hosting a competition next month (event)" → 2 separate facts!
 
-## TEMPORAL SPLITTING: When to Split Multi-Event Facts - CRITICAL ⚠️
+## CAUSAL RELATIONSHIPS
 
-**NEW PRINCIPLE**: Split facts when they have significantly different temporal scopes.
+When splitting related facts, link them with causal_relations:
+- **causes**: This fact causes the target
+- **caused_by**: This fact was caused by target
+- **enables/prevents**: This fact enables/prevents the target
 
-### SPLIT into separate facts when:
-- ❌ Events span >7 days apart
-- ❌ Mix of specific dates + vague ongoing periods ("lately")
-- ❌ Multiple discrete events with independent temporal significance
-
-**Example - SPLIT THIS:**
-```
-Input: "Melanie took kids to pottery on July 14. She shared a photo on July 13.
-        She's been painting with them lately."
-
-✅ CORRECT (3 separate facts with causal links):
-
-Fact 0:
-fact: "Melanie took her kids to a pottery workshop on July 14, 2023, where they each made their own pots, describing it as fun and therapeutic."
-occurred_start: 2023-07-14T00:00:00Z
-occurred_end: 2023-07-14T23:59:59Z
-causal_relations: [{{target_fact_index: 1, relation_type: "enables", strength: 1.0}}]
-
-Fact 1:
-fact: "Melanie shared a photo on July 13, 2023, of a cup her kids made, noting its cuteness and how it showcased their personalities."
-occurred_start: 2023-07-13T00:00:00Z
-occurred_end: 2023-07-13T23:59:59Z
-causal_relations: [{{target_fact_index: 0, relation_type: "caused_by", strength: 1.0}}]
-
-Fact 2:
-fact: "Melanie and her kids have been painting together lately, especially nature-inspired pieces, finding it a bonding experience."
-occurred_start: 2023-07-01T00:00:00Z  (estimate "lately")
-occurred_end: 2023-07-14T23:59:59Z
-causal_relations: None  (related activity but no direct causation)
-```
-
-### KEEP COMBINED when:
-- ✅ Events occur within same day/week
-- ✅ Events are part of continuous single activity
-- ✅ One main event + immediate context
-
-**Example - KEEP COMBINED:**
-```
-Input: "On July 14, Alice attended a conference, gave a talk, and met with colleagues"
-
-✅ CORRECT (single fact):
-fact: "On July 14, 2023, Alice attended a conference where she gave a talk and met with colleagues"
-occurred_start: 2023-07-14T00:00:00Z
-occurred_end: 2023-07-14T23:59:59Z
-```
-
-## CAUSAL RELATIONSHIPS - NEW FEATURE ⚠️
-
-**When splitting related facts, identify and mark causal relationships.**
-
-### Causal Relation Types:
-
-1. **"causes"** - This fact directly causes the target fact
-   ```
-   Fact 0: "Karlie died in February 2023"
-   Fact 1: "Deborah spends time in garden to cope with grief"
-   → Fact 0 causal_relations: [{{target_fact_index: 1, relation_type: "causes", strength: 1.0}}]
-   ```
-
-2. **"caused_by"** - This fact was caused by the target fact (reverse of "causes")
-   ```
-   Fact 0: "It rained heavily"
-   Fact 1: "Game was cancelled"
-   → Fact 1 causal_relations: [{{target_fact_index: 0, relation_type: "caused_by", strength: 1.0}}]
-   ```
-
-3. **"enables"** - This fact enables/allows the target fact
-   ```
-   Fact 0: "I took pottery class"
-   Fact 1: "I learned to make ceramics"
-   → Fact 0 causal_relations: [{{target_fact_index: 1, relation_type: "enables", strength: 1.0}}]
-   ```
-
-4. **"prevents"** - This fact prevents/blocks the target fact
-   ```
-   Fact 0: "Road was closed"
-   Fact 1: "We couldn't drive to venue"
-   → Fact 0 causal_relations: [{{target_fact_index: 1, relation_type: "prevents", strength: 1.0}}]
-   ```
-
-### When to Create Causal Links:
-- **DO link** when: Text explicitly states causation ("because", "so", "therefore", "as a result")
-- **DO link** when: Clear logical causation even if not explicit
-- **DON'T link** when: Events are merely related but not causal
-
-### Causal Link Examples:
-
-**Example 1: Explicit causation**
-```
-Input: "I lost my friend last week, so I've been spending time in the garden to find comfort"
-
-Fact 0: "I lost my friend on February 15, 2023"
-Fact 1: "I have been spending time in the garden to find comfort after losing my friend"
-→ Fact 0 causal_relations: [{{target_fact_index: 1, relation_type: "causes", strength: 1.0}}]
-```
-
-**Example 2: Implicit causation**
-```
-Input: "I received positive feedback on my presentation. I was thrilled!"
-
-Fact 0: "I received positive feedback on my presentation"
-Fact 1: "I was thrilled about the positive feedback"
-→ Fact 0 causal_relations: [{{target_fact_index: 1, relation_type: "causes", strength: 1.0}}]
-```
-
-**Example 3: Related but not causal**
-```
-Input: "I visited Paris in July. I also went to Rome in August."
-
-Fact 0: "I visited Paris in July 2023"
-Fact 1: "I visited Rome in August 2023"
-→ No causal links (just related activities)
-```
-
-## LOGICAL INFERENCE AND CONNECTION MAKING - CRITICAL ⚠️
-
-**ABSOLUTE RULE**: Make logical connections between related pieces of information. Do NOT treat clearly related facts as separate when context allows you to connect them.
-
-### CONNECT THE DOTS
-When extracting facts, actively look for logical connections and make inferences:
-
-**Example 1: Identity Inference**
-**Input:**
-- "I lost a friend last week" (earlier in conversation)
-- "This is the last photo with Karlie taken last summer" (later in conversation)
-
-❌ **WRONG (disconnected)**: "Deborah lost a friend last week and also has a photo with Karlie from last summer"
-✅ **CORRECT (connected)**: "Deborah lost her friend Karlie last week, and shared the last photo they took together during a hike in summer 2022"
-
-**Reasoning**: The context strongly suggests Karlie is the lost friend. Make this connection!
-
-**Example 2: Causal Connection**
-**Input:**
-- "I lost a friend last week, so I've been spending time in the garden to find comfort"
-- "The roses and dahlias bring me peace"
-
-❌ **WRONG**: Two separate facts about grief and gardens
-✅ **CORRECT**: "Deborah lost a friend last week and has been finding comfort by spending time in her garden with roses and dahlias, which bring her peace"
-
-**Reasoning**: The garden visits are causally linked to the loss.
-
-**Example 3: Referential Connection**
-**Input:**
-- "I started a new project"
-- "It's been really challenging but rewarding"
-
-❌ **WRONG**: Two disconnected statements
-✅ **CORRECT**: "I started a new project that has been really challenging but rewarding"
-
-**Reasoning**: "It" clearly refers to the project.
-
-### TYPES OF CONNECTIONS TO MAKE
-
-1. **Identity Connections**: When someone is mentioned by name later, connect to earlier pronoun references
-   - "my friend" + "with Karlie" → "my friend Karlie"
-
-2. **Causal Connections**: When one thing is the reason for another
-   - "I lost a friend, so I've been gardening" → link the loss to the coping behavior
-
-3. **Temporal Connections**: When events are clearly sequential or related in time
-   - "We hiked" + "this is the last photo" → "this is the last photo from our hike"
-
-4. **Referential Connections**: When pronouns or references point to earlier mentions
-   - "the project" + "it's challenging" → "the project is challenging"
-
-5. **Contextual Connections**: When context strongly implies a relationship
-   - Someone showing a photo while discussing loss → the photo is of the person they lost
-
-### WHEN TO MAKE INFERENCES
-
-**DO make inferences when:**
-- Context strongly suggests a connection (probability > 80%)
-- Multiple pieces of information clearly refer to the same thing
-- There's causal language ("so", "because", "therefore")
-- Pronouns or references point to earlier mentions
-- Timeline/narrative flow suggests connection
-
-**DON'T make inferences when:**
-- Connection is ambiguous or uncertain
-- Multiple interpretations are equally valid
-- You'd be guessing without strong contextual support
-
-### CRITICAL REMINDER
-The goal is to create **coherent, connected narratives**, not disconnected fragments. If information is clearly related, COMBINE and CONNECT it logically.
-
-## WHEN TO SPLIT INTO SEPARATE FACTS
-
-Only split into separate facts when topics are COMPLETELY UNRELATED:
-- Different subjects discussed (playlist names vs. vacation plans)
-- Biographical facts vs. events (where someone is from vs. what they did)
-- Different time periods (something last year vs. today)
-
-## What to SKIP
-- Greetings, thank yous (unless they reveal information)
-- Filler words ("um", "uh", "like")
-- Pure reactions without content ("wow", "cool")
-- Incomplete fragments with no meaning
-- **Structural/procedural statements**: Openings, closings, transitions, housekeeping ("let's get started", "that's all", "moving on")
-- **Meta-commentary about the medium itself**: References to the format/structure rather than content ("welcome to the show", "thanks for listening", "before we begin")
-- **Calls to action unrelated to content**: Requests to subscribe, follow, rate, share, etc.
-- **Generic sign-offs**: "See you next time", "Until later", "That wraps it up"
-- **FOCUS PRINCIPLE**: Extract SUBSTANTIVE CONTENT (ideas, facts, discussions, decisions), NOT FORMAT/STRUCTURE
+Only link when there's explicit or clear implicit causation ("because", "so", "therefore").
 
 ## FACT TYPE CLASSIFICATION
 
-Classify each fact as 'world', 'agent', or 'opinion':
+- **'world'**: Facts about others (third person)
+- **'agent'**: Facts about YOU the memory owner (FIRST PERSON: "I did...", "I said...")
+- **'opinion'**: Your beliefs/perspectives (first person: "I believe...")
 
-- **'world'**: Facts about other people, events, things that happened in the world, what others said/did
-  - Written in third person (use names, "they", etc.)
-  - Does NOT involve you (the agent) directly
-- **'agent'**: Facts that involve YOU (the agent whose memory this is) - what you specifically did, said, experienced, or actions you took
-  - YOU are identified by the agent name in context (e.g., "Your name: Marcus" means you are Marcus)
-  - **CRITICAL**: Agent facts MUST be written in FIRST PERSON using "I", "me", "my" (NOT using your name)
-  - Agent facts capture things YOU did, said, or experienced - not just things that happened around you
-  - **SPEAKER ATTRIBUTION WARNING**: In conversations with speakers labeled (e.g., "Marcus: text" and "Jamie: text"), ONLY extract agent facts from lines where YOUR name appears as the speaker
-  - Examples: "I said I prefer coffee", "I attended the conference", "I completed the project", "I met with Jamie"
-  - ❌ WRONG: "Marcus said he prefers coffee" (using name instead of first person)
-  - ✅ CORRECT: "I said I prefer coffee" (first person)
-- **'opinion'**: YOUR (the agent's) formed opinions, beliefs, and perspectives about topics
-  - Also written in first person: "I believe...", "I think..."
+**Speaker attribution**: If context says "Your name: Marcus", only extract 'agent' facts from "Marcus:" lines.
 
-**CRITICAL SPEAKER ATTRIBUTION RULES**:
-1. If text has format "Name: statement", ONLY extract 'agent' facts from lines where Name matches YOUR name from context
-2. If context says "Your name: Marcus", then ONLY statements by "Marcus:" are YOUR statements
-3. Statements by other speakers (e.g., "Jamie:") are 'world' facts about what THEY said/did
-4. DO NOT confuse who said what - carefully check the speaker name before each statement
+## WHAT TO SKIP
+- Greetings, filler words, pure reactions ("wow", "cool")
+- Structural statements ("let's get started", "see you next time")
+- Calls to action ("subscribe", "follow")
 
-**Example**: If context says "Your name: Marcus" and text is:
+## EXAMPLE: SPLITTING CONVERSATION VS EVENT FACTS
+
+**Input (conversation date: April 3, 2023):**
+"I'm expanding my dance studio's social media presence and offering workshops to local schools. I'm also hosting a dance competition next month to showcase local talent. The dancers are so excited!"
+
+**Output (2 facts - conversation + event):**
+
+**Fact 1 (kind=conversation - ongoing activities, no occurred dates):**
 ```
-Marcus: I predict the Rams will win 27-24.
-Jamie: I predict the Niners will win 27-13.
+fact_kind: "conversation"
+factual_core: "Jon is expanding his dance studio's social media presence in April 2023; offering workshops and classes to local schools and centers; seeing progress and dancers are excited"
+emotional_significance: "excited and proud of progress"
+preferences_opinions: "Jon loves giving dancers a place to express themselves"
+observations: "Jon owns/runs a dance studio"
+occurred_start: null  ← conversation kind = no occurred dates
+occurred_end: null
 ```
-- "I predicted the Rams will win 27-24" → 'agent' (I/Marcus said this)
-- "Jamie predicted the Niners will win 27-13" → 'world' (Jamie said this, not me)
-- ❌ WRONG: "I predicted the Niners will win 27-13" (this was Jamie's prediction, not mine!)
 
-## ENTITY EXTRACTION
-Extract ALL important entities (names of people, places, organizations, products, concepts, etc).
+**Fact 2 (kind=event - specific datable occurrence):**
+```
+fact_kind: "event"
+factual_core: "Jon will host a dance competition in May 2023 to showcase local talent and bring attention to his studio"
+emotional_significance: "excited about the event"
+occurred_start: "2023-05-01T00:00:00Z"  ← event kind = HAS occurred dates
+occurred_end: "2023-05-31T23:59:59Z"
+```
 
-Extract proper nouns and key identifying terms. Skip pronouns and generic terms.
-
-## EXAMPLES - COMPREHENSIVE VS FRAGMENTED FACTS:
-
-### Example 1: Playlist Discussion
-**Input Conversation:**
-"Alice: Hey, what should we name our summer party playlist?
-Bob: How about 'Summer Vibes'? It's catchy and seasonal.
-Alice: I like it, but want something more unique.
-Bob: What about 'Sunset Sessions' or 'Beach Beats'?
-Alice: Ooh, I love 'Beach Beats'! It's playful and fun.
-Bob: Perfect, let's go with that!"
-
-**❌ BAD (fragmented into many small facts):**
-1. "Alice asked about playlist names"
-2. "Bob suggested Summer Vibes"
-3. "Alice wanted something unique"
-4. "Bob suggested Sunset Sessions"
-5. "Bob suggested Beach Beats"
-6. "Alice likes Beach Beats"
-7. "They chose Beach Beats"
-
-**✅ GOOD (one comprehensive fact):**
-"Alice and Bob discussed naming their summer party playlist. Bob suggested 'Summer Vibes' because it's catchy and seasonal, but Alice wanted something more unique. Bob then proposed 'Sunset Sessions' and 'Beach Beats', with Alice favoring 'Beach Beats' for its playful and fun tone. They ultimately decided on 'Beach Beats' as the final name."
-- fact_type: "world"
-- entities: [{{"text": "Alice"}}, {{"text": "Bob"}}]
-
-### Example 2: Photo Sharing with Context
-**Input:**
-"Nate: Here's a photo of my new hair!
-Friend: Whoa! Why that color?
-Nate: I picked bright orange because it's bold and makes me feel confident. Plus it matches my personality!"
-
-**❌ BAD (loses context):**
-"Nate chose orange hair because it's bold"
-
-**✅ GOOD (comprehensive with all context):**
-"Nate shared a photo of his new bright orange hair. When asked why he chose that color, Nate explained he picked it because it's bold and makes him feel confident, and it matches his personality."
-- fact_type: "world"
-- entities: [{{"text": "Nate"}}]
-- NOTE: Preserves that it's a PHOTO, it's NEW hair, the COLOR, and the FULL reasoning
-
-### Example 3: Travel Planning
-**Input:**
-"Sarah: I'm thinking of visiting Japan next spring.
-Mike: That's perfect timing for cherry blossoms! You should definitely visit Kyoto.
-Sarah: Why Kyoto specifically?
-Mike: It has the most beautiful temples and the cherry blossoms there are spectacular. I went in 2019.
-Sarah: Sounds amazing! I'll add it to my itinerary."
-
-**❌ BAD (fragmented):**
-1. "Sarah is planning to visit Japan"
-2. "Mike suggested Kyoto"
-3. "Kyoto has beautiful temples"
-4. "Mike visited in 2019"
-
-**✅ GOOD (comprehensive conversation):**
-"Sarah is planning to visit Japan next spring, and Mike recommended Kyoto as the perfect destination for cherry blossom season. Mike explained that Kyoto has the most beautiful temples and spectacular cherry blossoms, based on his visit there in 2019. Sarah decided to add Kyoto to her itinerary."
-- fact_type: "world"
-- date: Next spring from reference date
-- entities: [{{"text": "Sarah"}}, {{"text": "Mike"}}, {{"text": "Japan"}}, {{"text": "Kyoto"}}]
-
-### Example 4: Job News
-**Input:**
-"Alice mentioned she works at Google in Mountain View. She joined the AI team last year and loves the culture there."
-
-**✅ GOOD (combined into one comprehensive fact):**
-"Alice works at Google in Mountain View on the AI team, which she joined in 2023, and she loves the company culture there."
-- fact_type: "world"
-- date: 2023 (if reference is 2024)
-- entities: [{{"text": "Alice"}}, {{"text": "Google"}}, {{"text": "Mountain View"}}, {{"text": "AI team"}}]
-
-### Example 5: Agent vs World Facts (CRITICAL FOR CLASSIFICATION)
-**Context:** "Podcast episode between you (Marcus) and Jamie about AI"
-**Input:**
-"Marcus: I've been working on interpretability research for the past year.
-Jamie: That's fascinating! What made you focus on that?
-Marcus: I believe it's crucial for AI safety. Without understanding how models work, we can't trust them.
-Jamie: I agree. Have you published any papers?
-Marcus: Yes, I published a paper on attention visualization in March."
-
-**✅ GOOD CLASSIFICATION:**
-1. "I have been working on interpretability research for the past year because I believe it's crucial for AI safety and think that without understanding how models work, we can't trust them. Jamie found this fascinating and asked about publications. I published a paper on attention visualization in March 2024."
-   - fact_type: "agent" (written in FIRST PERSON - my work and statements)
-   - entities: [{{"text": "Jamie"}}, {{"text": "interpretability research"}}, {{"text": "attention visualization"}}]
-   - NOTE: Uses "I" not "Marcus" - first person for agent facts
-
-2. "Jamie agrees that understanding how AI models work is crucial for trust"
-   - fact_type: "world" (Jamie's statement - third person, not the memory owner)
-   - entities: [{{"text": "Jamie"}}]
-
-**❌ BAD CLASSIFICATION:**
-- Using "Marcus has been working..." instead of "I have been working..." for agent facts
-- Marking my actions as 'world' facts
-- Marking Jamie's statements as 'agent' facts
-
-### Example 6: Capturing Emotional and Experiential Dimensions
-**Input:**
-"Marcus: I was absolutely thrilled when my paper got accepted to NeurIPS! I couldn't believe it.
-Jamie: That's amazing! How confident were you going in?
-Marcus: Honestly, I was pretty anxious. I wasn't sure if the reviewers would appreciate the approach.
-Jamie: Well, it paid off! You must be relieved.
-Marcus: Extremely relieved. I've been working on this for over a year and was starting to doubt myself."
-
-**❌ BAD (stripping away emotional dimension):**
-"I submitted a paper to NeurIPS and it got accepted after working on it for over a year."
-
-**✅ GOOD (preserving emotional, cognitive, and temporal dimensions):**
-"I was absolutely thrilled when my paper got accepted to NeurIPS, though I couldn't believe it initially. Jamie asked how confident I was going in, and I explained that I was pretty anxious and wasn't sure if the reviewers would appreciate my approach. When Jamie noted it paid off, I expressed that I was extremely relieved, as I had been working on this for over a year and was starting to doubt myself."
-- fact_type: "agent"
-- entities: [{{"text": "NeurIPS"}}, {{"text": "Jamie"}}]
-- NOTE: Preserves emotions (thrilled, anxious, relieved), uncertainty (wasn't sure), self-doubt, and temporal context (over a year)
-
-### Example 7: Skipping Structural/Procedural Statements
-**Input (could be podcast, meeting, lecture, etc.):**
-"Marcus: So in my research on AI safety, I've found that interpretability is key.
-Jamie: That's fascinating! Tell us more.
-Marcus: Well, it's all about understanding how models make decisions...
-Marcus: I think that's gonna do it for us today! Don't forget to subscribe and leave a rating. See you next week!"
-
-**✅ GOOD (extract only substantive content):**
-1. "I have found that interpretability is key in my AI safety research because it's all about understanding how models make decisions, and Jamie found this fascinating."
-   - fact_type: "agent"
-   - entities: [{{"text": "Jamie"}}, {{"text": "AI safety"}}, {{"text": "interpretability"}}]
-
-**❌ BAD (extracting procedural/structural statements):**
-- "I think that's gonna do it for us today and I encourage listeners to subscribe and leave a rating" ← This is structural boilerplate about the format, NOT substantive content!
-
-### Example 8: When to Split into Multiple Facts
-**Input:**
-"Caroline said 'This necklace is from my grandma in Sweden. I'm planning to visit Stockholm next month for a tech conference.'"
-
-**✅ GOOD (split into 2 facts - different topics):**
-1. "Caroline received a necklace from her grandmother in Sweden"
-   - entities: [{{"text": "Caroline"}}, {{"text": "Sweden"}}]
-2. "Caroline is planning to visit Stockholm next month to attend a tech conference"
-   - date: Next month from reference
-   - entities: [{{"text": "Caroline"}}, {{"text": "Stockholm"}}]
-- NOTE: Split because one is about the past (necklace) and one is future plans (conference) - completely different topics
+**❌ BAD:** Combining both into one fact with occurred=May (makes ongoing activities look like they happened in May!)
 
 ## TEXT TO EXTRACT FROM:
 {chunk}
 
 ## CRITICAL REMINDERS:
-1. **EXTRACT 2-5 COMPREHENSIVE FACTS** - Not dozens of fragments
-2. **TEMPORAL RANGES (occurred_start/end)** - CRITICAL: Set occurred_start and occurred_end for each fact! Point events: start=end. Ranges: "February 2023" → start=Feb 1, end=Feb 28. "lately" → estimate reasonable range.
-3. **TEMPORAL SPLITTING** - CRITICAL: Split facts when events span >7 days or mix specific dates + vague periods ("lately"). Keep combined when events within same day/week.
-4. **CAUSAL RELATIONSHIPS** - CRITICAL: When splitting related facts, add causal_relations links! "X happened, so Y happened" → X.causal_relations=[{{target_fact_index: 1, relation_type: "causes"}}]
-5. **PRESERVE ALL CONTEXT** - Photos, "new" things, visual elements, reasoning, modifiers
-6. **INCLUDE ALL PARTICIPANTS** - Who said/did what with full reasoning
-7. **MAINTAIN NARRATIVE FLOW** - Tell the complete story in each fact
-8. **MAKE LOGICAL CONNECTIONS** - CRITICAL: Connect related information! "I lost a friend" + "last photo with Karlie" → "I lost my friend Karlie". Resolve references ("it" → "the project")
-9. **CALCULATE TEMPORAL FIELDS CORRECTLY** - CRITICAL: occurred_start/end = when FACT occurred. "Last night" on Aug 14 → occurred_start=Aug 13. Calculate from event_date!
-10. **CONVERT RELATIVE DATES IN TEXT** - CRITICAL: In fact text, "yesterday" → "on March 14, 2024", "last year" → "in 2023". NEVER use "recently", "soon", "lately"!
-11. **EXTRACT ALL ENTITIES** - PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER
-12. **CLASSIFY FACTS CORRECTLY**:
-   - 'agent' = memory owner's actions/statements (identified as "you" in context) - **MUST USE FIRST PERSON** ("I did...", "I said...")
-   - 'world' = other people's actions/statements, general events - use third person
-   - 'opinion' = memory owner's beliefs/perspectives - use first person ("I believe...", "I think...")
-13. **EXTRACT CONTENT, NOT FORMAT** - Skip structural/procedural statements (openings, closings, housekeeping), meta-commentary about the medium, calls to action - extract only SUBSTANTIVE CONTENT (ideas, facts, discussions, decisions)
-14. **CAPTURE ALL INFORMATION DIMENSIONS** - Preserve emotions (thrilled, anxious), sensory details (bright orange, loud), cognitive states (wasn't sure, realized), capabilities (can speak French, struggles with), attitudes (skeptical, enthusiastic), comparisons (better than, different from), and causal relationships (because, which led to). Do NOT strip away qualitative richness!
-15. When in doubt: Split multi-temporal facts, link them causally, use temporal ranges appropriately"""
+1. **COMBINE Q&A** - Never create standalone question facts! Merge questions with their answers into single facts.
+2. **CAPTURE ALL MEANINGFUL CONTENT** - Activities, encouragement (with specific words!), recommendations, reactions, preferences
+3. **CONVERT RELATIVE DATES TO SPECIFIC DATES** - "last week" → "around August 16" (NOT "in August"!), "yesterday" → "on August 18". Be precise!
+4. **CAPTURE WHAT WAS SAID** - "Gina said Jon is perfect mentor with determination" NOT "Jon received encouragement". Preserve the actual content!
+5. **FACT_KIND DETERMINES OCCURRED DATES** - Only 'event' gets occurred_start/end. 'conversation' and 'other' = null
+6. **CAPTURE PREFERENCES** - "ideal", "favorite", "love" → preferences_opinions
+7. **CAPTURE EXACT ADJECTIVES** - Use the EXACT words! "awesome" not "amazing", "epic" not "perfect" → sensory_details
+8. **CAPTURE OBSERVATIONS** - "shooting in Miami" → observations: "traveled to Miami". Infer travel, achievements, capabilities!"""
 
-    import time
     import logging
     from openai import BadRequestError
 
@@ -860,7 +428,7 @@ Marcus: I think that's gonna do it for us today! Don't forget to subscribe and l
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a comprehensive fact extractor that creates narrative, self-contained facts with temporal ranges and causal relationships. TEMPORAL RANGES - CRITICAL: Each fact must have occurred_start and occurred_end. Point events: start=end (July 14). Range events: start to end (February: Feb 1 to Feb 28, 'lately': estimate range). TEMPORAL SPLITTING - CRITICAL: Split facts when events span >7 days or mix specific dates + vague periods. Keep combined within same day/week. CAUSAL RELATIONSHIPS - NEW: When splitting related facts, link them! 'X happened, so Y happened' → add causal_relations to X linking to Y with type 'causes'. Types: causes, caused_by, enables, prevents. Extract 2-5 COMPREHENSIVE facts per conversation, NOT dozens of fragments. COMBINE related exchanges into single narrative facts BUT split when temporally incoherent. PRESERVE all context (photos, 'new' things, visual elements, full reasoning), INCLUDE all participants and what they said/did, MAINTAIN narrative flow. MAKE LOGICAL CONNECTIONS: Connect related information! 'I lost a friend' + 'photo with Karlie' → 'I lost my friend Karlie'. Resolve pronouns. TEMPORAL CALCULATION - CRITICAL: occurred_start/end = when fact OCCURRED, not mentioned! 'Last night' on Aug 14 → occurred_start=Aug 13. FACT TEXT: Convert relative dates to absolute: 'yesterday' → 'on March 14, 2024', NEVER 'recently'! Extract entities (PERSON, ORG, PLACE, PRODUCT, CONCEPT, OTHER). FACT TYPES: 'world' (others/events - third person), 'agent' (memory owner - FIRST PERSON 'I did'), 'opinion' (beliefs - first person 'I believe'). Extract SUBSTANTIVE CONTENT only - skip structural statements. CAPTURE ALL DIMENSIONS: emotions (thrilled, anxious), sensory details (bright orange, loud), cognitive states (wasn't sure, realized), capabilities (can speak French, struggles with), attitudes (skeptical, enthusiastic), comparisons (better than, different from), causal relationships. Do NOT strip richness!"
+                        "content": "Extract ALL meaningful content. COMBINE Q&A into single facts (no standalone questions!). Skip only greetings and pure filler. CONVERT RELATIVE DATES TO SPECIFIC DATES ('last week' → 'around Aug 16' NOT 'in August'!). factual_core = WHAT was said, not THAT something was said! fact_kind: 'conversation'/'event'/'other'. Only 'event' gets occurred dates."
                     },
                     {
                         "role": "user",
@@ -872,7 +440,23 @@ Marcus: I think that's gonna do it for us today! Don't forget to subscribe and l
                 temperature=0.1,
                 max_tokens=65000,
             )
-            chunk_facts = [fact.model_dump() for fact in extraction_response.facts]
+            # Build combined fact text from dimensions and include in output
+            chunk_facts = []
+            for fact in extraction_response.facts:
+                fact_dict = fact.model_dump()
+                # Add combined 'fact' field from structured dimensions
+                fact_dict['fact'] = fact.build_fact_text()
+
+                # Safety net: strip occurred dates if fact_kind is not 'event'
+                # (in case LLM doesn't follow the rules)
+                if fact_dict.get('fact_kind') != 'event':
+                    fact_dict['occurred_start'] = None
+                    fact_dict['occurred_end'] = None
+
+                # Remove fact_kind from output (only used for prompt engineering, not stored)
+                fact_dict.pop('fact_kind', None)
+
+                chunk_facts.append(fact_dict)
             return chunk_facts
 
         except BadRequestError as e:
@@ -1034,7 +618,7 @@ async def extract_facts_from_text(
     Returns:
         List of fact dictionaries with 'fact' and 'date' keys
     """
-    chunks = chunk_text(text, max_chars=5000)
+    chunks = chunk_text(text, max_chars=3000)
     tasks = [
         _extract_facts_with_auto_split(
             chunk=chunk,

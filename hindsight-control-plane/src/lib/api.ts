@@ -190,6 +190,56 @@ export class DataplaneClient {
       method: 'DELETE',
     });
   }
+
+  /**
+   * List entities for an agent
+   */
+  async listEntities(params: {
+    agent_id: string;
+    limit?: number;
+  }) {
+    const queryParams = new URLSearchParams();
+    queryParams.append('agent_id', params.agent_id);
+    if (params.limit) queryParams.append('limit', params.limit.toString());
+
+    return this.fetchApi<{
+      entities: Array<{
+        id: string;
+        canonical_name: string;
+        mention_count: number;
+        first_seen?: string;
+        last_seen?: string;
+        metadata?: Record<string, any>;
+      }>;
+    }>(`/api/entities?${queryParams}`);
+  }
+
+  /**
+   * Get entity details with observations
+   */
+  async getEntity(entityId: string, agentId: string) {
+    return this.fetchApi<{
+      id: string;
+      canonical_name: string;
+      mention_count: number;
+      first_seen?: string;
+      last_seen?: string;
+      metadata?: Record<string, any>;
+      observations: Array<{
+        text: string;
+        mentioned_at?: string;
+      }>;
+    }>(`/api/entities/${entityId}?agent_id=${agentId}`);
+  }
+
+  /**
+   * Regenerate observations for an entity
+   */
+  async regenerateEntityObservations(entityId: string, agentId: string) {
+    return this.fetchApi(`/api/entities/${entityId}/regenerate?agent_id=${agentId}`, {
+      method: 'POST',
+    });
+  }
 }
 
 // Export a singleton instance

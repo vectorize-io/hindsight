@@ -100,6 +100,7 @@ class EmbeddedPostgres:
         username: str = DEFAULT_USERNAME,
         password: str = DEFAULT_PASSWORD,
         database: str = DEFAULT_DATABASE,
+        name: str = "hindsight",
     ):
         """
         Initialize the embedded PostgreSQL manager.
@@ -112,6 +113,7 @@ class EmbeddedPostgres:
             username: Username for the database. Defaults to "hindsight"
             password: Password for the database. Defaults to "hindsight"
             database: Database name to create. Defaults to "hindsight"
+            name: Instance name for pg0. Defaults to "hindsight"
         """
         self.data_dir = Path(data_dir or DEFAULT_DATA_DIR).expanduser()
         self.install_dir = Path(install_dir or DEFAULT_INSTALL_DIR).expanduser()
@@ -120,6 +122,7 @@ class EmbeddedPostgres:
         self.username = username
         self.password = password
         self.database = database
+        self.name = name
 
         # Binary path
         binary_name = "pg0.exe" if platform.system() == "Windows" else "pg0"
@@ -208,10 +211,11 @@ class EmbeddedPostgres:
         # Create data directory
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Starting embedded PostgreSQL (data: {self.data_dir}, port: {self.port})...")
+        logger.info(f"Starting embedded PostgreSQL (name: {self.name}, data: {self.data_dir}, install: {self.install_dir}, port: {self.port})...")
 
         returncode, stdout, stderr = await self._run_command_async(
             "start",
+            "--name", self.name,
             "--port", str(self.port),
             "--username", self.username,
             "--password", self.password,
@@ -237,9 +241,9 @@ class EmbeddedPostgres:
         if not self.is_installed():
             return
 
-        logger.info("Stopping embedded PostgreSQL...")
+        logger.info(f"Stopping embedded PostgreSQL (name: {self.name})...")
 
-        returncode, stdout, stderr = await self._run_command_async("stop")
+        returncode, stdout, stderr = await self._run_command_async("stop", "--name", self.name)
 
         if returncode != 0:
             # Don't raise if server wasn't running
@@ -264,7 +268,7 @@ class EmbeddedPostgres:
             raise RuntimeError("pg0 is not installed.")
 
         returncode, stdout, stderr = await self._run_command_async(
-            "info", "-o", "json")
+            "info", "--name", self.name, "-o", "json")
 
         if returncode != 0:
             raise RuntimeError(f"Failed to get PostgreSQL info: {stderr}")

@@ -12,7 +12,7 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-echo "🚀 Starting LoComo Benchmark with '${ENV_MODE}' environment..."
+echo "🚀 Starting LoComo Benchmark"
 echo "📄 Loading environment from $ENV_FILE"
 echo ""
 
@@ -21,4 +21,4 @@ set -a
 source "$ENV_FILE"
 set +a
 
-uv run python memora-dev/benchmarks/locomo/locomo_benchmark.py "${ARGS[@]}"
+uv run python hindsight-dev/benchmarks/locomo/locomo_benchmark.py "${ARGS[@]}"
