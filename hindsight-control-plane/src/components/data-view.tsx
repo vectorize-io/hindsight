@@ -320,8 +320,8 @@ export function DataView({ factType }: DataViewProps) {
           )}
 
           {viewMode === 'table' && (
-            <div className="flex gap-4">
-              <div className={`transition-all ${selectedTableMemory ? 'w-2/3' : 'w-full'}`}>
+            <div>
+              <div className="w-full">
                 <div className="px-5 mb-4">
                   <Input
                     type="text"
@@ -358,7 +358,8 @@ export function DataView({ factType }: DataViewProps) {
                                   <TableHead className="w-[80px]">ID</TableHead>
                                   <TableHead>Text</TableHead>
                                   <TableHead className="w-[150px]">Context</TableHead>
-                                  <TableHead className="w-[120px]">Occurred</TableHead>
+                                  <TableHead className="w-[100px]">Occurred</TableHead>
+                                  <TableHead className="w-[100px]">Mentioned</TableHead>
                                   <TableHead className="w-[60px]">Actions</TableHead>
                                 </TableRow>
                               </TableHeader>
@@ -366,6 +367,9 @@ export function DataView({ factType }: DataViewProps) {
                                 {paginatedRows.map((row: any, idx: number) => {
                                   const occurredDisplay = row.occurred_start
                                     ? new Date(row.occurred_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                    : null;
+                                  const mentionedDisplay = row.mentioned_at
+                                    ? new Date(row.mentioned_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                                     : null;
 
                                   return (
@@ -404,6 +408,14 @@ export function DataView({ factType }: DataViewProps) {
                                           <span className="flex items-center gap-1">
                                             <Calendar className="h-3 w-3" />
                                             {occurredDisplay}
+                                          </span>
+                                        ) : '-'}
+                                      </TableCell>
+                                      <TableCell className="text-xs">
+                                        {mentionedDisplay ? (
+                                          <span className="flex items-center gap-1">
+                                            <Calendar className="h-3 w-3" />
+                                            {mentionedDisplay}
                                           </span>
                                         ) : '-'}
                                       </TableCell>
@@ -492,9 +504,9 @@ export function DataView({ factType }: DataViewProps) {
                 </div>
               </div>
 
-              {/* Memory Detail Panel for Table View */}
+              {/* Memory Detail Panel for Table View - Fixed on Right */}
               {selectedTableMemory && (
-                <div className="w-1/3 pr-5 pb-5">
+                <div className="fixed right-0 top-0 h-screen w-96 bg-background border-l border-border shadow-lg z-50 overflow-y-auto p-4">
                   <MemoryDetailPanel
                     memory={selectedTableMemory}
                     onClose={() => setSelectedTableMemory(null)}

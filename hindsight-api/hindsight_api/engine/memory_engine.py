@@ -1084,7 +1084,8 @@ class MemoryEngine:
             temporal_results = []
             aggregated_timings = {"semantic": 0.0, "bm25": 0.0, "graph": 0.0, "temporal": 0.0}
 
-            for idx, (ft_semantic, ft_bm25, ft_graph, ft_temporal, ft_timings) in enumerate(all_retrievals):
+            detected_temporal_constraint = None
+            for idx, (ft_semantic, ft_bm25, ft_graph, ft_temporal, ft_timings, ft_temporal_constraint) in enumerate(all_retrievals):
                 # Log fact types in this retrieval batch
                 ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
                 logger.debug(f"[SEARCH {search_id}] Fact type '{ft_name}': semantic={len(ft_semantic)}, bm25={len(ft_bm25)}, graph={len(ft_graph)}, temporal={len(ft_temporal) if ft_temporal else 0}")
@@ -1097,6 +1098,9 @@ class MemoryEngine:
                 # Track max timing for each method (since they run in parallel across fact types)
                 for method, duration in ft_timings.items():
                     aggregated_timings[method] = max(aggregated_timings[method], duration)
+                # Capture temporal constraint (same across all fact types)
+                if ft_temporal_constraint:
+                    detected_temporal_constraint = ft_temporal_constraint
 
             # If no temporal results from any fact type, set to None
             if not temporal_results:
@@ -1120,9 +1124,13 @@ class MemoryEngine:
                 f"bm25={len(bm25_results)}({aggregated_timings['bm25']:.3f}s)",
                 f"graph={len(graph_results)}({aggregated_timings['graph']:.3f}s)"
             ]
-            if temporal_results:
-                timing_parts.append(f"temporal={len(temporal_results)}({aggregated_timings['temporal']:.3f}s)")
-            log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {step_duration:.3f}s")
+            temporal_info = ""
+            if detected_temporal_constraint:
+                start_dt, end_dt = detected_temporal_constraint
+                temporal_count = len(temporal_results) if temporal_results else 0
+                timing_parts.append(f"temporal={temporal_count}({aggregated_timings['temporal']:.3f}s)")
+                temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
+            log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {step_duration:.3f}s{temporal_info}")
 
             # Record retrieval results for tracer (convert typed results to old format)
             if tracer:

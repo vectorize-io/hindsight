@@ -125,8 +125,6 @@ jobs:
         file: docker/standalone/Dockerfile
         target: ${{ matrix.target }}
         push: false
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
 
   test-api:
     runs-on: ubuntu-latest

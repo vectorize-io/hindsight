@@ -452,7 +452,7 @@ async def retrieve_parallel(
     thinking_budget: int,
     question_date: Optional[datetime] = None,
     query_analyzer: Optional["QueryAnalyzer"] = None
-) -> Tuple[List[RetrievalResult], List[RetrievalResult], List[RetrievalResult], Optional[List[RetrievalResult]], Dict[str, float]]:
+) -> Tuple[List[RetrievalResult], List[RetrievalResult], List[RetrievalResult], Optional[List[RetrievalResult]], Dict[str, float], Optional[Tuple[datetime, datetime]]]:
     """
     Run 3-way or 4-way parallel retrieval (adds temporal if detected).
 
@@ -467,10 +467,11 @@ async def retrieve_parallel(
         query_analyzer: Query analyzer to use (defaults to TransformerQueryAnalyzer)
 
     Returns:
-        Tuple of (semantic_results, bm25_results, graph_results, temporal_results, timings)
+        Tuple of (semantic_results, bm25_results, graph_results, temporal_results, timings, temporal_constraint)
         Each results list contains RetrievalResult objects
         temporal_results is None if no temporal constraint detected
         timings is a dict with per-method latencies in seconds
+        temporal_constraint is the (start_date, end_date) tuple if detected, else None
     """
     # Detect temporal constraint
     from .temporal_extraction import extract_temporal_constraint
@@ -481,7 +482,6 @@ async def retrieve_parallel(
     temporal_constraint = extract_temporal_constraint(
         query_text, reference_date=question_date, analyzer=query_analyzer
     )
-    logger.info(f"[TEMPORAL] Query: {query_text[:50]}... -> constraint={temporal_constraint}")
 
     # Wrapper to track timing for each retrieval method
     async def timed_retrieval(name: str, coro):
@@ -534,4 +534,4 @@ async def retrieve_parallel(
         graph_results, _, timings["graph"] = results[2]
         temporal_results = None
 
-    return semantic_results, bm25_results, graph_results, temporal_results, timings
+    return semantic_results, bm25_results, graph_results, temporal_results, timings, temporal_constraint

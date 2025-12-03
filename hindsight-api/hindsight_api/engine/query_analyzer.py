@@ -184,6 +184,34 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         if re.search(r'\b(today|hoy|oggi|aujourd\'?hui|heute)\b', query, re.IGNORECASE):
             return constraint(reference_date, reference_date)
 
+        # "a couple of days ago" / "a few days ago" patterns
+        # These are imprecise so we create a range
+        if re.search(r'\b(a\s+)?couple\s+(of\s+)?days?\s+ago\b', query, re.IGNORECASE):
+            # "a couple of days" = approximately 2 days, give range of 1-3 days
+            return constraint(reference_date - timedelta(days=3), reference_date - timedelta(days=1))
+
+        if re.search(r'\b(a\s+)?few\s+days?\s+ago\b', query, re.IGNORECASE):
+            # "a few days" = approximately 3-4 days, give range of 2-5 days
+            return constraint(reference_date - timedelta(days=5), reference_date - timedelta(days=2))
+
+        # "a couple of weeks ago" / "a few weeks ago" patterns
+        if re.search(r'\b(a\s+)?couple\s+(of\s+)?weeks?\s+ago\b', query, re.IGNORECASE):
+            # "a couple of weeks" = approximately 2 weeks, give range of 1-3 weeks
+            return constraint(reference_date - timedelta(weeks=3), reference_date - timedelta(weeks=1))
+
+        if re.search(r'\b(a\s+)?few\s+weeks?\s+ago\b', query, re.IGNORECASE):
+            # "a few weeks" = approximately 3-4 weeks, give range of 2-5 weeks
+            return constraint(reference_date - timedelta(weeks=5), reference_date - timedelta(weeks=2))
+
+        # "a couple of months ago" / "a few months ago" patterns
+        if re.search(r'\b(a\s+)?couple\s+(of\s+)?months?\s+ago\b', query, re.IGNORECASE):
+            # "a couple of months" = approximately 2 months, give range of 1-3 months
+            return constraint(reference_date - timedelta(days=90), reference_date - timedelta(days=30))
+
+        if re.search(r'\b(a\s+)?few\s+months?\s+ago\b', query, re.IGNORECASE):
+            # "a few months" = approximately 3-4 months, give range of 2-5 months
+            return constraint(reference_date - timedelta(days=150), reference_date - timedelta(days=60))
+
         # Last week patterns (English, Spanish, Italian, French, German)
         if re.search(r'\b(last\s+week|la\s+semana\s+pasada|la\s+settimana\s+scorsa|la\s+semaine\s+derni[eè]re|letzte\s+woche)\b', query, re.IGNORECASE):
             start = reference_date - timedelta(days=reference_date.weekday() + 7)

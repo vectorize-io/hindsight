@@ -232,3 +232,54 @@ def test_query_analyzer_last_weekend(query_analyzer):
     assert analysis.temporal_constraint.end_date.day == 12  # Sunday
 
 
+def test_query_analyzer_couple_days_ago(query_analyzer):
+    """Test extraction of 'a couple of days ago' colloquial expression."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    query = "I mentioned cooking something for my friend a couple of days ago. What was it?"
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    print(f"\nQuery: '{query}'")
+    print(f"Reference date: {reference_date.strftime('%A, %Y-%m-%d')}")
+    print(f"Analysis: {analysis}")
+
+    assert analysis.temporal_constraint is not None, "Should extract temporal constraint for 'a couple of days ago'"
+    # Range should be 1-3 days ago: Jan 12-14
+    assert analysis.temporal_constraint.start_date.day == 12
+    assert analysis.temporal_constraint.end_date.day == 14
+
+
+def test_query_analyzer_few_days_ago(query_analyzer):
+    """Test extraction of 'a few days ago' colloquial expression."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    query = "What did I do a few days ago?"
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    print(f"\nQuery: '{query}'")
+    print(f"Reference date: {reference_date.strftime('%A, %Y-%m-%d')}")
+    print(f"Analysis: {analysis}")
+
+    assert analysis.temporal_constraint is not None, "Should extract temporal constraint for 'a few days ago'"
+    # Range should be 2-5 days ago: Jan 10-13
+    assert analysis.temporal_constraint.start_date.day == 10
+    assert analysis.temporal_constraint.end_date.day == 13
+
+
+def test_query_analyzer_couple_weeks_ago(query_analyzer):
+    """Test extraction of 'a couple of weeks ago' colloquial expression."""
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    query = "a couple of weeks ago we discussed this"
+    analysis = query_analyzer.analyze(query, reference_date)
+
+    print(f"\nQuery: '{query}'")
+    print(f"Reference date: {reference_date.strftime('%A, %Y-%m-%d')}")
+    print(f"Analysis: {analysis}")
+
+    assert analysis.temporal_constraint is not None, "Should extract temporal constraint for 'a couple of weeks ago'"
+    # Range should be 1-3 weeks ago
+    assert analysis.temporal_constraint.start_date.month == 12  # Dec 25 (3 weeks before Jan 15)
+    assert analysis.temporal_constraint.end_date.month == 1  # Jan 8 (1 week before Jan 15)
+
+

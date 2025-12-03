@@ -330,7 +330,9 @@ FACT FORMAT - ALL FIVE DIMENSIONS REQUIRED - MAXIMUM VERBOSITY
 For EACH fact, CAPTURE ALL DETAILS - NEVER SUMMARIZE OR OMIT:
 
 1. **what**: WHAT happened - COMPLETE description with ALL specifics (objects, actions, quantities, details)
-2. **when**: WHEN it happened - ALWAYS include temporal info (dates, times, durations, relative times)
+2. **when**: WHEN it happened - ALWAYS include temporal info with DAY OF WEEK (e.g., "Monday, June 10, 2024")
+   - Always include the day name: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
+   - Format: "day_name, month day, year" (e.g., "Saturday, June 9, 2024")
 3. **where**: WHERE it happened or is about - SPECIFIC locations, places, areas, regions (if applicable)
 4. **who**: WHO is involved - ALL people/entities with FULL relationships and background
 5. **why**: WHY it matters - ALL emotions, preferences, motivations, significance, nuance
@@ -350,7 +352,7 @@ Example input: "I went to my college roommate's wedding last June. Emily finally
 
 CORRECT output:
 - what: "Emily got married to Sarah at a rooftop garden ceremony"
-- when: "in June 2024, after dating for 5 years"
+- when: "Saturday, June 8, 2024, after dating for 5 years"
 - where: "downtown San Francisco, at a rooftop garden venue"
 - who: "Emily (user's college roommate), Sarah (Emily's partner of 5 years)"
 - why: "User found it romantic and beautiful, dreams of similar outdoor ceremony"
@@ -366,7 +368,8 @@ TEMPORAL HANDLING
 ══════════════════════════════════════════════════════════════════════════
 
 For EVENTS (fact_kind="event"):
-- Convert relative dates → absolute: "yesterday" on March 15 → "March 14, 2024"
+- Convert relative dates → absolute WITH DAY OF WEEK: "yesterday" on Saturday March 15 → "Friday, March 14, 2024"
+- Always include the day name (Monday, Tuesday, etc.) in the 'when' field
 - Set occurred_start/occurred_end to WHEN IT HAPPENED (not when mentioned)
 
 For CONVERSATIONS (fact_kind="conversation"):
@@ -468,10 +471,12 @@ WHAT TO EXTRACT vs SKIP
     last_error = None
 
     # Build user message with metadata and chunk content in a clear format
+    # Format event_date with day of week for better temporal reasoning
+    event_date_formatted = event_date.strftime('%A, %B %d, %Y')  # e.g., "Monday, June 10, 2024"
     user_message = f"""Extract facts from the following text chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
-Event Date: {event_date.isoformat()}
+Event Date: {event_date_formatted} ({event_date.isoformat()})
 Context: {context if context else 'none'}
 
 Text:
