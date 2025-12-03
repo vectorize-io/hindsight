@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api"
-version = "0.0.7"
+version = "0.0.8"
 description = "Temporal + Semantic + Entity Memory System for AI agents using PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.11"
