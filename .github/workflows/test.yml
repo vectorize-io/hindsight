@@ -44,14 +44,14 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
     - name: Install dependencies
-      working-directory: ./hindsight-clients/typescript
-      run: npm ci
+      run: npm ci --workspace=hindsight-clients/typescript
 
     - name: Build TypeScript client
-      working-directory: ./hindsight-clients/typescript
-      run: npm run build
+      run: npm run build --workspace=hindsight-clients/typescript
 
   build-docs:
     runs-on: ubuntu-latest
@@ -63,14 +63,14 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
     - name: Install dependencies
-      working-directory: ./hindsight-docs
-      run: npm ci
+      run: npm ci --workspace=hindsight-docs
 
     - name: Build docs
-      working-directory: ./hindsight-docs
-      run: npm run build
+      run: npm run build --workspace=hindsight-docs
 
   build-rust-cli:
     runs-on: ubuntu-latest
