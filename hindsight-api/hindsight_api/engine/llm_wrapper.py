@@ -19,6 +19,35 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # Global semaphore to limit concurrent LLM requests across all instances
 _global_llm_semaphore = asyncio.Semaphore(32)
 
+# Model-specific max output token limits
+# These represent the maximum tokens a model can generate in a single response
+MODEL_MAX_OUTPUT_TOKENS = {
+    # OpenAI models
+    "gpt-4o": 16384,
+    "gpt-4o-mini": 16384,
+    "gpt-4-turbo": 4096,
+    "gpt-4-turbo-preview": 4096,
+    "gpt-4": 8192,
+    "gpt-3.5-turbo": 4096,
+    "o1": 100000,
+    "o1-mini": 65536,
+    "o1-preview": 32768,
+    # Groq models
+    "llama-3.1-70b-versatile": 32768,
+    "llama-3.1-8b-instant": 8192,
+    "llama-3.3-70b-versatile": 32768,
+    "llama3-70b-8192": 8192,
+    "llama3-8b-8192": 8192,
+    "mixtral-8x7b-32768": 32768,
+    # Gemini models
+    "gemini-2.0-flash": 8192,
+    "gemini-1.5-pro": 8192,
+    "gemini-1.5-flash": 8192,
+}
+
+# Conservative default for unknown models
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
 
 class OutputTooLongError(Exception):
     """
@@ -92,6 +121,16 @@ class LLMConfig:
         logger.info(
             f"Initialized LLM: provider={self.provider}, model={self.model}, base_url={self.base_url}"
         )
+
+    @property
+    def max_output_tokens(self) -> int:
+        """
+        Get the max output tokens for the configured model.
+
+        Returns the model-specific limit from MODEL_MAX_OUTPUT_TOKENS,
+        or DEFAULT_MAX_OUTPUT_TOKENS if the model is not in the mapping.
+        """
+        return MODEL_MAX_OUTPUT_TOKENS.get(self.model, DEFAULT_MAX_OUTPUT_TOKENS)
 
     async def call(
         self,
