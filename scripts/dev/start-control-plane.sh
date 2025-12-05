@@ -13,12 +13,9 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
 fi
 
 echo "🔨 Building TypeScript SDK first to ensure it's up to date..."
-cd "$ROOT_DIR/hindsight-clients/typescript" || exit 1
-npm run build
+npm run build -w @vectorize-io/hindsight-client
 echo "✅ SDK built successfully"
 echo ""
-
-cd "$ROOT_DIR/hindsight-control-plane" || exit 1
 
 echo "🚀 Starting Control Plane (Next.js dev server)..."
 if [ -f "$ROOT_DIR/.env" ]; then
@@ -33,4 +30,4 @@ fi
 export HOSTNAME="${HINDSIGHT_CP_HOSTNAME:-0.0.0.0}"
 
 # Run dev server
-npm run dev
+npm run dev -w hindsight-control-plane

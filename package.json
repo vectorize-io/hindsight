@@ -1,0 +1,9 @@
+{
+  "name": "hindsight",
+  "private": true,
+  "workspaces": [
+    "hindsight-clients/typescript",
+    "hindsight-control-plane",
+    "hindsight-docs"
+  ]
+}

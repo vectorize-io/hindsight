@@ -5,13 +5,23 @@ Thanks for your interest in contributing to Hindsight!
 ## Getting Started
 
 1. Fork and clone the repository
-2. Install dependencies:
    ```bash
-   cd hindsight-api && uv sync
+   git clone git@github.com:vectorize-io/hindsight.git
+   cd hindsight
    ```
-3. Set up your environment:
+2. Set up your environment:
    ```bash
-   export OPENAI_API_KEY=your-key
+   cp .env.example .env
+   ```
+   Edit the .env to add LLM API key and config as required
+
+3. Install dependencies:
+   ```bash
+   # Python dependencies
+   uv sync --directory hindsight-api/
+
+   # Node dependencies (uses npm workspaces)
+   npm install
    ```
 
 ## Development

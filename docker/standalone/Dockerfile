@@ -52,13 +52,15 @@ FROM node:20-slim AS sdk-builder
 ARG INCLUDE_CP
 RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping SDK build" && exit 0; fi
 
-WORKDIR /app/sdk
+WORKDIR /app
 
-COPY hindsight-clients/typescript/package*.json ./
-RUN npm ci
+# Copy root package files for npm workspaces
+COPY package.json package-lock.json ./
+COPY hindsight-clients/typescript/ ./hindsight-clients/typescript/
 
-COPY hindsight-clients/typescript/ ./
-RUN npm run build
+# Install and build SDK using workspace
+RUN npm ci -w @vectorize-io/hindsight-client
+RUN npm run build -w @vectorize-io/hindsight-client
 
 # =============================================================================
 # Stage: Control Plane Builder
@@ -71,7 +73,7 @@ RUN if [ "$INCLUDE_CP" != "true" ]; then echo "Skipping CP build" && exit 0; fi
 WORKDIR /app
 
 # Copy built SDK
-COPY --from=sdk-builder /app/sdk /app/sdk
+COPY --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
 
 # Install Control Plane dependencies
 # Only copy package.json (not package-lock.json) to ensure npm installs
@@ -186,7 +188,7 @@ FROM node:20-alpine AS cp-only
 WORKDIR /app
 
 # Copy built SDK
-COPY --from=sdk-builder /app/sdk /app/sdk
+COPY --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
 
 # Copy Control Plane standalone build
 WORKDIR /app/control-plane
@@ -239,7 +241,7 @@ RUN useradd -m -s /bin/bash hindsight
 COPY --from=api-builder /app/api /app/api
 
 # Copy built SDK
-COPY --from=sdk-builder /app/sdk /app/sdk
+COPY --from=sdk-builder /app/hindsight-clients/typescript /app/sdk
 
 # Copy Control Plane standalone build
 WORKDIR /app/control-plane

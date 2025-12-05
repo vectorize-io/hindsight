@@ -80,14 +80,14 @@ jobs:
       with:
         node-version: '20'
         registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
     - name: Install dependencies
-      working-directory: ./hindsight-clients/typescript
-      run: npm ci
+      run: npm ci --workspace=hindsight-clients/typescript
 
     - name: Build
-      working-directory: ./hindsight-clients/typescript
-      run: npm run build
+      run: npm run build --workspace=hindsight-clients/typescript
 
     - name: Publish to npm
       working-directory: ./hindsight-clients/typescript
