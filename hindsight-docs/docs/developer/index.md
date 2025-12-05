@@ -22,14 +22,14 @@ Hindsight solves these problems with a memory system designed specifically for A
 
 ```mermaid
 graph TB
-    subgraph app[Your Application]
+    subgraph app["<b>Your Application</b>"]
         Agent[AI Agent]
     end
 
-    subgraph hindsight[Hindsight]
+    subgraph hindsight["<b>Hindsight</b>"]
         API[API Server]
 
-        subgraph bank[Memory Bank]
+        subgraph bank["<b>Memory Bank</b>"]
             Documents[Documents]
             Memories[Memories]
             Entities[Entities]
@@ -104,6 +104,7 @@ The `bias_strength` parameter (0-1) controls how much personality influences opi
 
 ### Getting Started
 - [**Quick Start**](/developer/api/quickstart) — Install and get up and running in 60 seconds
+- [**RAG vs Hindsight**](/developer/rag-vs-hindsight) — See how Hindsight differs from traditional RAG with real examples
 
 ### Core Concepts
 - [**Retain**](/developer/retain) — How memories are stored with multi-dimensional facts
