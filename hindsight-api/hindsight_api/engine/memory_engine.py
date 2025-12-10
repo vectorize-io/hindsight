@@ -2712,7 +2712,7 @@ Guidelines:
             ],
             scope="memory_think",
             temperature=0.9,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
         llm_time = time.time() - llm_start
 

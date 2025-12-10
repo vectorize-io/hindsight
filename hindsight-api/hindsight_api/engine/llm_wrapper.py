@@ -210,8 +210,8 @@ class LLMProvider:
                         raise
 
                 except APIStatusError as e:
-                    # Fast fail on 4xx client errors (except 429 rate limit)
-                    if 400 <= e.status_code < 500 and e.status_code != 429:
+                    # Fast fail on 4xx client errors (except 429 rate limit and 498 which is treated as server error)
+                    if 400 <= e.status_code < 500 and e.status_code not in (429, 498):
                         logger.error(f"Client error (HTTP {e.status_code}), not retrying: {str(e)}")
                         raise
 

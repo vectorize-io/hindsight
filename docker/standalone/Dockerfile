@@ -40,9 +40,8 @@ WORKDIR /app/api
 # Sync dependencies (will create lock file if needed)
 RUN uv sync
 
-# Copy source code and alembic migrations
+# Copy source code (alembic migrations are inside hindsight_api/)
 COPY hindsight-api/hindsight_api ./hindsight_api
-COPY hindsight-api/alembic ./alembic
 
 # =============================================================================
 # Stage: SDK Builder (needed for Control Plane)
