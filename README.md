@@ -10,7 +10,7 @@
 [![npm](https://img.shields.io/npm/v/@vectorize-io/hindsight-client)](https://www.npmjs.com/package/@vectorize-io/hindsight-client)
 [![Slack Community](https://img.shields.io/badge/Slack-Join%20Community-4A154B?logo=slack)](https://join.slack.com/t/hindsight-space/shared_invite/zt-3klo21kua-VUCC_zHP5rIcXFB1_5yw6A)
 
-[Documentation](https://vectorize-io.github.io/hindsight) • [Paper](./Hindsight.pdf) • [Examples](./examples)
+[Documentation](https://vectorize-io.github.io/hindsight) • [Paper](#coming-soon) • [Examples](https://github.com/vectorize-io/hindsight-cookbook)
 
 </div>
 
@@ -28,7 +28,7 @@ Hindsight addresses common challenges that have frustrated AI engineers building
 
 ## How Hindsight Works
 
-![Overview](./hindsight-docs/static/img/hindsight-overview.png)
+![Overview](./hindsight-docs/static/img/hindsight-overview.webp)
 
 Hindsight organizes memory into four networks to mimic the way human memory works:
 
@@ -156,7 +156,7 @@ client.retain(
 
 Behind the scenes, the retain operation uses an LLM to extract key facts, temporal data, entities, and relationships. It passes these through a normalization process to transform extracted data into canonical entities, time series, and search indexes along with metadata. These representations create the pathways for accurate memory retrieval in the recall and reflect operations. 
 
-![Retain Operation](hindsight-docs/static/img/retain-operation.png)
+![Retain Operation](hindsight-docs/static/img/retain-operation.webp)
 
 ### Recall
 
@@ -182,7 +182,7 @@ Recall performs 4 retrieval strategies in parallel:
 - Graph: Entity/temporal/causal links
 - Temporal: Time range filtering
 
-![Retain Operation](hindsight-docs/static/img/recall-operation.png)
+![Retain Operation](hindsight-docs/static/img/recall-operation.webp)
 
 The individual results from the retrievals are merged, then ordered by relevance using reciprocal rank fusion and a cross-encoder reranking model.
 
@@ -208,7 +208,7 @@ client = Hindsight(base_url="http://localhost:8888")
 client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 ```
 
-![Retain Operation](hindsight-docs/static/img/reflect-operation.png)
+![Retain Operation](hindsight-docs/static/img/reflect-operation.webp)
 
 ## Integrations
 
