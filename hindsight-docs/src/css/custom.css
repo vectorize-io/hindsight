@@ -94,6 +94,66 @@
   transition: background-color 0.15s ease;
 }
 
+/* Navbar icons (desktop only) */
+@media (min-width: 997px) {
+  .navbar-item-developer::before,
+  .navbar-item-sdks::before,
+  .navbar-item-api::before,
+  .navbar-item-cookbook::before,
+  .navbar-item-changelog::before {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    content: '';
+  }
+
+  .navbar-item-developer::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M71.68 97.22 34.74 128l36.94 30.78a12 12 0 1 1-15.36 18.44l-48-40a12 12 0 0 1 0-18.44l48-40a12 12 0 0 1 15.36 18.44Zm176 21.56-48-40a12 12 0 1 0-15.36 18.44L221.26 128l-36.94 30.78a12 12 0 1 0 15.36 18.44l48-40a12 12 0 0 0 0-18.44ZM164.1 28.72a12 12 0 0 0-15.38 7.18l-64 176a12 12 0 0 0 7.18 15.37 11.79 11.79 0 0 0 4.1.73 12 12 0 0 0 11.28-7.9l64-176a12 12 0 0 0-7.18-15.38Z'/%3E%3C/svg%3E");
+  }
+
+  .navbar-item-sdks::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='m225.6 62.64-88-48.17a19.91 19.91 0 0 0-19.2 0l-88 48.17A20 20 0 0 0 20 80.19v95.62a20 20 0 0 0 10.4 17.55l88 48.17a19.89 19.89 0 0 0 19.2 0l88-48.17a20 20 0 0 0 10.4-17.55V80.19a20 20 0 0 0-10.4-17.55ZM128 36.57 200 76l-72 39.42L56 76ZM44 96.82l72 39.43v76.89l-72-39.42Zm96 116.32v-76.89l72-39.43v76.89Z'/%3E%3C/svg%3E");
+  }
+
+  .navbar-item-api::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M180.49 143.51a12 12 0 0 1 0 17l-24 24a12 12 0 0 1-17-17L155 152l-15.52-15.51a12 12 0 0 1 17-17ZM112.49 120.49a12 12 0 0 0-17 0l-24 24a12 12 0 0 0 0 17l24 24a12 12 0 0 0 17-17L97 153l15.52-15.51a12 12 0 0 0-.03-17ZM220 88v24a12 12 0 0 1-24 0v-16h-44a12 12 0 0 1-12-12V40H60v68a12 12 0 0 1-24 0V40a20 20 0 0 1 20-20h96a12 12 0 0 1 8.49 3.52l56 56A12 12 0 0 1 220 88Zm-60-8h23L160 57Zm-4 132H60v-12a12 12 0 0 0-24 0v12a20 20 0 0 0 20 20h100a12 12 0 0 0 0-24Zm64-44a12 12 0 0 0-12 12v36h-44a12 12 0 0 0 0 24h44a20 20 0 0 0 20-20v-40a12 12 0 0 0-8-12Z'/%3E%3C/svg%3E");
+  }
+
+  .navbar-item-cookbook::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M224 44H160a43.86 43.86 0 0 0-32 13.85A43.86 43.86 0 0 0 96 44H32a20 20 0 0 0-20 20v128a20 20 0 0 0 20 20h64a20 20 0 0 1 20 20 12 12 0 0 0 24 0 20 20 0 0 1 20-20h64a20 20 0 0 0 20-20V64a20 20 0 0 0-20-20ZM96 188H36V68h60a20 20 0 0 1 20 20v108.69A43.74 43.74 0 0 0 96 188Zm124 0h-60a43.74 43.74 0 0 0-20 8.69V88a20 20 0 0 1 20-20h60Z'/%3E%3C/svg%3E");
+  }
+
+  .navbar-item-changelog::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M140 80v41.21l34.17 20.5a12 12 0 1 1-12.34 20.58l-40-24A12 12 0 0 1 116 128V80a12 12 0 0 1 24 0Zm-12-52a99.38 99.38 0 0 0-70.76 29.34c-4.69 4.74-9 9.37-13.24 14V64a12 12 0 0 0-24 0v40a12 12 0 0 0 12 12h40a12 12 0 0 0 0-24H53.41c4.24-5.95 8.53-11.93 13.49-16.95A76 76 0 1 1 52 128a12 12 0 0 0-24 0 100 100 0 1 0 100-100Z'/%3E%3C/svg%3E");
+  }
+
+  /* Dark mode icons */
+  [data-theme='dark'] .navbar-item-developer::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M71.68 97.22 34.74 128l36.94 30.78a12 12 0 1 1-15.36 18.44l-48-40a12 12 0 0 1 0-18.44l48-40a12 12 0 0 1 15.36 18.44Zm176 21.56-48-40a12 12 0 1 0-15.36 18.44L221.26 128l-36.94 30.78a12 12 0 1 0 15.36 18.44l48-40a12 12 0 0 0 0-18.44ZM164.1 28.72a12 12 0 0 0-15.38 7.18l-64 176a12 12 0 0 0 7.18 15.37 11.79 11.79 0 0 0 4.1.73 12 12 0 0 0 11.28-7.9l64-176a12 12 0 0 0-7.18-15.38Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-sdks::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='m225.6 62.64-88-48.17a19.91 19.91 0 0 0-19.2 0l-88 48.17A20 20 0 0 0 20 80.19v95.62a20 20 0 0 0 10.4 17.55l88 48.17a19.89 19.89 0 0 0 19.2 0l88-48.17a20 20 0 0 0 10.4-17.55V80.19a20 20 0 0 0-10.4-17.55ZM128 36.57 200 76l-72 39.42L56 76ZM44 96.82l72 39.43v76.89l-72-39.42Zm96 116.32v-76.89l72-39.43v76.89Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-api::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M180.49 143.51a12 12 0 0 1 0 17l-24 24a12 12 0 0 1-17-17L155 152l-15.52-15.51a12 12 0 0 1 17-17ZM112.49 120.49a12 12 0 0 0-17 0l-24 24a12 12 0 0 0 0 17l24 24a12 12 0 0 0 17-17L97 153l15.52-15.51a12 12 0 0 0-.03-17ZM220 88v24a12 12 0 0 1-24 0v-16h-44a12 12 0 0 1-12-12V40H60v68a12 12 0 0 1-24 0V40a20 20 0 0 1 20-20h96a12 12 0 0 1 8.49 3.52l56 56A12 12 0 0 1 220 88Zm-60-8h23L160 57Zm-4 132H60v-12a12 12 0 0 0-24 0v12a20 20 0 0 0 20 20h100a12 12 0 0 0 0-24Zm64-44a12 12 0 0 0-12 12v36h-44a12 12 0 0 0 0 24h44a20 20 0 0 0 20-20v-40a12 12 0 0 0-8-12Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-cookbook::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M224 44H160a43.86 43.86 0 0 0-32 13.85A43.86 43.86 0 0 0 96 44H32a20 20 0 0 0-20 20v128a20 20 0 0 0 20 20h64a20 20 0 0 1 20 20 12 12 0 0 0 24 0 20 20 0 0 1 20-20h64a20 20 0 0 0 20-20V64a20 20 0 0 0-20-20ZM96 188H36V68h60a20 20 0 0 1 20 20v108.69A43.74 43.74 0 0 0 96 188Zm124 0h-60a43.74 43.74 0 0 0-20 8.69V88a20 20 0 0 1 20-20h60Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-changelog::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M140 80v41.21l34.17 20.5a12 12 0 1 1-12.34 20.58l-40-24A12 12 0 0 1 116 128V80a12 12 0 0 1 24 0Zm-12-52a99.38 99.38 0 0 0-70.76 29.34c-4.69 4.74-9 9.37-13.24 14V64a12 12 0 0 0-24 0v40a12 12 0 0 0 12 12h40a12 12 0 0 0 0-24H53.41c4.24-5.95 8.53-11.93 13.49-16.95A76 76 0 1 1 52 128a12 12 0 0 0-24 0 100 100 0 1 0 100-100Z'/%3E%3C/svg%3E");
+  }
+}
+
 /* GitHub icon link */
 .header-github-link::before {
   content: '';
@@ -124,6 +184,95 @@
 
 [data-theme='dark'] .navbar__link:hover {
   background-color: #27272a;
+}
+
+/* Mobile navbar */
+@media (max-width: 996px) {
+  :root {
+    --ifm-navbar-height: 3.5rem;
+  }
+
+  .navbar {
+    padding: 0 0.75rem;
+  }
+
+  .navbar__logo {
+    margin-bottom: 0;
+    height: 24px !important;
+  }
+
+  .navbar__logo img {
+    height: 24px !important;
+  }
+
+  /* Hamburger menu toggle */
+  .navbar__toggle {
+    color: var(--ifm-color-primary);
+  }
+
+  /* Mobile sidebar */
+  .navbar-sidebar {
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar__brand {
+    padding: 1rem;
+    border-bottom: 1px solid var(--ifm-toc-border-color);
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar__items {
+    padding: 1rem 0;
+    background: #ffffff !important;
+  }
+
+  .navbar-sidebar .menu__link {
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 0.75rem 1.25rem;
+    color: #1e293b !important;
+  }
+
+  .navbar-sidebar .menu__link--active {
+    background: var(--hindsight-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Close button */
+  .navbar-sidebar__close {
+    color: #1e293b !important;
+  }
+
+  /* Backdrop overlay */
+  .navbar-sidebar__backdrop {
+    background: rgba(0, 0, 0, 0.5) !important;
+  }
+}
+
+/* Dark mode mobile sidebar */
+@media (max-width: 996px) {
+  [data-theme='dark'] .navbar-sidebar {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__brand {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__items {
+    background: #09090b !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar .menu__link {
+    color: #e2e8f0 !important;
+  }
+
+  [data-theme='dark'] .navbar-sidebar__close {
+    color: #e2e8f0 !important;
+  }
 }
 
 /* Hero section */

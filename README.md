@@ -66,7 +66,7 @@ UI: http://localhost:9999
 Install client:
 
 ```bash
-pip install hindsight-client
+pip install hindsight-client -U
 # or
 npm install @vectorize-io/hindsight-client
 ```
@@ -91,7 +91,7 @@ client.reflect(bank_id="my-bank", query="Tell me about Alice")
 ### Python (embedded, no Docker)
 
 ```bash
-pip install hindsight-all
+pip install hindsight-all -U
 ```
 
 ```python
@@ -100,27 +100,27 @@ from hindsight import HindsightServer, HindsightClient
 
 with HindsightServer(
     llm_provider="openai",
-    llm_model="gpt-4o-mini", 
+    llm_model="gpt-5-mini", 
     llm_api_key=os.environ["OPENAI_API_KEY"]
 ) as server:
     client = HindsightClient(base_url=server.url)
-    client.retain(bank_id="my-agent", content="Alice works at Google")
-    results = client.recall(bank_id="my-agent", query="Where does Alice work?")
+    client.retain(bank_id="my-bank", content="Alice works at Google")
+    results = client.recall(bank_id="my-bank", query="Where does Alice work?")
 ```
 
-### TypeScript
+### Node.js / TypeScript
 
 ```bash
 npm install @vectorize-io/hindsight-client
 ```
 
-```typescript
-import { HindsightClient } from '@vectorize-io/hindsight-client';
+```javascript
+const { HindsightClient } = require('@vectorize-io/hindsight-client');
 
 const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
 
-await client.retain('my-agent', 'Alice loves hiking in Yosemite');
-const response = await client.recall('my-agent', 'What does Alice like?');
+await client.retain('my-bank', 'Alice loves hiking in Yosemite');
+await client.recall('my-bank', 'What does Alice like?');
 ```
 
 ---
@@ -168,9 +168,7 @@ client = Hindsight(base_url="http://localhost:8888")
 client.recall(bank_id="my-bank", query="What does Alice do?")
 
 # Temporal
-results = client.recall(bank_id="my-bank", query="What happened in June?")
-
-
+client.recall(bank_id="my-bank", query="What happened in June?")
 ```
 
 Recall performs 4 retrieval strategies in parallel:

@@ -50,7 +50,9 @@ class Hindsight:
         client.retain(bank_id="alice", content="Alice loves AI")
 
         # Recall memories
-        results = client.recall(bank_id="alice", query="What does Alice like?")
+        response = client.recall(bank_id="alice", query="What does Alice like?")
+        for r in response.results:
+            print(r.text)
 
         # Generate contextual answer
         answer = client.reflect(bank_id="alice", query="What are my interests?")
@@ -125,8 +127,8 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata'
-            document_id: Optional document ID for grouping memories
+            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata', 'document_id'
+            document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
@@ -138,13 +140,14 @@ class Hindsight:
                 timestamp=item.get("timestamp"),
                 context=item.get("context"),
                 metadata=item.get("metadata"),
+                # Use item's document_id if provided, otherwise fall back to batch-level document_id
+                document_id=item.get("document_id") or document_id,
             )
             for item in items
         ]
 
         request_obj = retain_request.RetainRequest(
             items=memory_items,
-            document_id=document_id,
             async_=retain_async,
         )
 
@@ -161,6 +164,8 @@ class Hindsight:
         query_timestamp: Optional[str] = None,
         include_entities: bool = False,
         max_entity_tokens: int = 500,
+        include_chunks: bool = False,
+        max_chunk_tokens: int = 8192,
     ) -> RecallResponse:
         """
         Recall memories using semantic similarity.
@@ -175,14 +180,17 @@ class Hindsight:
             query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
             include_entities: Include entity observations in results (default: False)
             max_entity_tokens: Maximum tokens for entity observations (default: 500)
+            include_chunks: Include raw text chunks in results (default: False)
+            max_chunk_tokens: Maximum tokens for chunks (default: 8192)
 
         Returns:
-            RecallResponse with results, optional entities, and optional trace
+            RecallResponse with results, optional entities, optional chunks, and optional trace
         """
-        from hindsight_client_api.models import include_options, entity_include_options
+        from hindsight_client_api.models import include_options, entity_include_options, chunk_include_options
 
         include_opts = include_options.IncludeOptions(
-            entities=entity_include_options.EntityIncludeOptions(max_tokens=max_entity_tokens) if include_entities else None
+            entities=entity_include_options.EntityIncludeOptions(max_tokens=max_entity_tokens) if include_entities else None,
+            chunks=chunk_include_options.ChunkIncludeOptions(max_tokens=max_chunk_tokens) if include_chunks else None,
         )
 
         request_obj = recall_request.RecallRequest(
@@ -277,8 +285,8 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata'
-            document_id: Optional document ID for grouping memories
+            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata', 'document_id'
+            document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
@@ -290,13 +298,14 @@ class Hindsight:
                 timestamp=item.get("timestamp"),
                 context=item.get("context"),
                 metadata=item.get("metadata"),
+                # Use item's document_id if provided, otherwise fall back to batch-level document_id
+                document_id=item.get("document_id") or document_id,
             )
             for item in items
         ]
 
         request_obj = retain_request.RetainRequest(
             items=memory_items,
-            document_id=document_id,
             async_=retain_async,
         )
 

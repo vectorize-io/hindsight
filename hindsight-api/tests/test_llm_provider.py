@@ -10,36 +10,30 @@ from hindsight_api.engine.llm_wrapper import LLMProvider
 MODEL_MATRIX = [
     # OpenAI models
     ("openai", "gpt-4o-mini"),
+    ("openai", "gpt-4.1-mini"),
+    ("openai", "gpt-4.1-nano"),
     ("openai", "gpt-5-mini"),
+    ("openai", "gpt-5-nano"),
+    ("openai", "gpt-5"),
     # Groq models
     ("groq", "llama-3.3-70b-versatile"),
     ("groq", "openai/gpt-oss-120b"),
+    ("groq", "openai/gpt-oss-20b"),
     # Gemini models
-    ("gemini", "gemini-2.0-flash"),
-    ("gemini", "gemini-2.5-flash-preview-05-20"),
+    ("gemini", "gemini-2.5-flash"),
+    ("gemini", "gemini-2.5-flash-lite"),
 ]
 
 
 def get_api_key_for_provider(provider: str) -> str | None:
     """Get API key for provider from environment variables."""
-    # Try provider-specific env vars first
     provider_key_map = {
-        "openai": ["OPENAI_API_KEY", "HINDSIGHT_API_LLM_API_KEY"],
-        "groq": ["GROQ_API_KEY", "HINDSIGHT_API_LLM_API_KEY"],
-        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "HINDSIGHT_API_LLM_API_KEY"],
+        "openai": "OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "gemini": "GEMINI_API_KEY",
     }
-
-    for env_var in provider_key_map.get(provider, []):
-        key = os.getenv(env_var)
-        if key:
-            # For HINDSIGHT_API_LLM_API_KEY, only use if provider matches
-            if env_var == "HINDSIGHT_API_LLM_API_KEY":
-                configured_provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "").lower()
-                if configured_provider == provider:
-                    return key
-            else:
-                return key
-    return None
+    env_var = provider_key_map.get(provider)
+    return os.getenv(env_var) if env_var else None
 
 
 @pytest.mark.parametrize("provider,model", MODEL_MATRIX)
@@ -97,8 +91,10 @@ async def test_llm_provider_verify_connection(provider: str, model: str):
 # Models that support large output (65000+ tokens)
 LARGE_OUTPUT_MODELS = [
     ("openai", "gpt-5-mini"),
-    ("gemini", "gemini-2.0-flash"),
-    ("gemini", "gemini-2.5-flash-preview-05-20"),
+    ("openai", "gpt-5-nano"),
+    ("openai", "gpt-5"),
+    ("gemini", "gemini-2.5-flash"),
+    ("gemini", "gemini-2.5-flash-lite"),
 ]
 
 

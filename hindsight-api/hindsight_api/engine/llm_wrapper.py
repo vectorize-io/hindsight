@@ -170,24 +170,38 @@ class LLMProvider:
                 "messages": messages,
             }
 
-            if max_completion_tokens is not None:
-                call_params["max_completion_tokens"] = max_completion_tokens
             # Check if model supports reasoning parameter (o1, o3, gpt-5 families)
             model_lower = self.model.lower()
             is_reasoning_model = any(x in model_lower for x in ["gpt-5", "o1", "o3"])
+
+            # For GPT-4 and GPT-4.1 models, cap max_completion_tokens to 32000
+            is_gpt4_model = any(x in model_lower for x in ["gpt-4.1", "gpt-4-"])
+            if max_completion_tokens is not None:
+                if is_gpt4_model and max_completion_tokens > 32000:
+                    max_completion_tokens = 32000
+                # For reasoning models, max_completion_tokens includes reasoning + output tokens
+                # Enforce minimum of 16000 to ensure enough space for both
+                if is_reasoning_model and max_completion_tokens < 16000:
+                    max_completion_tokens = 16000
+                call_params["max_completion_tokens"] = max_completion_tokens
 
             # GPT-5/o1/o3 family doesn't support custom temperature (only default 1)
             if temperature is not None and not is_reasoning_model:
                 call_params["temperature"] = temperature
 
+            # Set reasoning_effort for reasoning models (OpenAI gpt-5, o1, o3)
+            if is_reasoning_model and self.provider == "openai":
+                call_params["reasoning_effort"] = self.reasoning_effort
+
             # Provider-specific parameters
             if self.provider == "groq":
                 call_params["seed"] = DEFAULT_LLM_SEED
-                call_params["extra_body"] = {
-                    "service_tier": "auto",
-                    "reasoning_effort": self.reasoning_effort,
-                    "include_reasoning": False,
-                }
+                extra_body = {"service_tier": "auto"}
+                # Only add reasoning parameters for reasoning models
+                if is_reasoning_model:
+                    extra_body["reasoning_effort"] = self.reasoning_effort
+                    extra_body["include_reasoning"] = False
+                call_params["extra_body"] = extra_body
 
             last_exception = None
 
