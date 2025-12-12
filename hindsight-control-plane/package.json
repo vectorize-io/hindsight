@@ -36,7 +36,7 @@
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1",
     "lucide-react": "^0.553.0",
-    "next": "^16.0.7",
+    "next": "^16.0.10",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-chrono": "^2.9.1",
