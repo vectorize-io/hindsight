@@ -18,22 +18,19 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List, Union
+from typing import Any, ClassVar, Dict, List
 from typing_extensions import Annotated
 from typing import Optional, Set
 from typing_extensions import Self
 
 class DispositionTraits(BaseModel):
     """
-    Disposition traits based on Big Five model.
+    Disposition traits that influence how memories are formed and interpreted.
     """ # noqa: E501
-    openness: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="Openness to experience (0-1)")
-    conscientiousness: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="Conscientiousness (0-1)")
-    extraversion: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="Extraversion (0-1)")
-    agreeableness: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="Agreeableness (0-1)")
-    neuroticism: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="Neuroticism (0-1)")
-    bias_strength: Union[Annotated[float, Field(le=1.0, strict=True, ge=0.0)], Annotated[int, Field(le=1, strict=True, ge=0)]] = Field(description="How strongly disposition influences opinions (0-1)")
-    __properties: ClassVar[List[str]] = ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism", "bias_strength"]
+    skepticism: Annotated[int, Field(le=5, strict=True, ge=1)] = Field(description="How skeptical vs trusting (1=trusting, 5=skeptical)")
+    literalism: Annotated[int, Field(le=5, strict=True, ge=1)] = Field(description="How literally to interpret information (1=flexible, 5=literal)")
+    empathy: Annotated[int, Field(le=5, strict=True, ge=1)] = Field(description="How much to consider emotional context (1=detached, 5=empathetic)")
+    __properties: ClassVar[List[str]] = ["skepticism", "literalism", "empathy"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -86,12 +83,9 @@ class DispositionTraits(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "openness": obj.get("openness"),
-            "conscientiousness": obj.get("conscientiousness"),
-            "extraversion": obj.get("extraversion"),
-            "agreeableness": obj.get("agreeableness"),
-            "neuroticism": obj.get("neuroticism"),
-            "bias_strength": obj.get("bias_strength")
+            "skepticism": obj.get("skepticism"),
+            "literalism": obj.get("literalism"),
+            "empathy": obj.get("empathy")
         })
         return _obj
 

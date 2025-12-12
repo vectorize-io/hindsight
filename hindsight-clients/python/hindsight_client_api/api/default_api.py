@@ -647,7 +647,7 @@ class DefaultApi:
     ) -> DeleteResponse:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (personality and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -719,7 +719,7 @@ class DefaultApi:
     ) -> ApiResponse[DeleteResponse]:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (personality and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -791,7 +791,7 @@ class DefaultApi:
     ) -> RESTResponseType:
         """Clear memory bank memories
 
-        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (personality and background) will be preserved.
+        Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -5705,7 +5705,7 @@ class DefaultApi:
     ) -> BankProfileResponse:
         """Update memory bank disposition
 
-        Update bank's Big Five disposition traits and bias strength
+        Update bank's disposition traits (skepticism, literalism, empathy)
 
         :param bank_id: (required)
         :type bank_id: str
@@ -5777,7 +5777,7 @@ class DefaultApi:
     ) -> ApiResponse[BankProfileResponse]:
         """Update memory bank disposition
 
-        Update bank's Big Five disposition traits and bias strength
+        Update bank's disposition traits (skepticism, literalism, empathy)
 
         :param bank_id: (required)
         :type bank_id: str
@@ -5849,7 +5849,7 @@ class DefaultApi:
     ) -> RESTResponseType:
         """Update memory bank disposition
 
-        Update bank's Big Five disposition traits and bias strength
+        Update bank's disposition traits (skepticism, literalism, empathy)
 
         :param bank_id: (required)
         :type bank_id: str

@@ -8,37 +8,50 @@ Hindsight includes a built-in [Model Context Protocol (MCP)](https://modelcontex
 
 ## Access
 
-The MCP server is **enabled by default** and mounted at `/mcp` on the API server:
+The MCP server is **enabled by default** and mounted at `/mcp` on the API server. Each memory bank has its own MCP endpoint:
 
 ```
-http://localhost:8888/mcp
+http://localhost:8888/mcp/{bank_id}/
 ```
 
-To disable it, set the environment variable:
+For example, to connect to the memory bank `alice`:
+```
+http://localhost:8888/mcp/alice/
+```
+
+To disable the MCP server, set the environment variable:
 
 ```bash
 export HINDSIGHT_API_MCP_ENABLED=false
 ```
 
+## Per-Bank Endpoints
+
+Unlike traditional MCP servers where tools require explicit identifiers, Hindsight uses **per-bank endpoints**. The `bank_id` is part of the URL path, so tools don't need to specify which bank to use—it's implicit from the connection.
+
+This design:
+- **Simplifies tool usage** — no need to pass `bank_id` with every call
+- **Enforces isolation** — each MCP connection is scoped to a single bank
+- **Enables multi-tenant setups** — connect different users to different endpoints
+
+---
+
 ## Available Tools
 
-### hindsight_put
+### retain
 
-Store information to a user's memory bank.
+Store information to long-term memory.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `bank_id` | string | Yes | Unique identifier for the user (e.g., `user_12345`, `alice@example.com`) |
 | `content` | string | Yes | The fact or memory to store |
-| `context` | string | Yes | Category for the memory (e.g., `personal_preferences`, `work_history`) |
-| `explanation` | string | No | Why this memory is being stored |
+| `context` | string | No | Category for the memory (default: `general`) |
 
 **Example:**
 ```json
 {
-  "name": "hindsight_put",
+  "name": "retain",
   "arguments": {
-    "bank_id": "user_12345",
     "content": "User prefers Python over JavaScript for backend development",
     "context": "programming_preferences"
   }
@@ -53,23 +66,20 @@ Store information to a user's memory bank.
 
 ---
 
-### hindsight_search
+### recall
 
-Search a user's memory bank to provide personalized responses.
+Search memories to provide personalized responses.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `bank_id` | string | Yes | Unique identifier for the user |
 | `query` | string | Yes | Natural language search query |
-| `max_tokens` | integer | No | Maximum tokens for results (default: 4096) |
-| `explanation` | string | No | Why this search is being performed |
+| `max_results` | integer | No | Maximum results to return (default: 10) |
 
 **Example:**
 ```json
 {
-  "name": "hindsight_search",
+  "name": "recall",
   "arguments": {
-    "bank_id": "user_12345",
     "query": "What are the user's programming language preferences?"
   }
 }
@@ -84,8 +94,7 @@ Search a user's memory bank to provide personalized responses.
       "text": "User prefers Python over JavaScript for backend development",
       "type": "world",
       "context": "programming_preferences",
-      "event_date": null,
-      "document_id": null
+      "event_date": null
     }
   ]
 }
@@ -99,17 +108,22 @@ Search a user's memory bank to provide personalized responses.
 
 ---
 
-## Per-User Isolation
-
-Both tools require a `bank_id` that uniquely identifies the user. Memories are strictly isolated per bank — one user cannot access another user's memories.
-
-**Best practices:**
-- Use consistent identifiers (user ID, email, session ID)
-- Don't share `bank_id` between different users
-- Only call these tools when you can identify the specific user
-
----
-
 ## Integration with AI Assistants
 
-The MCP server can be used with any MCP-compatible AI assistant. For Claude Desktop integration using the CLI, see [MCP Server (CLI)](/sdks/mcp).
+The MCP server can be used with any MCP-compatible AI assistant.
+
+### Claude Desktop Configuration
+
+To connect Claude Desktop to a specific memory bank:
+
+```json
+{
+  "mcpServers": {
+    "hindsight-alice": {
+      "url": "http://localhost:8888/mcp/alice/"
+    }
+  }
+}
+```
+
+Each user can have their own MCP server configuration pointing to their personal memory bank.

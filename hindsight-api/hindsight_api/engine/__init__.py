@@ -9,7 +9,8 @@ This package contains all the implementation details of the memory engine:
 
 from .memory_engine import MemoryEngine
 from .db_utils import acquire_with_retry
-from .embeddings import Embeddings, SentenceTransformersEmbeddings
+from .embeddings import Embeddings, LocalSTEmbeddings, RemoteTEIEmbeddings
+from .cross_encoder import CrossEncoderModel, LocalSTCrossEncoder, RemoteTEICrossEncoder
 from .search.trace import (
     SearchTrace,
     QueryInfo,
@@ -29,7 +30,11 @@ __all__ = [
     "MemoryEngine",
     "acquire_with_retry",
     "Embeddings",
-    "SentenceTransformersEmbeddings",
+    "LocalSTEmbeddings",
+    "RemoteTEIEmbeddings",
+    "CrossEncoderModel",
+    "LocalSTCrossEncoder",
+    "RemoteTEICrossEncoder",
     "SearchTrace",
     "SearchTracer",
     "QueryInfo",

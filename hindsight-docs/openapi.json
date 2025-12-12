@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Agent Memory API",
-    "description": "\nA temporal-semantic memory system for AI agents that stores, retrieves, and reasons over memories.\n\n## Features\n\n* **Batch Memory Storage**: Store multiple memories efficiently with automatic fact extraction\n* **Semantic Search**: Find relevant memories using natural language queries\n* **Fact Type Filtering**: Search across world facts, agent actions, and opinions separately\n* **Think Endpoint**: Generate contextual answers based on agent identity and memories\n* **Graph Visualization**: Interactive memory graph visualization\n* **Document Tracking**: Track and manage memory documents with upsert support\n\n## Architecture\n\nThe system uses:\n- **Temporal Links**: Connect memories that are close in time\n- **Semantic Links**: Connect semantically similar memories\n- **Entity Links**: Connect memories that mention the same entities\n- **Spreading Activation**: Intelligent traversal for memory retrieval\n        ",
+    "title": "Hindsight HTTP API",
+    "description": "HTTP API for Hindsight",
     "contact": {
       "name": "Memory System"
     },
@@ -10,29 +10,69 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "1.0.0"
+    "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/agents/{agent_id}/graph": {
+    "/health": {
       "get": {
         "tags": [
-          "Visualization"
+          "Monitoring"
+        ],
+        "summary": "Health check endpoint",
+        "description": "Checks the health of the API and database connection",
+        "operationId": "health_endpoint_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Prometheus metrics endpoint",
+        "description": "Exports metrics in Prometheus format for scraping",
+        "operationId": "metrics_endpoint_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/graph": {
+      "get": {
+        "tags": [
+          "Memory"
         ],
         "summary": "Get memory graph data",
-        "description": "Retrieve graph data for visualization, optionally filtered by fact_type (world/agent/opinion). Limited to 1000 most recent items.",
+        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion). Limited to 1000 most recent items.",
         "operationId": "get_graph",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
-            "name": "fact_type",
+            "name": "type",
             "in": "query",
             "required": false,
             "schema": {
@@ -44,7 +84,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Fact Type"
+              "title": "Type"
             }
           }
         ],
@@ -72,26 +112,26 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/memories/list": {
+    "/v1/default/banks/{bank_id}/memories/list": {
       "get": {
         "tags": [
-          "Memory Operations"
+          "Memory"
         ],
         "summary": "List memory units",
-        "description": "List memory units with pagination and optional full-text search. Supports filtering by fact_type.",
+        "description": "List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
         "operationId": "list_memories",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
-            "name": "fact_type",
+            "name": "type",
             "in": "query",
             "required": false,
             "schema": {
@@ -103,7 +143,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Fact Type"
+              "title": "Type"
             }
           },
           {
@@ -167,22 +207,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/memories/search": {
+    "/v1/default/banks/{bank_id}/memories/recall": {
       "post": {
         "tags": [
-          "Memory Operations"
+          "Memory"
         ],
-        "summary": "Search memory",
-        "description": "Search memory using semantic similarity and spreading activation.\n\n    The fact_type parameter is optional and must be one of:\n    - 'world': General knowledge about people, places, events, and things that happen\n    - 'agent': Memories about what the AI agent did, actions taken, and tasks performed\n    - 'opinion': The agent's formed beliefs, perspectives, and viewpoints",
-        "operationId": "search_memories",
+        "summary": "Recall memory",
+        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe type parameter is optional and must be one of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n- `opinion`: The bank's formed beliefs, perspectives, and viewpoints\n\nSet `include_entities=true` to get entity observations alongside recall results.",
+        "operationId": "recall_memories",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -191,7 +231,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchRequest"
+                "$ref": "#/components/schemas/RecallRequest"
               }
             }
           }
@@ -202,7 +242,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
+                  "$ref": "#/components/schemas/RecallResponse"
                 }
               }
             }
@@ -220,22 +260,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/think": {
+    "/v1/default/banks/{bank_id}/reflect": {
       "post": {
         "tags": [
-          "Reasoning"
+          "Memory"
         ],
-        "summary": "Think and generate answer",
-        "description": "Think and formulate an answer using agent identity, world facts, and opinions.\n\n    This endpoint:\n    1. Retrieves agent facts (agent's identity)\n    2. Retrieves world facts relevant to the query\n    3. Retrieves existing opinions (agent's perspectives)\n    4. Uses LLM to formulate a contextual answer\n    5. Extracts and stores any new opinions formed\n    6. Returns plain text answer, the facts used, and new opinions",
-        "operationId": "think",
+        "summary": "Reflect and generate answer",
+        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Extracts and stores any new opinions formed\n6. Returns plain text answer, the facts used, and new opinions",
+        "operationId": "reflect",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -244,7 +284,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ThinkRequest"
+                "$ref": "#/components/schemas/ReflectRequest"
               }
             }
           }
@@ -255,7 +295,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ThinkResponse"
+                  "$ref": "#/components/schemas/ReflectResponse"
                 }
               }
             }
@@ -273,21 +313,21 @@
         }
       }
     },
-    "/api/v1/agents": {
+    "/v1/default/banks": {
       "get": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "List all agents",
+        "summary": "List all memory banks",
         "description": "Get a list of all agents with their profiles",
-        "operationId": "list_agents",
+        "operationId": "list_banks",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentListResponse"
+                  "$ref": "#/components/schemas/BankListResponse"
                 }
               }
             }
@@ -295,22 +335,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/stats": {
+    "/v1/default/banks/{bank_id}/stats": {
       "get": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "Get memory statistics for an agent",
+        "summary": "Get statistics for memory bank",
         "description": "Get statistics about nodes and links for a specific agent",
         "operationId": "get_agent_stats",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -336,7 +376,166 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/documents": {
+    "/v1/default/banks/{bank_id}/entities": {
+      "get": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "List entities",
+        "description": "List all entities (people, organizations, etc.) known by the bank, ordered by mention count.",
+        "operationId": "list_entities",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of entities to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of entities to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities/{entity_id}": {
+      "get": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "Get entity details",
+        "description": "Get detailed information about an entity including observations (mental model).",
+        "operationId": "get_entity",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate": {
+      "post": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "Regenerate entity observations",
+        "description": "Regenerate observations for an entity based on all facts mentioning it.",
+        "operationId": "regenerate_entity_observations",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/documents": {
       "get": {
         "tags": [
           "Documents"
@@ -346,12 +545,12 @@
         "operationId": "list_documents",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
@@ -415,7 +614,7 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/documents/{document_id}": {
+    "/v1/default/banks/{bank_id}/documents/{document_id}": {
       "get": {
         "tags": [
           "Documents"
@@ -425,12 +624,12 @@
         "operationId": "get_document",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
@@ -475,12 +674,12 @@
         "operationId": "delete_document",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
@@ -515,187 +714,65 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/memories": {
-      "post": {
-        "tags": [
-          "Memory Operations"
-        ],
-        "summary": "Store multiple memories",
-        "description": "Store multiple memory items in batch with automatic fact extraction.\n\n    Features:\n    - Efficient batch processing\n    - Automatic fact extraction from natural language\n    - Entity recognition and linking\n    - Document tracking with automatic upsert (when document_id is provided)\n    - Temporal and semantic linking\n\n    The system automatically:\n    1. Extracts semantic facts from the content\n    2. Generates embeddings\n    3. Deduplicates similar facts\n    4. Creates temporal, semantic, and entity links\n    5. Tracks document metadata\n\n    Note: If document_id is provided and already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior).",
-        "operationId": "batch_put_memories",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Agent Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchPutRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchPutResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Agent Management"
-        ],
-        "summary": "Clear agent memories",
-        "description": "Delete memory units for an agent. Optionally filter by fact_type (world, agent, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The agent profile (personality and background) will be preserved.",
-        "operationId": "clear_agent_memories",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Agent Id"
-            }
-          },
-          {
-            "name": "fact_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional fact type filter (world, agent, opinion)",
-              "title": "Fact Type"
-            },
-            "description": "Optional fact type filter (world, agent, opinion)"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeleteResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/agents/{agent_id}/memories/async": {
-      "post": {
-        "tags": [
-          "Memory Operations"
-        ],
-        "summary": "Store multiple memories asynchronously",
-        "description": "Store multiple memory items in batch asynchronously using the task backend.\n\n    This endpoint returns immediately after queuing the task, without waiting for completion.\n    The actual processing happens in the background.\n\n    Features:\n    - Immediate response (non-blocking)\n    - Background processing via task queue\n    - Efficient batch processing\n    - Automatic fact extraction from natural language\n    - Entity recognition and linking\n    - Document tracking with automatic upsert (when document_id is provided)\n    - Temporal and semantic linking\n\n    The system automatically:\n    1. Queues the batch put task\n    2. Returns immediately with success=True, queued=True\n    3. Processes in background: extracts facts, generates embeddings, creates links\n\n    Note: If document_id is provided and already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior).",
-        "operationId": "batch_put_async",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Agent Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchPutRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchPutAsyncResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/agents/{agent_id}/operations": {
+    "/v1/default/chunks/{chunk_id}": {
       "get": {
         "tags": [
-          "Memory Operations"
+          "Documents"
+        ],
+        "summary": "Get chunk details",
+        "description": "Get a specific chunk by its ID",
+        "operationId": "get_chunk",
+        "parameters": [
+          {
+            "name": "chunk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Chunk Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations": {
+      "get": {
+        "tags": [
+          "Operations"
         ],
         "summary": "List async operations",
         "description": "Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
         "operationId": "list_operations",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -721,22 +798,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/operations/{operation_id}": {
+    "/v1/default/banks/{bank_id}/operations/{operation_id}": {
       "delete": {
         "tags": [
-          "Memory Operations"
+          "Operations"
         ],
         "summary": "Cancel a pending async operation",
         "description": "Cancel a pending async operation by removing it from the queue",
         "operationId": "cancel_operation",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           },
           {
@@ -771,72 +848,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/memories/{unit_id}": {
-      "delete": {
-        "tags": [
-          "Memory Operations"
-        ],
-        "summary": "Delete a memory unit",
-        "description": "Delete a single memory unit and all its associated links (temporal, semantic, and entity links)",
-        "operationId": "delete_memory_unit",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Agent Id"
-            }
-          },
-          {
-            "name": "unit_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Unit Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/agents/{agent_id}/profile": {
+    "/v1/default/banks/{bank_id}/profile": {
       "get": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "Get agent profile",
-        "description": "Get personality traits and background for an agent. Auto-creates agent with defaults if not exists.",
-        "operationId": "get_agent_profile",
+        "summary": "Get memory bank profile",
+        "description": "Get disposition traits and background for a memory bank. Auto-creates agent with defaults if not exists.",
+        "operationId": "get_bank_profile",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -846,7 +873,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentProfileResponse"
+                  "$ref": "#/components/schemas/BankProfileResponse"
                 }
               }
             }
@@ -865,19 +892,19 @@
       },
       "put": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "Update agent personality",
-        "description": "Update agent's Big Five personality traits and bias strength",
-        "operationId": "update_agent_personality",
+        "summary": "Update memory bank disposition",
+        "description": "Update bank's disposition traits (skepticism, literalism, empathy)",
+        "operationId": "update_bank_disposition",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -886,7 +913,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdatePersonalityRequest"
+                "$ref": "#/components/schemas/UpdateDispositionRequest"
               }
             }
           }
@@ -897,7 +924,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentProfileResponse"
+                  "$ref": "#/components/schemas/BankProfileResponse"
                 }
               }
             }
@@ -915,22 +942,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}/background": {
+    "/v1/default/banks/{bank_id}/background": {
       "post": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "Add/merge agent background",
-        "description": "Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers personality traits.",
-        "operationId": "add_agent_background",
+        "summary": "Add/merge memory bank background",
+        "description": "Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers disposition traits.",
+        "operationId": "add_bank_background",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -968,22 +995,22 @@
         }
       }
     },
-    "/api/v1/agents/{agent_id}": {
+    "/v1/default/banks/{bank_id}": {
       "put": {
         "tags": [
-          "Agent Management"
+          "Banks"
         ],
-        "summary": "Create or update agent",
-        "description": "Create a new agent or update existing agent with personality and background. Auto-fills missing fields with defaults.",
-        "operationId": "create_or_update_agent",
+        "summary": "Create or update memory bank",
+        "description": "Create a new agent or update existing agent with disposition and background. Auto-fills missing fields with defaults.",
+        "operationId": "create_or_update_bank",
         "parameters": [
           {
-            "name": "agent_id",
+            "name": "bank_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Agent Id"
+              "title": "Bank Id"
             }
           }
         ],
@@ -992,7 +1019,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateAgentRequest"
+                "$ref": "#/components/schemas/CreateBankRequest"
               }
             }
           }
@@ -1003,7 +1030,160 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentProfileResponse"
+                  "$ref": "#/components/schemas/BankProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Delete memory bank",
+        "description": "Delete an entire memory bank including all memories, entities, documents, and the bank profile itself. This is a destructive operation that cannot be undone.",
+        "operationId": "delete_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Retain memories",
+        "description": "Retain memory items with automatic fact extraction.\n\nThis is the main endpoint for storing memories. It supports both synchronous and asynchronous processing via the `async` parameter.\n\n**Features:**\n- Efficient batch processing\n- Automatic fact extraction from natural language\n- Entity recognition and linking\n- Document tracking with automatic upsert (when document_id is provided)\n- Temporal and semantic linking\n- Optional asynchronous processing\n\n**The system automatically:**\n1. Extracts semantic facts from the content\n2. Generates embeddings\n3. Deduplicates similar facts\n4. Creates temporal, semantic, and entity links\n5. Tracks document metadata\n\n**When `async=true`:** Returns immediately after queuing. Use the operations endpoint to monitor progress.\n\n**When `async=false` (default):** Waits for processing to complete.\n\n**Note:** If a memory item has a `document_id` that already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior).",
+        "operationId": "retain_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetainResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Clear memory bank memories",
+        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        "operationId": "clear_bank_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional fact type filter (world, experience, opinion)",
+              "title": "Type"
+            },
+            "description": "Optional fact type filter (world, experience, opinion)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
                 }
               }
             }
@@ -1031,10 +1211,10 @@
             "title": "Content",
             "description": "New background information to add or merge"
           },
-          "update_personality": {
+          "update_disposition": {
             "type": "boolean",
-            "title": "Update Personality",
-            "description": "If true, infer Big Five personality traits from the merged background (default: true)",
+            "title": "Update Disposition",
+            "description": "If true, infer disposition traits from the merged background (default: true)",
             "default": true
           }
         },
@@ -1046,21 +1226,53 @@
         "description": "Request model for adding/merging background information.",
         "example": {
           "content": "I was born in Texas",
-          "update_personality": true
+          "update_disposition": true
         }
       },
-      "AgentListItem": {
+      "BackgroundResponse": {
         "properties": {
-          "agent_id": {
+          "background": {
             "type": "string",
-            "title": "Agent Id"
+            "title": "Background"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DispositionTraits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "background"
+        ],
+        "title": "BackgroundResponse",
+        "description": "Response model for background update.",
+        "example": {
+          "background": "I was born in Texas. I am a software engineer with 10 years of experience.",
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          }
+        }
+      },
+      "BankListItem": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
           },
           "name": {
             "type": "string",
             "title": "Name"
           },
-          "personality": {
-            "$ref": "#/components/schemas/PersonalityTraits"
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
           },
           "background": {
             "type": "string",
@@ -1091,62 +1303,59 @@
         },
         "type": "object",
         "required": [
-          "agent_id",
+          "bank_id",
           "name",
-          "personality",
+          "disposition",
           "background"
         ],
-        "title": "AgentListItem",
-        "description": "Agent list item with profile summary."
+        "title": "BankListItem",
+        "description": "Bank list item with profile summary."
       },
-      "AgentListResponse": {
+      "BankListResponse": {
         "properties": {
-          "agents": {
+          "banks": {
             "items": {
-              "$ref": "#/components/schemas/AgentListItem"
+              "$ref": "#/components/schemas/BankListItem"
             },
             "type": "array",
-            "title": "Agents"
+            "title": "Banks"
           }
         },
         "type": "object",
         "required": [
-          "agents"
+          "banks"
         ],
-        "title": "AgentListResponse",
-        "description": "Response model for listing all agents.",
+        "title": "BankListResponse",
+        "description": "Response model for listing all banks.",
         "example": {
-          "agents": [
+          "banks": [
             {
-              "agent_id": "user123",
               "background": "I am a software engineer",
+              "bank_id": "user123",
               "created_at": "2024-01-15T10:30:00Z",
-              "name": "Alice",
-              "personality": {
-                "agreeableness": 0.5,
-                "bias_strength": 0.5,
-                "conscientiousness": 0.5,
-                "extraversion": 0.5,
-                "neuroticism": 0.5,
-                "openness": 0.5
+              "disposition": {
+                "empathy": 3,
+                "literalism": 3,
+                "skepticism": 3
               },
+              "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"
             }
           ]
         }
       },
-      "AgentProfileResponse": {
+      "BankProfileResponse": {
         "properties": {
-          "agent_id": {
+          "bank_id": {
             "type": "string",
-            "title": "Agent Id"
+            "title": "Bank Id"
           },
           "name": {
             "type": "string",
             "title": "Name"
           },
-          "personality": {
-            "$ref": "#/components/schemas/PersonalityTraits"
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
           },
           "background": {
             "type": "string",
@@ -1155,204 +1364,125 @@
         },
         "type": "object",
         "required": [
-          "agent_id",
+          "bank_id",
           "name",
-          "personality",
+          "disposition",
           "background"
         ],
-        "title": "AgentProfileResponse",
-        "description": "Response model for agent profile.",
+        "title": "BankProfileResponse",
+        "description": "Response model for bank profile.",
         "example": {
-          "agent_id": "user123",
           "background": "I am a software engineer with 10 years of experience in startups",
-          "name": "Alice",
-          "personality": {
-            "agreeableness": 0.7,
-            "bias_strength": 0.7,
-            "conscientiousness": 0.6,
-            "extraversion": 0.5,
-            "neuroticism": 0.3,
-            "openness": 0.8
-          }
+          "bank_id": "user123",
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          },
+          "name": "Alice"
         }
       },
-      "BackgroundResponse": {
-        "properties": {
-          "background": {
-            "type": "string",
-            "title": "Background"
-          },
-          "personality": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PersonalityTraits"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "required": [
-          "background"
+      "Budget": {
+        "type": "string",
+        "enum": [
+          "low",
+          "mid",
+          "high"
         ],
-        "title": "BackgroundResponse",
-        "description": "Response model for background update.",
-        "example": {
-          "background": "I was born in Texas. I am a software engineer with 10 years of experience.",
-          "personality": {
-            "agreeableness": 0.8,
-            "bias_strength": 0.6,
-            "conscientiousness": 0.6,
-            "extraversion": 0.5,
-            "neuroticism": 0.4,
-            "openness": 0.7
-          }
-        }
+        "title": "Budget",
+        "description": "Budget levels for recall/reflect operations."
       },
-      "BatchPutAsyncResponse": {
+      "ChunkData": {
         "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success"
-          },
-          "message": {
+          "id": {
             "type": "string",
-            "title": "Message"
+            "title": "Id"
           },
-          "agent_id": {
+          "text": {
             "type": "string",
-            "title": "Agent Id"
+            "title": "Text"
           },
-          "document_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Id"
-          },
-          "items_count": {
+          "chunk_index": {
             "type": "integer",
-            "title": "Items Count"
+            "title": "Chunk Index"
           },
-          "queued": {
+          "truncated": {
             "type": "boolean",
-            "title": "Queued"
+            "title": "Truncated",
+            "description": "Whether the chunk text was truncated due to token limits",
+            "default": false
           }
         },
         "type": "object",
         "required": [
-          "success",
-          "message",
-          "agent_id",
-          "items_count",
-          "queued"
+          "id",
+          "text",
+          "chunk_index"
         ],
-        "title": "BatchPutAsyncResponse",
-        "description": "Response model for async batch put endpoint.",
-        "example": {
-          "agent_id": "user123",
-          "document_id": "conversation_123",
-          "items_count": 2,
-          "message": "Batch put task queued for background processing",
-          "queued": true,
-          "success": true
-        }
+        "title": "ChunkData",
+        "description": "Chunk data for a single chunk."
       },
-      "BatchPutRequest": {
+      "ChunkIncludeOptions": {
         "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MemoryItem"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "document_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items"
-        ],
-        "title": "BatchPutRequest",
-        "description": "Request model for batch put endpoint.",
-        "example": {
-          "document_id": "conversation_123",
-          "items": [
-            {
-              "content": "Alice works at Google",
-              "context": "work"
-            },
-            {
-              "content": "Bob went hiking yesterday",
-              "event_date": "2024-01-15T10:00:00Z"
-            }
-          ]
-        }
-      },
-      "BatchPutResponse": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message"
-          },
-          "agent_id": {
-            "type": "string",
-            "title": "Agent Id"
-          },
-          "document_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Id"
-          },
-          "items_count": {
+          "max_tokens": {
             "type": "integer",
-            "title": "Items Count"
+            "title": "Max Tokens",
+            "description": "Maximum tokens for chunks (chunks may be truncated)",
+            "default": 8192
+          }
+        },
+        "type": "object",
+        "title": "ChunkIncludeOptions",
+        "description": "Options for including chunks in recall results."
+      },
+      "ChunkResponse": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "title": "Chunk Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "chunk_index": {
+            "type": "integer",
+            "title": "Chunk Index"
+          },
+          "chunk_text": {
+            "type": "string",
+            "title": "Chunk Text"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
           }
         },
         "type": "object",
         "required": [
-          "success",
-          "message",
-          "agent_id",
-          "items_count"
+          "chunk_id",
+          "document_id",
+          "bank_id",
+          "chunk_index",
+          "chunk_text",
+          "created_at"
         ],
-        "title": "BatchPutResponse",
-        "description": "Response model for batch put endpoint.",
+        "title": "ChunkResponse",
+        "description": "Response model for get chunk endpoint.",
         "example": {
-          "agent_id": "user123",
-          "document_id": "conversation_123",
-          "items_count": 2,
-          "message": "Successfully stored 2 memory items",
-          "success": true
+          "bank_id": "user123",
+          "chunk_id": "user123_session_1_0",
+          "chunk_index": 0,
+          "chunk_text": "This is the first chunk of the document...",
+          "created_at": "2024-01-15T10:30:00Z",
+          "document_id": "session_1"
         }
       },
-      "CreateAgentRequest": {
+      "CreateBankRequest": {
         "properties": {
           "name": {
             "anyOf": [
@@ -1365,10 +1495,10 @@
             ],
             "title": "Name"
           },
-          "personality": {
+          "disposition": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/PersonalityTraits"
+                "$ref": "#/components/schemas/DispositionTraits"
               },
               {
                 "type": "null"
@@ -1388,19 +1518,16 @@
           }
         },
         "type": "object",
-        "title": "CreateAgentRequest",
-        "description": "Request model for creating/updating an agent.",
+        "title": "CreateBankRequest",
+        "description": "Request model for creating/updating a bank.",
         "example": {
           "background": "I am a creative software engineer with 10 years of experience",
-          "name": "Alice",
-          "personality": {
-            "agreeableness": 0.7,
-            "bias_strength": 0.7,
-            "conscientiousness": 0.6,
-            "extraversion": 0.5,
-            "neuroticism": 0.3,
-            "openness": 0.8
-          }
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          },
+          "name": "Alice"
         }
       },
       "DeleteResponse": {
@@ -1410,20 +1537,76 @@
             "title": "Success"
           },
           "message": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Message"
+          },
+          "deleted_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted Count"
           }
         },
         "type": "object",
         "required": [
-          "success",
-          "message"
+          "success"
         ],
         "title": "DeleteResponse",
         "description": "Response model for delete operations.",
         "example": {
-          "message": "Resource deleted successfully",
-          "success": true
+          "success": true,
+          "message": "Deleted successfully",
+          "deleted_count": 10
+        }
+      },
+      "DispositionTraits": {
+        "properties": {
+          "skepticism": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Skepticism",
+            "description": "How skeptical vs trusting (1=trusting, 5=skeptical)"
+          },
+          "literalism": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Literalism",
+            "description": "How literally to interpret information (1=flexible, 5=literal)"
+          },
+          "empathy": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Empathy",
+            "description": "How much to consider emotional context (1=detached, 5=empathetic)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skepticism",
+          "literalism",
+          "empathy"
+        ],
+        "title": "DispositionTraits",
+        "description": "Disposition traits that influence how memories are formed and interpreted.",
+        "example": {
+          "empathy": 3,
+          "literalism": 3,
+          "skepticism": 3
         }
       },
       "DocumentResponse": {
@@ -1432,9 +1615,9 @@
             "type": "string",
             "title": "Id"
           },
-          "agent_id": {
+          "bank_id": {
             "type": "string",
-            "title": "Agent Id"
+            "title": "Bank Id"
           },
           "original_text": {
             "type": "string",
@@ -1467,7 +1650,7 @@
         "type": "object",
         "required": [
           "id",
-          "agent_id",
+          "bank_id",
           "original_text",
           "content_hash",
           "created_at",
@@ -1477,7 +1660,7 @@
         "title": "DocumentResponse",
         "description": "Response model for get document endpoint.",
         "example": {
-          "agent_id": "user123",
+          "bank_id": "user123",
           "content_hash": "abc123",
           "created_at": "2024-01-15T10:30:00Z",
           "id": "session_1",
@@ -1485,6 +1668,249 @@
           "original_text": "Full document text here...",
           "updated_at": "2024-01-15T10:30:00Z"
         }
+      },
+      "EntityDetailResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "mention_count": {
+            "type": "integer",
+            "title": "Mention Count"
+          },
+          "first_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/EntityObservationResponse"
+            },
+            "type": "array",
+            "title": "Observations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "canonical_name",
+          "mention_count",
+          "observations"
+        ],
+        "title": "EntityDetailResponse",
+        "description": "Response model for entity detail endpoint.",
+        "example": {
+          "canonical_name": "John",
+          "first_seen": "2024-01-15T10:30:00Z",
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "last_seen": "2024-02-01T14:00:00Z",
+          "mention_count": 15,
+          "observations": [
+            {
+              "mentioned_at": "2024-01-15T10:30:00Z",
+              "text": "John works at Google"
+            }
+          ]
+        }
+      },
+      "EntityIncludeOptions": {
+        "properties": {
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "description": "Maximum tokens for entity observations",
+            "default": 500
+          }
+        },
+        "type": "object",
+        "title": "EntityIncludeOptions",
+        "description": "Options for including entity observations in recall results."
+      },
+      "EntityListItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "mention_count": {
+            "type": "integer",
+            "title": "Mention Count"
+          },
+          "first_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "canonical_name",
+          "mention_count"
+        ],
+        "title": "EntityListItem",
+        "description": "Entity list item with summary.",
+        "example": {
+          "canonical_name": "John",
+          "first_seen": "2024-01-15T10:30:00Z",
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "last_seen": "2024-02-01T14:00:00Z",
+          "mention_count": 15
+        }
+      },
+      "EntityListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntityListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EntityListResponse",
+        "description": "Response model for entity list endpoint.",
+        "example": {
+          "items": [
+            {
+              "canonical_name": "John",
+              "first_seen": "2024-01-15T10:30:00Z",
+              "id": "123e4567-e89b-12d3-a456-426614174000",
+              "last_seen": "2024-02-01T14:00:00Z",
+              "mention_count": 15
+            }
+          ]
+        }
+      },
+      "EntityObservationResponse": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "EntityObservationResponse",
+        "description": "An observation about an entity."
+      },
+      "EntityStateResponse": {
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/EntityObservationResponse"
+            },
+            "type": "array",
+            "title": "Observations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entity_id",
+          "canonical_name",
+          "observations"
+        ],
+        "title": "EntityStateResponse",
+        "description": "Current mental model of an entity."
+      },
+      "FactsIncludeOptions": {
+        "properties": {},
+        "type": "object",
+        "title": "FactsIncludeOptions",
+        "description": "Options for including facts (based_on) in reflect results."
       },
       "GraphDataResponse": {
         "properties": {
@@ -1572,6 +1998,38 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "IncludeOptions": {
+        "properties": {
+          "entities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityIncludeOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Include entity observations. Set to null to disable entity inclusion.",
+            "default": {
+              "max_tokens": 500
+            }
+          },
+          "chunks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkIncludeOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Include raw chunks. Set to {} to enable, null to disable (default: disabled)."
+          }
+        },
+        "type": "object",
+        "title": "IncludeOptions",
+        "description": "Options for including additional data in recall results."
+      },
       "ListDocumentsResponse": {
         "properties": {
           "items": {
@@ -1607,7 +2065,7 @@
         "example": {
           "items": [
             {
-              "agent_id": "user123",
+              "bank_id": "user123",
               "content_hash": "abc123",
               "created_at": "2024-01-15T10:30:00Z",
               "id": "session_1",
@@ -1659,9 +2117,9 @@
               "context": "Work conversation",
               "date": "2024-01-15T10:30:00Z",
               "entities": "Alice (PERSON), Google (ORGANIZATION)",
-              "fact_type": "world",
               "id": "550e8400-e29b-41d4-a716-446655440000",
-              "text": "Alice works at Google on the AI team"
+              "text": "Alice works at Google on the AI team",
+              "type": "world"
             }
           ],
           "limit": 100,
@@ -1675,7 +2133,7 @@
             "type": "string",
             "title": "Content"
           },
-          "event_date": {
+          "timestamp": {
             "anyOf": [
               {
                 "type": "string",
@@ -1685,7 +2143,7 @@
                 "type": "null"
               }
             ],
-            "title": "Event Date"
+            "title": "Timestamp"
           },
           "context": {
             "anyOf": [
@@ -1697,6 +2155,32 @@
               }
             ],
             "title": "Context"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id",
+            "description": "Optional document ID for this memory item."
           }
         },
         "type": "object",
@@ -1704,85 +2188,25 @@
           "content"
         ],
         "title": "MemoryItem",
-        "description": "Single memory item for batch put.",
+        "description": "Single memory item for retain.",
         "example": {
           "content": "Alice mentioned she's working on a new ML model",
           "context": "team meeting",
-          "event_date": "2024-01-15T10:30:00Z"
+          "document_id": "meeting_notes_2024_01_15",
+          "metadata": {
+            "channel": "engineering",
+            "source": "slack"
+          },
+          "timestamp": "2024-01-15T10:30:00Z"
         }
       },
-      "PersonalityTraits": {
-        "properties": {
-          "openness": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Openness",
-            "description": "Openness to experience (0-1)"
-          },
-          "conscientiousness": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Conscientiousness",
-            "description": "Conscientiousness (0-1)"
-          },
-          "extraversion": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Extraversion",
-            "description": "Extraversion (0-1)"
-          },
-          "agreeableness": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Agreeableness",
-            "description": "Agreeableness (0-1)"
-          },
-          "neuroticism": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Neuroticism",
-            "description": "Neuroticism (0-1)"
-          },
-          "bias_strength": {
-            "type": "number",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Bias Strength",
-            "description": "How strongly personality influences opinions (0-1)"
-          }
-        },
-        "type": "object",
-        "required": [
-          "openness",
-          "conscientiousness",
-          "extraversion",
-          "agreeableness",
-          "neuroticism",
-          "bias_strength"
-        ],
-        "title": "PersonalityTraits",
-        "description": "Personality traits based on Big Five model.",
-        "example": {
-          "agreeableness": 0.7,
-          "bias_strength": 0.7,
-          "conscientiousness": 0.6,
-          "extraversion": 0.5,
-          "neuroticism": 0.3,
-          "openness": 0.8
-        }
-      },
-      "SearchRequest": {
+      "RecallRequest": {
         "properties": {
           "query": {
             "type": "string",
             "title": "Query"
           },
-          "fact_type": {
+          "types": {
             "anyOf": [
               {
                 "items": {
@@ -1794,12 +2218,12 @@
                 "type": "null"
               }
             ],
-            "title": "Fact Type"
+            "title": "Types",
+            "description": "List of fact types to recall (defaults to all if not specified)"
           },
-          "thinking_budget": {
-            "type": "integer",
-            "title": "Thinking Budget",
-            "default": 100
+          "budget": {
+            "$ref": "#/components/schemas/Budget",
+            "default": "mid"
           },
           "max_tokens": {
             "type": "integer",
@@ -1811,7 +2235,7 @@
             "title": "Trace",
             "default": false
           },
-          "question_date": {
+          "query_timestamp": {
             "anyOf": [
               {
                 "type": "string"
@@ -1820,32 +2244,42 @@
                 "type": "null"
               }
             ],
-            "title": "Question Date"
+            "title": "Query Timestamp",
+            "description": "ISO format date string (e.g., '2023-05-30T23:40:00')"
+          },
+          "include": {
+            "$ref": "#/components/schemas/IncludeOptions",
+            "description": "Options for including additional data (entities are included by default)"
           }
         },
         "type": "object",
         "required": [
           "query"
         ],
-        "title": "SearchRequest",
-        "description": "Request model for search endpoint.",
+        "title": "RecallRequest",
+        "description": "Request model for recall endpoint.",
         "example": {
-          "fact_type": [
-            "world",
-            "agent"
-          ],
+          "budget": "mid",
+          "include": {
+            "entities": {
+              "max_tokens": 500
+            }
+          },
           "max_tokens": 4096,
           "query": "What did Alice say about machine learning?",
-          "question_date": "2023-05-30T23:40:00",
-          "thinking_budget": 100,
-          "trace": true
+          "query_timestamp": "2023-05-30T23:40:00",
+          "trace": true,
+          "types": [
+            "world",
+            "experience"
+          ]
         }
       },
-      "SearchResponse": {
+      "RecallResponse": {
         "properties": {
           "results": {
             "items": {
-              "$ref": "#/components/schemas/SearchResult"
+              "$ref": "#/components/schemas/RecallResult"
             },
             "type": "array",
             "title": "Results"
@@ -1861,20 +2295,75 @@
               }
             ],
             "title": "Trace"
+          },
+          "entities": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/EntityStateResponse"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities",
+            "description": "Entity states for entities mentioned in results"
+          },
+          "chunks": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/ChunkData"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunks",
+            "description": "Chunks for facts, keyed by chunk_id"
           }
         },
         "type": "object",
         "required": [
           "results"
         ],
-        "title": "SearchResponse",
-        "description": "Response model for search endpoints.",
+        "title": "RecallResponse",
+        "description": "Response model for recall endpoints.",
         "example": {
+          "chunks": {
+            "456e7890-e12b-34d5-a678-901234567890": {
+              "chunk_index": 0,
+              "id": "456e7890-e12b-34d5-a678-901234567890",
+              "text": "Alice works at Google on the AI team. She's been there for 3 years..."
+            }
+          },
+          "entities": {
+            "Alice": {
+              "canonical_name": "Alice",
+              "entity_id": "123e4567-e89b-12d3-a456-426614174001",
+              "observations": [
+                {
+                  "mentioned_at": "2024-01-15T10:30:00Z",
+                  "text": "Alice works at Google on the AI team"
+                }
+              ]
+            }
+          },
           "results": [
             {
+              "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
               "context": "work info",
-              "event_date": "2024-01-15T10:30:00Z",
+              "entities": [
+                "Alice",
+                "Google"
+              ],
               "id": "123e4567-e89b-12d3-a456-426614174000",
+              "occurred_end": "2024-01-15T10:30:00Z",
+              "occurred_start": "2024-01-15T10:30:00Z",
               "text": "Alice works at Google on the AI team",
               "type": "world"
             }
@@ -1886,7 +2375,7 @@
           }
         }
       },
-      "SearchResult": {
+      "RecallResult": {
         "properties": {
           "id": {
             "type": "string",
@@ -1907,6 +2396,20 @@
             ],
             "title": "Type"
           },
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities"
+          },
           "context": {
             "anyOf": [
               {
@@ -1918,7 +2421,7 @@
             ],
             "title": "Context"
           },
-          "event_date": {
+          "occurred_start": {
             "anyOf": [
               {
                 "type": "string"
@@ -1927,7 +2430,29 @@
                 "type": "null"
               }
             ],
-            "title": "Event Date"
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
           },
           "document_id": {
             "anyOf": [
@@ -1939,6 +2464,31 @@
               }
             ],
             "title": "Document Id"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
           }
         },
         "type": "object",
@@ -1946,18 +2496,28 @@
           "id",
           "text"
         ],
-        "title": "SearchResult",
-        "description": "Single search result item.",
+        "title": "RecallResult",
+        "description": "Single recall result item.",
         "example": {
+          "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
           "context": "work info",
           "document_id": "session_abc123",
-          "event_date": "2024-01-15T10:30:00Z",
+          "entities": [
+            "Alice",
+            "Google"
+          ],
           "id": "123e4567-e89b-12d3-a456-426614174000",
+          "mentioned_at": "2024-01-15T10:30:00Z",
+          "metadata": {
+            "source": "slack"
+          },
+          "occurred_end": "2024-01-15T10:30:00Z",
+          "occurred_start": "2024-01-15T10:30:00Z",
           "text": "Alice works at Google on the AI team",
           "type": "world"
         }
       },
-      "ThinkFact": {
+      "ReflectFact": {
         "properties": {
           "id": {
             "anyOf": [
@@ -1996,7 +2556,7 @@
             ],
             "title": "Context"
           },
-          "event_date": {
+          "occurred_start": {
             "anyOf": [
               {
                 "type": "string"
@@ -2005,33 +2565,62 @@
                 "type": "null"
               }
             ],
-            "title": "Event Date"
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End"
           }
         },
         "type": "object",
         "required": [
           "text"
         ],
-        "title": "ThinkFact",
+        "title": "ReflectFact",
         "description": "A fact used in think response.",
         "example": {
           "context": "healthcare discussion",
-          "event_date": "2024-01-15T10:30:00Z",
           "id": "123e4567-e89b-12d3-a456-426614174000",
+          "occurred_end": "2024-01-15T10:30:00Z",
+          "occurred_start": "2024-01-15T10:30:00Z",
           "text": "AI is used in healthcare",
           "type": "world"
         }
       },
-      "ThinkRequest": {
+      "ReflectIncludeOptions": {
+        "properties": {
+          "facts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactsIncludeOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Include facts that the answer is based on. Set to {} to enable, null to disable (default: disabled)."
+          }
+        },
+        "type": "object",
+        "title": "ReflectIncludeOptions",
+        "description": "Options for including additional data in reflect results."
+      },
+      "ReflectRequest": {
         "properties": {
           "query": {
             "type": "string",
             "title": "Query"
           },
-          "thinking_budget": {
-            "type": "integer",
-            "title": "Thinking Budget",
-            "default": 50
+          "budget": {
+            "$ref": "#/components/schemas/Budget",
+            "default": "low"
           },
           "context": {
             "anyOf": [
@@ -2043,21 +2632,28 @@
               }
             ],
             "title": "Context"
+          },
+          "include": {
+            "$ref": "#/components/schemas/ReflectIncludeOptions",
+            "description": "Options for including additional data (disabled by default)"
           }
         },
         "type": "object",
         "required": [
           "query"
         ],
-        "title": "ThinkRequest",
-        "description": "Request model for think endpoint.",
+        "title": "ReflectRequest",
+        "description": "Request model for reflect endpoint.",
         "example": {
+          "budget": "low",
           "context": "This is for a research paper on AI ethics",
-          "query": "What do you think about artificial intelligence?",
-          "thinking_budget": 50
+          "include": {
+            "facts": {}
+          },
+          "query": "What do you think about artificial intelligence?"
         }
       },
-      "ThinkResponse": {
+      "ReflectResponse": {
         "properties": {
           "text": {
             "type": "string",
@@ -2065,18 +2661,10 @@
           },
           "based_on": {
             "items": {
-              "$ref": "#/components/schemas/ThinkFact"
+              "$ref": "#/components/schemas/ReflectFact"
             },
             "type": "array",
             "title": "Based On",
-            "default": []
-          },
-          "new_opinions": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "New Opinions",
             "default": []
           }
         },
@@ -2084,7 +2672,7 @@
         "required": [
           "text"
         ],
-        "title": "ThinkResponse",
+        "title": "ReflectResponse",
         "description": "Response model for think endpoint.",
         "example": {
           "based_on": [
@@ -2096,27 +2684,98 @@
             {
               "id": "456",
               "text": "I discussed AI applications last week",
-              "type": "agent"
+              "type": "experience"
             }
-          ],
-          "new_opinions": [
-            "AI has great potential when used responsibly"
           ],
           "text": "Based on my understanding, AI is a transformative technology..."
         }
       },
-      "UpdatePersonalityRequest": {
+      "RetainRequest": {
         "properties": {
-          "personality": {
-            "$ref": "#/components/schemas/PersonalityTraits"
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "async": {
+            "type": "boolean",
+            "title": "Async",
+            "description": "If true, process asynchronously in background. If false, wait for completion (default: false)",
+            "default": false
           }
         },
         "type": "object",
         "required": [
-          "personality"
+          "items"
         ],
-        "title": "UpdatePersonalityRequest",
-        "description": "Request model for updating personality traits."
+        "title": "RetainRequest",
+        "description": "Request model for retain endpoint.",
+        "example": {
+          "async": false,
+          "items": [
+            {
+              "content": "Alice works at Google",
+              "context": "work",
+              "document_id": "conversation_123"
+            },
+            {
+              "content": "Bob went hiking yesterday",
+              "document_id": "conversation_123",
+              "timestamp": "2024-01-15T10:00:00Z"
+            }
+          ]
+        }
+      },
+      "RetainResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "items_count": {
+            "type": "integer",
+            "title": "Items Count"
+          },
+          "async": {
+            "type": "boolean",
+            "title": "Async",
+            "description": "Whether the operation was processed asynchronously"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "bank_id",
+          "items_count",
+          "async"
+        ],
+        "title": "RetainResponse",
+        "description": "Response model for retain endpoint.",
+        "example": {
+          "async": false,
+          "bank_id": "user123",
+          "items_count": 2,
+          "success": true
+        }
+      },
+      "UpdateDispositionRequest": {
+        "properties": {
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "disposition"
+        ],
+        "title": "UpdateDispositionRequest",
+        "description": "Request model for updating disposition traits."
       },
       "ValidationError": {
         "properties": {

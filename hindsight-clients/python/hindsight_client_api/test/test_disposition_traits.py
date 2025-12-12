@@ -35,21 +35,15 @@ class TestDispositionTraits(unittest.TestCase):
         model = DispositionTraits()
         if include_optional:
             return DispositionTraits(
-                openness = 0.0,
-                conscientiousness = 0.0,
-                extraversion = 0.0,
-                agreeableness = 0.0,
-                neuroticism = 0.0,
-                bias_strength = 0.0
+                skepticism = 1.0,
+                literalism = 1.0,
+                empathy = 1.0
             )
         else:
             return DispositionTraits(
-                openness = 0.0,
-                conscientiousness = 0.0,
-                extraversion = 0.0,
-                agreeableness = 0.0,
-                neuroticism = 0.0,
-                bias_strength = 0.0,
+                skepticism = 1.0,
+                literalism = 1.0,
+                empathy = 1.0,
         )
         """
 

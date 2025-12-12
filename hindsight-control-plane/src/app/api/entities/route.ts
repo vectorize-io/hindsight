@@ -21,6 +21,13 @@ export async function GET(request: NextRequest) {
       query: { limit }
     });
 
+    if (response.error) {
+      return NextResponse.json(
+        { error: response.error },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(response.data, { status: 200 });
   } catch (error) {
     console.error('Error listing entities:', error);

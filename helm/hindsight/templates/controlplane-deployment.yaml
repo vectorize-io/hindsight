@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -31,30 +31,26 @@ spec:
       - name: control-plane
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
+        image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Values.version }}"
         imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
         ports:
         - name: http
           containerPort: {{ .Values.controlPlane.service.targetPort }}
           protocol: TCP
         env:
-        - name: NODE_ENV
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "hindsight.fullname" . }}-config
-              key: node-env
-        - name: HINDSIGHT_CP_HOSTNAME
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "hindsight.fullname" . }}-config
-              key: hostname
-        - name: HINDSIGHT_CP_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "hindsight.fullname" . }}-config
-              key: control-plane-port
         - name: HINDSIGHT_CP_DATAPLANE_API_URL
           value: {{ include "hindsight.apiUrl" . | quote }}
+        {{- range $key, $value := .Values.controlPlane.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- range $key, $value := .Values.controlPlane.secrets }}
+        - name: {{ $key }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "hindsight.fullname" $ }}-secret
+              key: {{ $key }}
+        {{- end }}
         livenessProbe:
           {{- toYaml .Values.controlPlane.livenessProbe | nindent 10 }}
         readinessProbe:

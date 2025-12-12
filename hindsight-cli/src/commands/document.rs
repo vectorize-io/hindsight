@@ -20,14 +20,14 @@ pub fn list(
 
     let response = client.list_documents(agent_id, query.as_deref(), Some(limit), Some(offset), verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
         Ok(docs_response) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_info(&format!("Documents for agent '{}' (total: {})", agent_id, docs_response.total));
+                ui::print_info(&format!("Documents for bank '{}' (total: {})", agent_id, docs_response.total));
                 for doc in &docs_response.items {
                     let id = doc.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let created = doc.get("created_at").and_then(|v| v.as_str()).unwrap_or("unknown");
@@ -65,8 +65,8 @@ pub fn get(
 
     let response = client.get_document(agent_id, document_id, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -102,8 +102,8 @@ pub fn delete(
 
     let response = client.delete_document(agent_id, document_id, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {

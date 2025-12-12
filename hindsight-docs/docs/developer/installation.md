@@ -37,11 +37,12 @@ See [Models](./models) for detailed comparison and configuration.
 Run everything in one container with embedded PostgreSQL:
 
 ```bash
-docker run -p 8888:8888 -p 9999:9999 \
-  -e HINDSIGHT_API_LLM_PROVIDER=openai \
-  -e HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx \
-  -e HINDSIGHT_API_LLM_MODEL=gpt-4o-mini \
-  ghcr.io/vectorize-io/hindsight
+export OPENAI_API_KEY=sk-xxx
+
+docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
+  -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
+  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
 ```
 
 - **API Server**: http://localhost:8888
@@ -54,27 +55,29 @@ docker run -p 8888:8888 -p 9999:9999 \
 **Best for**: Production deployments, auto-scaling, cloud environments
 
 ```bash
-# Add Hindsight Helm repository
-helm repo add hindsight https://vectorize-io.github.io/hindsight
-helm repo update
-
 # Install with built-in PostgreSQL
-helm install hindsight hindsight/hindsight \
+helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
   --set api.llm.provider=groq \
   --set api.llm.apiKey=gsk_xxxxxxxxxxxx \
   --set postgresql.enabled=true
 
 # Or use external PostgreSQL
-helm install hindsight hindsight/hindsight \
+helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
   --set api.llm.provider=groq \
   --set api.llm.apiKey=gsk_xxxxxxxxxxxx \
   --set postgresql.enabled=false \
   --set api.database.url=postgresql://user:pass@postgres.example.com:5432/hindsight
+
+# Install a specific version
+helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight --version 0.1.3
+
+# Upgrade to latest
+helm upgrade hindsight oci://ghcr.io/vectorize-io/charts/hindsight
 ```
 
 **Requirements**:
 - Kubernetes cluster (GKE, EKS, AKS, or self-hosted)
-- Helm 3+
+- Helm 3.8+
 
 See the [Helm chart documentation](https://github.com/vectorize-io/hindsight/tree/main/helm) for advanced configuration.
 

@@ -292,8 +292,7 @@ class Bank(Base):
         JSONB,
         nullable=False,
         server_default=sql_text(
-            '\'{"openness": 0.5, "conscientiousness": 0.5, "extraversion": 0.5, '
-            '"agreeableness": 0.5, "neuroticism": 0.5, "bias_strength": 0.5}\'::jsonb'
+            '\'{"skepticism": 3, "literalism": 3, "empathy": 3}\'::jsonb'
         )
     )
     background: Mapped[str] = mapped_column(Text, nullable=False, server_default="")

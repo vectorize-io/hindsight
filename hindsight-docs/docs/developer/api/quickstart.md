@@ -9,15 +9,15 @@ Get up and running with Hindsight in 60 seconds.
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## Start the Server
+## Start the API Server
 
 <Tabs>
 <TabItem value="pip" label="pip (API only)">
 
 ```bash
-pip install hindsight-all
-export HINDSIGHT_API_LLM_PROVIDER=groq
-export HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
+pip install hindsight-api
+export OPENAI_API_KEY=sk-xxx
+export HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY
 
 hindsight-api
 ```
@@ -28,10 +28,13 @@ API available at http://localhost:8888
 <TabItem value="docker" label="Docker (Full Experience)">
 
 ```bash
-docker run -p 8888:8888 -p 9999:9999 \
-  -e HINDSIGHT_API_LLM_PROVIDER=groq \
-  -e HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx \
-  ghcr.io/vectorize-io/hindsight
+
+export OPENAI_API_KEY=sk-xxx
+
+docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
+  -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
+  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
 ```
 
 - **API**: http://localhost:8888
@@ -41,7 +44,8 @@ docker run -p 8888:8888 -p 9999:9999 \
 </Tabs>
 
 :::tip LLM Provider
-Hindsight requires an LLM with structured output support. Recommended: **Groq** with `gpt-oss-20b` for fast, cost-effective inference. Also supports OpenAI and Ollama.
+Hindsight requires an LLM with structured output support. Recommended: **Groq** with `gpt-oss-20b` for fast, cost-effective inference.
+See [LLM Providers](/developer/models#llm) for more details.
 :::
 
 ---
@@ -66,7 +70,7 @@ client.retain(bank_id="my-bank", content="Alice works at Google as a software en
 # Recall: Search memories
 client.recall(bank_id="my-bank", query="What does Alice do?")
 
-# Reflect: Generate personality-aware response
+# Reflect: Generate disposition-aware response
 client.reflect(bank_id="my-bank", query="Tell me about Alice")
 ```
 
@@ -96,7 +100,7 @@ await client.reflect('my-bank', 'Tell me about Alice');
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vectorize-io/hindsight/refs/heads/main/hindsight-cli/install.sh | bash
+curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 ```
 
 ```bash
@@ -121,7 +125,7 @@ hindsight memory reflect my-bank "Tell me about Alice"
 |-----------|--------------|
 | **Retain** | Content is processed, facts are extracted, entities are identified and linked in a knowledge graph |
 | **Recall** | Four search strategies (semantic, keyword, graph, temporal) run in parallel to find relevant memories |
-| **Reflect** | Retrieved memories are used to generate a personality-aware response |
+| **Reflect** | Retrieved memories are used to generate a disposition-aware response |
 
 ---
 
@@ -129,6 +133,6 @@ hindsight memory reflect my-bank "Tell me about Alice"
 
 - [**Retain**](./retain) — Advanced options for storing memories
 - [**Recall**](./recall) — Search and retrieval strategies
-- [**Reflect**](./reflect) — Personality-aware reasoning
-- [**Memory Banks**](./memory-banks) — Configure personality and background
+- [**Reflect**](./reflect) — Disposition-aware reasoning
+- [**Memory Banks**](./memory-banks) — Configure disposition and background
 - [**Server Deployment**](/developer/installation) — Docker Compose, Helm, and production setup

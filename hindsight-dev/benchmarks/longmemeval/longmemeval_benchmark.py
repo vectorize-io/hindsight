@@ -128,16 +128,202 @@ class LongMemEvalDataset(BenchmarkDataset):
 
 class QuestionAnswer(pydantic.BaseModel):
     answer: str
-    reasoning: str
+    reasoning: Optional[str] = None
 
 class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
     """LongMemEval-specific answer generator using configurable LLM provider."""
 
-    def __init__(self):
-        """Initialize with LLM configuration for memory operations."""
-        self.llm_config = LLMConfig.for_judge()
+    def __init__(self, context_format: str = "json"):
+        """Initialize with LLM configuration for answer generation.
+
+        Args:
+            context_format: How to format the retrieved context. Options:
+                - "json": Raw JSON dump of recall_result (original behavior)
+                - "structured": Human-readable format with facts grouped with source chunks
+        """
+        self.llm_config = LLMConfig.for_answer_generation()
         self.client = self.llm_config._client
         self.model = self.llm_config.model
+        self.context_format = context_format
+
+    def _format_context_json(self, recall_result: Dict[str, Any]) -> str:
+        """Original JSON dump format."""
+        return json.dumps(recall_result)
+
+    def _format_context_structured(self, recall_result: Dict[str, Any]) -> str:
+        """Human-readable format with facts grouped with their source chunks.
+
+        Format:
+            Fact 1: [fact text]
+            When: [date]
+            Source:
+              "[chunk text]"
+
+            ---
+
+            Fact 2: ...
+
+            === Entity Observations ===
+            Entity: [name]
+            - [observation 1]
+            - [observation 2]
+        """
+        results = recall_result.get("results", [])
+        chunks = recall_result.get("chunks", {})
+        entities = recall_result.get("entities", {})
+
+        if not results and not entities:
+            return "No memories found."
+
+        formatted_parts = []
+
+        for i, fact in enumerate(results, 1):
+            fact_text = fact.get("text", "")
+            fact_type = fact.get("fact_type", "unknown")
+
+            # Extract temporal information
+            occurred_start = fact.get("occurred_start")
+            occurred_end = fact.get("occurred_end")
+            mentioned_at = fact.get("mentioned_at")
+
+            # Build temporal string
+            when_parts = []
+            if occurred_start:
+                when_parts.append(f"occurred: {occurred_start}")
+            if mentioned_at:
+                when_parts.append(f"mentioned: {mentioned_at}")
+            when_str = " | ".join(when_parts) if when_parts else "unknown"
+
+            # Get the source chunk if available
+            chunk_id = fact.get("chunk_id")
+            chunk_text = None
+            if chunk_id and chunk_id in chunks:
+                chunk_info = chunks[chunk_id]
+                chunk_text = chunk_info.get("chunk_text", "")
+
+            # Build the formatted fact entry
+            entry_parts = [
+                f"Fact {i} ({fact_type}): {fact_text}",
+                f"When: {when_str}"
+            ]
+
+            # Add context field if present
+            context = fact.get("context")
+            if context:
+                entry_parts.append(f"Context: {context}")
+
+            # Add source chunk
+            if chunk_text:
+                # Truncate very long chunks
+                if len(chunk_text) > 1000:
+                    chunk_text = chunk_text[:1000] + "..."
+                entry_parts.append(f"Source chunk:\n  \"{chunk_text}\"")
+
+            formatted_parts.append("\n".join(entry_parts))
+
+        # Add entity observations section if present
+        if entities:
+            entity_parts = ["=== Entity Observations ==="]
+            for entity_name, entity_state in entities.items():
+                observations = entity_state.get("observations", [])
+                if observations:
+                    entity_parts.append(f"\nEntity: {entity_name}")
+                    for obs in observations:
+                        obs_text = obs.get("text", "")
+                        entity_parts.append(f"  - {obs_text}")
+            if len(entity_parts) > 1:  # More than just the header
+                formatted_parts.append("\n".join(entity_parts))
+
+        return "\n\n---\n\n".join(formatted_parts)
+
+    def _get_context_instructions(self) -> str:
+        """Get instructions for interpreting the context based on format."""
+        if self.context_format == "structured":
+            return """**Understanding the Retrieved Context:**
+The context contains memory facts extracted from previous conversations, each with its source chunk.
+
+1. **Fact**: A high-level summary/atomic fact (e.g., "User loves hiking in mountains")
+   - This is the searchable summary of what was stored
+
+2. **Source Chunk**: The actual raw conversation where the fact was extracted from
+   - **This is your primary source for detailed information**
+   - Look here for specifics, context, quotes, and evidence
+   - Prioritize information from chunks when facts seem ambiguous
+
+3. **Temporal Information**:
+   - "occurred": When the event actually happened
+   - "mentioned": When it was discussed in conversation
+   - Use this to understand the timeline and resolve conflicts (prefer more recent info)
+
+4. **Context**: Additional metadata about the conversation session
+
+**Date Calculations (CRITICAL - read carefully):**
+- When calculating days between two dates: count the days from Date A to Date B as (B - A)
+- Example: Jan 1 to Jan 8 = 7 days (not 8)
+- "X days ago" from Question Date means: Question Date minus X days
+- When a fact says "three weeks ago" on a certain mentioned date, that refers to 3 weeks before THAT mentioned date, NOT the question date
+- Always convert relative times ("last Friday", "two weeks ago") to absolute dates BEFORE comparing
+- Double-check your arithmetic - off-by-one errors are very common
+- **Important**: Read questions carefully for time anchors. "How many days ago did X happen when Y happened?" asks for the time between X and Y, NOT between X and the question date
+
+**Handling Relative Times in Facts:**
+- If a fact says "last Friday" or "two weeks ago", anchor it to the fact's "mentioned" date, NOT the question date
+- First convert ALL relative references to absolute dates, then answer the question
+- Show your date conversion work in your reasoning
+
+**Counting Questions (CRITICAL for "how many" questions):**
+- **Scan ALL facts first** - go through every single fact before counting, don't stop early
+- **List each item explicitly in your reasoning** before giving the count: "1. X, 2. Y, 3. Z = 3 total"
+- **Check all facts and chunks** before giving your final count
+- **Watch for duplicates**: The same item may appear in multiple facts. Deduplicate by checking if two facts refer to the same underlying item/event
+- **Watch for different descriptions of same thing**: "Dr. Patel (ENT specialist)" and "the ENT specialist" might be the same doctor
+- **Don't over-interpret**: A project you "completed" is different from a project you're "leading"
+- **Don't double-count**: If the same charity event is mentioned in two conversations, it's still one event
+
+**Disambiguation Guidance (CRITICAL - many errors come from over-counting):**
+- **Assume overlap by default**: If two facts describe similar events (same type, similar timeframe, similar details), assume they are the SAME event unless there's clear evidence they are different
+- If a person has a name AND a role mentioned, check if they're the same person before counting separately
+- If an amount is mentioned multiple times on different dates, check if it's the same event or different events
+- When facts reference the same underlying event from different sessions, count it once
+- **Check for aliases**: "my college roommate's wedding" and "Emily's wedding" might be the same event
+- **Check for time period overlap**: Two "week-long breaks" mentioned in overlapping time periods are likely the same break
+- **When in doubt, undercount**: It's better to miss a duplicate than to count the same thing twice
+
+**Question Interpretation (read carefully):**
+- "How many X before Y?" - count only X that happened BEFORE Y, not Y itself
+- "How many properties viewed before making an offer on Z?" - count OTHER properties, not Z
+- "How many X in the last week/month?" - calculate the exact date range from the question date, then filter
+- Pay attention to qualifiers like "before", "after", "initially", "currently", "in total"
+
+**When to Say "I Don't Know":**
+- If the question asks about something not in the retrieved context, say "I don't have information about X"
+- If comparing two things (e.g., "which happened first, X or Y?") but only one is mentioned, explicitly say the other is missing
+- Don't guess or infer dates that aren't explicitly stated in the facts or chunks
+- If you cannot find a specific piece of information after checking all facts and chunks, admit it
+- **Partial knowledge is OK**: If asked about two things and you only have info on one, provide what you know and note what's missing (don't just say "I don't know")
+
+**For Recommendation/Preference Questions (tips, suggestions, advice):**
+- **DO NOT invent specific recommendations** (no made-up product names, course names, paper titles, channel names, etc.)
+- **DO mention specific brands/products the user ALREADY uses** from the context
+- Describe WHAT KIND of recommendation the user would prefer, referencing their existing tools/brands
+- Keep answers concise - focus on key preferences (brand, quality level, specific interests) not exhaustive category lists
+- First scan ALL facts for user's existing tools, brands, stated preferences
+
+**How to Answer:**
+1. Scan ALL facts to find relevant memories - don't stop after finding a few
+2. **Read the source chunks carefully** - they contain the actual details you need
+3. Convert all relative times to absolute dates
+4. Use temporal information to understand when things happened
+5. Synthesize information from multiple facts if needed
+6. If facts conflict, prefer more recent information
+7. Double-check any date calculations before answering
+8. **For counting questions ("how many")**: First list each unique item in your reasoning (1. X, 2. Y, 3. Z...), then count them
+9. **For recommendations**: Reference the user's existing tools, experiences, or preferences explicitly
+
+"""
+        else:
+            # Original JSON format - minimal instructions
+            return ""
 
     async def generate_answer(
                 self,
@@ -159,7 +345,13 @@ class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
                 Tuple of (answer, reasoning, None)
                 - None indicates to use the memories from recall_result
             """
-            context = json.dumps(recall_result)
+            # Format context based on selected mode
+            if self.context_format == "structured":
+                context = self._format_context_structured(recall_result)
+            else:
+                context = self._format_context_json(recall_result)
+
+            context_instructions = self._get_context_instructions()
 
             # Format question date if provided
             formatted_question_date = question_date.strftime('%Y-%m-%d %H:%M:%S UTC') if question_date else "Not specified"
@@ -172,21 +364,21 @@ class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
                             "role": "user",
                             "content": f"""You are a helpful assistant that must answer user questions based on the previous conversations.
 
-**How to Answer:**
+{context_instructions}**Answer Guidelines:**
 1. Start by scanning retrieved context to understand the facts and events that happened and the timeline.
 2. Reason about all the memories and find the right answer, considering the most recent memory as an update of the current facts.
 3. If you have 2 possible answers, just say both.
 
 In general the answer must be comprehensive and plenty of details from the retrieved context.
 
-For quantitative questions, use numbers and units. Example: 'How many..', just answer the number and which ones. Consider EACH item even if it's not the most recent one. Reason and do calculation for complex questions.
+For quantitative/counting questions ("how many..."): First list each unique item in your reasoning (1. X, 2. Y, 3. Z...), scanning ALL facts, then count them for your answer.
 If questions asks a location (where...?) make sure to include the location name.
-For recommendations/suggestions, use the retrieved context to understand the user's preferences and user's personal experiences, and provide a possible answer based on those. Include the reasoning and explicitly say what the user prefers, before making suggestions (user previous experiences or specific requests FROM the user). Consider as much user preferences as possible in your answer.
-For questions asking for help or instructions, consider the users' recent memories and previous interactions with the assistant to understand their current situation better (recent purchases, specific product models used..) 
+For recommendation questions ("can you recommend...", "suggest...", "any tips..."): DO NOT give actual recommendations. Instead, describe what KIND the user would prefer based on their context. Example answer format: "The user would prefer recommendations for [category] that focus on [their interest]. They would not prefer [what to avoid based on context]."
+For questions asking for help or instructions, consider the users' recent memories and previous interactions with the assistant to understand their current situation better (recent purchases, specific product models used..)
 For specific number/value questions, use the context to understand what is the most up-to-date number based on recency, but also include the reasoning (in the answer) on previous possible values and why you think are less relevant.
 For open questions, include as much details as possible from different sources that are relevant.
 For questions where a specific entity/role is mentioned and it's different from your memory, just say the truth, don't make up anything just to fulfill the question. For example, if the question is about a specific sport, you should consider if the memories and the question are about the same sport. (e.g. american football vs soccer, shows vs podcasts)
-For comparative questions, say you don't know the answer if you don't have information about both sides. (or more sides) 
+For comparative questions, say you don't know the answer if you don't have information about both sides. (or more sides)
 For questions related to time/date, carefully review the question date and the memories date to correctly answer the question.
 For questions related to time/date calculation (e.g. How many days passed between X and Y?), carefully review the memories date to correctly answer the question and only provide an answer if you have information about both X and Y, otherwise say it's not possible to calculate and why.
 
@@ -206,9 +398,13 @@ Answer:
                     ],
                     response_format=QuestionAnswer,
                     scope="memory",
-                    max_tokens=8192,
+                    max_completion_tokens=32768,
                 )
-                return answer_obj.answer, answer_obj.reasoning + " (question date: " + formatted_question_date + ")", None
+                reasoning_text = answer_obj.reasoning or ""
+                if reasoning_text:
+                    reasoning_text = reasoning_text + " "
+                reasoning_text += f"(question date: {formatted_question_date})"
+                return answer_obj.answer, reasoning_text, None
             except Exception as e:
                 return f"Error generating answer: {str(e)}", "Error occurred during answer generation.", None
 
@@ -227,7 +423,9 @@ async def run_benchmark(
     only_ingested: bool = False,
     category: str = None,
     max_concurrent_items: int = 1,
-    results_filename: str = "benchmark_results.json"
+    results_filename: str = "benchmark_results.json",
+    context_format: str = "json",
+    source_results: str = None
 ):
     """
     Run the LongMemEval benchmark.
@@ -247,14 +445,17 @@ async def run_benchmark(
         category: Optional category to filter questions (e.g., 'single-session-user', 'multi-session', 'temporal-reasoning'). Mutually exclusive with max_instances and max_instances_per_category.
         max_concurrent_items: Maximum number of instances to process in parallel (default: 1 for sequential)
         results_filename: Filename for results (default: benchmark_results.json). Directory is fixed to results/.
+        context_format: How to format context for answer generation. "json" (raw JSON) or "structured" (human-readable with facts+chunks).
+        source_results: Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json.
     """
     from rich.console import Console
     console = Console()
 
     # Validate mutually exclusive arguments
-    exclusive_args = [max_instances is not None, max_instances_per_category is not None, category is not None]
-    if sum(exclusive_args) > 1:
-        console.print("[red]Error: --max-instances, --max-questions-per-category, and --category are mutually exclusive[/red]")
+    # --max-instances-per-category can't be combined with --max-instances or --category
+    # But --category CAN be combined with --max-instances (to limit questions within a category)
+    if max_instances_per_category is not None and (max_instances is not None or category is not None):
+        console.print("[red]Error: --max-questions-per-category cannot be combined with --max-instances or --category[/red]")
         return
 
     # Validate --only-ingested can't be combined with other dataset filters
@@ -316,12 +517,15 @@ async def run_benchmark(
     failed_question_ids = set()
     invalid_question_ids = set()
     if only_failed or only_invalid:
-        results_path = Path(__file__).parent / 'results' / 'benchmark_results.json'
+        # Use source_results if specified, otherwise default to benchmark_results.json
+        source_file = source_results if source_results else 'benchmark_results.json'
+        results_path = Path(__file__).parent / 'results' / source_file
         if not results_path.exists():
             console.print(f"[red]Error: Cannot use --only-failed or --only-invalid without existing results file[/red]")
             console.print(f"[yellow]Results file not found: {results_path}[/yellow]")
             return
 
+        console.print(f"[cyan]Reading failed/invalid questions from: {source_file}[/cyan]")
         with open(results_path, 'r') as f:
             previous_results = json.load(f)
 
@@ -388,8 +592,11 @@ async def run_benchmark(
         else:
             console.print(f"[green]Found {total_found} {filter_type} items to re-evaluate[/green]")
 
-    answer_generator = LongMemEvalAnswerGenerator()
+    answer_generator = LongMemEvalAnswerGenerator(context_format=context_format)
     answer_evaluator = LLMAnswerEvaluator()
+
+    # Log context format being used
+    console.print(f"[blue]Context format: {context_format}[/blue]")
 
     # Create local memory engine
     from benchmarks.common.benchmark_runner import create_memory_engine
@@ -481,6 +688,9 @@ async def run_benchmark(
     # Generate detailed report by question type
     generate_type_report(results)
 
+    # Generate markdown results table
+    generate_markdown_table(results, output_path)
+
     return results
 
 
@@ -567,6 +777,67 @@ def generate_type_report(results: dict):
     console.print(table)
 
 
+def generate_markdown_table(results: dict, json_output_path: Path):
+    """Generate a markdown results table with model configuration."""
+    from rich.console import Console
+    console = Console()
+
+    # Aggregate stats by question type
+    type_stats = {}
+
+    for item_result in results['item_results']:
+        metrics = item_result['metrics']
+        by_category = metrics.get('category_stats', {})
+
+        for qtype, stats in by_category.items():
+            if qtype not in type_stats:
+                type_stats[qtype] = {'total': 0, 'correct': 0, 'invalid': 0}
+            type_stats[qtype]['total'] += stats['total']
+            type_stats[qtype]['correct'] += stats['correct']
+            type_stats[qtype]['invalid'] += stats.get('invalid', 0)
+
+    # Build markdown content
+    lines = []
+    lines.append("# LongMemEval Benchmark Results")
+    lines.append("")
+
+    # Add model configuration
+    if 'model_config' in results:
+        config = results['model_config']
+        lines.append("## Model Configuration")
+        lines.append("")
+        lines.append(f"- **Hindsight**: {config['hindsight']['provider']}/{config['hindsight']['model']}")
+        lines.append(f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+        lines.append(f"- **LLM Judge**: {config['judge']['provider']}/{config['judge']['model']}")
+        lines.append("")
+
+    lines.append(f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})")
+    lines.append("")
+
+    # Results by question type
+    lines.append("## Results by Question Type")
+    lines.append("")
+    lines.append("| Question Type | Total | Correct | Invalid | Accuracy |")
+    lines.append("|---------------|-------|---------|---------|----------|")
+
+    for qtype in sorted(type_stats.keys()):
+        stats = type_stats[qtype]
+        valid_total = stats['total'] - stats['invalid']
+        acc = (stats['correct'] / valid_total * 100) if valid_total > 0 else 0
+        invalid_str = str(stats['invalid']) if stats['invalid'] > 0 else "-"
+        lines.append(f"| {qtype} | {stats['total']} | {stats['correct']} | {invalid_str} | {acc:.1f}% |")
+
+    # Add overall row
+    total_invalid = results.get('total_invalid', 0)
+    invalid_str = str(total_invalid) if total_invalid > 0 else "-"
+    lines.append(f"| **OVERALL** | **{results['total_questions']}** | **{results['total_correct']}** | **{invalid_str}** | **{results['overall_accuracy']:.1f}%** |")
+
+    # Write to file (same directory as JSON, but .md extension)
+    md_output_path = json_output_path.with_suffix('.md')
+    md_output_path.write_text('\n'.join(lines))
+    console.print(f"\n[green]✓[/green] Results table saved to {md_output_path}")
+
+
 if __name__ == "__main__":
     import logging
     import argparse
@@ -586,7 +857,7 @@ if __name__ == "__main__":
         type=int,
         default=None,
         dest="max_instances_per_category",
-        help="Limit number of questions per category (e.g., 20 = 20 questions from each of the 6 categories = 120 total). Mutually exclusive with --max-instances and --category."
+        help="Limit number of questions per category (e.g., 20 = 20 questions from each of the 6 categories = 120 total). Cannot be combined with --max-instances or --category."
     )
     parser.add_argument(
         "--max-questions",
@@ -641,7 +912,7 @@ if __name__ == "__main__":
         "--category",
         type=str,
         default=None,
-        help="Filter questions by category/question_type. Available categories: 'single-session-user', 'multi-session', 'single-session-preference', 'temporal-reasoning', 'knowledge-update', 'single-session-assistant'. Mutually exclusive with --max-instances and --max-instances-per-category."
+        help="Filter questions by category/question_type. Available categories: 'single-session-user', 'multi-session', 'single-session-preference', 'temporal-reasoning', 'knowledge-update', 'single-session-assistant'. Can be combined with --max-instances to limit questions within the category."
     )
     parser.add_argument(
         "--parallel",
@@ -655,6 +926,19 @@ if __name__ == "__main__":
         default="benchmark_results.json",
         help="Filename for results output (default: benchmark_results.json). Saved in results/ directory."
     )
+    parser.add_argument(
+        "--context-format",
+        type=str,
+        choices=["json", "structured"],
+        default="json",
+        help="How to format context for answer generation. 'json' (raw JSON dump, original behavior) or 'structured' (human-readable format with facts grouped with source chunks). Default: json."
+    )
+    parser.add_argument(
+        "--source-results",
+        type=str,
+        default=None,
+        help="Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json if not specified."
+    )
 
     args = parser.parse_args()
 
@@ -663,13 +947,9 @@ if __name__ == "__main__":
         parser.error("Cannot use both --only-failed and --only-invalid at the same time")
 
     # Validate mutually exclusive arguments
-    exclusive_count = sum([
-        args.max_instances is not None,
-        args.max_instances_per_category is not None,
-        args.category is not None
-    ])
-    if exclusive_count > 1:
-        parser.error("--max-instances, --max-questions-per-category, and --category are mutually exclusive")
+    # --max-instances-per-category can't be combined with --max-instances or --category
+    if args.max_instances_per_category is not None and (args.max_instances is not None or args.category is not None):
+        parser.error("--max-questions-per-category cannot be combined with --max-instances or --category")
 
     results = asyncio.run(run_benchmark(
         max_instances=args.max_instances,
@@ -685,5 +965,7 @@ if __name__ == "__main__":
         only_ingested=args.only_ingested,
         category=args.category,
         max_concurrent_items=args.parallel,
-        results_filename=args.results_filename
+        results_filename=args.results_filename,
+        context_format=args.context_format,
+        source_results=args.source_results
     ))

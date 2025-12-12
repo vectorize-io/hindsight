@@ -20,7 +20,6 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
-from hindsight_client_api.models.metadata_filter import MetadataFilter
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from typing import Optional, Set
 from typing_extensions import Self
@@ -32,9 +31,8 @@ class ReflectRequest(BaseModel):
     query: StrictStr
     budget: Optional[Budget] = None
     context: Optional[StrictStr] = None
-    filters: Optional[List[MetadataFilter]] = None
     include: Optional[ReflectIncludeOptions] = Field(default=None, description="Options for including additional data (disabled by default)")
-    __properties: ClassVar[List[str]] = ["query", "budget", "context", "filters", "include"]
+    __properties: ClassVar[List[str]] = ["query", "budget", "context", "include"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -75,13 +73,6 @@ class ReflectRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in filters (list)
-        _items = []
-        if self.filters:
-            for _item_filters in self.filters:
-                if _item_filters:
-                    _items.append(_item_filters.to_dict())
-            _dict['filters'] = _items
         # override the default output from pydantic by calling `to_dict()` of include
         if self.include:
             _dict['include'] = self.include.to_dict()
@@ -89,11 +80,6 @@ class ReflectRequest(BaseModel):
         # and model_fields_set contains the field
         if self.context is None and "context" in self.model_fields_set:
             _dict['context'] = None
-
-        # set to None if filters (nullable) is None
-        # and model_fields_set contains the field
-        if self.filters is None and "filters" in self.model_fields_set:
-            _dict['filters'] = None
 
         return _dict
 
@@ -110,7 +96,6 @@ class ReflectRequest(BaseModel):
             "query": obj.get("query"),
             "budget": obj.get("budget"),
             "context": obj.get("context"),
-            "filters": [MetadataFilter.from_dict(_item) for _item in obj["filters"]] if obj.get("filters") is not None else None,
             "include": ReflectIncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None
         })
         return _obj

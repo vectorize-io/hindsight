@@ -183,7 +183,7 @@ export const getBankProfile = <ThrowOnError extends boolean = false>(options: Op
 /**
  * Update memory bank disposition
  *
- * Update bank's Big Five disposition traits and bias strength
+ * Update bank's disposition traits (skepticism, literalism, empathy)
  */
 export const updateBankDisposition = <ThrowOnError extends boolean = false>(options: Options<UpdateBankDispositionData, ThrowOnError>) => (options.client ?? client).put<UpdateBankDispositionResponses, UpdateBankDispositionErrors, ThrowOnError>({
     url: '/v1/default/banks/{bank_id}/profile',
@@ -225,7 +225,7 @@ export const createOrUpdateBank = <ThrowOnError extends boolean = false>(options
 /**
  * Clear memory bank memories
  *
- * Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (personality and background) will be preserved.
+ * Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.
  */
 export const clearBankMemories = <ThrowOnError extends boolean = false>(options: Options<ClearBankMemoriesData, ThrowOnError>) => (options.client ?? client).delete<ClearBankMemoriesResponses, ClearBankMemoriesErrors, ThrowOnError>({ url: '/v1/default/banks/{bank_id}/memories', ...options });
 

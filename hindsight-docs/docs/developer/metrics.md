@@ -8,45 +8,21 @@ curl http://localhost:8888/metrics
 
 ## Available Metrics
 
-### Request Metrics
+### Operation Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `hindsight_http_requests_total` | Counter | Total HTTP requests (labels: method, endpoint, status_code) |
-| `hindsight_http_request_duration_seconds` | Histogram | Request latency (labels: method, endpoint) |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `hindsight.operation.duration` | Histogram | operation, bank_id, budget, max_tokens, success | Duration of operations in seconds |
+| `hindsight.operation.total` | Counter | operation, bank_id, budget, max_tokens, success | Total number of operations executed |
 
-### Memory Operations
+The `operation` label values are: `retain`, `recall`, `reflect`.
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `hindsight_retain_duration_seconds` | Histogram | Retain operation latency |
-| `hindsight_retain_items_total` | Counter | Total items retained |
-| `hindsight_recall_duration_seconds` | Histogram | Recall operation latency |
-| `hindsight_recall_results_count` | Histogram | Number of results per recall |
-| `hindsight_reflect_duration_seconds` | Histogram | Reflect operation latency |
+### Token Metrics
 
-### LLM Metrics
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `hindsight_llm_requests_total` | Counter | LLM API requests (labels: provider, model, status) |
-| `hindsight_llm_request_duration_seconds` | Histogram | LLM request latency |
-| `hindsight_llm_tokens_total` | Counter | Tokens consumed (labels: provider, token_type) |
-
-### Database Metrics
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `hindsight_db_connections_active` | Gauge | Active database connections |
-| `hindsight_db_connections_idle` | Gauge | Idle connections in pool |
-| `hindsight_db_query_duration_seconds` | Histogram | Query latency (labels: query_type) |
-
-### Memory Bank Metrics
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `hindsight_bank_memory_units_total` | Gauge | Total memories per bank |
-| `hindsight_bank_entities_total` | Gauge | Total entities per bank |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `hindsight.tokens.input` | Counter | operation, bank_id, budget, max_tokens | Input tokens consumed |
+| `hindsight.tokens.output` | Counter | operation, bank_id, budget, max_tokens | Output tokens generated |
 
 ## Prometheus Configuration
 

@@ -7,7 +7,7 @@ import logging
 from typing import List, Tuple, Dict, Any
 from uuid import UUID
 
-from .types import ProcessedFact, EntityRef
+from .types import ProcessedFact, EntityRef, EntityLink
 from . import link_utils
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ async def process_entities_batch(
     unit_ids: List[str],
     facts: List[ProcessedFact],
     log_buffer: List[str] = None
-) -> List[Tuple[str, str, float]]:
+) -> List[EntityLink]:
     """
     Process entities for all facts and create entity links.
 
@@ -39,7 +39,7 @@ async def process_entities_batch(
         log_buffer: Optional buffer for detailed logging
 
     Returns:
-        List of entity link tuples: (unit_id, entity_id, confidence)
+        List of EntityLink objects for batch insertion
     """
     if not unit_ids or not facts:
         return []
@@ -75,14 +75,14 @@ async def process_entities_batch(
 
 async def insert_entity_links_batch(
     conn,
-    entity_links: List[Tuple[str, str, float]]
+    entity_links: List[EntityLink]
 ) -> None:
     """
     Insert entity links in batch.
 
     Args:
         conn: Database connection
-        entity_links: List of (unit_id, entity_id, confidence) tuples
+        entity_links: List of EntityLink objects
     """
     if not entity_links:
         return

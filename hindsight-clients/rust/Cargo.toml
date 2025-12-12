@@ -30,6 +30,7 @@ url = "2.5"
 
 [dev-dependencies]
 tokio-test = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
 
 [build-dependencies]
 progenitor = "0.11"

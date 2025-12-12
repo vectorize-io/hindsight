@@ -4,290 +4,31 @@ sidebar_position: 9
 
 # Operations
 
-Monitor and manage long-running background tasks in Hindsight.
-
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
+Background tasks that Hindsight executes asynchronously.
 
 :::tip Prerequisites
 Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
 :::
 
-## What Are Operations?
+## How Operations Work
 
-When you call `retain_batch` with `async=True`, Hindsight processes the content in the background and returns immediately with an operation ID. Operations let you track and manage these async retain tasks.
+Hindsight processes several types of tasks in the background to maintain memory quality and consistency. These operations run automatically—you don't need to trigger them manually.
 
-By default, async operations are executed in-process within the API service. This is managed automatically — you don't need to configure anything.
+By default, all background operations are executed in-process within the API service.
 
-:::tip Scaling with Streaming
-For high-throughput workloads, you can extend the task backend to use a streaming platform like Kafka. This enables scale-out processing across multiple workers and handles backpressure on the API.
+:::note Kafka Integration
+Support for external streaming platforms like Kafka for scale-out processing is planned but **not available out of the box** in the current release.
 :::
 
-## Async Batch Retain
-
-For large content batches, use async mode to avoid timeouts:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-from hindsight_client import Hindsight
-
-client = Hindsight(base_url="http://localhost:8888")
-
-client.retain_batch(
-    bank_id="my-bank",
-    items=[
-        {"content": doc1_text},
-        {"content": doc2_text},
-    ],
-    retain_async=True
-)
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-import { HindsightClient } from '@vectorize-io/hindsight-client';
-
-const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
-
-await client.retainBatch('my-bank', [
-    { content: doc1Text },
-    { content: doc2Text },
-], { async: true });
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-hindsight retain my-bank --files docs/*.md --async
-```
-
-</TabItem>
-</Tabs>
-
-## List Operations
-
-View all operations for a memory bank:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-# Using the low-level API
-from hindsight_client_api import ApiClient, Configuration
-from hindsight_client_api.api import DefaultApi
-
-config = Configuration(host="http://localhost:8888")
-api_client = ApiClient(config)
-api = DefaultApi(api_client)
-
-# List all operations
-response = api.list_operations(bank_id="my-bank")
-
-for op in response.items:
-    print(f"{op.id}: {op.task_type} - {op.status}")
-    print(f"  Items: {op.items_count}")
-    if op.error_message:
-        print(f"  Error: {op.error_message}")
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-import { sdk, createClient, createConfig } from '@vectorize-io/hindsight-client';
-
-const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
-
-// List all operations
-const response = await sdk.listOperations({
-    client: apiClient,
-    path: { bank_id: 'my-bank' }
-});
-
-for (const op of response.data.items) {
-    console.log(`${op.id}: ${op.task_type} - ${op.status}`);
-    console.log(`  Items: ${op.items_count}`);
-    if (op.error_message) {
-        console.log(`  Error: ${op.error_message}`);
-    }
-}
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-# List all operations
-hindsight operations list my-bank
-
-# Filter by status
-hindsight operations list my-bank --status running
-
-# Watch all running operations
-hindsight operations watch my-bank --all
-```
-
-</TabItem>
-</Tabs>
-
-## Cancel Operations
-
-Stop a running or pending operation:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-# Cancel operation
-api.cancel_operation(
-    bank_id="my-bank",
-    operation_id="op-abc123"
-)
-
-# Cancel all pending operations
-response = api.list_operations(bank_id="my-bank")
-for op in response.items:
-    if op.status == "pending":
-        api.cancel_operation(bank_id="my-bank", operation_id=op.id)
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-// Cancel operation
-await sdk.cancelOperation({
-    client: apiClient,
-    path: { bank_id: 'my-bank', operation_id: 'op-abc123' }
-});
-
-// Cancel all pending
-const ops = await sdk.listOperations({
-    client: apiClient,
-    path: { bank_id: 'my-bank' }
-});
-
-for (const op of ops.data.items) {
-    if (op.status === 'pending') {
-        await sdk.cancelOperation({
-            client: apiClient,
-            path: { bank_id: 'my-bank', operation_id: op.id }
-        });
-    }
-}
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-# Cancel operation
-hindsight operations cancel my-bank op-abc123
-
-# Cancel all pending
-hindsight operations cancel my-bank --all-pending
-```
-
-</TabItem>
-</Tabs>
-
-## Operation States
-
-| State | Description |
-|-------|-------------|
-| **pending** | Queued, waiting to start |
-| **running** | Currently processing |
-| **completed** | Successfully finished |
-| **failed** | Encountered an error |
-| **cancelled** | Stopped by user |
-
-## Monitoring Strategies
-
-### Polling
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-import time
-
-def wait_for_operations(api, bank_id, poll_interval=5):
-    """Wait for all pending/running operations to complete."""
-    while True:
-        response = api.list_operations(bank_id=bank_id)
-
-        pending_or_running = [
-            op for op in response.items
-            if op.status in ['pending', 'running']
-        ]
-
-        if not pending_or_running:
-            print("All operations completed!")
-            break
-
-        for op in pending_or_running:
-            print(f"  {op.id}: {op.status} ({op.items_count} items)")
-
-        time.sleep(poll_interval)
-
-# Use it
-wait_for_operations(api, "my-bank")
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-async function waitForOperations(apiClient: any, bankId: string, pollInterval = 5000) {
-    while (true) {
-        const response = await sdk.listOperations({
-            client: apiClient,
-            path: { bank_id: bankId }
-        });
-
-        const pendingOrRunning = response.data.items.filter(
-            (op: any) => ['pending', 'running'].includes(op.status)
-        );
-
-        if (pendingOrRunning.length === 0) {
-            console.log('All operations completed!');
-            break;
-        }
-
-        for (const op of pendingOrRunning) {
-            console.log(`  ${op.id}: ${op.status} (${op.items_count} items)`);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-    }
-}
-
-// Use it
-await waitForOperations(apiClient, 'my-bank');
-```
-
-</TabItem>
-</Tabs>
-
-## Performance Tips
-
-**Use async for large batches:**
-- Sync: < 100 items or < 100KB
-- Async: > 100 items or > 100KB
-
-**Monitor progress:**
-- Check `items_count` field
-- Poll every 5-10 seconds
-
-**Handle failures:**
-- Check `error_message` field for details
-- Retry with exponential backoff
-- Break large batches into smaller chunks
+## Operation Types
+
+| Operation | Trigger | Description |
+|-----------|---------|-------------|
+| **batch_retain** | `retain_batch` with `async=True` | Processes large content batches in the background |
+| **form_opinion** | After each `reflect` call | Extracts and stores new opinions formed during reflection |
+| **reinforce_opinion** | After `retain` | Updates opinion confidence based on new supporting evidence |
+| **access_count_update** | After `recall` | Tracks which memories are accessed for relevance scoring |
+| **regenerate_observations** | Bank profile update | Regenerates entity observations when disposition changes |
 
 ## Next Steps
 

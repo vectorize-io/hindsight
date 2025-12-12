@@ -40,9 +40,11 @@ WORKDIR /app/api
 # Sync dependencies (will create lock file if needed)
 RUN uv sync
 
-# Copy source code and alembic migrations
+# Copy source code (alembic migrations are inside hindsight_api/)
 COPY hindsight-api/hindsight_api ./hindsight_api
-COPY hindsight-api/alembic ./alembic
+
+# Install the local package (uv sync only installed dependencies, not the package itself)
+RUN uv pip install -e .
 
 # =============================================================================
 # Stage: SDK Builder (needed for Control Plane)
@@ -130,34 +132,10 @@ RUN mkdir -p /app/data && chown -R hindsight:hindsight /app
 USER hindsight
 
 # Set PATH for hindsight user
-ENV PATH="/home/hindsight/.hindsight/bin:/app/api/.venv/bin:${PATH}"
+ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# Install pg0 binary
-RUN mkdir -p /home/hindsight/.hindsight/bin && \
-    ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-        PG0_BINARY="pg0-linux-aarch64-gnu"; \
-    elif [ "$ARCH" = "x86_64" ]; then \
-        PG0_BINARY="pg0-linux-x86_64-gnu"; \
-    else \
-        echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    echo "Installing pg0 binary: $PG0_BINARY" && \
-    for i in 1 2 3 4 5; do \
-        curl -fsSL -o /home/hindsight/.hindsight/bin/pg0 \
-            "https://github.com/vectorize-io/pg0/releases/latest/download/$PG0_BINARY" && \
-        chmod +x /home/hindsight/.hindsight/bin/pg0 && \
-        break || (echo "Retry $i failed, waiting..." && sleep 10); \
-    done && \
-    /home/hindsight/.hindsight/bin/pg0 --version
-
-# Pre-download PostgreSQL binaries
+# Pre-cache PostgreSQL binaries by starting/stopping pg0-embedded
 ENV PG0_HOME=/home/hindsight/.pg0-cache
-RUN pg0 start --help && \
-    (pg0 start --name hindsight --port 5555 --username hindsight --password hindsight --database hindsight && \
-    sleep 2 && \
-    pg0 stop --name hindsight && \
-    echo "PostgreSQL pre-cached to $PG0_HOME") || echo "Pre-download skipped"
 
 ENV PG0_HOME=/home/hindsight/.pg0
 
@@ -177,6 +155,7 @@ ENV HINDSIGHT_API_PORT=8888
 ENV HINDSIGHT_API_LOG_LEVEL=info
 ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=false
+ENV PYTHONUNBUFFERED=1
 
 CMD ["/app/start-all.sh"]
 
@@ -262,34 +241,17 @@ RUN mkdir -p /app/data && chown -R hindsight:hindsight /app
 USER hindsight
 
 # Set PATH for hindsight user
-ENV PATH="/home/hindsight/.hindsight/bin:/app/api/.venv/bin:${PATH}"
+ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# Install pg0 binary
-RUN mkdir -p /home/hindsight/.hindsight/bin && \
-    ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-        PG0_BINARY="pg0-linux-aarch64-gnu"; \
-    elif [ "$ARCH" = "x86_64" ]; then \
-        PG0_BINARY="pg0-linux-x86_64-gnu"; \
-    else \
-        echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    echo "Installing pg0 binary: $PG0_BINARY" && \
-    for i in 1 2 3 4 5; do \
-        curl -fsSL -o /home/hindsight/.hindsight/bin/pg0 \
-            "https://github.com/vectorize-io/pg0/releases/latest/download/$PG0_BINARY" && \
-        chmod +x /home/hindsight/.hindsight/bin/pg0 && \
-        break || (echo "Retry $i failed, waiting..." && sleep 10); \
-    done && \
-    /home/hindsight/.hindsight/bin/pg0 --version
-
-# Pre-download PostgreSQL binaries
+# Pre-cache PostgreSQL binaries by starting/stopping pg0-embedded
 ENV PG0_HOME=/home/hindsight/.pg0-cache
-RUN pg0 start --help && \
-    (pg0 start --name hindsight --port 5555 --username hindsight --password hindsight --database hindsight && \
-    sleep 2 && \
-    pg0 stop --name hindsight && \
-    echo "PostgreSQL pre-cached to $PG0_HOME") || echo "Pre-download skipped"
+RUN /app/api/.venv/bin/python -c "\
+from pg0 import Pg0; \
+print('Pre-caching PostgreSQL binaries...'); \
+pg = Pg0(name='hindsight', port=5555, username='hindsight', password='hindsight', database='hindsight'); \
+pg.start(); \
+pg.stop(); \
+print('PostgreSQL pre-cached to PG0_HOME')" || echo "Pre-download skipped"
 
 ENV PG0_HOME=/home/hindsight/.pg0
 
@@ -311,6 +273,7 @@ ENV NODE_ENV=production
 ENV HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888
 ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=true
+ENV PYTHONUNBUFFERED=1
 
 CMD ["/app/start-all.sh"]
 

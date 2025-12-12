@@ -98,7 +98,7 @@ Generate database URL
 {{- if .Values.databaseUrl }}
 {{- .Values.databaseUrl }}
 {{- else if .Values.postgresql.enabled }}
-{{- printf "postgresql://%s:%s@%s-postgresql:%d/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password (include "hindsight.fullname" .) (.Values.postgresql.primary.service.port | int) .Values.postgresql.auth.database }}
+{{- printf "postgresql://%s:%s@%s-postgresql:%d/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password (include "hindsight.fullname" .) (.Values.postgresql.service.port | int) .Values.postgresql.auth.database }}
 {{- else }}
 {{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%d/%s" .Values.postgresql.external.username .Values.postgresql.external.host (.Values.postgresql.external.port | int) .Values.postgresql.external.database }}
 {{- end }}

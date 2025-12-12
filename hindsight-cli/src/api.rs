@@ -13,7 +13,7 @@ use std::collections::HashMap;
 // Types not defined in OpenAPI spec (TODO: add to openapi.json)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentStats {
-    pub agent_id: String,
+    pub bank_id: String,
     pub total_nodes: i32,
     pub total_links: i32,
     pub total_documents: i32,
@@ -38,7 +38,7 @@ pub struct Operation {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OperationsResponse {
-    pub agent_id: String,
+    pub bank_id: String,
     pub operations: Vec<Operation>,
 }
 
@@ -66,7 +66,13 @@ pub struct ApiClient {
 impl ApiClient {
     pub fn new(base_url: String) -> Result<Self> {
         let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new()?);
-        let client = AsyncClient::new(&base_url);
+
+        // Create HTTP client with 2-minute timeout
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()?;
+
+        let client = AsyncClient::new_with_client(&base_url, http_client);
         Ok(ApiClient { client, runtime })
     }
 
@@ -231,19 +237,18 @@ impl ApiClient {
             Ok(response.into_inner())
         })
     }
+
+    pub fn delete_bank(&self, bank_id: &str, _verbose: bool) -> Result<types::DeleteResponse> {
+        self.runtime.block_on(async {
+            let response = self.client.delete_bank(bank_id).await?;
+            Ok(response.into_inner())
+        })
+    }
 }
 
 // Re-export types from the generated client for use in commands
 pub use types::{
-    AddBackgroundRequest,
-    BackgroundResponse,
-    BankListItem,
     BankProfileResponse,
-    CreateBankRequest,
-    DeleteResponse,
-    DispositionTraits,
-    DocumentResponse,
-    ListDocumentsResponse,
     MemoryItem,
     RecallRequest,
     RecallResponse,
@@ -251,5 +256,4 @@ pub use types::{
     ReflectRequest,
     ReflectResponse,
     RetainRequest,
-    RetainResponse,
 };

@@ -15,7 +15,7 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 
 ## What Are Opinions?
 
-Opinions are beliefs formed by the memory bank based on evidence and personality. Unlike world facts (objective information received) or experience (conversations and events), opinions are **judgments** with confidence scores.
+Opinions are beliefs formed by the memory bank based on evidence and disposition. Unlike world facts (objective information received) or experience (conversations and events), opinions are **judgments** with confidence scores.
 
 | Type | Example | Confidence |
 |------|---------|------------|
@@ -25,16 +25,16 @@ Opinions are beliefs formed by the memory bank based on evidence and personality
 
 ## How Opinions Form
 
-Opinions are created during `think` operations when the memory bank:
+Opinions are created during `reflect` operations when the memory bank:
 1. Retrieves relevant facts
-2. Applies personality traits
+2. Applies disposition traits
 3. Forms a judgment
 4. Assigns a confidence score
 
 ```mermaid
 graph LR
-    F[Facts] --> P[Personality Filter]
-    P --> J[Judgment]
+    F[Facts] --> D[Disposition Filter]
+    D --> J[Judgment]
     J --> O[Opinion + Confidence]
     O --> S[(Store)]
 ```
@@ -44,13 +44,13 @@ graph LR
 
 ```python
 # Ask a question that might form an opinion
-answer = client.think(
-    agent_id="my-agent",
+answer = client.reflect(
+    bank_id="my-bank",
     query="What do you think about functional programming?"
 )
 
 # Check if new opinions were formed
-for opinion in answer["new_opinions"]:
+for opinion in answer.get("new_opinions", []):
     print(f"New opinion: {opinion['text']}")
     print(f"Confidence: {opinion['confidence']}")
 ```
@@ -65,10 +65,10 @@ for opinion in answer["new_opinions"]:
 
 ```python
 # Search only opinions
-opinions = client.search_memories(
-    agent_id="my-agent",
+opinions = client.recall(
+    bank_id="my-bank",
     query="programming languages",
-    fact_type=["opinion"]
+    types=["opinion"]
 )
 
 for op in opinions:
@@ -79,7 +79,7 @@ for op in opinions:
 <TabItem value="cli" label="CLI">
 
 ```bash
-hindsight memory search my-agent "programming" --fact-type opinion
+hindsight recall my-bank "programming" --types opinion
 ```
 
 </TabItem>
@@ -107,23 +107,23 @@ t=2: "Python is best for data science, though Julia is faster" (0.75)
 t=3: "Python is best for data science" (0.82)
 ```
 
-## Personality Influence
+## Disposition Influence
 
-Different personalities form different opinions from the same facts:
+Different dispositions form different opinions from the same facts:
 
 <Tabs>
 <TabItem value="python" label="Python">
 
 ```python
-# Create two memory banks with different personalities
-client.create_agent(
-    agent_id="open-minded",
-    personality={"openness": 0.9, "conscientiousness": 0.3, "bias_strength": 0.7}
+# Create two memory banks with different dispositions
+client.create_bank(
+    bank_id="open-minded",
+    disposition={"skepticism": 2, "literalism": 2, "empathy": 4}
 )
 
-client.create_agent(
-    agent_id="conservative",
-    personality={"openness": 0.2, "conscientiousness": 0.9, "bias_strength": 0.7}
+client.create_bank(
+    bank_id="conservative",
+    disposition={"skepticism": 5, "literalism": 5, "empathy": 2}
 )
 
 # Store the same facts to both
@@ -133,59 +133,35 @@ facts = [
     "Rust compile times are longer than C++"
 ]
 for fact in facts:
-    client.store(agent_id="open-minded", content=fact)
-    client.store(agent_id="conservative", content=fact)
+    client.retain(bank_id="open-minded", content=fact)
+    client.retain(bank_id="conservative", content=fact)
 
 # Ask both the same question
 q = "Should we rewrite our C++ codebase in Rust?"
 
-answer1 = client.think(agent_id="open-minded", query=q)
+answer1 = client.reflect(bank_id="open-minded", query=q)
 # Likely: "Yes, Rust's safety benefits outweigh migration costs"
 
-answer2 = client.think(agent_id="conservative", query=q)
+answer2 = client.reflect(bank_id="conservative", query=q)
 # Likely: "No, C++'s ecosystem and our team's expertise make it the safer choice"
 ```
 
 </TabItem>
 </Tabs>
 
-## Bias Strength
+## Opinions in Reflect Responses
 
-The `bias_strength` parameter (0-1) controls how much personality influences opinions:
-
-| Value | Behavior |
-|-------|----------|
-| 0.0 | Pure evidence-based reasoning |
-| 0.5 | Balanced personality + evidence |
-| 1.0 | Strongly personality-driven |
+When `reflect` uses opinions, they appear in `based_on`:
 
 ```python
-# Evidence-focused agent
-client.create_agent(
-    agent_id="analyst",
-    personality={"bias_strength": 0.2}  # Low bias
-)
-
-# Personality-driven agent
-client.create_agent(
-    agent_id="advisor",
-    personality={"bias_strength": 0.8}  # High bias
-)
-```
-
-## Opinions in Think Responses
-
-When `think` uses opinions, they appear in `based_on`:
-
-```python
-answer = client.think(agent_id="my-agent", query="What language should I learn?")
+answer = client.reflect(bank_id="my-bank", query="What language should I learn?")
 
 print("World facts used:")
-for f in answer["based_on"]["world"]:
+for f in answer.based_on.get("world", []):
     print(f"  {f['text']}")
 
 print("\nOpinions used:")
-for o in answer["based_on"]["opinion"]:
+for o in answer.based_on.get("opinion", []):
     print(f"  {o['text']} (confidence: {o['confidence_score']})")
 ```
 

@@ -180,12 +180,9 @@ export class ControlPlaneClient {
       bank_id: string;
       name: string;
       disposition: {
-        openness: number;
-        conscientiousness: number;
-        extraversion: number;
-        agreeableness: number;
-        neuroticism: number;
-        bias_strength: number;
+        skepticism: number;
+        literalism: number;
+        empathy: number;
       };
       background: string;
     }>(`/api/profile/${bankId}`);
@@ -197,12 +194,9 @@ export class ControlPlaneClient {
   async updateBankProfile(bankId: string, profile: {
     name?: string;
     disposition?: {
-      openness: number;
-      conscientiousness: number;
-      extraversion: number;
-      agreeableness: number;
-      neuroticism: number;
-      bias_strength: number;
+      skepticism: number;
+      literalism: number;
+      empathy: number;
     };
     background?: string;
   }) {

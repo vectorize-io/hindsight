@@ -12,7 +12,6 @@ Name | Type | Description | Notes
 **max_tokens** | **int** |  | [optional] [default to 4096]
 **trace** | **bool** |  | [optional] [default to False]
 **query_timestamp** | **str** |  | [optional] 
-**filters** | [**List[MetadataFilter]**](MetadataFilter.md) |  | [optional] 
 **include** | [**IncludeOptions**](IncludeOptions.md) | Options for including additional data (entities are included by default) | [optional] 
 
 ## Example

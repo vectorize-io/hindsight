@@ -1,5 +1,4 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
-import apiSidebar from './docs/api-reference/endpoints/sidebar';
 
 const sidebars: SidebarsConfig = {
   developerSidebar: [
@@ -33,17 +32,15 @@ const sidebars: SidebarsConfig = {
           id: 'developer/performance',
           label: 'Performance',
         },
-      ],
-    },
-    {
-      type: 'category',
-      label: 'Getting Started',
-      collapsible: false,
-      items: [
         {
           type: 'doc',
-          id: 'developer/api/quickstart',
-          label: 'Quick Start',
+          id: 'developer/storage',
+          label: 'Storage',
+        },
+        {
+          type: 'doc',
+          id: 'developer/rag-vs-hindsight',
+          label: 'RAG vs Memory',
         },
       ],
     },
@@ -52,6 +49,11 @@ const sidebars: SidebarsConfig = {
       label: 'API',
       collapsible: false,
       items: [
+        {
+          type: 'doc',
+          id: 'developer/api/quickstart',
+          label: 'Quick Start',
+        },
         {
           type: 'doc',
           id: 'developer/api/retain',
@@ -145,59 +147,29 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
-    {
-      type: 'category',
-      label: 'Integrations',
-      collapsible: false,
-      items: [
-        {
-          type: 'doc',
-          id: 'sdks/openai',
-          label: 'OpenAI',
-        },
-        {
-          type: 'doc',
-          id: 'sdks/langgraph',
-          label: 'LangGraph',
-        },
-        {
-          type: 'doc',
-          id: 'sdks/mcp',
-          label: 'MCP Server',
-        },
-      ],
-    },
-  ],
-  apiReferenceSidebar: [
-    {
-      type: 'doc',
-      id: 'api-reference/index',
-      label: 'Overview',
-    },
-    {
-      type: 'category',
-      label: 'HTTP API',
-      collapsible: false,
-      items: apiSidebar,
-    },
-    {
-      type: 'category',
-      label: 'MCP API',
-      collapsible: false,
-      items: [
-        {
-          type: 'doc',
-          id: 'api-reference/mcp',
-          label: 'Tools Reference',
-        },
-      ],
-    },
   ],
   cookbookSidebar: [
     {
       type: 'doc',
       id: 'cookbook/index',
-      label: 'Cookbook',
+      label: 'Overview',
+    },
+    {
+      type: 'category',
+      label: 'Use Cases',
+      collapsible: false,
+      items: [
+        {
+          type: 'doc',
+          id: 'cookbook/per-user-memory',
+          label: 'Per-User Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/support-agent-with-shared-knowledge',
+          label: 'Support Agent + Shared Knowledge',
+        },
+      ],
     },
   ],
   changelogSidebar: [

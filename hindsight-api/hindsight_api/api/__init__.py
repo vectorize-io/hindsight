@@ -17,18 +17,17 @@ def create_app(
     http_api_enabled: bool = True,
     mcp_api_enabled: bool = False,
     mcp_mount_path: str = "/mcp",
-    run_migrations: bool = True,
     initialize_memory: bool = True
 ) -> FastAPI:
     """
     Create and configure the unified Hindsight API application.
 
     Args:
-        memory: MemoryEngine instance (already initialized with required parameters)
+        memory: MemoryEngine instance (already initialized with required parameters).
+                Migrations are controlled by the MemoryEngine's run_migrations parameter.
         http_api_enabled: Whether to enable HTTP REST API endpoints (default: True)
         mcp_api_enabled: Whether to enable MCP server (default: False)
         mcp_mount_path: Path to mount MCP server (default: /mcp)
-        run_migrations: Whether to run database migrations on startup (default: True)
         initialize_memory: Whether to initialize memory system on startup (default: True)
 
     Returns:
@@ -50,7 +49,6 @@ def create_app(
         from .http import create_app as create_http_app
         app = create_http_app(
             memory=memory,
-            run_migrations=run_migrations,
             initialize_memory=initialize_memory
         )
         logger.info("HTTP REST API enabled")

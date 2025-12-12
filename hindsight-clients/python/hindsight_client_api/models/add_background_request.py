@@ -27,7 +27,7 @@ class AddBackgroundRequest(BaseModel):
     Request model for adding/merging background information.
     """ # noqa: E501
     content: StrictStr = Field(description="New background information to add or merge")
-    update_disposition: Optional[StrictBool] = Field(default=True, description="If true, infer Big Five disposition traits from the merged background (default: true)")
+    update_disposition: Optional[StrictBool] = Field(default=True, description="If true, infer disposition traits from the merged background (default: true)")
     __properties: ClassVar[List[str]] = ["content", "update_disposition"]
 
     model_config = ConfigDict(

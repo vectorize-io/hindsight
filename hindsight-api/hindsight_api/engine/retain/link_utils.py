@@ -6,6 +6,9 @@ import time
 import logging
 from typing import List
 from datetime import timedelta, datetime, timezone
+from uuid import UUID
+
+from .types import EntityLink
 
 logger = logging.getLogger(__name__)
 
@@ -202,47 +205,24 @@ async def extract_entities_batch_optimized(
 
         # Resolve ALL entities in one batch call
         if all_entities_flat:
-            # [6.2.2] Batch resolve entities
+            # [6.2.2] Batch resolve entities - single call with per-entity dates
             substep_6_2_2_start = time.time()
-            # Group by date for batch resolution (round to hour to reduce buckets)
-            entities_by_date = {}
+
+            # Add per-entity dates to entity data for batch resolution
             for idx, (unit_id, local_idx, fact_date) in enumerate(entity_to_unit):
-                # Round to hour to group facts from same time period
-                date_key = fact_date.replace(minute=0, second=0, microsecond=0)
-                if date_key not in entities_by_date:
-                    entities_by_date[date_key] = []
-                entities_by_date[date_key].append((idx, all_entities_flat[idx]))
+                all_entities_flat[idx]['event_date'] = fact_date
 
-            _log(log_buffer, f"    [6.2.2] Grouped into {len(entities_by_date)} date buckets, resolving sequentially...", level='debug')
+            # Resolve ALL entities in ONE batch call (much faster than sequential buckets)
+            # INSERT ... ON CONFLICT handles any race conditions at the DB level
+            resolved_entity_ids = await entity_resolver.resolve_entities_batch(
+                bank_id=bank_id,
+                entities_data=all_entities_flat,
+                context=context,
+                unit_event_date=None,  # Not used when per-entity dates provided
+                conn=conn  # Use main transaction connection
+            )
 
-            # Resolve all date groups SEQUENTIALLY using main transaction connection
-            # This prevents race conditions where parallel tasks create duplicate entities
-            resolved_entity_ids = [None] * len(all_entities_flat)
-
-            for date_idx, (date_key, entities_group) in enumerate(entities_by_date.items(), 1):
-                date_bucket_start = time.time()
-                indices = [idx for idx, _ in entities_group]
-                entities_data = [entity_data for _, entity_data in entities_group]
-                # Use the first fact's date for this bucket (all should be in same hour)
-                fact_date = entity_to_unit[indices[0]][2]
-
-                # Use main transaction connection to ensure consistency
-                batch_resolved = await entity_resolver.resolve_entities_batch(
-                    bank_id=bank_id,
-                    entities_data=entities_data,
-                    context=context,
-                    unit_event_date=fact_date,
-                    conn=conn  # Use main transaction connection
-                )
-
-                if len(entities_by_date) <= 10:  # Only log individual buckets if there aren't too many
-                    _log(log_buffer, f"      [6.2.2.{date_idx}] Resolved {len(entities_data)} entities in {time.time() - date_bucket_start:.3f}s", level='debug')
-
-                # Map results back to resolved_entity_ids
-                for idx, entity_id in zip(indices, batch_resolved):
-                    resolved_entity_ids[idx] = entity_id
-
-            _log(log_buffer, f"    [6.2.2] Resolve entities: {len(all_entities_flat)} entities across {len(entities_by_date)} buckets in {time.time() - substep_6_2_2_start:.3f}s", level='debug')
+            _log(log_buffer, f"    [6.2.2] Resolve entities: {len(all_entities_flat)} entities in single batch in {time.time() - substep_6_2_2_start:.3f}s", level='debug')
 
             # [6.2.3] Create unit-entity links in BATCH
             substep_6_2_3_start = time.time()
@@ -305,10 +285,14 @@ async def extract_entities_batch_optimized(
         # Only link each new unit to the most recent MAX_LINKS_PER_ENTITY units
         MAX_LINKS_PER_ENTITY = 50  # Limit to prevent explosion when entity appears in many facts
         link_gen_start = time.time()
-        links = []
+        links: List[EntityLink] = []
         new_unit_set = set(unit_ids)  # Units from this batch
 
+        def to_uuid(val) -> UUID:
+            return UUID(val) if isinstance(val, str) else val
+
         for entity_id, units_with_entity in entity_to_units.items():
+            entity_uuid = to_uuid(entity_id)
             # Separate new units (from this batch) and existing units
             new_units = [u for u in units_with_entity if str(u) in new_unit_set or u in new_unit_set]
             existing_units = [u for u in units_with_entity if str(u) not in new_unit_set and u not in new_unit_set]
@@ -318,15 +302,15 @@ async def extract_entities_batch_optimized(
             new_units_to_link = new_units[-MAX_LINKS_PER_ENTITY:] if len(new_units) > MAX_LINKS_PER_ENTITY else new_units
             for i, unit_id_1 in enumerate(new_units_to_link):
                 for unit_id_2 in new_units_to_link[i+1:]:
-                    links.append((unit_id_1, unit_id_2, 'entity', 1.0, entity_id))
-                    links.append((unit_id_2, unit_id_1, 'entity', 1.0, entity_id))
+                    links.append(EntityLink(from_unit_id=to_uuid(unit_id_1), to_unit_id=to_uuid(unit_id_2), entity_id=entity_uuid))
+                    links.append(EntityLink(from_unit_id=to_uuid(unit_id_2), to_unit_id=to_uuid(unit_id_1), entity_id=entity_uuid))
 
             # Link new units to LIMITED existing units (most recent)
             existing_to_link = existing_units[-MAX_LINKS_PER_ENTITY:]  # Take most recent
             for new_unit in new_units:
                 for existing_unit in existing_to_link:
-                    links.append((new_unit, existing_unit, 'entity', 1.0, entity_id))
-                    links.append((existing_unit, new_unit, 'entity', 1.0, entity_id))
+                    links.append(EntityLink(from_unit_id=to_uuid(new_unit), to_unit_id=to_uuid(existing_unit), entity_id=entity_uuid))
+                    links.append(EntityLink(from_unit_id=to_uuid(existing_unit), to_unit_id=to_uuid(new_unit), entity_id=entity_uuid))
 
         _log(log_buffer, f"      [6.3.3] Generate {len(links)} links: {time.time() - link_gen_start:.3f}s", level='debug')
         _log(log_buffer, f"  [6.3] Entity link creation: {len(links)} links for {len(all_entity_ids)} unique entities in {time.time() - substep_start:.3f}s", level='debug')
@@ -346,7 +330,7 @@ async def create_temporal_links_batch_per_fact(
     unit_ids: List[str],
     time_window_hours: int = 24,
     log_buffer: List[str] = None,
-):
+) -> int:
     """
     Create temporal links for multiple units, each with their own event_date.
 
@@ -359,9 +343,12 @@ async def create_temporal_links_batch_per_fact(
         unit_ids: List of unit IDs
         time_window_hours: Time window in hours for temporal links
         log_buffer: Optional buffer for logging
+
+    Returns:
+        Number of temporal links created
     """
     if not unit_ids:
-        return
+        return 0
 
     try:
         import time as time_mod
@@ -403,6 +390,27 @@ async def create_temporal_links_batch_per_fact(
         # Filter and create links in memory (much faster than N queries)
         link_gen_start = time_mod.time()
         links = compute_temporal_links(new_units, all_candidates, time_window_hours)
+
+        # Also compute temporal links WITHIN the new batch (new units to each other)
+        if len(new_units) > 1:
+            # Convert new_units dict to candidate format for within-batch linking
+            new_unit_items = list(new_units.items())
+            for i, (unit_id, event_date) in enumerate(new_unit_items):
+                unit_event_date_norm = _normalize_datetime(event_date)
+
+                # Compare with other new units (only those after this one to avoid duplicates)
+                for j in range(i + 1, len(new_unit_items)):
+                    other_id, other_event_date = new_unit_items[j]
+                    other_event_date_norm = _normalize_datetime(other_event_date)
+
+                    # Check if within time window
+                    time_diff_hours = abs((unit_event_date_norm - other_event_date_norm).total_seconds() / 3600)
+                    if time_diff_hours <= time_window_hours:
+                        weight = max(0.3, 1.0 - (time_diff_hours / time_window_hours))
+                        # Create bidirectional links
+                        links.append((unit_id, other_id, 'temporal', weight, None))
+                        links.append((other_id, unit_id, 'temporal', weight, None))
+
         _log(log_buffer, f"      [7.3] Generate {len(links)} temporal links: {time_mod.time() - link_gen_start:.3f}s")
 
         if links:
@@ -416,6 +424,8 @@ async def create_temporal_links_batch_per_fact(
                 links
             )
             _log(log_buffer, f"      [7.4] Insert {len(links)} temporal links: {time_mod.time() - insert_start:.3f}s")
+
+        return len(links)
 
     except Exception as e:
         logger.error(f"Failed to create temporal links: {str(e)}")
@@ -432,7 +442,7 @@ async def create_semantic_links_batch(
     top_k: int = 5,
     threshold: float = 0.7,
     log_buffer: List[str] = None,
-):
+) -> int:
     """
     Create semantic links for multiple units efficiently.
 
@@ -446,9 +456,12 @@ async def create_semantic_links_batch(
         top_k: Number of top similar units to link
         threshold: Minimum similarity threshold
         log_buffer: Optional buffer for logging
+
+    Returns:
+        Number of semantic links created
     """
     if not unit_ids or not embeddings:
-        return
+        return 0
 
     try:
         import time as time_mod
@@ -522,8 +535,37 @@ async def create_semantic_links_batch(
 
                     for idx in sorted_indices:
                         similar_id = existing_ids[idx]
-                        similarity = float(similarities[idx])
+                        # Clamp to [0, 1] to handle floating point precision issues
+                        similarity = float(min(1.0, max(0.0, similarities[idx])))
                         all_links.append((unit_id, similar_id, 'semantic', similarity, None))
+
+        # Also compute similarities WITHIN the new batch (new units to each other)
+        # Apply the same top_k limit per unit as we do for existing units
+        if len(unit_ids) > 1:
+            new_embeddings_matrix = np.array(embeddings)
+
+            for i, unit_id in enumerate(unit_ids):
+                # Compute similarities with all OTHER new units
+                other_indices = [j for j in range(len(unit_ids)) if j != i]
+                if not other_indices:
+                    continue
+
+                other_embeddings = new_embeddings_matrix[other_indices]
+                similarities = np.dot(other_embeddings, new_embeddings_matrix[i])
+
+                # Find top-k above threshold (same logic as existing units)
+                above_threshold = np.where(similarities >= threshold)[0]
+
+                if len(above_threshold) > 0:
+                    # Sort by similarity (descending) and take top-k
+                    sorted_local_indices = above_threshold[np.argsort(-similarities[above_threshold])][:top_k]
+
+                    for local_idx in sorted_local_indices:
+                        other_idx = other_indices[local_idx]
+                        other_id = unit_ids[other_idx]
+                        # Clamp to [0, 1] to handle floating point precision issues
+                        similarity = float(min(1.0, max(0.0, similarities[local_idx])))
+                        all_links.append((unit_id, other_id, 'semantic', similarity, None))
 
         _log(log_buffer, f"      [8.2] Compute similarities & generate {len(all_links)} semantic links: {time_mod.time() - compute_start:.3f}s")
 
@@ -539,6 +581,8 @@ async def create_semantic_links_batch(
             )
             _log(log_buffer, f"      [8.3] Insert {len(all_links)} semantic links: {time_mod.time() - insert_start:.3f}s")
 
+        return len(all_links)
+
     except Exception as e:
         logger.error(f"Failed to create semantic links: {str(e)}")
         import traceback
@@ -546,7 +590,7 @@ async def create_semantic_links_batch(
         raise
 
 
-async def insert_entity_links_batch(conn, links: List[tuple], chunk_size: int = 50000):
+async def insert_entity_links_batch(conn, links: List[EntityLink], chunk_size: int = 50000):
     """
     Insert all entity links using COPY to temp table + INSERT for maximum speed.
 
@@ -556,7 +600,7 @@ async def insert_entity_links_batch(conn, links: List[tuple], chunk_size: int = 
 
     Args:
         conn: Database connection
-        links: List of tuples (from_unit_id, to_unit_id, link_type, weight, entity_id)
+        links: List of EntityLink objects
         chunk_size: Number of rows per batch (default 50000)
     """
     if not links:
@@ -585,16 +629,16 @@ async def insert_entity_links_batch(conn, links: List[tuple], chunk_size: int = 
     await conn.execute("TRUNCATE _temp_entity_links")
     logger.debug(f"      [9.2] Truncate temp table: {time_mod.time() - truncate_start:.3f}s")
 
-    # Convert links to proper format for COPY
+    # Convert EntityLink objects to tuples for COPY
     convert_start = time_mod.time()
     records = []
-    for from_id, to_id, link_type, weight, entity_id in links:
+    for link in links:
         records.append((
-            uuid_mod.UUID(from_id) if isinstance(from_id, str) else from_id,
-            uuid_mod.UUID(to_id) if isinstance(to_id, str) else to_id,
-            link_type,
-            weight,
-            uuid_mod.UUID(str(entity_id)) if entity_id and not isinstance(entity_id, uuid_mod.UUID) else entity_id
+            link.from_unit_id,
+            link.to_unit_id,
+            link.link_type,
+            link.weight,
+            link.entity_id
         ))
     logger.debug(f"      [9.3] Convert {len(records)} records: {time_mod.time() - convert_start:.3f}s")
 

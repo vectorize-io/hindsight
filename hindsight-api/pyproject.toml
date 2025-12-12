@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api"
-version = "0.0.21"
+version = "0.1.4"
 description = "Temporal + Semantic + Entity Memory System for AI agents using PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ dependencies = [
     "openai>=1.0.0",
     "pydantic>=2.0.0",
     "rich>=13.0.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=3.0.0,<3.3.0",
     "langchain-text-splitters>=0.3.0",
     "fastapi[standard]>=0.120.3",
     "uvicorn>=0.38.0",
@@ -24,11 +24,12 @@ dependencies = [
     "pgvector>=0.4.1",
     "greenlet>=3.2.4",
     "psycopg2-binary>=2.9.11",
-    "transformers>=4.30.0",
-    "torch>=2.0.0",
+    "transformers>=4.30.0,<4.46.0",
+    "torch>=2.0.0,<2.6.0",
     "tiktoken>=0.12.0",
     "httpx>=0.27.0",
-    "fastmcp>=2.0.0",
+    "fastmcp>=2.3.0",
+    "pg0-embedded>=0.1.0",
     "python-dateutil>=2.8.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -45,21 +46,34 @@ test = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.0.0",
     "filelock>=3.0.0",
-    "testcontainers[postgres]>=4.0.0",
 ]
 
 [project.scripts]
-hindsight-api = "hindsight_api.cli:main"
+hindsight-api = "hindsight_api.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_api"]
 
+[tool.hatch.build.targets.wheel.sources]
+"hindsight_api" = "hindsight_api"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "hindsight_api/**/*",
+]
+
+[tool.hatch.build]
+include = [
+    "hindsight_api/**/*.py",
+    "hindsight_api/alembic/**/*",
+]
+
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
-log_cli_format = "%(asctime)s %(levelname)s %(message)s"
+log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
-addopts = "--timeout 60 -n auto --durations=10 -v"
+addopts = "--timeout 120 -n 8 --durations=10 -v"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 log_auto_indent = true
@@ -70,11 +84,10 @@ filterwarnings = [
 
 [dependency-groups]
 dev = [
-    "filelock>=3.20.0",
     "pytest>=9.0.0",
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "python-dotenv>=1.2.1",
-    "testcontainers>=4.13.3",
+    "filelock>=3.0.0",
 ]

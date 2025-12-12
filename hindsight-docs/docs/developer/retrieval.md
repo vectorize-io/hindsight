@@ -6,6 +6,24 @@ sidebar_position: 3
 
 When you call `recall()`, Hindsight uses multiple search strategies in parallel to find the most relevant memories, regardless of how you phrase your query.
 
+```mermaid
+graph LR
+    Q[Query] --> S[Semantic]
+    Q --> K[Keyword]
+    Q --> G[Graph]
+    Q --> T[Temporal]
+
+    S --> RRF[RRF Fusion]
+    K --> RRF
+    G --> RRF
+    T --> RRF
+
+    RRF --> CE[Cross-Encoder]
+    CE --> R[Results]
+```
+
+---
+
 ## The Challenge of Memory Recall
 
 Different queries need different search approaches:
@@ -117,19 +135,6 @@ This gives your agent richer context while maintaining precise control over tota
 
 ---
 
-## How Recall Works
-
-When you call `recall(query, bank_id)`:
-
-1. **Parse** → Detect temporal expressions, understand intent
-2. **Search** → Run 4 strategies in parallel
-3. **Fuse** → Combine results, prioritizing consensus
-4. **Rerank** → Neural reranking for final relevance
-5. **Filter** → Select top memories within token budget
-6. **Return** → Ranked, relevant memories
-
----
-
 ## Tuning Recall: Quality vs Latency
 
 Different use cases require different trade-offs between **recall quality** and **response speed**. Two parameters control this:
@@ -203,4 +208,4 @@ The **fusion** of all four gives you exactly what you're looking for, even thoug
 ## Next Steps
 
 - [**Retain**](./retain) — How memories are stored with rich context
-- [**Reflect**](./reflect) — How personality influences reasoning
+- [**Reflect**](./reflect) — How disposition influences reasoning

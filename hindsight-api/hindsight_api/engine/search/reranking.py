@@ -10,10 +10,8 @@ class CrossEncoderReranker:
     """
     Neural reranking using a cross-encoder model.
 
-    Uses cross-encoder/ms-marco-MiniLM-L-6-v2 by default:
-    - Fast inference (~80ms for 100 pairs on CPU)
-    - Small model (80MB)
-    - Trained for passage re-ranking
+    Configured via environment variables (see cross_encoder.py).
+    Default local model is cross-encoder/ms-marco-MiniLM-L-6-v2.
     """
 
     def __init__(self, cross_encoder=None):
@@ -21,14 +19,12 @@ class CrossEncoderReranker:
         Initialize cross-encoder reranker.
 
         Args:
-            cross_encoder: CrossEncoderReranker instance. If None, uses default
-                          SentenceTransformersCrossEncoder with ms-marco-MiniLM-L-6-v2
-                          (loaded lazily for faster startup)
+            cross_encoder: CrossEncoderModel instance. If None, creates one from
+                          environment variables (defaults to local provider)
         """
         if cross_encoder is None:
-            from hindsight_api.engine.cross_encoder import SentenceTransformersCrossEncoder
-            # Model is loaded lazily - call ensure_loaded() during initialize()
-            cross_encoder = SentenceTransformersCrossEncoder()
+            from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
+            cross_encoder = create_cross_encoder_from_env()
         self.cross_encoder = cross_encoder
 
     def rerank(

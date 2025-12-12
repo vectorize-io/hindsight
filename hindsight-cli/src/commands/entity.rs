@@ -18,8 +18,8 @@ pub fn list(
 
     let response = client.list_entities(bank_id, Some(limit), verbose)?;
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     if output_format == OutputFormat::Pretty {
@@ -66,8 +66,8 @@ pub fn get(
 
     let response = client.get_entity(bank_id, entity_id, verbose)?;
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     if output_format == OutputFormat::Pretty {
@@ -82,17 +82,6 @@ pub fn get(
         }
         if let Some(last_seen) = &response.last_seen {
             println!("Last seen: {}", last_seen);
-        }
-
-        // Show observations (always included)
-        if !response.observations.is_empty() {
-            println!("\nObservations ({}):", response.observations.len());
-            for obs in &response.observations {
-                println!("  - {}", obs.text);
-                if let Some(mentioned_at) = &obs.mentioned_at {
-                    println!("    Mentioned at: {}", mentioned_at);
-                }
-            }
         }
 
         println!();
@@ -118,8 +107,8 @@ pub fn regenerate(
 
     let response = client.regenerate_entity(bank_id, entity_id, verbose)?;
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     if output_format == OutputFormat::Pretty {

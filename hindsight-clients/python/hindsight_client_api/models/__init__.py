@@ -38,7 +38,6 @@ from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.list_documents_response import ListDocumentsResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.memory_item import MemoryItem
-from hindsight_client_api.models.metadata_filter import MetadataFilter
 from hindsight_client_api.models.recall_request import RecallRequest
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult

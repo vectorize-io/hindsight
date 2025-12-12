@@ -177,6 +177,20 @@ class ProcessedFact:
 
 
 @dataclass
+class EntityLink:
+    """
+    Link between two memory units through a shared entity.
+
+    Used for entity-based graph connections in the memory graph.
+    """
+    from_unit_id: UUID
+    to_unit_id: UUID
+    entity_id: UUID
+    link_type: str = 'entity'
+    weight: float = 1.0
+
+
+@dataclass
 class RetainBatch:
     """
     A batch of content to retain.

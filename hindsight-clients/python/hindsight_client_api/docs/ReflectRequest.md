@@ -9,7 +9,6 @@ Name | Type | Description | Notes
 **query** | **str** |  | 
 **budget** | [**Budget**](Budget.md) |  | [optional] 
 **context** | **str** |  | [optional] 
-**filters** | [**List[MetadataFilter]**](MetadataFilter.md) |  | [optional] 
 **include** | [**ReflectIncludeOptions**](ReflectIncludeOptions.md) | Options for including additional data (disabled by default) | [optional] 
 
 ## Example

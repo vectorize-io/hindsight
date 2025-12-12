@@ -34,6 +34,7 @@ impl From<Format> for OutputFormat {
 #[command(name = "hindsight")]
 #[command(about = "Hindsight CLI - Semantic memory system", long_about = None)]
 #[command(version)]
+#[command(before_help = get_before_help())]
 #[command(after_help = get_after_help())]
 struct Cli {
     /// Output format (pretty, json, yaml)
@@ -58,6 +59,10 @@ fn get_after_help() -> String {
         "Current API URL: {} (from {})\n\nRun 'hindsight configure' to change the API URL.",
         api_url, source
     )
+}
+
+fn get_before_help() -> &'static str {
+    ui::get_logo()
 }
 
 #[derive(Subcommand)]
@@ -100,8 +105,8 @@ enum BankCommands {
     /// List all banks
     List,
 
-    /// Get bank profile (disposition + background)
-    Profile {
+    /// Get bank disposition and background
+    Disposition {
         /// Bank ID
         bank_id: String,
     },
@@ -132,6 +137,16 @@ enum BankCommands {
         /// Skip automatic disposition inference
         #[arg(long)]
         no_update_disposition: bool,
+    },
+
+    /// Delete a bank and all its data
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -378,11 +393,14 @@ fn run() -> Result<()> {
         Commands::Explore => commands::explore::run(&client),
         Commands::Bank(bank_cmd) => match bank_cmd {
             BankCommands::List => commands::bank::list(&client, verbose, output_format),
-            BankCommands::Profile { bank_id } => commands::bank::profile(&client, &bank_id, verbose, output_format),
+            BankCommands::Disposition { bank_id } => commands::bank::disposition(&client, &bank_id, verbose, output_format),
             BankCommands::Stats { bank_id } => commands::bank::stats(&client, &bank_id, verbose, output_format),
             BankCommands::Name { bank_id, name } => commands::bank::update_name(&client, &bank_id, &name, verbose, output_format),
             BankCommands::Background { bank_id, content, no_update_disposition } => {
                 commands::bank::update_background(&client, &bank_id, &content, no_update_disposition, verbose, output_format)
+            }
+            BankCommands::Delete { bank_id, yes } => {
+                commands::bank::delete(&client, &bank_id, yes, verbose, output_format)
             }
         },
 

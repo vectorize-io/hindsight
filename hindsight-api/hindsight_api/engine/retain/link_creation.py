@@ -16,7 +16,7 @@ async def create_temporal_links_batch(
     conn,
     bank_id: str,
     unit_ids: List[str]
-) -> None:
+) -> int:
     """
     Create temporal links between facts.
 
@@ -26,11 +26,14 @@ async def create_temporal_links_batch(
         conn: Database connection
         bank_id: Bank identifier
         unit_ids: List of unit IDs to create links for
+
+    Returns:
+        Number of temporal links created
     """
     if not unit_ids:
-        return
+        return 0
 
-    await link_utils.create_temporal_links_batch_per_fact(
+    return await link_utils.create_temporal_links_batch_per_fact(
         conn,
         bank_id,
         unit_ids,
@@ -43,7 +46,7 @@ async def create_semantic_links_batch(
     bank_id: str,
     unit_ids: List[str],
     embeddings: List[List[float]]
-) -> None:
+) -> int:
     """
     Create semantic links between facts.
 
@@ -54,14 +57,17 @@ async def create_semantic_links_batch(
         bank_id: Bank identifier
         unit_ids: List of unit IDs to create links for
         embeddings: List of embedding vectors (same length as unit_ids)
+
+    Returns:
+        Number of semantic links created
     """
     if not unit_ids or not embeddings:
-        return
+        return 0
 
     if len(unit_ids) != len(embeddings):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and embeddings ({len(embeddings)})")
 
-    await link_utils.create_semantic_links_batch(
+    return await link_utils.create_semantic_links_batch(
         conn,
         bank_id,
         unit_ids,

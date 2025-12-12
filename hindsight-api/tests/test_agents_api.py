@@ -1,5 +1,5 @@
 """
-Tests for agent management API (profile, personality, background).
+Tests for agent management API (profile, disposition, background).
 """
 import pytest
 import uuid
@@ -18,51 +18,42 @@ class TestAgentProfile:
 
     @pytest.mark.asyncio
     async def test_get_agent_profile_creates_default(self, memory: MemoryEngine):
-        """Test that getting a profile for a new agent creates default personality."""
+        """Test that getting a profile for a new agent creates default disposition."""
         bank_id = unique_agent_id("test_profile_default")
 
         profile = await memory.get_bank_profile(bank_id)
 
         assert profile is not None
-        assert "personality" in profile
+        assert "disposition" in profile
         assert "background" in profile
 
-        personality = profile["personality"]
-        assert personality.openness == 0.5
-        assert personality.conscientiousness == 0.5
-        assert personality.extraversion == 0.5
-        assert personality.agreeableness == 0.5
-        assert personality.neuroticism == 0.5
-        assert personality.bias_strength == 0.5
+        disposition = profile["disposition"]
+        assert disposition.skepticism == 3
+        assert disposition.literalism == 3
+        assert disposition.empathy == 3
 
         assert profile["background"] == ""
 
     @pytest.mark.asyncio
-    async def test_update_agent_personality(self, memory: MemoryEngine):
-        """Test updating agent personality traits."""
+    async def test_update_agent_disposition(self, memory: MemoryEngine):
+        """Test updating agent disposition traits."""
         bank_id = unique_agent_id("test_profile_update")
 
         profile = await memory.get_bank_profile(bank_id)
-        assert profile["personality"].openness == 0.5
+        assert profile["disposition"].skepticism == 3
 
-        new_personality = {
-            "openness": 0.8,
-            "conscientiousness": 0.6,
-            "extraversion": 0.7,
-            "agreeableness": 0.4,
-            "neuroticism": 0.3,
-            "bias_strength": 0.9,
+        new_disposition = {
+            "skepticism": 5,
+            "literalism": 4,
+            "empathy": 2,
         }
-        await memory.update_bank_personality(bank_id, new_personality)
+        await memory.update_bank_disposition(bank_id, new_disposition)
 
         updated_profile = await memory.get_bank_profile(bank_id)
-        personality = updated_profile["personality"]
-        assert abs(personality.openness - new_personality["openness"]) < 0.001
-        assert abs(personality.conscientiousness - new_personality["conscientiousness"]) < 0.001
-        assert abs(personality.extraversion - new_personality["extraversion"]) < 0.001
-        assert abs(personality.agreeableness - new_personality["agreeableness"]) < 0.001
-        assert abs(personality.neuroticism - new_personality["neuroticism"]) < 0.001
-        assert abs(personality.bias_strength - new_personality["bias_strength"]) < 0.001
+        disposition = updated_profile["disposition"]
+        assert disposition.skepticism == new_disposition["skepticism"]
+        assert disposition.literalism == new_disposition["literalism"]
+        assert disposition.empathy == new_disposition["empathy"]
 
     @pytest.mark.asyncio
     async def test_list_agents(self, memory: MemoryEngine):
@@ -84,7 +75,7 @@ class TestAgentProfile:
 
         for agent in agents:
             assert "bank_id" in agent
-            assert "personality" in agent
+            assert "disposition" in agent
             assert "background" in agent
             assert "created_at" in agent
             assert "updated_at" in agent
@@ -104,14 +95,14 @@ class TestAgentBackground:
         result1 = await memory.merge_bank_background(
             bank_id,
             "I was born in Texas",
-            update_personality=False
+            update_disposition=False
         )
         assert "Texas" in result1["background"]
 
         result2 = await memory.merge_bank_background(
             bank_id,
             "I have 10 years of startup experience",
-            update_personality=False
+            update_disposition=False
         )
         assert "Texas" in result2["background"] or "startup" in result2["background"]
 
@@ -126,14 +117,14 @@ class TestAgentBackground:
         result1 = await memory.merge_bank_background(
             bank_id,
             "I was born in Colorado",
-            update_personality=False
+            update_disposition=False
         )
         assert "Colorado" in result1["background"]
 
         result2 = await memory.merge_bank_background(
             bank_id,
             "You were born in Texas",
-            update_personality=False
+            update_disposition=False
         )
         assert "Texas" in result2["background"]
 
@@ -147,23 +138,20 @@ class TestAgentEndpoint:
         bank_id = unique_agent_id("test_put_create")
 
         request = CreateBankRequest(
-            personality=DispositionTraits(
-                openness=0.8,
-                conscientiousness=0.6,
-                extraversion=0.5,
-                agreeableness=0.7,
-                neuroticism=0.3,
-                bias_strength=0.7
+            disposition=DispositionTraits(
+                skepticism=4,
+                literalism=5,
+                empathy=2
             ),
             background="I am a creative software engineer"
         )
 
         profile = await memory.get_bank_profile(bank_id)
 
-        if request.personality is not None:
-            await memory.update_bank_personality(
+        if request.disposition is not None:
+            await memory.update_bank_disposition(
                 bank_id,
-                request.personality.model_dump()
+                request.disposition.model_dump()
             )
 
         if request.background is not None:
@@ -182,8 +170,8 @@ class TestAgentEndpoint:
 
         final_profile = await memory.get_bank_profile(bank_id)
 
-        assert final_profile["personality"].openness == 0.8
-        assert final_profile["personality"].bias_strength == 0.7
+        assert final_profile["disposition"].skepticism == 4
+        assert final_profile["disposition"].literalism == 5
         assert final_profile["background"] == "I am a creative software engineer"
 
     @pytest.mark.asyncio
@@ -213,32 +201,29 @@ class TestAgentEndpoint:
 
         final_profile = await memory.get_bank_profile(bank_id)
 
-        assert final_profile["personality"].openness == 0.5
+        assert final_profile["disposition"].skepticism == 3  # Default
         assert final_profile["background"] == "I am a data scientist"
 
 
-class TestAgentPersonalityIntegration:
-    """Tests for personality integration with other features."""
+class TestAgentDispositionIntegration:
+    """Tests for disposition integration with other features."""
 
     @pytest.mark.asyncio
-    async def test_think_uses_personality(self, memory: MemoryEngine):
-        """Test that THINK operation uses agent personality."""
+    async def test_think_uses_disposition(self, memory: MemoryEngine):
+        """Test that THINK operation uses agent disposition."""
         bank_id = unique_agent_id("test_think")
 
-        personality = {
-            "openness": 0.9,
-            "conscientiousness": 0.2,
-            "extraversion": 0.8,
-            "agreeableness": 0.1,
-            "neuroticism": 0.7,
-            "bias_strength": 0.9,
+        disposition = {
+            "skepticism": 5,  # Very skeptical
+            "literalism": 4,  # High literalism
+            "empathy": 2,     # Low empathy
         }
-        await memory.update_bank_personality(bank_id, personality)
+        await memory.update_bank_disposition(bank_id, disposition)
 
         await memory.merge_bank_background(
             bank_id,
             "I am a creative artist who values innovation over tradition",
-            update_personality=False
+            update_disposition=False
         )
 
         await memory.retain_batch_async(

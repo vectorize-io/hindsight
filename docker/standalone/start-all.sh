@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting Hindsight..."
-echo ""
-
 # Service flags (default to true if not set)
 ENABLE_API="${HINDSIGHT_ENABLE_API:-true}"
 ENABLE_CP="${HINDSIGHT_ENABLE_CP:-true}"
@@ -26,21 +23,19 @@ PIDS=()
 # Start API if enabled
 if [ "$ENABLE_API" = "true" ]; then
     cd /app/api
-    python -m hindsight_api.web.server 2>&1 | sed -u 's/^/[api] /' &
+    hindsight-api 2>&1 | sed -u 's/^/[api] /' &
     API_PID=$!
     PIDS+=($API_PID)
 
     # Wait for API to be ready
-    echo "⏳ Waiting for API..."
     for i in {1..60}; do
         if curl -sf http://localhost:8888/health &>/dev/null; then
-            echo "✅ API is ready"
             break
         fi
         sleep 1
     done
 else
-    echo "⏭️  API disabled (HINDSIGHT_ENABLE_API=false)"
+    echo "API disabled (HINDSIGHT_ENABLE_API=false)"
 fi
 
 # Start Control Plane if enabled
@@ -51,7 +46,7 @@ if [ "$ENABLE_CP" = "true" ]; then
     CP_PID=$!
     PIDS+=($CP_PID)
 else
-    echo "⏭️  Control Plane disabled (HINDSIGHT_ENABLE_CP=false)"
+    echo "Control Plane disabled (HINDSIGHT_ENABLE_CP=false)"
 fi
 
 # Print status

@@ -103,8 +103,8 @@ class LoComoAnswerGenerator(LLMAnswerGenerator):
     """LoComo-specific answer generator using configurable LLM provider."""
 
     def __init__(self):
-        """Initialize with LLM configuration for memory operations."""
-        self.llm_config = LLMConfig.for_memory()
+        """Initialize with LLM configuration for answer generation."""
+        self.llm_config = LLMConfig.for_answer_generation()
         self.client = self.llm_config._client
         self.model = self.llm_config.model
 
@@ -444,6 +444,17 @@ def generate_markdown_table(results: dict, use_think: bool = False):
     mode_str = " (Think Mode)" if use_think else ""
     lines.append(f"# LoComo Benchmark Results{mode_str}")
     lines.append("")
+
+    # Add model configuration
+    if 'model_config' in results:
+        config = results['model_config']
+        lines.append("## Model Configuration")
+        lines.append("")
+        lines.append(f"- **Hindsight**: {config['hindsight']['provider']}/{config['hindsight']['model']}")
+        lines.append(f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+        lines.append(f"- **LLM Judge**: {config['judge']['provider']}/{config['judge']['model']}")
+        lines.append("")
+
     lines.append(f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})")
     lines.append("")
     lines.append("| Sample ID | Sessions | Questions | Correct | Accuracy | Multi-hop | Single-hop | Temporal | Open-domain |")

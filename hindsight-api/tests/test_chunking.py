@@ -2,7 +2,7 @@
 Test chunking functionality for large documents.
 """
 import pytest
-from hindsight_api.engine.fact_extraction import chunk_text
+from hindsight_api.engine.retain.fact_extraction import chunk_text
 
 
 def test_chunk_text_small():
@@ -42,10 +42,6 @@ def test_chunk_text_64k():
     text = sentence * (64000 // len(sentence))
 
     chunks = chunk_text(text, max_chars=120000)
-
-    print(f"\n64k text chunked into {len(chunks)} chunks")
-    for i, chunk in enumerate(chunks):
-        print(f"  Chunk {i + 1}: {len(chunk)} characters")
 
     # Should create at least 1 chunk (if text fits) or more
     assert len(chunks) >= 1

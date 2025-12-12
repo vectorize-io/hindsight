@@ -128,7 +128,17 @@ export class HindsightClient {
     async recall(
         bankId: string,
         query: string,
-        options?: { types?: string[]; maxTokens?: number; budget?: Budget; trace?: boolean }
+        options?: {
+            types?: string[];
+            maxTokens?: number;
+            budget?: Budget;
+            trace?: boolean;
+            queryTimestamp?: string;
+            includeEntities?: boolean;
+            maxEntityTokens?: number;
+            includeChunks?: boolean;
+            maxChunkTokens?: number;
+        }
     ): Promise<RecallResponse> {
         const response = await sdk.recallMemories({
             client: this.client,
@@ -139,6 +149,11 @@ export class HindsightClient {
                 max_tokens: options?.maxTokens,
                 budget: options?.budget || 'mid',
                 trace: options?.trace,
+                query_timestamp: options?.queryTimestamp,
+                include: {
+                    entities: options?.includeEntities ? { max_tokens: options?.maxEntityTokens ?? 500 } : undefined,
+                    chunks: options?.includeChunks ? { max_tokens: options?.maxChunkTokens ?? 8192 } : undefined,
+                },
             },
         });
 

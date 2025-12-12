@@ -49,6 +49,9 @@ export function MemoryDetailPanel({
 
   if (!memory) return null;
 
+  // Handle both 'id' and 'node_id' (trace results use node_id)
+  const memoryId = memory.id || memory.node_id;
+
   const labelSize = compact ? 'text-[10px]' : 'text-xs';
   const textSize = compact ? 'text-xs' : 'text-sm';
 
@@ -64,13 +67,12 @@ export function MemoryDetailPanel({
               <p className="text-sm text-muted-foreground mt-1">Full memory content and metadata</p>
             </div>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={onClose}
-              className="h-9 px-3 gap-2"
+              className="h-8 w-8 p-0"
             >
-              <X className="h-4 w-4" />
-              Close
+              <X className="h-5 w-5" />
             </Button>
           </div>
 
@@ -130,24 +132,26 @@ export function MemoryDetailPanel({
             )}
 
             {/* ID */}
-            <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Memory ID</div>
-              <div className="flex items-center gap-2">
-                <code className="text-xs font-mono break-all flex-1 text-muted-foreground">{memory.id}</code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0 flex-shrink-0"
-                  onClick={() => copyToClipboard(memory.id)}
-                >
-                  {copiedId === memory.id ? (
-                    <Check className="h-4 w-4 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
+            {memoryId && (
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Memory ID</div>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs font-mono break-all flex-1 text-muted-foreground">{memoryId}</code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 flex-shrink-0"
+                    onClick={() => copyToClipboard(memoryId)}
+                  >
+                    {copiedId === memoryId ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Document/Chunk buttons */}
             {(memory.document_id || memory.chunk_id) && (
@@ -268,24 +272,26 @@ export function MemoryDetailPanel({
           )}
 
           {/* ID */}
-          <div className={`${compact ? 'p-2' : 'p-3'} bg-muted rounded-lg`}>
-            <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>Memory ID</div>
-            <div className="flex items-center gap-2">
-              <span className={`${compact ? 'text-[10px]' : 'text-sm'} font-mono break-all`}>{memory.id}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 flex-shrink-0"
-                onClick={() => copyToClipboard(memory.id)}
-              >
-                {copiedId === memory.id ? (
-                  <Check className="h-3 w-3 text-green-600" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-              </Button>
+          {memoryId && (
+            <div className={`${compact ? 'p-2' : 'p-3'} bg-muted rounded-lg`}>
+              <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>Memory ID</div>
+              <div className="flex items-center gap-2">
+                <span className={`${compact ? 'text-[10px]' : 'text-sm'} font-mono break-all`}>{memoryId}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 flex-shrink-0"
+                  onClick={() => copyToClipboard(memoryId)}
+                >
+                  {copiedId === memoryId ? (
+                    <Check className="h-3 w-3 text-green-600" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Document/Chunk buttons */}
           {(memory.document_id || memory.chunk_id) && (

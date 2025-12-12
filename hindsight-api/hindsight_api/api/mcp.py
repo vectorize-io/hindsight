@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 from hindsight_api import MemoryEngine
+from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
 
 # Configure logging from HINDSIGHT_API_LOG_LEVEL environment variable
 _log_level_str = os.environ.get("HINDSIGHT_API_LOG_LEVEL", "info").lower()
@@ -90,7 +91,7 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
             search_result = await memory.recall_async(
                 bank_id=bank_id,
                 query=query,
-                fact_type=["world", "experience", "opinion"],
+                fact_type=list(VALID_RECALL_FACT_TYPES),
                 budget=Budget.LOW
             )
 
@@ -120,11 +121,7 @@ class MCPMiddleware:
         self.app = app
         self.memory = memory
         self.mcp_server = create_mcp_server(memory)
-        # Use sse_app - http_app requires lifespan management that's complex with middleware
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            self.mcp_app = self.mcp_server.sse_app()
+        self.mcp_app = self.mcp_server.http_app()
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":

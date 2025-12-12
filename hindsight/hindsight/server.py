@@ -119,7 +119,6 @@ class Server:
             app = create_app(
                 memory=self._memory,
                 mcp_api_enabled=self.mcp_enabled,
-                run_migrations=True,
                 initialize_memory=True,
             )
 

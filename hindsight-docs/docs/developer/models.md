@@ -7,7 +7,7 @@ Hindsight uses several machine learning models for different tasks.
 | Model Type | Purpose | Default | Configurable |
 |------------|---------|---------|--------------|
 | **Embedding** | Vector representations for semantic search | `BAAI/bge-small-en-v1.5` | Yes |
-| **Cross-Encoder** | Reranking search results | `ms-marco-MiniLM-L-6-v2` | Yes |
+| **Cross-Encoder** | Reranking search results | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Yes |
 | **LLM** | Fact extraction, reasoning, generation | Provider-specific | Yes |
 
 All local models (embedding, cross-encoder) are automatically downloaded from HuggingFace on first run.
@@ -28,12 +28,20 @@ Converts text into dense vector representations for semantic similarity search.
 | `BAAI/bge-base-en-v1.5` | 768 | Higher accuracy, slower |
 | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | Multilingual (50+ languages) |
 
+:::warning
+All embedding models must produce 384-dimensional vectors to match the database schema.
+:::
+
 **Configuration:**
 
 ```bash
-export HINDSIGHT_API_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
-export HINDSIGHT_API_EMBEDDING_DEVICE=cuda  # or mps for Apple Silicon
-export HINDSIGHT_API_EMBEDDING_BATCH_SIZE=64
+# Local provider (default)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
+export HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5
+
+# TEI provider (remote)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei
+export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
 ```
 
 ---
@@ -48,16 +56,20 @@ Reranks initial search results to improve precision.
 
 | Model | Use Case |
 |-------|----------|
-| `ms-marco-MiniLM-L-6-v2` | Default, fast |
-| `ms-marco-MiniLM-L-12-v2` | Higher accuracy |
-| `mmarco-mMiniLMv2-L12-H384-v1` | Multilingual |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | Default, fast |
+| `cross-encoder/ms-marco-MiniLM-L-12-v2` | Higher accuracy |
+| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual |
 
 **Configuration:**
 
 ```bash
-export HINDSIGHT_API_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-12-v2
-export HINDSIGHT_API_RERANK_TOP_K=50      # How many results to rerank
-export HINDSIGHT_API_RERANK_ENABLED=true  # Set to false to disable
+# Local provider (default)
+export HINDSIGHT_API_RERANKER_PROVIDER=local
+export HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+
+# TEI provider (remote)
+export HINDSIGHT_API_RERANKER_PROVIDER=tei
+export HINDSIGHT_API_RERANKER_TEI_URL=http://localhost:8081
 ```
 
 ---
@@ -66,13 +78,13 @@ export HINDSIGHT_API_RERANK_ENABLED=true  # Set to false to disable
 
 Used for fact extraction, entity resolution, opinion generation, and answer synthesis.
 
-**Supported providers:** Groq, OpenAI, Ollama
+**Supported providers:** Groq, OpenAI, Gemini, Ollama
 
 | Provider | Recommended Model | Best For |
-|----------|-------------------|----------|
-| **Groq** | `gpt-oss-20b` | Fast inference, high throughput (recommended) |
-| **OpenAI** | `gpt-4o-mini` | Good quality, cost-effective |
-| **OpenAI** | `gpt-4o` | Best quality |
+|----------|------------------|----------|
+| **Groq** | `openai/gpt-oss-20b` | Fast inference, high throughput (recommended) |
+| **OpenAI** | `gpt-4o` | Good quality |
+| **Gemini** | `gemini-2.0-flash` | Good quality, cost effective |
 | **Ollama** | `llama3.1` | Local deployment, privacy |
 
 **Configuration:**
@@ -86,7 +98,12 @@ export HINDSIGHT_API_LLM_MODEL=openai/gpt-oss-20b
 # OpenAI
 export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
-export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
+export HINDSIGHT_API_LLM_MODEL=gpt-4o
+
+# Gemini
+export HINDSIGHT_API_LLM_PROVIDER=gemini
+export HINDSIGHT_API_LLM_API_KEY=xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash
 
 # Ollama (local)
 export HINDSIGHT_API_LLM_PROVIDER=ollama
@@ -94,15 +111,4 @@ export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
 export HINDSIGHT_API_LLM_MODEL=llama3.1
 ```
 
-**Note:** The LLM is the primary bottleneck for write operations. See [Performance](./performance) for optimization strategies.
-
----
-
-## Model Comparison
-
-| Provider | Model | Speed | Quality | Cost |
-|----------|-------|-------|---------|------|
-| Groq | gpt-oss-20b | Fast | Good | Free tier |
-| OpenAI | gpt-4o-mini | Medium | Good | $0.15 / $0.60 per 1M tokens |
-| OpenAI | gpt-4o | Slower | Best | $2.50 / $10.00 per 1M tokens |
-| Ollama | llama3.1 | Varies | Good | Free (local) |
+**Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.

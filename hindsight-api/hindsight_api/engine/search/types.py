@@ -31,8 +31,9 @@ class RetrievalResult:
     embedding: Optional[List[float]] = None
 
     # Retrieval-specific scores (only one will be set depending on retrieval method)
-    similarity: Optional[float] = None  # Semantic/graph retrieval
+    similarity: Optional[float] = None  # Semantic retrieval
     bm25_score: Optional[float] = None  # BM25 retrieval
+    activation: Optional[float] = None  # Graph retrieval (spreading activation)
     temporal_score: Optional[float] = None  # Temporal retrieval
     temporal_proximity: Optional[float] = None  # Temporal retrieval
 
@@ -54,6 +55,7 @@ class RetrievalResult:
             embedding=row.get("embedding"),
             similarity=row.get("similarity"),
             bm25_score=row.get("bm25_score"),
+            activation=row.get("activation"),
             temporal_score=row.get("temporal_score"),
             temporal_proximity=row.get("temporal_proximity"),
         )
@@ -152,6 +154,7 @@ class ScoredResult:
         result["cross_encoder_score"] = self.cross_encoder_score
         result["cross_encoder_score_normalized"] = self.cross_encoder_score_normalized
         result["rrf_normalized"] = self.rrf_normalized
+        result["temporal"] = self.temporal
         result["recency"] = self.recency
         result["combined_score"] = self.combined_score
         result["weight"] = self.weight

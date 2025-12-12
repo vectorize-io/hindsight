@@ -36,25 +36,11 @@ from pydantic import BaseModel, Field, ConfigDict
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.db_utils import acquire_with_retry
+from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
 from hindsight_api.metrics import get_metrics_collector, initialize_metrics, create_metrics_collector
 
 
 logger = logging.getLogger(__name__)
-
-
-class MetadataFilter(BaseModel):
-    """Filter for metadata fields. Matches records where (key=value) OR (key not set) when match_unset=True."""
-    model_config = ConfigDict(json_schema_extra={
-        "example": {
-            "key": "source",
-            "value": "slack",
-            "match_unset": True
-        }
-    })
-
-    key: str = Field(description="Metadata key to filter on")
-    value: Optional[str] = Field(default=None, description="Value to match. If None with match_unset=True, matches any record where key is not set.")
-    match_unset: bool = Field(default=True, description="If True, also match records where this metadata key is not set")
 
 
 class EntityIncludeOptions(BaseModel):
@@ -89,7 +75,6 @@ class RecallRequest(BaseModel):
             "max_tokens": 4096,
             "trace": True,
             "query_timestamp": "2023-05-30T23:40:00",
-            "filters": [{"key": "source", "value": "slack", "match_unset": True}],
             "include": {
                 "entities": {
                     "max_tokens": 500
@@ -104,7 +89,6 @@ class RecallRequest(BaseModel):
     max_tokens: int = 4096
     trace: bool = False
     query_timestamp: Optional[str] = Field(default=None, description="ISO format date string (e.g., '2023-05-30T23:40:00')")
-    filters: Optional[List[MetadataFilter]] = Field(default=None, description="Filter by metadata. Multiple filters are ANDed together.")
     include: IncludeOptions = Field(default_factory=IncludeOptions, description="Options for including additional data (entities are included by default)")
 
 
@@ -362,7 +346,6 @@ class ReflectRequest(BaseModel):
             "query": "What do you think about artificial intelligence?",
             "budget": "low",
             "context": "This is for a research paper on AI ethics",
-            "filters": [{"key": "source", "value": "slack", "match_unset": True}],
             "include": {
                 "facts": {}
             }
@@ -372,7 +355,6 @@ class ReflectRequest(BaseModel):
     query: str
     budget: Budget = Budget.LOW
     context: Optional[str] = None
-    filters: Optional[List[MetadataFilter]] = Field(default=None, description="Filter by metadata. Multiple filters are ANDed together.")
     include: ReflectIncludeOptions = Field(default_factory=ReflectIncludeOptions, description="Options for including additional data (disabled by default)")
 
 
@@ -439,24 +421,18 @@ class BanksResponse(BaseModel):
 
 
 class DispositionTraits(BaseModel):
-    """Disposition traits based on Big Five model."""
+    """Disposition traits that influence how memories are formed and interpreted."""
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "openness": 0.8,
-            "conscientiousness": 0.6,
-            "extraversion": 0.5,
-            "agreeableness": 0.7,
-            "neuroticism": 0.3,
-            "bias_strength": 0.7
+            "skepticism": 3,
+            "literalism": 3,
+            "empathy": 3
         }
     })
 
-    openness: float = Field(ge=0.0, le=1.0, description="Openness to experience (0-1)")
-    conscientiousness: float = Field(ge=0.0, le=1.0, description="Conscientiousness (0-1)")
-    extraversion: float = Field(ge=0.0, le=1.0, description="Extraversion (0-1)")
-    agreeableness: float = Field(ge=0.0, le=1.0, description="Agreeableness (0-1)")
-    neuroticism: float = Field(ge=0.0, le=1.0, description="Neuroticism (0-1)")
-    bias_strength: float = Field(ge=0.0, le=1.0, description="How strongly disposition influences opinions (0-1)")
+    skepticism: int = Field(ge=1, le=5, description="How skeptical vs trusting (1=trusting, 5=skeptical)")
+    literalism: int = Field(ge=1, le=5, description="How literally to interpret information (1=flexible, 5=literal)")
+    empathy: int = Field(ge=1, le=5, description="How much to consider emotional context (1=detached, 5=empathetic)")
 
 
 class BankProfileResponse(BaseModel):
@@ -466,12 +442,9 @@ class BankProfileResponse(BaseModel):
             "bank_id": "user123",
             "name": "Alice",
             "disposition": {
-                "openness": 0.8,
-                "conscientiousness": 0.6,
-                "extraversion": 0.5,
-                "agreeableness": 0.7,
-                "neuroticism": 0.3,
-                "bias_strength": 0.7
+                "skepticism": 3,
+                "literalism": 3,
+                "empathy": 3
             },
             "background": "I am a software engineer with 10 years of experience in startups"
         }
@@ -500,7 +473,7 @@ class AddBackgroundRequest(BaseModel):
     content: str = Field(description="New background information to add or merge")
     update_disposition: bool = Field(
         default=True,
-        description="If true, infer Big Five disposition traits from the merged background (default: true)"
+        description="If true, infer disposition traits from the merged background (default: true)"
     )
 
 
@@ -510,12 +483,9 @@ class BackgroundResponse(BaseModel):
         "example": {
             "background": "I was born in Texas. I am a software engineer with 10 years of experience.",
             "disposition": {
-                "openness": 0.7,
-                "conscientiousness": 0.6,
-                "extraversion": 0.5,
-                "agreeableness": 0.8,
-                "neuroticism": 0.4,
-                "bias_strength": 0.6
+                "skepticism": 3,
+                "literalism": 3,
+                "empathy": 3
             }
         }
     })
@@ -543,12 +513,9 @@ class BankListResponse(BaseModel):
                     "bank_id": "user123",
                     "name": "Alice",
                     "disposition": {
-                        "openness": 0.5,
-                        "conscientiousness": 0.5,
-                        "extraversion": 0.5,
-                        "agreeableness": 0.5,
-                        "neuroticism": 0.5,
-                        "bias_strength": 0.5
+                        "skepticism": 3,
+                        "literalism": 3,
+                        "empathy": 3
                     },
                     "background": "I am a software engineer",
                     "created_at": "2024-01-15T10:30:00Z",
@@ -567,12 +534,9 @@ class CreateBankRequest(BaseModel):
         "example": {
             "name": "Alice",
             "disposition": {
-                "openness": 0.8,
-                "conscientiousness": 0.6,
-                "extraversion": 0.5,
-                "agreeableness": 0.7,
-                "neuroticism": 0.3,
-                "bias_strength": 0.7
+                "skepticism": 3,
+                "literalism": 3,
+                "empathy": 3
             },
             "background": "I am a creative software engineer with 10 years of experience"
         }
@@ -708,20 +672,24 @@ class DeleteResponse(BaseModel):
     """Response model for delete operations."""
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "success": True
+            "success": True,
+            "message": "Deleted successfully",
+            "deleted_count": 10
         }
     })
 
     success: bool
+    message: Optional[str] = None
+    deleted_count: Optional[int] = None
 
 
-def create_app(memory: MemoryEngine, run_migrations: bool = True, initialize_memory: bool = True) -> FastAPI:
+def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
     Args:
-        memory: MemoryEngine instance (already initialized with required parameters)
-        run_migrations: Whether to run database migrations on startup (default: True)
+        memory: MemoryEngine instance (already initialized with required parameters).
+                Migrations are controlled by the MemoryEngine's run_migrations parameter.
         initialize_memory: Whether to initialize memory system on startup (default: True)
 
     Returns:
@@ -752,15 +720,10 @@ def create_app(memory: MemoryEngine, run_migrations: bool = True, initialize_mem
             app.state.prometheus_reader = None
             # Metrics collector is already initialized as no-op by default
 
-        # Startup: Initialize database and memory system
+        # Startup: Initialize database and memory system (migrations run inside initialize if enabled)
         if initialize_memory:
             await memory.initialize()
             logging.info("Memory system initialized")
-
-        if run_migrations:
-            from hindsight_api.migrations import run_migrations as do_migrations
-            do_migrations(memory.db_url)
-            logging.info("Database migrations applied")
 
 
 
@@ -770,9 +733,11 @@ def create_app(memory: MemoryEngine, run_migrations: bool = True, initialize_mem
         await memory.close()
         logging.info("Memory system closed")
 
+    from hindsight_api import __version__
+
     app = FastAPI(
         title="Hindsight HTTP API",
-        version="1.0.0",
+        version=__version__,
         description="HTTP API for Hindsight",
         contact={
             "name": "Memory System",
@@ -834,7 +799,8 @@ def _register_routes(app: FastAPI):
         response_model=GraphDataResponse,
         summary="Get memory graph data",
         description="Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion). Limited to 1000 most recent items.",
-        operation_id="get_graph"
+        operation_id="get_graph",
+        tags=["Memory"]
     )
     async def api_graph(bank_id: str,
         type: Optional[str] = None
@@ -855,7 +821,8 @@ def _register_routes(app: FastAPI):
         response_model=ListMemoryUnitsResponse,
         summary="List memory units",
         description="List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
-        operation_id="list_memories"
+        operation_id="list_memories",
+        tags=["Memory"]
     )
     async def api_list(bank_id: str,
         type: Optional[str] = None,
@@ -896,34 +863,22 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/memories/recall",
         response_model=RecallResponse,
         summary="Recall memory",
-        description="""
-    Recall memory using semantic similarity and spreading activation.
-
-    The type parameter is optional and must be one of:
-    - 'world': General knowledge about people, places, events, and things that happen
-    - 'experience': Memories about experience, conversations, actions taken, and tasks performed
-    - 'opinion': The bank's formed beliefs, perspectives, and viewpoints
-
-    Set include_entities=true to get entity observations alongside recall results.
-        """,
-        operation_id="recall_memories"
+        description="Recall memory using semantic similarity and spreading activation.\n\n"
+        "The type parameter is optional and must be one of:\n"
+        "- `world`: General knowledge about people, places, events, and things that happen\n"
+        "- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n"
+        "- `opinion`: The bank's formed beliefs, perspectives, and viewpoints\n\n"
+        "Set `include_entities=true` to get entity observations alongside recall results.",
+        operation_id="recall_memories",
+        tags=["Memory"]
     )
     async def api_recall(bank_id: str, request: RecallRequest):
         """Run a recall and return results with trace."""
         metrics = get_metrics_collector()
 
         try:
-            # Validate types
-            valid_fact_types = ["world", "experience", "opinion"]
-
             # Default to world, experience, opinion if not specified (exclude observation by default)
-            fact_types = request.types if request.types else ["world", "experience", "opinion"]
-            for ft in fact_types:
-                if ft not in valid_fact_types:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid type '{ft}'. Must be one of: {', '.join(valid_fact_types)}"
-                    )
+            fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
 
             # Parse query_timestamp if provided
             question_date = None
@@ -1022,18 +977,16 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/reflect",
         response_model=ReflectResponse,
         summary="Reflect and generate answer",
-        description="""
-    Reflect and formulate an answer using bank identity, world facts, and opinions.
-
-    This endpoint:
-    1. Retrieves experience (conversations and events)
-    2. Retrieves world facts relevant to the query
-    3. Retrieves existing opinions (bank's perspectives)
-    4. Uses LLM to formulate a contextual answer
-    5. Extracts and stores any new opinions formed
-    6. Returns plain text answer, the facts used, and new opinions
-        """,
-        operation_id="reflect"
+        description="Reflect and formulate an answer using bank identity, world facts, and opinions.\n\n"
+        "This endpoint:\n"
+        "1. Retrieves experience (conversations and events)\n"
+        "2. Retrieves world facts relevant to the query\n"
+        "3. Retrieves existing opinions (bank's perspectives)\n"
+        "4. Uses LLM to formulate a contextual answer\n"
+        "5. Extracts and stores any new opinions formed\n"
+        "6. Returns plain text answer, the facts used, and new opinions",
+        operation_id="reflect",
+        tags=["Memory"]
     )
     async def api_reflect(bank_id: str, request: ReflectRequest):
         metrics = get_metrics_collector()
@@ -1079,7 +1032,8 @@ def _register_routes(app: FastAPI):
         response_model=BankListResponse,
         summary="List all memory banks",
         description="Get a list of all agents with their profiles",
-        operation_id="list_banks"
+        operation_id="list_banks",
+        tags=["Banks"]
     )
     async def api_list_banks():
         """Get list of all banks with their profiles."""
@@ -1096,7 +1050,8 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/stats",
         summary="Get statistics for memory bank",
         description="Get statistics about nodes and links for a specific agent",
-        operation_id="get_agent_stats"
+        operation_id="get_agent_stats",
+        tags=["Banks"]
     )
     async def api_stats(bank_id: str):
         """Get statistics about memory nodes and links for a memory bank."""
@@ -1217,7 +1172,8 @@ def _register_routes(app: FastAPI):
         response_model=EntityListResponse,
         summary="List entities",
         description="List all entities (people, organizations, etc.) known by the bank, ordered by mention count.",
-        operation_id="list_entities"
+        operation_id="list_entities",
+        tags=["Entities"]
     )
     async def api_list_entities(bank_id: str,
         limit: int = Query(default=100, description="Maximum number of entities to return")
@@ -1239,7 +1195,8 @@ def _register_routes(app: FastAPI):
         response_model=EntityDetailResponse,
         summary="Get entity details",
         description="Get detailed information about an entity including observations (mental model).",
-        operation_id="get_entity"
+        operation_id="get_entity",
+        tags=["Entities"]
     )
     async def api_get_entity(bank_id: str, entity_id: str):
         """Get entity details with observations."""
@@ -1289,7 +1246,8 @@ def _register_routes(app: FastAPI):
         response_model=EntityDetailResponse,
         summary="Regenerate entity observations",
         description="Regenerate observations for an entity based on all facts mentioning it.",
-        operation_id="regenerate_entity_observations"
+        operation_id="regenerate_entity_observations",
+        tags=["Entities"]
     )
     async def api_regenerate_entity_observations(bank_id: str, entity_id: str):
         """Regenerate observations for an entity."""
@@ -1346,7 +1304,8 @@ def _register_routes(app: FastAPI):
         response_model=ListDocumentsResponse,
         summary="List documents",
         description="List documents with pagination and optional search. Documents are the source content from which memory units are extracted.",
-        operation_id="list_documents"
+        operation_id="list_documents",
+        tags=["Documents"]
     )
     async def api_list_documents(bank_id: str,
         q: Optional[str] = None,
@@ -1382,7 +1341,8 @@ def _register_routes(app: FastAPI):
         response_model=DocumentResponse,
         summary="Get document details",
         description="Get a specific document including its original text",
-        operation_id="get_document"
+        operation_id="get_document",
+        tags=["Documents"]
     )
     async def api_get_document(bank_id: str,
         document_id: str
@@ -1413,7 +1373,8 @@ def _register_routes(app: FastAPI):
         response_model=ChunkResponse,
         summary="Get chunk details",
         description="Get a specific chunk by its ID",
-        operation_id="get_chunk"
+        operation_id="get_chunk",
+        tags=["Documents"]
     )
     async def api_get_chunk(chunk_id: str):
         """
@@ -1439,17 +1400,14 @@ def _register_routes(app: FastAPI):
     @app.delete(
         "/v1/default/banks/{bank_id}/documents/{document_id}",
         summary="Delete a document",
-        description="""
-Delete a document and all its associated memory units and links.
-
-This will cascade delete:
-- The document itself
-- All memory units extracted from this document
-- All links (temporal, semantic, entity) associated with those memory units
-
-This operation cannot be undone.
-        """,
-        operation_id="delete_document"
+        description="Delete a document and all its associated memory units and links.\n\n"
+        "This will cascade delete:\n"
+        "- The document itself\n"
+        "- All memory units extracted from this document\n"
+        "- All links (temporal, semantic, entity) associated with those memory units\n\n"
+        "This operation cannot be undone.",
+        operation_id="delete_document",
+        tags=["Documents"]
     )
     async def api_delete_document(bank_id: str,
         document_id: str
@@ -1486,7 +1444,8 @@ This operation cannot be undone.
         "/v1/default/banks/{bank_id}/operations",
         summary="List async operations",
         description="Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
-        operation_id="list_operations"
+        operation_id="list_operations",
+        tags=["Operations"]
     )
     async def api_list_operations(bank_id: str):
         """List all async operations (pending and failed) for a memory bank."""
@@ -1530,7 +1489,8 @@ This operation cannot be undone.
         "/v1/default/banks/{bank_id}/operations/{operation_id}",
         summary="Cancel a pending async operation",
         description="Cancel a pending async operation by removing it from the queue",
-        operation_id="cancel_operation"
+        operation_id="cancel_operation",
+        tags=["Operations"]
     )
     async def api_cancel_operation(bank_id: str, operation_id: str):
         """Cancel a pending async operation."""
@@ -1580,7 +1540,8 @@ This operation cannot be undone.
         response_model=BankProfileResponse,
         summary="Get memory bank profile",
         description="Get disposition traits and background for a memory bank. Auto-creates agent with defaults if not exists.",
-        operation_id="get_bank_profile"
+        operation_id="get_bank_profile",
+        tags=["Banks"]
     )
     async def api_get_bank_profile(bank_id: str):
         """Get memory bank profile (disposition + background)."""
@@ -1605,8 +1566,9 @@ This operation cannot be undone.
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
         summary="Update memory bank disposition",
-        description="Update bank's Big Five disposition traits and bias strength",
-        operation_id="update_bank_disposition"
+        description="Update bank's disposition traits (skepticism, literalism, empathy)",
+        operation_id="update_bank_disposition",
+        tags=["Banks"]
     )
     async def api_update_bank_disposition(bank_id: str,
         request: UpdateDispositionRequest
@@ -1640,7 +1602,8 @@ This operation cannot be undone.
         response_model=BackgroundResponse,
         summary="Add/merge memory bank background",
         description="Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers disposition traits.",
-        operation_id="add_bank_background"
+        operation_id="add_bank_background",
+        tags=["Banks"]
     )
     async def api_add_bank_background(bank_id: str,
         request: AddBackgroundRequest
@@ -1670,7 +1633,8 @@ This operation cannot be undone.
         response_model=BankProfileResponse,
         summary="Create or update memory bank",
         description="Create a new agent or update existing agent with disposition and background. Auto-fills missing fields with defaults.",
-        operation_id="create_or_update_bank"
+        operation_id="create_or_update_bank",
+        tags=["Banks"]
     )
     async def api_create_or_update_bank(bank_id: str,
         request: CreateBankRequest
@@ -1736,43 +1700,55 @@ This operation cannot be undone.
             raise HTTPException(status_code=500, detail=str(e))
 
 
+    @app.delete(
+        "/v1/default/banks/{bank_id}",
+        response_model=DeleteResponse,
+        summary="Delete memory bank",
+        description="Delete an entire memory bank including all memories, entities, documents, and the bank profile itself. "
+        "This is a destructive operation that cannot be undone.",
+        operation_id="delete_bank",
+        tags=["Banks"]
+    )
+    async def api_delete_bank(bank_id: str):
+        """Delete an entire memory bank and all its data."""
+        try:
+            result = await app.state.memory.delete_bank(bank_id)
+            return DeleteResponse(
+                success=True,
+                message=f"Bank '{bank_id}' and all associated data deleted successfully",
+                deleted_count=result.get("memory_units_deleted", 0) + result.get("entities_deleted", 0) + result.get("documents_deleted", 0)
+            )
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
     @app.post(
         "/v1/default/banks/{bank_id}/memories",
         response_model=RetainResponse,
         summary="Retain memories",
-        description="""
-    Retain memory items with automatic fact extraction.
-
-    This is the main endpoint for storing memories. It supports both synchronous and asynchronous processing
-    via the async parameter.
-
-    Features:
-    - Efficient batch processing
-    - Automatic fact extraction from natural language
-    - Entity recognition and linking
-    - Document tracking with automatic upsert (when document_id is provided on items)
-    - Temporal and semantic linking
-    - Optional asynchronous processing
-
-    The system automatically:
-    1. Extracts semantic facts from the content
-    2. Generates embeddings
-    3. Deduplicates similar facts
-    4. Creates temporal, semantic, and entity links
-    5. Tracks document metadata
-
-    When async=true:
-    - Returns immediately after queuing the task
-    - Processing happens in the background
-    - Use the operations endpoint to monitor progress
-
-    When async=false (default):
-    - Waits for processing to complete
-    - Returns after all memories are stored
-
-    Note: If a memory item has a document_id that already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior). Items with the same document_id are grouped together for efficient processing.
-        """,
-        operation_id="retain_memories"
+        description="Retain memory items with automatic fact extraction.\n\n"
+        "This is the main endpoint for storing memories. It supports both synchronous and asynchronous processing via the `async` parameter.\n\n"
+        "**Features:**\n"
+        "- Efficient batch processing\n"
+        "- Automatic fact extraction from natural language\n"
+        "- Entity recognition and linking\n"
+        "- Document tracking with automatic upsert (when document_id is provided)\n"
+        "- Temporal and semantic linking\n"
+        "- Optional asynchronous processing\n\n"
+        "**The system automatically:**\n"
+        "1. Extracts semantic facts from the content\n"
+        "2. Generates embeddings\n"
+        "3. Deduplicates similar facts\n"
+        "4. Creates temporal, semantic, and entity links\n"
+        "5. Tracks document metadata\n\n"
+        "**When `async=true`:** Returns immediately after queuing. Use the operations endpoint to monitor progress.\n\n"
+        "**When `async=false` (default):** Waits for processing to complete.\n\n"
+        "**Note:** If a memory item has a `document_id` that already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior).",
+        operation_id="retain_memories",
+        tags=["Memory"]
     )
     async def api_retain(bank_id: str, request: RetainRequest):
         """Retain memories with optional async processing."""
@@ -1813,7 +1789,7 @@ This operation cannot be undone.
 
                 # Submit task to background queue
                 await app.state.memory._task_backend.submit_task({
-                    'type': 'batch_put',
+                    'type': 'batch_retain',
                     'operation_id': str(operation_id),
                     'bank_id': bank_id,
                     'contents': contents
@@ -1852,8 +1828,9 @@ This operation cannot be undone.
         "/v1/default/banks/{bank_id}/memories",
         response_model=DeleteResponse,
         summary="Clear memory bank memories",
-        description="Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (personality and background) will be preserved.",
-        operation_id="clear_bank_memories"
+        description="Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        operation_id="clear_bank_memories",
+        tags=["Memory"]
     )
     async def api_clear_bank_memories(bank_id: str,
         type: Optional[str] = Query(None, description="Optional fact type filter (world, experience, opinion)")

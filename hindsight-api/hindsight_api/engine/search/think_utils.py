@@ -28,30 +28,48 @@ class OpinionExtractionResponse(BaseModel):
     )
 
 
-def describe_trait(name: str, value: float) -> str:
-    """Convert trait value to descriptive text."""
-    if value >= 0.8:
-        return f"very high {name}"
-    elif value >= 0.6:
-        return f"high {name}"
-    elif value >= 0.4:
-        return f"moderate {name}"
-    elif value >= 0.2:
-        return f"low {name}"
-    else:
-        return f"very low {name}"
+def describe_trait_level(value: int) -> str:
+    """Convert trait value (1-5) to descriptive text."""
+    levels = {
+        1: "very low",
+        2: "low",
+        3: "moderate",
+        4: "high",
+        5: "very high"
+    }
+    return levels.get(value, "moderate")
 
 
 def build_disposition_description(disposition: DispositionTraits) -> str:
     """Build a disposition description string from disposition traits."""
-    return f"""Your disposition traits:
-- {describe_trait('openness to new ideas', disposition.openness)}
-- {describe_trait('conscientiousness and organization', disposition.conscientiousness)}
-- {describe_trait('extraversion and sociability', disposition.extraversion)}
-- {describe_trait('agreeableness and cooperation', disposition.agreeableness)}
-- {describe_trait('emotional sensitivity', disposition.neuroticism)}
+    skepticism_desc = {
+        1: "You are very trusting and tend to take information at face value.",
+        2: "You tend to trust information but may question obvious inconsistencies.",
+        3: "You have a balanced approach to information, neither too trusting nor too skeptical.",
+        4: "You are somewhat skeptical and often question the reliability of information.",
+        5: "You are highly skeptical and critically examine all information for accuracy and hidden motives."
+    }
 
-Disposition influence strength: {int(disposition.bias_strength * 100)}% (how much your disposition shapes your opinions)"""
+    literalism_desc = {
+        1: "You interpret information very flexibly, reading between the lines and inferring intent.",
+        2: "You tend to consider context and implied meaning alongside literal statements.",
+        3: "You balance literal interpretation with contextual understanding.",
+        4: "You prefer to interpret information more literally and precisely.",
+        5: "You interpret information very literally and focus on exact wording and commitments."
+    }
+
+    empathy_desc = {
+        1: "You focus primarily on facts and data, setting aside emotional context.",
+        2: "You consider facts first but acknowledge emotional factors exist.",
+        3: "You balance factual analysis with emotional understanding.",
+        4: "You give significant weight to emotional context and human factors.",
+        5: "You strongly consider the emotional state and circumstances of others when forming memories."
+    }
+
+    return f"""Your disposition traits:
+- Skepticism ({describe_trait_level(disposition.skepticism)}): {skepticism_desc.get(disposition.skepticism, skepticism_desc[3])}
+- Literalism ({describe_trait_level(disposition.literalism)}): {literalism_desc.get(disposition.literalism, literalism_desc[3])}
+- Empathy ({describe_trait_level(disposition.empathy)}): {empathy_desc.get(disposition.empathy, empathy_desc[3])}"""
 
 
 def format_facts_for_prompt(facts: List[MemoryFact]) -> str:
@@ -77,10 +95,6 @@ def format_facts_for_prompt(facts: List[MemoryFact]) -> str:
                 fact_obj["occurred_start"] = occurred_start
             elif isinstance(occurred_start, datetime):
                 fact_obj["occurred_start"] = occurred_start.strftime('%Y-%m-%d %H:%M:%S')
-
-        # Add activation if available
-        if fact.activation is not None:
-            fact_obj["score"] = fact.activation
 
         formatted.append(fact_obj)
 
@@ -141,13 +155,28 @@ Based on everything I know, believe, and who I am (including my name, dispositio
 
 def get_system_message(disposition: DispositionTraits) -> str:
     """Get the system message for the think LLM call."""
-    bias_strength = disposition.bias_strength
-    if bias_strength >= 0.7:
-        disposition_instruction = "Your disposition strongly influences your thinking. Let your traits guide how you interpret facts and form opinions. Don't be afraid to be biased based on your disposition."
-    elif bias_strength >= 0.4:
-        disposition_instruction = "Your disposition moderately influences your thinking. Balance your personal traits with objective analysis."
-    else:
-        disposition_instruction = "Your disposition has minimal influence on your thinking. Focus primarily on facts while keeping your traits in mind."
+    # Build disposition-specific instructions based on trait values
+    instructions = []
+
+    # Skepticism influences how much to question/doubt information
+    if disposition.skepticism >= 4:
+        instructions.append("Be skeptical of claims and look for potential issues or inconsistencies.")
+    elif disposition.skepticism <= 2:
+        instructions.append("Trust the information provided and take statements at face value.")
+
+    # Literalism influences interpretation style
+    if disposition.literalism >= 4:
+        instructions.append("Interpret information literally and focus on exact commitments and wording.")
+    elif disposition.literalism <= 2:
+        instructions.append("Read between the lines and consider implied meaning and context.")
+
+    # Empathy influences consideration of emotional factors
+    if disposition.empathy >= 4:
+        instructions.append("Consider the emotional state and circumstances behind the information.")
+    elif disposition.empathy <= 2:
+        instructions.append("Focus on facts and outcomes rather than emotional context.")
+
+    disposition_instruction = " ".join(instructions) if instructions else "Balance your disposition traits when interpreting information."
 
     return f"You are a person with your own thoughts, experiences, opinions, and disposition. When asked a question, respond naturally like a human would - share what you genuinely think based on what you know and have experienced. {disposition_instruction} Be direct, express your views confidently, and use 'I think', 'I believe', 'in my view', etc. Respond in plain text without markdown formatting."
 

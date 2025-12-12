@@ -92,9 +92,9 @@ export function EntitiesView() {
   };
 
   return (
-    <div className="flex gap-4">
+    <div>
       {/* Entity List */}
-      <div className="flex-1">
+      <div>
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
@@ -111,7 +111,6 @@ export function EntitiesView() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Mentions</TableHead>
                   <TableHead>First Seen</TableHead>
@@ -123,11 +122,10 @@ export function EntitiesView() {
                   <TableRow
                     key={entity.id}
                     onClick={() => loadEntityDetail(entity.id)}
-                    className={`cursor-pointer ${
-                      selectedEntity?.id === entity.id ? 'bg-accent' : ''
+                    className={`cursor-pointer hover:bg-muted/50 ${
+                      selectedEntity?.id === entity.id ? 'bg-primary/10' : ''
                     }`}
                   >
-                    <TableCell className="text-xs text-muted-foreground font-mono" title={entity.id}>{entity.id.slice(0, 8)}...</TableCell>
                     <TableCell className="font-medium">{entity.canonical_name}</TableCell>
                     <TableCell>{entity.mention_count}</TableCell>
                     <TableCell>{formatDate(entity.first_seen)}</TableCell>
@@ -149,59 +147,81 @@ export function EntitiesView() {
         )}
       </div>
 
-      {/* Entity Detail Panel */}
+      {/* Entity Detail Panel - Fixed overlay */}
       {selectedEntity && (
-        <div className="w-96 bg-card border-2 border-primary rounded-lg p-4">
-          <div className="flex justify-between items-start mb-4">
-            <h3 className="text-lg font-bold text-card-foreground">{selectedEntity.canonical_name}</h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedEntity(null)}
-            >
-              X
-            </Button>
-          </div>
-
-          <div className="text-sm text-muted-foreground mb-4">
-            <div>Mentions: {selectedEntity.mention_count}</div>
-            <div>First seen: {formatDate(selectedEntity.first_seen)}</div>
-            <div>Last seen: {formatDate(selectedEntity.last_seen)}</div>
-          </div>
-
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-2">
-              <h4 className="font-bold text-card-foreground">Observations</h4>
+        <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
+          <div className="p-5">
+            {/* Header */}
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">
+              <div>
+                <h3 className="text-xl font-bold text-foreground">{selectedEntity.canonical_name}</h3>
+                <p className="text-sm text-muted-foreground mt-1">Entity details</p>
+              </div>
               <Button
-                onClick={regenerateObservations}
-                disabled={regenerating}
-                variant="secondary"
+                variant="ghost"
                 size="sm"
+                onClick={() => setSelectedEntity(null)}
+                className="h-8 w-8 p-0"
               >
-                {regenerating ? 'Regenerating...' : 'Regenerate'}
+                <span className="text-lg">×</span>
               </Button>
             </div>
 
-            {loadingDetail ? (
-              <div className="text-muted-foreground text-sm">Loading observations...</div>
-            ) : selectedEntity.observations && selectedEntity.observations.length > 0 ? (
-              <ul className="space-y-2">
-                {selectedEntity.observations.map((obs, idx) => (
-                  <li key={idx} className="p-2 bg-muted rounded text-sm">
-                    <div>{obs.text}</div>
-                    {obs.mentioned_at && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {formatDate(obs.mentioned_at)}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="text-muted-foreground text-sm">
-                No observations yet. Click &quot;Regenerate&quot; to generate observations from facts.
+            <div className="space-y-5">
+              {/* Entity Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Mentions</div>
+                  <div className="text-lg font-semibold text-foreground">{selectedEntity.mention_count}</div>
+                </div>
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">First Seen</div>
+                  <div className="text-sm font-medium text-foreground">{formatDate(selectedEntity.first_seen)}</div>
+                </div>
               </div>
-            )}
+
+              {/* ID */}
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Entity ID</div>
+                <code className="text-xs font-mono break-all text-muted-foreground">{selectedEntity.id}</code>
+              </div>
+
+              {/* Observations */}
+              <div>
+                <div className="flex justify-between items-center mb-3">
+                  <div className="text-xs font-bold text-muted-foreground uppercase">Observations</div>
+                  <Button
+                    onClick={regenerateObservations}
+                    disabled={regenerating}
+                    variant="outline"
+                    size="sm"
+                  >
+                    {regenerating ? 'Regenerating...' : 'Regenerate'}
+                  </Button>
+                </div>
+
+                {loadingDetail ? (
+                  <div className="text-muted-foreground text-sm">Loading observations...</div>
+                ) : selectedEntity.observations && selectedEntity.observations.length > 0 ? (
+                  <ul className="space-y-2">
+                    {selectedEntity.observations.map((obs, idx) => (
+                      <li key={idx} className="p-3 bg-muted/50 rounded-lg">
+                        <div className="text-sm text-foreground">{obs.text}</div>
+                        {obs.mentioned_at && (
+                          <div className="text-xs text-muted-foreground mt-2">
+                            {formatDate(obs.mentioned_at)}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-muted-foreground text-sm p-4 bg-muted/50 rounded-lg">
+                    No observations yet. Click &quot;Regenerate&quot; to generate observations from facts.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -4,10 +4,22 @@ sidebar_position: 3
 
 # Reflect
 
-Generate personality-aware responses using retrieved memories.
+Generate disposition-aware responses using retrieved memories.
+
+When you call **reflect**, Hindsight performs a multi-step reasoning process:
+1. **Recalls** relevant memories from the bank based on your query
+2. **Applies** the bank's disposition traits to shape the reasoning style
+3. **Generates** a contextual answer grounded in the retrieved facts
+4. **Forms opinions** in the background based on the reasoning (available in subsequent calls)
+
+The response includes the generated answer along with the facts that were used, providing full transparency into how the answer was derived.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+
+:::info How Reflect Works
+Learn about disposition-driven reasoning and opinion formation in the [Reflect Architecture](/developer/reflect) guide.
+:::
 
 :::tip Prerequisites
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
@@ -80,64 +92,77 @@ const response = await client.reflect('my-bank', 'What do you think about remote
 </TabItem>
 </Tabs>
 
-:::info How Reflect Works
-Learn about personality-driven reasoning and opinion formation in the [Reflect Architecture](/developer/reflect) guide.
-:::
+## The Role of Context
 
-## Opinion Formation
+The `context` parameter steers how the reflection is performed without impacting the memory recall. It provides situational information that helps shape the reasoning and response.
 
-Reflect can form new opinions based on evidence:
+**How context is used:**
+- **Shapes reasoning**: Helps understand the situation when formulating an answer
+- **Disambiguates intent**: Clarifies what aspect of the query matters most
+- **Does not affect recall**: The same memories are retrieved regardless of context
 
 <Tabs>
 <TabItem value="python" label="Python">
 
 ```python
+# Context is passed to the LLM to help it understand the situation
 response = client.reflect(
     bank_id="my-bank",
-    query="What do you think about Python vs JavaScript for data science?"
+    query="What do you think about the proposal?",
+    context="We're in a budget review meeting discussing Q4 spending"
 )
+```
 
-# Response might include:
-# answer: "Based on what I know about data science workflows..."
-# new_opinions: [
-#     {"text": "Python is better for data science", "id": "..."}
-# ]
+</TabItem>
+<TabItem value="node" label="Node.js">
+
+```typescript
+// Context helps the LLM understand the current situation
+const response = await client.reflect('my-bank', 'What do you think about the proposal?', {
+    context: "We're in a budget review meeting discussing Q4 spending"
+});
 ```
 
 </TabItem>
 </Tabs>
 
-New opinions are automatically stored and influence future responses.
+## Opinion Formation
 
-## Personality Influence
+When reflect reasons about a question, it may form new **opinions** based on the evidence in the memory bank. These opinions are created in the background and become available in subsequent `reflect` and `recall` calls.
 
-The bank's personality affects reflect responses:
+**Why opinions matter:**
+- **Consistent thinking**: Opinions ensure the memory bank maintains a coherent perspective over time
+- **Evolving viewpoints**: As more information is retained, opinions can be refined or updated
+- **Grounded reasoning**: Opinions are always derived from factual evidence in the memory bank
 
-| Trait | Effect on Reflect |
-|-------|-----------------|
-| High **Openness** | More willing to consider new ideas |
-| High **Conscientiousness** | More structured, methodical responses |
-| High **Extraversion** | More collaborative suggestions |
-| High **Agreeableness** | More diplomatic, harmony-seeking |
-| High **Neuroticism** | More risk-aware, cautious |
+Opinions are stored as a special memory type and are automatically retrieved when relevant to future queries. This creates a natural evolution of the bank's perspective, similar to how humans form and refine their views based on accumulated experience.
+
+## Disposition Influence
+
+The bank's disposition affects reflect responses:
+
+| Trait | Low (1) | High (5) |
+|-------|---------|----------|
+| **Skepticism** | Trusting, accepts claims | Questions and doubts claims |
+| **Literalism** | Flexible interpretation | Exact, literal interpretation |
+| **Empathy** | Detached, fact-focused | Considers emotional context |
 
 <Tabs>
 <TabItem value="python" label="Python">
 
 ```python
-# Create a bank with specific personality
+# Create a bank with specific disposition
 client.create_bank(
     bank_id="cautious-advisor",
     background="I am a risk-aware financial advisor",
-    personality={
-        "openness": 0.3,
-        "conscientiousness": 0.9,
-        "neuroticism": 0.8,
-        "bias_strength": 0.7
+    disposition={
+        "skepticism": 5,   # Very skeptical of claims
+        "literalism": 4,   # Focuses on exact requirements
+        "empathy": 2       # Prioritizes facts over feelings
     }
 )
 
-# Reflect responses will reflect this personality
+# Reflect responses will reflect this disposition
 response = client.reflect(
     bank_id="cautious-advisor",
     query="Should I invest in crypto?"
@@ -149,18 +174,17 @@ response = client.reflect(
 <TabItem value="node" label="Node.js">
 
 ```typescript
-// Create a bank with specific personality
+// Create a bank with specific disposition
 await client.createBank('cautious-advisor', {
     background: 'I am a risk-aware financial advisor',
-    personality: {
-        openness: 0.3,
-        conscientiousness: 0.9,
-        neuroticism: 0.8,
-        bias_strength: 0.7
+    disposition: {
+        skepticism: 5,
+        literalism: 4,
+        empathy: 2
     }
 });
 
-// Reflect responses will reflect this personality
+// Reflect responses will reflect this disposition
 const response = await client.reflect('cautious-advisor', 'Should I invest in crypto?');
 ```
 
@@ -169,7 +193,7 @@ const response = await client.reflect('cautious-advisor', 'Should I invest in cr
 
 ## Using Sources
 
-The `facts_used` field shows which memories informed the response:
+The `based_on` field shows which memories informed the response:
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -177,10 +201,10 @@ The `facts_used` field shows which memories informed the response:
 ```python
 response = client.reflect(bank_id="my-bank", query="Tell me about Alice")
 
-print("Response:", response["answer"])
+print("Response:", response.text)
 print("\nBased on:")
-for fact in response.get("facts_used", []):
-    print(f"  - {fact['text']} (relevance: {fact['weight']:.2f})")
+for fact in response.based_on or []:
+    print(f"  - [{fact.type}] {fact.text}")
 ```
 
 </TabItem>
@@ -189,10 +213,10 @@ for fact in response.get("facts_used", []):
 ```typescript
 const response = await client.reflect('my-bank', 'Tell me about Alice');
 
-console.log('Response:', response.answer);
+console.log('Response:', response.text);
 console.log('\nBased on:');
-for (const fact of response.facts_used || []) {
-    console.log(`  - ${fact.text} (relevance: ${fact.weight.toFixed(2)})`);
+for (const fact of response.based_on || []) {
+    console.log(`  - [${fact.type}] ${fact.text}`);
 }
 ```
 

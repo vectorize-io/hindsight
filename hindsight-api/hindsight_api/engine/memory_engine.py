@@ -11,16 +11,19 @@ This implements a sophisticated memory architecture that combines:
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, Union, TypedDict, TYPE_CHECKING
 import asyncpg
 import asyncio
-from .embeddings import Embeddings, SentenceTransformersEmbeddings
-from .cross_encoder import CrossEncoderModel
+from .embeddings import Embeddings, create_embeddings_from_env
+from .cross_encoder import CrossEncoderModel, create_cross_encoder_from_env
 import time
 import numpy as np
 import uuid
 import logging
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from ..config import HindsightConfig
 
 
 class RetainContentDict(TypedDict, total=False):
@@ -48,7 +51,7 @@ from .entity_resolver import EntityResolver
 from .retain import embedding_utils, bank_utils
 from .search import think_utils, observation_utils
 from .llm_wrapper import LLMConfig
-from .response_models import RecallResult as RecallResultModel, ReflectResult, MemoryFact, EntityState, EntityObservation
+from .response_models import RecallResult as RecallResultModel, ReflectResult, MemoryFact, EntityState, EntityObservation, VALID_RECALL_FACT_TYPES
 from .task_backend import TaskBackend, AsyncIOQueueBackend
 from .search.reranking import CrossEncoderReranker
 from ..pg0 import EmbeddedPostgres
@@ -99,10 +102,10 @@ class MemoryEngine:
 
     def __init__(
         self,
-        db_url: str,
-        memory_llm_provider: str,
-        memory_llm_api_key: str,
-        memory_llm_model: str,
+        db_url: Optional[str] = None,
+        memory_llm_provider: Optional[str] = None,
+        memory_llm_api_key: Optional[str] = None,
+        memory_llm_model: Optional[str] = None,
         memory_llm_base_url: Optional[str] = None,
         embeddings: Optional[Embeddings] = None,
         cross_encoder: Optional[CrossEncoderModel] = None,
@@ -110,35 +113,67 @@ class MemoryEngine:
         pool_min_size: int = 5,
         pool_max_size: int = 100,
         task_backend: Optional[TaskBackend] = None,
+        run_migrations: bool = True,
     ):
         """
         Initialize the temporal + semantic memory system.
 
+        All parameters are optional and will be read from environment variables if not provided.
+        See hindsight_api.config for environment variable names and defaults.
+
         Args:
-            db_url: PostgreSQL connection URL (postgresql://user:pass@host:port/dbname). Required.
-            memory_llm_provider: LLM provider for memory operations: "openai", "groq", or "ollama". Required.
-            memory_llm_api_key: API key for the LLM provider. Required.
-            memory_llm_model: Model name to use for all memory operations (put/think/opinions). Required.
-            memory_llm_base_url: Base URL for the LLM API. Optional. Defaults based on provider:
-                                - groq: https://api.groq.com/openai/v1
-                                - ollama: http://localhost:11434/v1
-            embeddings: Embeddings implementation to use. If not provided, uses SentenceTransformersEmbeddings
-            cross_encoder: Cross-encoder model for reranking. If not provided, uses default when cross-encoder reranker is selected
-            query_analyzer: Query analyzer implementation to use. If not provided, uses TransformerQueryAnalyzer
+            db_url: PostgreSQL connection URL. Defaults to HINDSIGHT_API_DATABASE_URL env var or "pg0".
+                    Also supports pg0 URLs: "pg0" or "pg0://instance-name" or "pg0://instance-name:port"
+            memory_llm_provider: LLM provider. Defaults to HINDSIGHT_API_LLM_PROVIDER env var or "groq".
+            memory_llm_api_key: API key for the LLM provider. Defaults to HINDSIGHT_API_LLM_API_KEY env var.
+            memory_llm_model: Model name. Defaults to HINDSIGHT_API_LLM_MODEL env var.
+            memory_llm_base_url: Base URL for the LLM API. Defaults based on provider.
+            embeddings: Embeddings implementation. If not provided, created from env vars.
+            cross_encoder: Cross-encoder model. If not provided, created from env vars.
+            query_analyzer: Query analyzer implementation. If not provided, uses DateparserQueryAnalyzer.
             pool_min_size: Minimum number of connections in the pool (default: 5)
             pool_max_size: Maximum number of connections in the pool (default: 100)
-                          Increase for parallel think/search operations (e.g., 200-300 for 100+ parallel thinks)
-            task_backend: Custom task backend for async task execution. If not provided, uses AsyncIOQueueBackend
+            task_backend: Custom task backend. If not provided, uses AsyncIOQueueBackend.
+            run_migrations: Whether to run database migrations during initialize(). Default: True
         """
-        if not db_url:
-            raise ValueError("Database url is required")
+        # Load config from environment for any missing parameters
+        from ..config import get_config
+        config = get_config()
+
+        # Apply defaults from config
+        db_url = db_url or config.database_url
+        memory_llm_provider = memory_llm_provider or config.llm_provider
+        memory_llm_api_key = memory_llm_api_key or config.llm_api_key
+        memory_llm_model = memory_llm_model or config.llm_model
+        memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
         # Track pg0 instance (if used)
         self._pg0: Optional[EmbeddedPostgres] = None
+        self._pg0_instance_name: Optional[str] = None
 
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
-        self._use_pg0 = db_url == "pg0"
-        self.db_url = db_url if not self._use_pg0 else None
+        # Supports: "pg0" (default instance), "pg0://instance-name" (named instance), or regular postgresql:// URL
+        if db_url == "pg0":
+            self._use_pg0 = True
+            self._pg0_instance_name = "hindsight"
+            self._pg0_port = None  # Use default port
+            self.db_url = None
+        elif db_url.startswith("pg0://"):
+            self._use_pg0 = True
+            # Parse instance name and optional port: pg0://instance-name or pg0://instance-name:port
+            url_part = db_url[6:]  # Remove "pg0://"
+            if ":" in url_part:
+                self._pg0_instance_name, port_str = url_part.rsplit(":", 1)
+                self._pg0_port = int(port_str)
+            else:
+                self._pg0_instance_name = url_part or "hindsight"
+                self._pg0_port = None  # Use default port
+            self.db_url = None
+        else:
+            self._use_pg0 = False
+            self._pg0_instance_name = None
+            self._pg0_port = None
+            self.db_url = db_url
 
 
         # Set default base URL if not provided
@@ -155,15 +190,16 @@ class MemoryEngine:
         self._initialized = False
         self._pool_min_size = pool_min_size
         self._pool_max_size = pool_max_size
+        self._run_migrations = run_migrations
 
         # Initialize entity resolver (will be created in initialize())
         self.entity_resolver = None
 
-        # Initialize embeddings
+        # Initialize embeddings (from env vars if not provided)
         if embeddings is not None:
             self.embeddings = embeddings
         else:
-            self.embeddings = SentenceTransformersEmbeddings("BAAI/bge-small-en-v1.5")
+            self.embeddings = create_embeddings_from_env()
 
         # Initialize query analyzer
         if query_analyzer is not None:
@@ -294,7 +330,7 @@ class MemoryEngine:
                 await self._handle_reinforce_opinion(task_dict)
             elif task_type == 'form_opinion':
                 await self._handle_form_opinion(task_dict)
-            elif task_type == 'batch_put':
+            elif task_type == 'batch_retain':
                 await self._handle_batch_retain(task_dict)
             elif task_type == 'regenerate_observations':
                 await self._handle_regenerate_observations(task_dict)
@@ -378,35 +414,63 @@ class MemoryEngine:
         async def start_pg0():
             """Start pg0 if configured."""
             if self._use_pg0:
-                self._pg0 = EmbeddedPostgres()
-                self.db_url = await self._pg0.ensure_running()
+                kwargs = {"name": self._pg0_instance_name}
+                if self._pg0_port is not None:
+                    kwargs["port"] = self._pg0_port
+                pg0 = EmbeddedPostgres(**kwargs)
+                # Check if pg0 is already running before we start it
+                was_already_running = await pg0.is_running()
+                self.db_url = await pg0.ensure_running()
+                # Only track pg0 (to stop later) if WE started it
+                if not was_already_running:
+                    self._pg0 = pg0
 
-        def load_embeddings():
-            """Load embedding model (CPU-bound)."""
-            self.embeddings.load()
+        async def init_embeddings():
+            """Initialize embedding model."""
+            # For local providers, run in thread pool to avoid blocking event loop
+            if self.embeddings.provider_name == "local":
+                await loop.run_in_executor(
+                    None,
+                    lambda: asyncio.run(self.embeddings.initialize())
+                )
+            else:
+                await self.embeddings.initialize()
 
-        def load_cross_encoder():
-            """Load cross-encoder model (CPU-bound)."""
-            self._cross_encoder_reranker.cross_encoder.load()
+        async def init_cross_encoder():
+            """Initialize cross-encoder model."""
+            cross_encoder = self._cross_encoder_reranker.cross_encoder
+            # For local providers, run in thread pool to avoid blocking event loop
+            if cross_encoder.provider_name == "local":
+                await loop.run_in_executor(
+                    None,
+                    lambda: asyncio.run(cross_encoder.initialize())
+                )
+            else:
+                await cross_encoder.initialize()
 
-        def load_query_analyzer():
-            """Load query analyzer model (CPU-bound)."""
-            self.query_analyzer.load()
+        async def init_query_analyzer():
+            """Initialize query analyzer model."""
+            # Query analyzer load is sync and CPU-bound
+            await loop.run_in_executor(None, self.query_analyzer.load)
 
-        # Run pg0 and all model loads in parallel
-        # pg0 is async (IO-bound), models are sync (CPU-bound in thread pool)
-        # Use 3 workers to load all models concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            # Start all tasks
-            pg0_task = asyncio.create_task(start_pg0())
-            embeddings_future = loop.run_in_executor(executor, load_embeddings)
-            cross_encoder_future = loop.run_in_executor(executor, load_cross_encoder)
-            query_analyzer_future = loop.run_in_executor(executor, load_query_analyzer)
+        async def verify_llm():
+            """Verify LLM connection is working."""
+            await self._llm_config.verify_connection()
 
-            # Wait for all to complete
-            await asyncio.gather(
-                pg0_task, embeddings_future, cross_encoder_future, query_analyzer_future
-            )
+        # Run pg0 and all model initializations in parallel
+        await asyncio.gather(
+            start_pg0(),
+            init_embeddings(),
+            init_cross_encoder(),
+            init_query_analyzer(),
+            verify_llm(),
+        )
+
+        # Run database migrations if enabled
+        if self._run_migrations:
+            from ..migrations import run_migrations
+            logger.info("Running database migrations...")
+            run_migrations(self.db_url)
 
         logger.info(f"Connecting to PostgreSQL at {self.db_url}")
 
@@ -869,7 +933,6 @@ class MemoryEngine:
                 task_backend=self._task_backend,
                 format_date_fn=self._format_readable_date,
                 duplicate_checker_fn=self._find_duplicate_facts_batch,
-                regenerate_observations_fn=self._regenerate_observations_sync,
                 bank_id=bank_id,
                 contents_dicts=contents,
                 document_id=document_id,
@@ -955,11 +1018,19 @@ class MemoryEngine:
             - entities: Optional dict of entity states (if include_entities=True)
             - chunks: Optional dict of chunks (if include_chunks=True)
         """
+        # Validate fact types early
+        invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
+        if invalid_types:
+            raise ValueError(
+                f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
+                f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
+            )
+
         # Map budget enum to thinking_budget number
         budget_mapping = {
             Budget.LOW: 100,
             Budget.MID: 300,
-            Budget.HIGH: 600
+            Budget.HIGH: 1000
         }
         thinking_budget = budget_mapping[budget]
 
@@ -1040,12 +1111,12 @@ class MemoryEngine:
             tracer.start()
 
         pool = await self._get_pool()
-        search_start = time.time()
+        recall_start = time.time()
 
         # Buffer logs for clean output in concurrent scenarios
-        search_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+        recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         log_buffer = []
-        log_buffer.append(f"[SEARCH {search_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens})")
+        log_buffer.append(f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens})")
 
         try:
             # Step 1: Generate query embedding (for semantic search)
@@ -1085,22 +1156,22 @@ class MemoryEngine:
             aggregated_timings = {"semantic": 0.0, "bm25": 0.0, "graph": 0.0, "temporal": 0.0}
 
             detected_temporal_constraint = None
-            for idx, (ft_semantic, ft_bm25, ft_graph, ft_temporal, ft_timings, ft_temporal_constraint) in enumerate(all_retrievals):
+            for idx, retrieval_result in enumerate(all_retrievals):
                 # Log fact types in this retrieval batch
                 ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
-                logger.debug(f"[SEARCH {search_id}] Fact type '{ft_name}': semantic={len(ft_semantic)}, bm25={len(ft_bm25)}, graph={len(ft_graph)}, temporal={len(ft_temporal) if ft_temporal else 0}")
+                logger.debug(f"[RECALL {recall_id}] Fact type '{ft_name}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}")
 
-                semantic_results.extend(ft_semantic)
-                bm25_results.extend(ft_bm25)
-                graph_results.extend(ft_graph)
-                if ft_temporal:
-                    temporal_results.extend(ft_temporal)
+                semantic_results.extend(retrieval_result.semantic)
+                bm25_results.extend(retrieval_result.bm25)
+                graph_results.extend(retrieval_result.graph)
+                if retrieval_result.temporal:
+                    temporal_results.extend(retrieval_result.temporal)
                 # Track max timing for each method (since they run in parallel across fact types)
-                for method, duration in ft_timings.items():
-                    aggregated_timings[method] = max(aggregated_timings[method], duration)
+                for method, duration in retrieval_result.timings.items():
+                    aggregated_timings[method] = max(aggregated_timings.get(method, 0.0), duration)
                 # Capture temporal constraint (same across all fact types)
-                if ft_temporal_constraint:
-                    detected_temporal_constraint = ft_temporal_constraint
+                if retrieval_result.temporal_constraint:
+                    detected_temporal_constraint = retrieval_result.temporal_constraint
 
             # If no temporal results from any fact type, set to None
             if not temporal_results:
@@ -1132,48 +1203,56 @@ class MemoryEngine:
                 temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
             log_buffer.append(f"  [2] {total_retrievals}-way retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {step_duration:.3f}s{temporal_info}")
 
-            # Record retrieval results for tracer (convert typed results to old format)
+            # Record retrieval results for tracer - per fact type
             if tracer:
                 # Convert RetrievalResult to old tuple format for tracer
                 def to_tuple_format(results):
                     return [(r.id, r.__dict__) for r in results]
 
-                # Add semantic retrieval results
-                tracer.add_retrieval_results(
-                    method_name="semantic",
-                    results=to_tuple_format(semantic_results),
-                    duration_seconds=aggregated_timings["semantic"],
-                    score_field="similarity",
-                    metadata={"limit": thinking_budget}
-                )
+                # Add retrieval results per fact type (to show parallel execution in UI)
+                for idx, rr in enumerate(all_retrievals):
+                    ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
 
-                # Add BM25 retrieval results
-                tracer.add_retrieval_results(
-                    method_name="bm25",
-                    results=to_tuple_format(bm25_results),
-                    duration_seconds=aggregated_timings["bm25"],
-                    score_field="bm25_score",
-                    metadata={"limit": thinking_budget}
-                )
-
-                # Add graph retrieval results
-                tracer.add_retrieval_results(
-                    method_name="graph",
-                    results=to_tuple_format(graph_results),
-                    duration_seconds=aggregated_timings["graph"],
-                    score_field="similarity",  # Graph uses similarity for activation
-                    metadata={"budget": thinking_budget}
-                )
-
-                # Add temporal retrieval results if present
-                if temporal_results:
+                    # Add semantic retrieval results for this fact type
                     tracer.add_retrieval_results(
-                        method_name="temporal",
-                        results=to_tuple_format(temporal_results),
-                        duration_seconds=aggregated_timings["temporal"],
-                        score_field="temporal_score",
-                        metadata={"budget": thinking_budget}
+                        method_name="semantic",
+                        results=to_tuple_format(rr.semantic),
+                        duration_seconds=rr.timings.get("semantic", 0.0),
+                        score_field="similarity",
+                        metadata={"limit": thinking_budget},
+                        fact_type=ft_name
                     )
+
+                    # Add BM25 retrieval results for this fact type
+                    tracer.add_retrieval_results(
+                        method_name="bm25",
+                        results=to_tuple_format(rr.bm25),
+                        duration_seconds=rr.timings.get("bm25", 0.0),
+                        score_field="bm25_score",
+                        metadata={"limit": thinking_budget},
+                        fact_type=ft_name
+                    )
+
+                    # Add graph retrieval results for this fact type
+                    tracer.add_retrieval_results(
+                        method_name="graph",
+                        results=to_tuple_format(rr.graph),
+                        duration_seconds=rr.timings.get("graph", 0.0),
+                        score_field="activation",
+                        metadata={"budget": thinking_budget},
+                        fact_type=ft_name
+                    )
+
+                    # Add temporal retrieval results for this fact type (even if empty, to show it ran)
+                    if rr.temporal is not None:
+                        tracer.add_retrieval_results(
+                            method_name="temporal",
+                            results=to_tuple_format(rr.temporal),
+                            duration_seconds=rr.timings.get("temporal", 0.0),
+                            score_field="temporal_score",
+                            metadata={"budget": thinking_budget},
+                            fact_type=ft_name
+                        )
 
                 # Record entry points (from semantic results) for legacy graph view
                 for rank, retrieval in enumerate(semantic_results[:10], start=1):  # Top 10 as entry points
@@ -1209,7 +1288,6 @@ class MemoryEngine:
             # Step 4: Rerank using cross-encoder (MergedCandidate -> ScoredResult)
             step_start = time.time()
             reranker_instance = self._cross_encoder_reranker
-            log_buffer.append(f"  [4] Using cross-encoder reranker")
 
             # Rerank using cross-encoder
             scored_results = reranker_instance.rerank(query, merged_candidates)
@@ -1217,31 +1295,24 @@ class MemoryEngine:
             step_duration = time.time() - step_start
             log_buffer.append(f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s")
 
-            if tracer:
-                # Convert to old format for tracer
-                results_dict = [sr.to_dict() for sr in scored_results]
-                tracer_merged = [(mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
-                                for mc in merged_candidates]
-                tracer.add_reranked(results_dict, tracer_merged)
-                tracer.add_phase_metric("reranking", step_duration, {
-                    "reranker_type": "cross-encoder",
-                    "candidates_reranked": len(scored_results)
-                })
-
             # Step 4.5: Combine cross-encoder score with retrieval signals
             # This preserves retrieval work (RRF, temporal, recency) instead of pure cross-encoder ranking
             if scored_results:
-                # Normalize RRF scores to [0, 1] range
+                # Normalize RRF scores to [0, 1] range using min-max normalization
                 rrf_scores = [sr.candidate.rrf_score for sr in scored_results]
-                max_rrf = max(rrf_scores) if rrf_scores else 1.0
+                max_rrf = max(rrf_scores) if rrf_scores else 0.0
                 min_rrf = min(rrf_scores) if rrf_scores else 0.0
-                rrf_range = max_rrf - min_rrf if max_rrf > min_rrf else 1.0
+                rrf_range = max_rrf - min_rrf  # Don't force to 1.0, let fallback handle it
 
                 # Calculate recency based on occurred_start (more recent = higher score)
                 now = utcnow()
                 for sr in scored_results:
-                    # Normalize RRF score
-                    sr.rrf_normalized = (sr.candidate.rrf_score - min_rrf) / rrf_range if rrf_range > 0 else 0.5
+                    # Normalize RRF score (0-1 range, 0.5 if all same)
+                    if rrf_range > 0:
+                        sr.rrf_normalized = (sr.candidate.rrf_score - min_rrf) / rrf_range
+                    else:
+                        # All RRF scores are the same, use neutral value
+                        sr.rrf_normalized = 0.5
 
                     # Calculate recency (decay over 365 days, minimum 0.1)
                     sr.recency = 0.5  # default for missing dates
@@ -1272,6 +1343,17 @@ class MemoryEngine:
                 # Re-sort by combined score
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append(f"  [4.6] Combined scoring: cross_encoder(0.6) + rrf(0.2) + temporal(0.1) + recency(0.1)")
+
+            # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
+            if tracer:
+                results_dict = [sr.to_dict() for sr in scored_results]
+                tracer_merged = [(mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
+                                for mc in merged_candidates]
+                tracer.add_reranked(results_dict, tracer_merged)
+                tracer.add_phase_metric("reranking", step_duration, {
+                    "reranker_type": "cross-encoder",
+                    "candidates_reranked": len(scored_results)
+                })
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
@@ -1334,12 +1416,7 @@ class MemoryEngine:
                 ft = sr.retrieval.fact_type
                 fact_type_counts[ft] = fact_type_counts.get(ft, 0) + 1
 
-            total_time = time.time() - search_start
             fact_type_summary = ", ".join([f"{ft}={count}" for ft, count in sorted(fact_type_counts.items())])
-            log_buffer.append(f"[SEARCH {search_id}] Complete: {len(top_scored)} results ({fact_type_summary}) ({total_tokens} tokens) in {total_time:.3f}s")
-
-            # Log all buffered logs at once
-            logger.info("\n" + "\n".join(log_buffer))
 
             # Convert ScoredResult to dicts with ISO datetime strings
             top_results_dicts = []
@@ -1401,11 +1478,12 @@ class MemoryEngine:
                     mentioned_at=result_dict.get("mentioned_at"),
                     document_id=result_dict.get("document_id"),
                     chunk_id=result_dict.get("chunk_id"),
-                    activation=result_dict.get("weight")  # Use final weight as activation
                 ))
 
             # Fetch entity observations if requested
             entities_dict = None
+            total_entity_tokens = 0
+            total_chunk_tokens = 0
             if include_entities and fact_entity_map:
                 # Collect unique entities in order of fact relevance (preserving order from top_scored)
                 # Use a list to maintain order, but track seen entities to avoid duplicates
@@ -1425,7 +1503,6 @@ class MemoryEngine:
 
                 # Fetch observations for each entity (respect token budget, in order)
                 entities_dict = {}
-                total_entity_tokens = 0
                 encoding = _get_tiktoken_encoding()
 
                 for entity_id, entity_name in entities_ordered:
@@ -1485,7 +1562,6 @@ class MemoryEngine:
 
                     # Apply token limit and build chunks_dict in the order of chunk_ids_ordered
                     chunks_dict = {}
-                    total_chunk_tokens = 0
                     encoding = _get_tiktoken_encoding()
 
                     for chunk_id in chunk_ids_ordered:
@@ -1525,10 +1601,17 @@ class MemoryEngine:
                 trace = tracer.finalize(top_results_dicts)
                 trace_dict = trace.to_dict() if trace else None
 
+            # Log final recall stats
+            total_time = time.time() - recall_start
+            num_chunks = len(chunks_dict) if chunks_dict else 0
+            num_entities = len(entities_dict) if entities_dict else 0
+            log_buffer.append(f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s")
+            logger.info("\n" + "\n".join(log_buffer))
+
             return RecallResultModel(results=memory_facts, trace=trace_dict, entities=entities_dict, chunks=chunks_dict)
 
         except Exception as e:
-            log_buffer.append(f"[SEARCH {search_id}] ERROR after {time.time() - search_start:.3f}s: {str(e)}")
+            log_buffer.append(f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {str(e)}")
             logger.error("\n" + "\n".join(log_buffer))
             raise Exception(f"Failed to search memories: {str(e)}")
 
@@ -1725,10 +1808,14 @@ class MemoryEngine:
                         # Delete entities (cascades to unit_entities, entity_cooccurrences, memory_links with entity_id)
                         await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
 
+                        # Delete the bank profile itself
+                        await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
+
                         return {
                             "memory_units_deleted": units_count,
                             "entities_deleted": entities_count,
-                            "documents_deleted": documents_count
+                            "documents_deleted": documents_count,
+                            "bank_deleted": True
                         }
 
                 except Exception as e:
@@ -1773,10 +1860,11 @@ class MemoryEngine:
             """, *query_params)
 
             # Get links, filtering to only include links between units of the selected agent
+            # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
             unit_ids = [row['id'] for row in units]
             if unit_ids:
                 links = await conn.fetch("""
-                    SELECT
+                    SELECT DISTINCT ON (LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid))
                         ml.from_unit_id,
                         ml.to_unit_id,
                         ml.link_type,
@@ -1785,7 +1873,7 @@ class MemoryEngine:
                     FROM memory_links ml
                     LEFT JOIN entities e ON ml.entity_id = e.id
                     WHERE ml.from_unit_id = ANY($1::uuid[]) AND ml.to_unit_id = ANY($1::uuid[])
-                    ORDER BY ml.link_type, ml.weight DESC
+                    ORDER BY LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid), ml.weight DESC
                 """, unit_ids)
             else:
                 links = []
@@ -2502,14 +2590,14 @@ Guidelines:
     async def update_bank_disposition(
         self,
         bank_id: str,
-        disposition: Dict[str, float]
+        disposition: Dict[str, int]
     ) -> None:
         """
         Update bank disposition traits.
 
         Args:
             bank_id: bank IDentifier
-            disposition: Dict with Big Five traits + bias_strength (all 0-1)
+            disposition: Dict with skepticism, literalism, empathy (all 1-5)
         """
         pool = await self._get_pool()
         await bank_utils.update_bank_disposition(pool, bank_id, disposition)
@@ -2584,7 +2672,13 @@ Guidelines:
         if self._llm_config is None:
             raise ValueError("Memory LLM API key not set. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
 
+        reflect_start = time.time()
+        reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
+        log_buffer = []
+        log_buffer.append(f"[REFLECT {reflect_id}] Query: '{query[:50]}...'")
+
         # Steps 1-3: Run multi-fact-type search (12-way retrieval: 4 methods × 3 fact types)
+        recall_start = time.time()
         search_result = await self.recall_async(
             bank_id=bank_id,
             query=query,
@@ -2594,23 +2688,21 @@ Guidelines:
             fact_type=['experience', 'world', 'opinion'],
             include_entities=True
         )
+        recall_time = time.time() - recall_start
 
         all_results = search_result.results
-        logger.info(f"[THINK] Search returned {len(all_results)} results")
 
         # Split results by fact type for structured response
         agent_results = [r for r in all_results if r.fact_type == 'experience']
         world_results = [r for r in all_results if r.fact_type == 'world']
         opinion_results = [r for r in all_results if r.fact_type == 'opinion']
 
-        logger.info(f"[THINK] Split results - agent: {len(agent_results)}, world: {len(world_results)}, opinion: {len(opinion_results)}")
+        log_buffer.append(f"[REFLECT {reflect_id}] Recall: {len(all_results)} facts (experience={len(agent_results)}, world={len(world_results)}, opinion={len(opinion_results)}) in {recall_time:.3f}s")
 
         # Format facts for LLM
         agent_facts_text = think_utils.format_facts_for_prompt(agent_results)
         world_facts_text = think_utils.format_facts_for_prompt(world_results)
         opinion_facts_text = think_utils.format_facts_for_prompt(opinion_results)
-
-        logger.info(f"[THINK] Formatted facts - agent: {len(agent_facts_text)} chars, world: {len(world_facts_text)} chars, opinion: {len(opinion_facts_text)} chars")
 
         # Get bank profile (name, disposition + background)
         profile = await self.get_bank_profile(bank_id)
@@ -2630,10 +2722,11 @@ Guidelines:
             context=context,
         )
 
-        logger.info(f"[THINK] Full prompt length: {len(prompt)} chars")
+        log_buffer.append(f"[REFLECT {reflect_id}] Prompt: {len(prompt)} chars")
 
         system_message = think_utils.get_system_message(disposition)
 
+        llm_start = time.time()
         answer_text = await self._llm_config.call(
             messages=[
                 {"role": "system", "content": system_message},
@@ -2641,8 +2734,9 @@ Guidelines:
             ],
             scope="memory_think",
             temperature=0.9,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
+        llm_time = time.time() - llm_start
 
         answer_text = answer_text.strip()
 
@@ -2653,6 +2747,10 @@ Guidelines:
             'answer_text': answer_text,
             'query': query
         })
+
+        total_time = time.time() - reflect_start
+        log_buffer.append(f"[REFLECT {reflect_id}] Complete: {len(answer_text)} chars response, LLM {llm_time:.3f}s, total {total_time:.3f}s")
+        logger.info("\n" + "\n".join(log_buffer))
 
         # Return response with facts split by type
         return ReflectResult(
@@ -2702,7 +2800,7 @@ Guidelines:
                     )
 
         except Exception as e:
-            logger.warning(f"[THINK] Failed to extract/store opinions: {str(e)}")
+            logger.warning(f"[REFLECT] Failed to extract/store opinions: {str(e)}")
 
     async def get_entity_observations(
         self,
@@ -2828,7 +2926,8 @@ Guidelines:
         bank_id: str,
         entity_id: str,
         entity_name: str,
-        version: str | None = None
+        version: str | None = None,
+        conn=None
     ) -> List[str]:
         """
         Regenerate observations for an entity by:
@@ -2843,42 +2942,57 @@ Guidelines:
             entity_id: Entity UUID
             entity_name: Canonical name of the entity
             version: Entity's last_seen timestamp when task was created (for deduplication)
+            conn: Optional database connection (for transactional atomicity with caller)
 
         Returns:
             List of created observation IDs
         """
         pool = await self._get_pool()
+        entity_uuid = uuid.UUID(entity_id)
+
+        # Helper to run a query with provided conn or acquire one
+        async def fetch_with_conn(query, *args):
+            if conn is not None:
+                return await conn.fetch(query, *args)
+            else:
+                async with acquire_with_retry(pool) as acquired_conn:
+                    return await acquired_conn.fetch(query, *args)
+
+        async def fetchval_with_conn(query, *args):
+            if conn is not None:
+                return await conn.fetchval(query, *args)
+            else:
+                async with acquire_with_retry(pool) as acquired_conn:
+                    return await acquired_conn.fetchval(query, *args)
 
         # Step 1: Check version for deduplication
         if version:
-            async with acquire_with_retry(pool) as conn:
-                current_last_seen = await conn.fetchval(
-                    """
-                    SELECT last_seen
-                    FROM entities
-                    WHERE id = $1 AND bank_id = $2
-                    """,
-                    uuid.UUID(entity_id), bank_id
-                )
+            current_last_seen = await fetchval_with_conn(
+                """
+                SELECT last_seen
+                FROM entities
+                WHERE id = $1 AND bank_id = $2
+                """,
+                entity_uuid, bank_id
+            )
 
-                if current_last_seen and current_last_seen.isoformat() != version:
-                    return []
+            if current_last_seen and current_last_seen.isoformat() != version:
+                return []
 
         # Step 2: Get all facts mentioning this entity (exclude observations themselves)
-        async with acquire_with_retry(pool) as conn:
-            rows = await conn.fetch(
-                """
-                SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
-                FROM memory_units mu
-                JOIN unit_entities ue ON mu.id = ue.unit_id
-                WHERE mu.bank_id = $1
-                  AND ue.entity_id = $2
-                  AND mu.fact_type IN ('world', 'experience')
-                ORDER BY mu.occurred_start DESC
-                LIMIT 50
-                """,
-                bank_id, uuid.UUID(entity_id)
-            )
+        rows = await fetch_with_conn(
+            """
+            SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
+            FROM memory_units mu
+            JOIN unit_entities ue ON mu.id = ue.unit_id
+            WHERE mu.bank_id = $1
+              AND ue.entity_id = $2
+              AND mu.fact_type IN ('world', 'experience')
+            ORDER BY mu.occurred_start DESC
+            LIMIT 50
+            """,
+            bank_id, entity_uuid
+        )
 
         if not rows:
             return []
@@ -2905,120 +3019,173 @@ Guidelines:
         if not observations:
             return []
 
-        # Step 4: Delete old observations and insert new ones in a transaction
-        async with acquire_with_retry(pool) as conn:
-            async with conn.transaction():
-                # Delete old observations for this entity
-                await conn.execute(
+        # Step 4: Delete old observations and insert new ones
+        # If conn provided, we're already in a transaction - don't start another
+        # If conn is None, acquire one and start a transaction
+        async def do_db_operations(db_conn):
+            # Delete old observations for this entity
+            await db_conn.execute(
+                """
+                DELETE FROM memory_units
+                WHERE id IN (
+                    SELECT mu.id
+                    FROM memory_units mu
+                    JOIN unit_entities ue ON mu.id = ue.unit_id
+                    WHERE mu.bank_id = $1
+                      AND mu.fact_type = 'observation'
+                      AND ue.entity_id = $2
+                )
+                """,
+                bank_id, entity_uuid
+            )
+
+            # Generate embeddings for new observations
+            embeddings = await embedding_utils.generate_embeddings_batch(
+                self.embeddings, observations
+            )
+
+            # Insert new observations
+            current_time = utcnow()
+            created_ids = []
+
+            for obs_text, embedding in zip(observations, embeddings):
+                result = await db_conn.fetchrow(
                     """
-                    DELETE FROM memory_units
-                    WHERE id IN (
-                        SELECT mu.id
-                        FROM memory_units mu
-                        JOIN unit_entities ue ON mu.id = ue.unit_id
-                        WHERE mu.bank_id = $1
-                          AND mu.fact_type = 'observation'
-                          AND ue.entity_id = $2
+                    INSERT INTO memory_units (
+                        bank_id, text, embedding, context, event_date,
+                        occurred_start, occurred_end, mentioned_at,
+                        fact_type, access_count
                     )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'observation', 0)
+                    RETURNING id
                     """,
-                    bank_id, uuid.UUID(entity_id)
+                    bank_id,
+                    obs_text,
+                    str(embedding),
+                    f"observation about {entity_name}",
+                    current_time,
+                    current_time,
+                    current_time,
+                    current_time
+                )
+                obs_id = str(result['id'])
+                created_ids.append(obs_id)
+
+                # Link observation to entity
+                await db_conn.execute(
+                    """
+                    INSERT INTO unit_entities (unit_id, entity_id)
+                    VALUES ($1, $2)
+                    """,
+                    uuid.UUID(obs_id), entity_uuid
                 )
 
-                # Generate embeddings for new observations
-                embeddings = await embedding_utils.generate_embeddings_batch(
-                    self.embeddings, observations
-                )
+            return created_ids
 
-                # Insert new observations
-                current_time = utcnow()
-                created_ids = []
-
-                for obs_text, embedding in zip(observations, embeddings):
-                    result = await conn.fetchrow(
-                        """
-                        INSERT INTO memory_units (
-                            bank_id, text, embedding, context, event_date,
-                            occurred_start, occurred_end, mentioned_at,
-                            fact_type, access_count
-                        )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'observation', 0)
-                        RETURNING id
-                        """,
-                        bank_id,
-                        obs_text,
-                        str(embedding),
-                        f"observation about {entity_name}",
-                        current_time,
-                        current_time,
-                        current_time,
-                        current_time
-                    )
-                    obs_id = str(result['id'])
-                    created_ids.append(obs_id)
-
-                    # Link observation to entity
-                    await conn.execute(
-                        """
-                        INSERT INTO unit_entities (unit_id, entity_id)
-                        VALUES ($1, $2)
-                        """,
-                        uuid.UUID(obs_id), uuid.UUID(entity_id)
-                    )
-
-        # Single consolidated log line
-        logger.info(f"[OBSERVATIONS] {entity_name}: {len(facts)} facts -> {len(created_ids)} observations")
-        return created_ids
+        if conn is not None:
+            # Use provided connection (already in a transaction)
+            return await do_db_operations(conn)
+        else:
+            # Acquire connection and start our own transaction
+            async with acquire_with_retry(pool) as acquired_conn:
+                async with acquired_conn.transaction():
+                    return await do_db_operations(acquired_conn)
 
     async def _regenerate_observations_sync(
         self,
         bank_id: str,
         entity_ids: List[str],
-        min_facts: int = 5
+        min_facts: int = 5,
+        conn=None
     ) -> None:
         """
         Regenerate observations for entities synchronously (called during retain).
+
+        Processes entities in PARALLEL for faster execution.
 
         Args:
             bank_id: Bank identifier
             entity_ids: List of entity IDs to process
             min_facts: Minimum facts required to regenerate observations
+            conn: Optional database connection (for transactional atomicity)
         """
         if not bank_id or not entity_ids:
             return
 
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            for entity_id in entity_ids:
-                try:
-                    entity_uuid = uuid.UUID(entity_id) if isinstance(entity_id, str) else entity_id
+        # Convert to UUIDs
+        entity_uuids = [uuid.UUID(eid) if isinstance(eid, str) else eid for eid in entity_ids]
 
-                    # Check if entity exists
-                    entity_exists = await conn.fetchrow(
-                        "SELECT canonical_name FROM entities WHERE id = $1 AND bank_id = $2",
-                        entity_uuid, bank_id
-                    )
+        # Use provided connection or acquire a new one
+        if conn is not None:
+            # Use the provided connection (transactional with caller)
+            entity_rows = await conn.fetch(
+                """
+                SELECT id, canonical_name FROM entities
+                WHERE id = ANY($1) AND bank_id = $2
+                """,
+                entity_uuids, bank_id
+            )
+            entity_names = {row['id']: row['canonical_name'] for row in entity_rows}
 
-                    if not entity_exists:
-                        logger.debug(f"[OBSERVATIONS] Entity {entity_id} not yet in bank {bank_id}, skipping")
-                        continue
+            fact_counts = await conn.fetch(
+                """
+                SELECT ue.entity_id, COUNT(*) as cnt
+                FROM unit_entities ue
+                JOIN memory_units mu ON ue.unit_id = mu.id
+                WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
+                GROUP BY ue.entity_id
+                """,
+                entity_uuids, bank_id
+            )
+            entity_fact_counts = {row['entity_id']: row['cnt'] for row in fact_counts}
+        else:
+            # Acquire a new connection (standalone call)
+            pool = await self._get_pool()
+            async with pool.acquire() as acquired_conn:
+                entity_rows = await acquired_conn.fetch(
+                    """
+                    SELECT id, canonical_name FROM entities
+                    WHERE id = ANY($1) AND bank_id = $2
+                    """,
+                    entity_uuids, bank_id
+                )
+                entity_names = {row['id']: row['canonical_name'] for row in entity_rows}
 
-                    entity_name = entity_exists['canonical_name']
+                fact_counts = await acquired_conn.fetch(
+                    """
+                    SELECT ue.entity_id, COUNT(*) as cnt
+                    FROM unit_entities ue
+                    JOIN memory_units mu ON ue.unit_id = mu.id
+                    WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
+                    GROUP BY ue.entity_id
+                    """,
+                    entity_uuids, bank_id
+                )
+                entity_fact_counts = {row['entity_id']: row['cnt'] for row in fact_counts}
 
-                    # Count facts linked to this entity
-                    fact_count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM unit_entities WHERE entity_id = $1",
-                        entity_uuid
-                    ) or 0
+        # Filter entities that meet the threshold
+        entities_to_process = []
+        for entity_id in entity_ids:
+            entity_uuid = uuid.UUID(entity_id) if isinstance(entity_id, str) else entity_id
+            if entity_uuid not in entity_names:
+                continue
+            fact_count = entity_fact_counts.get(entity_uuid, 0)
+            if fact_count >= min_facts:
+                entities_to_process.append((entity_id, entity_names[entity_uuid]))
 
-                    # Only regenerate if entity has enough facts
-                    if fact_count >= min_facts:
-                        await self.regenerate_entity_observations(bank_id, entity_id, entity_name, version=None)
-                    else:
-                        logger.debug(f"[OBSERVATIONS] Skipping {entity_name} ({fact_count} facts < {min_facts} threshold)")
+        if not entities_to_process:
+            return
 
-                except Exception as e:
-                    logger.error(f"[OBSERVATIONS] Error processing entity {entity_id}: {e}")
-                    continue
+        # Process all entities in PARALLEL (LLM calls are the bottleneck)
+        async def process_entity(entity_id: str, entity_name: str):
+            try:
+                await self.regenerate_entity_observations(bank_id, entity_id, entity_name, version=None, conn=conn)
+            except Exception as e:
+                logger.error(f"[OBSERVATIONS] Error processing entity {entity_id}: {e}")
+
+        await asyncio.gather(*[
+            process_entity(eid, name) for eid, name in entities_to_process
+        ])
 
     async def _handle_regenerate_observations(self, task_dict: Dict[str, Any]):
         """

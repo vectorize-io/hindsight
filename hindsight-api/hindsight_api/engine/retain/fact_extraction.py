@@ -167,10 +167,10 @@ class ExtractedFact(BaseModel):
         description="'world' = about the user/others (background, experiences). 'assistant' = experience with the assistant."
     )
 
-    # Entities - extracted from 'who' field
+    # Entities - extracted from fact content
     entities: Optional[List[Entity]] = Field(
         default=None,
-        description="Named entities from 'who': people names, organizations, places. NOT generic relations."
+        description="Named entities, objects, AND abstract concepts from the fact. Include: people names, organizations, places, significant objects (e.g., 'coffee maker', 'car'), AND abstract concepts/themes (e.g., 'friendship', 'career growth', 'loss', 'celebration'). Extract anything that could help link related facts together."
     )
     causal_relations: Optional[List[CausalRelation]] = Field(
         default=None,
@@ -325,7 +325,7 @@ async def _extract_facts_from_chunk(
     Note: event_date parameter is kept for backward compatibility but not used in prompt.
     The LLM extracts temporal information from the context string instead.
     """
-    agent_context = f"\n- Your name: {agent_name}" if agent_name else ""
+    memory_bank_context = f"\n- Your name: {agent_name}" if agent_name and extract_opinions else ""
 
     # Determine which fact types to extract based on the flag
     # Note: We use "assistant" in the prompt but convert to "bank" for storage
@@ -339,7 +339,7 @@ async def _extract_facts_from_chunk(
 
 {fact_types_instruction}
 
-Context: {context if context else 'none'}{agent_context}
+
 
 ══════════════════════════════════════════════════════════════════════════
 FACT FORMAT - ALL FIVE DIMENSIONS REQUIRED - MAXIMUM VERBOSITY
@@ -382,13 +382,42 @@ WRONG output:
 - where: (missing) ← WRONG - include the location!
 
 ══════════════════════════════════════════════════════════════════════════
-TEMPORAL HANDLING
+FACT_KIND CLASSIFICATION (CRITICAL FOR TEMPORAL HANDLING)
 ══════════════════════════════════════════════════════════════════════════
 
-For EVENTS (fact_kind="event"):
-- Convert relative dates → absolute WITH DAY OF WEEK: "yesterday" on Saturday March 15 → "Friday, March 14, 2024"
+⚠️ MUST set fact_kind correctly - this determines whether occurred_start/end are set!
+
+fact_kind="event" - USE FOR:
+- Actions that happened at a specific time: "went to", "attended", "visited", "bought", "made"
+- Past events: "yesterday I...", "last week...", "in March 2020..."
+- Future plans with dates: "will go to", "scheduled for"
+- Examples: "I went to a pottery workshop" → event
+           "Alice visited Paris in February" → event
+           "I bought a new car yesterday" → event
+           "The user graduated from MIT in March 2020" → event
+
+fact_kind="conversation" - USE FOR:
+- Ongoing states: "works as", "lives in", "is married to"
+- Preferences: "loves", "prefers", "enjoys"
+- Traits/abilities: "speaks fluent French", "knows Python"
+- Examples: "I love Italian food" → conversation
+           "Alice works at Google" → conversation
+           "I prefer outdoor dining" → conversation
+
+══════════════════════════════════════════════════════════════════════════
+TEMPORAL HANDLING (CRITICAL - USE EVENT DATE AS REFERENCE)
+══════════════════════════════════════════════════════════════════════════
+
+⚠️ IMPORTANT: Use the "Event Date" provided in the input as your reference point!
+All relative dates ("yesterday", "last week", "recently") must be resolved relative to the Event Date, NOT today's date.
+
+For EVENTS (fact_kind="event") - MUST SET BOTH occurred_start AND occurred_end:
+- Convert relative dates → absolute using Event Date as reference
+- If Event Date is "Saturday, March 15, 2020", then "yesterday" = Friday, March 14, 2020
+- Dates mentioned in text (e.g., "in March 2020") should use THAT year, not current year
 - Always include the day name (Monday, Tuesday, etc.) in the 'when' field
-- Set occurred_start/occurred_end to WHEN IT HAPPENED (not when mentioned)
+- Set occurred_start AND occurred_end to WHEN IT HAPPENED (not when mentioned)
+- For single-day/point events: set occurred_end = occurred_start (same timestamp)
 
 For CONVERSATIONS (fact_kind="conversation"):
 - General info, preferences, ongoing states → NO occurred dates
@@ -415,20 +444,32 @@ Example: "I love Italian food and prefer outdoor dining"
 → Fact 2: what="User prefers outdoor dining", who="user", why="This is a dining preference", entities=["user"]
 
 ══════════════════════════════════════════════════════════════════════════
-ENTITIES - INCLUDE "user" (CRITICAL)
+ENTITIES - INCLUDE PEOPLE, PLACES, OBJECTS, AND CONCEPTS (CRITICAL)
 ══════════════════════════════════════════════════════════════════════════
 
-When a fact is ABOUT the user (their preferences, plans, experiences), ALWAYS include "user" in entities!
+Extract entities that help link related facts together. Include:
+1. "user" - when the fact is about the user
+2. People names - Emily, Dr. Smith, etc.
+3. Organizations/Places - IKEA, Goodwill, New York, etc.
+4. Specific objects - coffee maker, toaster, car, laptop, kitchen, etc.
+5. Abstract concepts - themes, values, emotions, or ideas that capture the essence of the fact:
+   - "friendship" for facts about friends helping each other, bonding, loyalty
+   - "career growth" for facts about promotions, learning new skills, job changes
+   - "loss" or "grief" for facts about death, endings, saying goodbye
+   - "celebration" for facts about parties, achievements, milestones
+   - "trust" or "betrayal" for facts involving those themes
 
-✅ CORRECT: entities=["user"] for "User loves coffee"
-✅ CORRECT: entities=["user", "Emily"] for "User attended Emily's wedding"
-❌ WRONG: entities=[] for facts about the user
+✅ CORRECT: entities=["user", "coffee maker", "Goodwill", "kitchen"] for "User donated their coffee maker to Goodwill"
+✅ CORRECT: entities=["user", "Emily", "friendship"] for "Emily helped user move to a new apartment"
+✅ CORRECT: entities=["user", "promotion", "career growth"] for "User got promoted to senior engineer"
+✅ CORRECT: entities=["user", "grandmother", "loss", "grief"] for "User's grandmother passed away last week"
+❌ WRONG: entities=["user", "Emily"] only - missing the "friendship" concept that links to other friendship facts!
 
 ══════════════════════════════════════════════════════════════════════════
 EXAMPLES
 ══════════════════════════════════════════════════════════════════════════
 
-Example 1 - World Facts (Context: June 10, 2024):
+Example 1 - World Facts (Event Date: Tuesday, June 10, 2024):
 Input: "I'm planning my wedding and want a small outdoor ceremony. I just got back from my college roommate Emily's wedding - she married Sarah at a rooftop garden, it was so romantic!"
 
 Output facts:
@@ -438,22 +479,23 @@ Output facts:
    - who: "user"
    - why: "User prefers intimate outdoor settings"
    - fact_type: "world", fact_kind: "conversation"
-   - entities: ["user"]
+   - entities: ["user", "wedding", "outdoor ceremony"]
 
 2. User planning wedding
    - what: "User is planning their own wedding"
    - who: "user"
    - why: "Inspired by Emily's ceremony"
    - fact_type: "world", fact_kind: "conversation"
-   - entities: ["user"]
+   - entities: ["user", "wedding"]
 
-3. Emily's wedding (THE EVENT)
+3. Emily's wedding (THE EVENT - note occurred_start AND occurred_end both set)
    - what: "Emily got married to Sarah at a rooftop garden ceremony in the city"
    - who: "Emily (user's college roommate), Sarah (Emily's partner)"
    - why: "User found it romantic and beautiful"
    - fact_type: "world", fact_kind: "event"
-   - occurred_start: "2024-06-09T00:00:00Z" (recently, user "just got back")
-   - entities: ["user", "Emily", "Sarah"]
+   - occurred_start: "2024-06-09T00:00:00Z" (recently, user "just got back" - relative to Event Date June 10, 2024)
+   - occurred_end: "2024-06-09T23:59:59Z" (same day - point event)
+   - entities: ["user", "Emily", "Sarah", "wedding", "rooftop garden"]
 
 Example 2 - Assistant Facts (Context: March 5, 2024):
 Input: "User: My API is really slow when we have 1000+ concurrent users. What can I do?
@@ -465,7 +507,23 @@ Output fact:
    - who: "user, assistant"
    - why: "User asked how to fix slow API performance with 1000+ concurrent users, expected 70-80% reduction in database load"
    - fact_type: "assistant", fact_kind: "conversation"
-   - entities: ["user"]
+   - entities: ["user", "API", "Redis"]
+
+Example 3 - Kitchen Items with Concept Inference (Event Date: Thursday, May 30, 2024):
+Input: "I finally donated my old coffee maker to Goodwill. I upgraded to that new espresso machine last month and the old one was just taking up counter space."
+
+Output fact:
+   - what: "User donated their old coffee maker to Goodwill after upgrading to a new espresso machine"
+   - when: "Thursday, May 30, 2024"
+   - who: "user"
+   - why: "The old coffee maker was taking up counter space after the upgrade"
+   - fact_type: "world", fact_kind: "event"
+   - occurred_start: "2024-05-30T00:00:00Z" (uses Event Date year)
+   - occurred_end: "2024-05-30T23:59:59Z" (same day - point event)
+   - entities: ["user", "coffee maker", "Goodwill", "espresso machine", "kitchen"]
+
+Note: "kitchen" is inferred as a concept because coffee makers and espresso machines are kitchen appliances.
+This links the fact to other kitchen-related facts (toaster, faucet, kitchen mat, etc.) via the shared "kitchen" entity.
 
 Note how the "why" field captures the FULL STORY: what the user asked AND what outcome was expected!
 
@@ -496,6 +554,7 @@ WHAT TO EXTRACT vs SKIP
     # Format event_date with day of week for better temporal reasoning
     event_date_formatted = event_date.strftime('%A, %B %d, %Y')  # e.g., "Monday, June 10, 2024"
     user_message = f"""Extract facts from the following text chunk.
+{memory_bank_context}
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_formatted} ({event_date.isoformat()})
@@ -520,7 +579,7 @@ Text:
                 response_format=FactExtractionResponse,
                 scope="memory_extract_facts",
                 temperature=0.1,
-                max_tokens=65000,
+                max_completion_tokens=65000,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
             )
 
@@ -628,8 +687,11 @@ Text:
                     occurred_end = get_value('occurred_end')
                     if occurred_start:
                         fact_data['occurred_start'] = occurred_start
-                    if occurred_end:
-                        fact_data['occurred_end'] = occurred_end
+                        # For point events: if occurred_end not set, default to occurred_start
+                        if occurred_end:
+                            fact_data['occurred_end'] = occurred_end
+                        else:
+                            fact_data['occurred_end'] = occurred_start
 
                 # Add entities if present (validate as Entity objects)
                 # LLM sometimes returns strings instead of {"text": "..."} format

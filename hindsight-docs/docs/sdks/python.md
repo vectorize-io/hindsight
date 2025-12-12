@@ -49,15 +49,15 @@ with HindsightServer(
     client = HindsightClient(base_url=server.url)
 
     # Retain a memory
-    client.retain(bank_id="my-agent", content="Alice works at Google")
+    client.retain(bank_id="my-bank", content="Alice works at Google")
 
     # Recall memories
-    results = client.recall(bank_id="my-agent", query="What does Alice do?")
+    results = client.recall(bank_id="my-bank", query="What does Alice do?")
     for r in results:
         print(r.text)
 
-    # Reflect - generate response with personality
-    answer = client.reflect(bank_id="my-agent", query="Tell me about Alice")
+    # Reflect - generate response with disposition
+    answer = client.reflect(bank_id="my-bank", query="Tell me about Alice")
     print(answer.text)
 ```
 
@@ -70,15 +70,15 @@ from hindsight_client import Hindsight
 client = Hindsight(base_url="http://localhost:8888")
 
 # Retain a memory
-client.retain(bank_id="my-agent", content="Alice works at Google")
+client.retain(bank_id="my-bank", content="Alice works at Google")
 
 # Recall memories
-results = client.recall(bank_id="my-agent", query="What does Alice do?")
+results = client.recall(bank_id="my-bank", query="What does Alice do?")
 for r in results:
     print(r.text)
 
-# Reflect - generate response with personality
-answer = client.reflect(bank_id="my-agent", query="Tell me about Alice")
+# Reflect - generate response with disposition
+answer = client.reflect(bank_id="my-bank", query="Tell me about Alice")
 print(answer.text)
 ```
 
@@ -103,7 +103,7 @@ client = Hindsight(
 ```python
 # Simple
 client.retain(
-    bank_id="my-agent",
+    bank_id="my-bank",
     content="Alice works at Google as a software engineer",
 )
 
@@ -111,7 +111,7 @@ client.retain(
 from datetime import datetime
 
 client.retain(
-    bank_id="my-agent",
+    bank_id="my-bank",
     content="Alice got promoted",
     context="career update",
     timestamp=datetime(2024, 1, 15),
@@ -124,7 +124,7 @@ client.retain(
 
 ```python
 client.retain_batch(
-    bank_id="my-agent",
+    bank_id="my-bank",
     items=[
         {"content": "Alice works at Google", "context": "career"},
         {"content": "Bob is a data scientist", "context": "career"},
@@ -139,16 +139,16 @@ client.retain_batch(
 ```python
 # Simple - returns list of RecallResult
 results = client.recall(
-    bank_id="my-agent",
+    bank_id="my-bank",
     query="What does Alice do?",
 )
 
-for r in results:
+for r in results.results:
     print(f"{r.text} (type: {r.type})")
 
 # With options
 results = client.recall(
-    bank_id="my-agent",
+    bank_id="my-bank",
     query="What does Alice do?",
     types=["world", "opinion"],  # Filter by fact type
     max_tokens=4096,
@@ -159,16 +159,15 @@ results = client.recall(
 ### Recall with Full Response
 
 ```python
-# Returns RecallResponse with entities and trace info
-response = client.recall_memories(
-    bank_id="my-agent",
+# Returns RecallResponse with entities and chunks
+response = client.recall(
+    bank_id="my-bank",
     query="What does Alice do?",
     types=["world", "experience"],
     budget="mid",
     max_tokens=4096,
-    trace=True,
     include_entities=True,
-    max_entity_tokens=500,
+    max_entity_tokens=500
 )
 
 print(f"Found {len(response.results)} memories")
@@ -185,14 +184,13 @@ if response.entities:
 
 ```python
 answer = client.reflect(
-    bank_id="my-agent",
+    bank_id="my-bank",
     query="What should I know about Alice?",
     budget="low",  # low, mid, or high
     context="preparing for a meeting",
 )
 
 print(answer.text)  # Generated response
-print(answer.based_on)  # Memories used
 ```
 
 ## Bank Management
@@ -201,16 +199,13 @@ print(answer.based_on)  # Memories used
 
 ```python
 client.create_bank(
-    bank_id="my-agent",
+    bank_id="my-bank",
     name="Assistant",
     background="I am a helpful AI assistant",
-    personality={
-        "openness": 0.7,
-        "conscientiousness": 0.8,
-        "extraversion": 0.5,
-        "agreeableness": 0.6,
-        "neuroticism": 0.3,
-        "bias_strength": 0.5,
+    disposition={
+        "skepticism": 3,    # 1-5: trusting to skeptical
+        "literalism": 3,    # 1-5: flexible to literal
+        "empathy": 3,       # 1-5: detached to empathetic
     },
 )
 ```
@@ -218,16 +213,13 @@ client.create_bank(
 ### List Memories
 
 ```python
-response = client.list_memories(
-    bank_id="my-agent",
+client.list_memories(
+    bank_id="my-bank",
     type="world",  # Optional: filter by type
     search_query="Alice",  # Optional: text search
     limit=100,
     offset=0,
 )
-
-for memory in response.memories:
-    print(f"{memory.id}: {memory.text}")
 ```
 
 ## Async Support
@@ -242,36 +234,20 @@ async def main():
     client = Hindsight(base_url="http://localhost:8888")
 
     # Async retain
-    await client.aretain(bank_id="my-agent", content="Hello world")
+    await client.aretain(bank_id="my-bank", content="Hello world")
 
     # Async recall
-    results = await client.arecall(bank_id="my-agent", query="Hello")
+    results = await client.arecall(bank_id="my-bank", query="Hello")
     for r in results:
         print(r.text)
 
     # Async reflect
-    answer = await client.areflect(bank_id="my-agent", query="What did I say?")
+    answer = await client.areflect(bank_id="my-bank", query="What did I say?")
     print(answer.text)
 
     client.close()
 
 asyncio.run(main())
-```
-
-## Response Types
-
-The client exports response types for type hints:
-
-```python
-from hindsight_client import (
-    Hindsight,
-    RetainResponse,
-    RecallResponse,
-    RecallResult,
-    ReflectResponse,
-    BankProfileResponse,
-    PersonalityTraits,
-)
 ```
 
 ## Context Manager
@@ -280,7 +256,7 @@ from hindsight_client import (
 from hindsight_client import Hindsight
 
 with Hindsight(base_url="http://localhost:8888") as client:
-    client.retain(bank_id="my-agent", content="Hello")
-    results = client.recall(bank_id="my-agent", query="Hello")
+    client.retain(bank_id="my-bank", content="Hello")
+    results = client.recall(bank_id="my-bank", query="Hello")
 # Client automatically closed
 ```

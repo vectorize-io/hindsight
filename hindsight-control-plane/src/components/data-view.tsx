@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { client } from '@/lib/api';
 import { useBank } from '@/lib/bank-context';
-import cytoscape from 'cytoscape';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Copy, Check, Calendar, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Copy, Check, Calendar, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Eye, EyeOff } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import { MemoryDetailPanel } from './memory-detail-panel';
+import { Graph2D, convertHindsightGraphData, GraphNode } from './graph-2d';
 
 type FactType = 'world' | 'experience' | 'opinion';
 type ViewMode = 'graph' | 'table' | 'timeline';
@@ -23,16 +25,41 @@ export function DataView({ factType }: DataViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('graph');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [nodeLimit, setNodeLimit] = useState(50);
-  const [layout, setLayout] = useState('circle');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGraphNode, setSelectedGraphNode] = useState<any>(null);
   const [selectedTableMemory, setSelectedTableMemory] = useState<any>(null);
   const itemsPerPage = 100;
-  const cyRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Graph controls state
+  const [showLabels, setShowLabels] = useState(true);
+  const [maxNodes, setMaxNodes] = useState<number | undefined>(50);
+  const [showControlPanel, setShowControlPanel] = useState(true);
+  const [visibleLinkTypes, setVisibleLinkTypes] = useState<Set<string>>(new Set(['semantic', 'temporal', 'entity', 'causal']));
+
+  const toggleLinkType = (type: string) => {
+    setVisibleLinkTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  // Esc key handler to deselect graph node
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedGraphNode) {
+        setSelectedGraphNode(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedGraphNode]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -68,118 +95,98 @@ export function DataView({ factType }: DataViewProps) {
     }
   };
 
-  const renderGraph = () => {
-    if (!data || !containerRef.current || !data.nodes || !data.edges) return;
+  // Filter table rows based on search query (text only)
+  const filteredTableRows = useMemo(() => {
+    if (!data?.table_rows) return [];
+    if (!searchQuery) return data.table_rows;
 
-    if (cyRef.current) {
-      cyRef.current.destroy();
-    }
-
-    const limitedNodes = (data.nodes || []).slice(0, nodeLimit);
-    const nodeIds = new Set(limitedNodes.map((n: any) => n.data.id));
-    const limitedEdges = (data.edges || []).filter((e: any) =>
-      nodeIds.has(e.data.source) && nodeIds.has(e.data.target)
+    const query = searchQuery.toLowerCase();
+    return data.table_rows.filter((row: any) =>
+      row.text?.toLowerCase().includes(query)
     );
+  }, [data, searchQuery]);
 
-    const layouts: any = {
-      circle: {
-        name: 'circle',
-        animate: false,
-        radius: 300,
-        spacingFactor: 1.5,
-      },
-      grid: {
-        name: 'grid',
-        animate: false,
-        rows: Math.ceil(Math.sqrt(limitedNodes.length)),
-        cols: Math.ceil(Math.sqrt(limitedNodes.length)),
-        spacingFactor: 2,
-      },
-      cose: {
-        name: 'cose',
-        animate: false,
-        nodeRepulsion: 15000,
-        idealEdgeLength: 150,
-        edgeElasticity: 100,
-        nestingFactor: 1.2,
-        gravity: 1,
-        numIter: 1000,
-        initialTemp: 200,
-        coolingFactor: 0.95,
-        minTemp: 1.0,
-      },
-    };
+  // Get filtered node IDs for graph filtering
+  const filteredNodeIds = useMemo(() => {
+    return new Set(filteredTableRows.map((row: any) => row.id));
+  }, [filteredTableRows]);
 
-    cyRef.current = cytoscape({
-      container: containerRef.current,
-      elements: [
-        ...limitedNodes.map((n: any) => ({ data: n.data })),
-        ...limitedEdges.map((e: any) => ({ data: e.data })),
-      ],
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color': 'data(color)' as any,
-            label: 'data(label)' as any,
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'font-size': '10px',
-            'font-weight': 'bold',
-            'text-wrap': 'wrap',
-            'text-max-width': '100px',
-            width: 40,
-            height: 40,
-            'border-width': 2,
-            'border-color': '#333',
-          },
-        },
-        {
-          selector: 'edge',
-          style: {
-            width: 1,
-            'line-color': 'data(color)' as any,
-            'line-style': 'data(lineStyle)' as any,
-            'target-arrow-shape': 'triangle',
-            'target-arrow-color': 'data(color)' as any,
-            'curve-style': 'bezier',
-            opacity: 0.6,
-          },
-        },
-        {
-          selector: 'node:selected',
-          style: {
-            'border-width': 4,
-            'border-color': '#000',
-          },
-        },
-      ] as any,
-      layout: layouts[layout] || layouts.circle,
-    });
-
-    // Add click handler for nodes
-    cyRef.current.on('tap', 'node', (evt: any) => {
-      const nodeId = evt.target.id();
-      // Find the corresponding table row data
-      const nodeData = data.table_rows?.find((row: any) => row.id === nodeId);
-      if (nodeData) {
-        setSelectedGraphNode(nodeData);
-      }
-    });
-
-    // Click on background to deselect
-    cyRef.current.on('tap', (evt: any) => {
-      if (evt.target === cyRef.current) {
-        setSelectedGraphNode(null);
-      }
-    });
+  // Helper to get normalized link type
+  const getLinkTypeCategory = (type: string | undefined): string => {
+    if (!type) return 'semantic';
+    if (type === 'semantic' || type === 'temporal' || type === 'entity') return type;
+    if (['causes', 'caused_by', 'enables', 'prevents'].includes(type)) return 'causal';
+    return 'semantic';
   };
 
-  useEffect(() => {
-    if (viewMode === 'graph' && data) {
-      renderGraph();
+  // Convert data for Graph2D with filtering
+  const graph2DData = useMemo(() => {
+    if (!data) return { nodes: [], links: [] };
+    const fullData = convertHindsightGraphData(data);
+
+    let nodes = fullData.nodes;
+    let links = fullData.links;
+
+    // Filter nodes based on search query
+    if (searchQuery) {
+      const filteredNodes = fullData.nodes.filter(node => filteredNodeIds.has(node.id));
+      const filteredNodeIdSet = new Set(filteredNodes.map(n => n.id));
+      nodes = filteredNodes;
+      links = fullData.links.filter(link =>
+        filteredNodeIdSet.has(link.source) && filteredNodeIdSet.has(link.target)
+      );
     }
-  }, [viewMode, data, nodeLimit, layout]);
+
+    // Filter links based on visible link types
+    links = links.filter(link => {
+      const category = getLinkTypeCategory(link.type);
+      return visibleLinkTypes.has(category);
+    });
+
+    return { nodes, links };
+  }, [data, searchQuery, filteredNodeIds, visibleLinkTypes]);
+
+  // Calculate link stats for display
+  const linkStats = useMemo(() => {
+    let semantic = 0, temporal = 0, entity = 0, causal = 0, total = 0;
+    const otherTypes: Record<string, number> = {};
+    graph2DData.links.forEach(l => {
+      total++;
+      const type = l.type || 'unknown';
+      if (type === 'semantic') semantic++;
+      else if (type === 'temporal') temporal++;
+      else if (type === 'entity') entity++;
+      else if (type === 'causes' || type === 'caused_by' || type === 'enables' || type === 'prevents') causal++;
+      else {
+        otherTypes[type] = (otherTypes[type] || 0) + 1;
+      }
+    });
+    console.log('Graph link stats:', { semantic, temporal, entity, causal, total });
+    if (Object.keys(otherTypes).length > 0) {
+      console.log('Other link types:', otherTypes);
+    }
+    return { semantic, temporal, entity, causal, total, otherTypes };
+  }, [graph2DData]);
+
+  // Handle node click in graph - show in panel
+  const handleGraphNodeClick = useCallback((node: GraphNode) => {
+    const nodeData = data?.table_rows?.find((row: any) => row.id === node.id);
+    if (nodeData) {
+      setSelectedGraphNode(nodeData);
+    }
+  }, [data]);
+
+  // Memoized color functions to prevent graph re-initialization
+  // Uses brand colors: primary blue (#0074d9), teal (#009296), amber for entity, purple for causal
+  const nodeColorFn = useCallback((node: GraphNode) => node.color || '#0074d9', []);
+  const linkColorFn = useCallback((link: any) => {
+    if (link.type === 'temporal') return '#009296';  // Brand teal
+    if (link.type === 'entity') return '#f59e0b';    // Amber
+    if (link.type === 'causes' || link.type === 'caused_by' || link.type === 'enables' || link.type === 'prevents') {
+      return '#8b5cf6';  // Purple for causal
+    }
+    return '#0074d9';  // Brand primary blue for semantic
+  }, []);
 
   // Reset to first page when search query changes
   useEffect(() => {
@@ -204,9 +211,20 @@ export function DataView({ factType }: DataViewProps) {
         </div>
       ) : data ? (
         <>
+          {/* Always visible filter */}
+          <div className="mb-4">
+            <Input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Filter memories by text..."
+              className="max-w-md"
+            />
+          </div>
+
           <div className="flex items-center justify-between mb-6">
             <div className="text-sm text-muted-foreground">
-              {data.total_units} total memories
+              {searchQuery ? `${filteredTableRows.length} of ${data.total_units} memories` : `${data.total_units} total memories`}
             </div>
             <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
               <button
@@ -243,134 +261,214 @@ export function DataView({ factType }: DataViewProps) {
           </div>
 
           {viewMode === 'graph' && (
-            <div className="flex gap-4">
-              <div className={`relative transition-all ${selectedGraphNode ? 'w-2/3' : 'w-full'}`}>
-                <div className="p-4 bg-card border-b-2 border-primary flex gap-4 items-center flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <label className="font-semibold text-card-foreground">Limit nodes:</label>
-                    <Input
-                      type="number"
-                      value={nodeLimit}
-                      onChange={(e) => setNodeLimit(parseInt(e.target.value))}
-                      min="10"
-                      max="1000"
-                      step="10"
-                      className="w-20"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="font-semibold text-card-foreground">Layout:</label>
-                    <Select value={layout} onValueChange={setLayout}>
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="circle">Circle (fast)</SelectItem>
-                        <SelectItem value="grid">Grid (fast)</SelectItem>
-                        <SelectItem value="cose">Force-directed (slow)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="text-sm text-muted-foreground ml-auto">
-                    Click on a node to view details
-                  </div>
-                </div>
-                <div ref={containerRef} className="w-full h-[800px] bg-background" />
-                <div className="absolute top-20 left-5 bg-card p-4 border-2 border-primary rounded-lg shadow-lg max-w-[250px]">
-                  <h3 className="font-bold mb-2 border-b-2 border-primary pb-1 text-card-foreground">Legend</h3>
-                  <h4 className="font-bold mt-2 mb-1 text-sm text-card-foreground">Link Types:</h4>
-                  <div className="flex items-center my-2">
-                    <div className="w-8 h-0.5 mr-2.5 bg-cyan-500 border-t border-dashed border-cyan-500" />
-                    <span className="text-sm"><strong>Temporal</strong></span>
-                  </div>
-                  <div className="flex items-center my-2">
-                    <div className="w-8 h-0.5 mr-2.5 bg-pink-500" />
-                    <span className="text-sm"><strong>Semantic</strong></span>
-                  </div>
-                  <div className="flex items-center my-2">
-                    <div className="w-8 h-0.5 mr-2.5 bg-yellow-500" />
-                    <span className="text-sm"><strong>Entity</strong></span>
-                  </div>
-                  <h4 className="font-bold mt-2 mb-1 text-sm">Nodes:</h4>
-                  <div className="flex items-center my-2">
-                    <div className="w-5 h-5 mr-2.5 bg-gray-300 border border-gray-500 rounded" />
-                    <span className="text-sm">No entities</span>
-                  </div>
-                  <div className="flex items-center my-2">
-                    <div className="w-5 h-5 mr-2.5 bg-blue-300 border border-gray-500 rounded" />
-                    <span className="text-sm">1 entity</span>
-                  </div>
-                  <div className="flex items-center my-2">
-                    <div className="w-5 h-5 mr-2.5 bg-blue-500 border border-gray-500 rounded" />
-                    <span className="text-sm">2+ entities</span>
-                  </div>
-                </div>
+            <div className="flex gap-0">
+              {/* Graph */}
+              <div className="flex-1 min-w-0">
+                <Graph2D
+                  data={graph2DData}
+                  height={700}
+                  showLabels={showLabels}
+                  onNodeClick={handleGraphNodeClick}
+                  maxNodes={maxNodes}
+                  nodeColorFn={nodeColorFn}
+                  linkColorFn={linkColorFn}
+                />
               </div>
 
-              {/* Memory Detail Panel for Graph View - Fixed on Right */}
-              {selectedGraphNode && (
-                <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
-                  <MemoryDetailPanel
-                    memory={selectedGraphNode}
-                    onClose={() => setSelectedGraphNode(null)}
-                    inPanel
-                  />
+              {/* Right Toggle Button */}
+              <button
+                onClick={() => setShowControlPanel(!showControlPanel)}
+                className="flex-shrink-0 w-5 h-[700px] bg-transparent hover:bg-muted/50 flex items-center justify-center transition-colors"
+                title={showControlPanel ? 'Hide panel' : 'Show panel'}
+              >
+                {showControlPanel ? (
+                  <ChevronRight className="w-3 h-3 text-muted-foreground/60" />
+                ) : (
+                  <ChevronLeft className="w-3 h-3 text-muted-foreground/60" />
+                )}
+              </button>
+
+              {/* Right Panel - Legend/Controls OR Memory Details */}
+              <div className={`${showControlPanel ? 'w-80' : 'w-0'} transition-all duration-300 overflow-hidden flex-shrink-0`}>
+                <div className="w-80 h-[700px] bg-card border-l border-border overflow-y-auto">
+                  {selectedGraphNode ? (
+                    /* Memory Detail View */
+                    <MemoryDetailPanel
+                      memory={selectedGraphNode}
+                      onClose={() => setSelectedGraphNode(null)}
+                      inPanel
+                    />
+                  ) : (
+                    /* Legend & Controls View */
+                    <div className="p-4 space-y-5">
+                      {/* Legend & Stats */}
+                      <div>
+                        <h3 className="text-sm font-semibold mb-3 text-foreground">Graph</h3>
+                        <div className="space-y-2">
+                          {/* Nodes */}
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#0074d9' }} />
+                              <span className="text-foreground">Nodes</span>
+                            </div>
+                            <span className="font-mono text-foreground">
+                              {Math.min(maxNodes ?? graph2DData.nodes.length, graph2DData.nodes.length)}/{graph2DData.nodes.length}
+                            </span>
+                          </div>
+
+                          <div className="text-xs font-medium text-muted-foreground mt-2 mb-1">Links ({linkStats.total}) <span className="text-muted-foreground/60">· click to filter</span></div>
+                          <button
+                            onClick={() => toggleLinkType('semantic')}
+                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
+                              visibleLinkTypes.has('semantic') ? 'hover:bg-muted' : 'opacity-40 hover:opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-0.5 bg-[#0074d9]" />
+                              <span className="text-foreground">Semantic</span>
+                            </div>
+                            <span className={`font-mono ${linkStats.semantic === 0 ? 'text-destructive' : 'text-foreground'}`}>
+                              {linkStats.semantic}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => toggleLinkType('temporal')}
+                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
+                              visibleLinkTypes.has('temporal') ? 'hover:bg-muted' : 'opacity-40 hover:opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-0.5 bg-[#009296]" />
+                              <span className="text-foreground">Temporal</span>
+                            </div>
+                            <span className={`font-mono ${linkStats.temporal === 0 ? 'text-destructive' : 'text-foreground'}`}>
+                              {linkStats.temporal}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => toggleLinkType('entity')}
+                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
+                              visibleLinkTypes.has('entity') ? 'hover:bg-muted' : 'opacity-40 hover:opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-0.5 bg-[#f59e0b]" />
+                              <span className="text-foreground">Entity</span>
+                            </div>
+                            <span className="font-mono text-foreground">{linkStats.entity}</span>
+                          </button>
+                          <button
+                            onClick={() => toggleLinkType('causal')}
+                            className={`w-full flex items-center justify-between text-sm px-2 py-1 rounded transition-all ${
+                              visibleLinkTypes.has('causal') ? 'hover:bg-muted' : 'opacity-40 hover:opacity-60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-0.5 bg-[#8b5cf6]" />
+                              <span className="text-foreground">Causal</span>
+                            </div>
+                            <span className={`font-mono ${linkStats.causal === 0 ? 'text-muted-foreground' : 'text-foreground'}`}>
+                              {linkStats.causal}
+                            </span>
+                          </button>
+                          {Object.entries(linkStats.otherTypes || {}).map(([type, count]) => (
+                            <div key={type} className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground capitalize ml-6">{type}</span>
+                              <span className="font-mono text-muted-foreground">{count as number}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-border" />
+
+                      {/* Controls Section */}
+                      <div>
+                        <h3 className="text-sm font-semibold mb-3 text-foreground">Display</h3>
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor="show-labels" className="text-sm text-foreground">Show labels</Label>
+                            <Switch
+                              id="show-labels"
+                              checked={showLabels}
+                              onCheckedChange={setShowLabels}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-border" />
+
+                      {/* Limits Section */}
+                      <div>
+                        <h3 className="text-sm font-semibold mb-3 text-foreground">Performance</h3>
+                        <div className="space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <Label className="text-sm text-foreground">Max nodes</Label>
+                              <span className="text-xs text-muted-foreground">
+                                {maxNodes ?? 'All'} / {graph2DData.nodes.length}
+                              </span>
+                            </div>
+                            <Slider
+                              value={[maxNodes ?? graph2DData.nodes.length]}
+                              min={10}
+                              max={Math.max(graph2DData.nodes.length, 10)}
+                              step={10}
+                              onValueChange={([v]) => setMaxNodes(v >= graph2DData.nodes.length ? undefined : v)}
+                              className="w-full"
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            All links between visible nodes are shown.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-border" />
+
+                      {/* Hint */}
+                      <div className="text-xs text-muted-foreground/60 text-center pt-2">
+                        Click a node to see details
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {viewMode === 'table' && (
             <div>
               <div className="w-full">
-                <div className="px-5 mb-4">
-                  <Input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search memories (text, context, ID)..."
-                    className="max-w-2xl"
-                  />
-                </div>
-                <div className="px-5 pb-5">
-                  {data.table_rows && data.table_rows.length > 0 ? (
+                <div className="pb-4">
+                  {filteredTableRows.length > 0 ? (
                     (() => {
-                      const filteredRows = data.table_rows.filter((row: any) => {
-                        if (!searchQuery) return true;
-                        const query = searchQuery.toLowerCase();
-                        return (
-                          row.text?.toLowerCase().includes(query) ||
-                          row.context?.toLowerCase().includes(query) ||
-                          row.id?.toLowerCase().includes(query)
-                        );
-                      });
-
-                      const totalPages = Math.ceil(filteredRows.length / itemsPerPage);
+                      const totalPages = Math.ceil(filteredTableRows.length / itemsPerPage);
                       const startIndex = (currentPage - 1) * itemsPerPage;
                       const endIndex = startIndex + itemsPerPage;
-                      const paginatedRows = filteredRows.slice(startIndex, endIndex);
+                      const paginatedRows = filteredTableRows.slice(startIndex, endIndex);
 
                       return (
                         <>
                           <div className="border rounded-lg overflow-hidden">
-                            <Table>
+                            <Table className="table-fixed">
                               <TableHeader>
                                 <TableRow className="bg-muted/50">
-                                  <TableHead className="w-[80px]">ID</TableHead>
-                                  <TableHead>Text</TableHead>
-                                  <TableHead className="w-[150px]">Context</TableHead>
-                                  <TableHead className="w-[100px]">Occurred</TableHead>
-                                  <TableHead className="w-[100px]">Mentioned</TableHead>
-                                  <TableHead className="w-[60px]">Actions</TableHead>
+                                  <TableHead className="w-[45%]">Memory</TableHead>
+                                  <TableHead className="w-[20%]">Entities</TableHead>
+                                  <TableHead className="w-[15%]">Occurred</TableHead>
+                                  <TableHead className="w-[15%]">Mentioned</TableHead>
+                                  <TableHead className="w-[5%]"></TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {paginatedRows.map((row: any, idx: number) => {
                                   const occurredDisplay = row.occurred_start
-                                    ? new Date(row.occurred_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                    ? new Date(row.occurred_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                                     : null;
                                   const mentionedDisplay = row.mentioned_at
-                                    ? new Date(row.mentioned_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                    ? new Date(row.mentioned_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                                     : null;
 
                                   return (
@@ -381,46 +479,40 @@ export function DataView({ factType }: DataViewProps) {
                                         selectedTableMemory?.id === row.id ? 'bg-primary/10' : ''
                                       }`}
                                     >
-                                      <TableCell className="font-mono text-xs text-muted-foreground" title={row.id}>
-                                        {row.id?.substring(0, 8)}...
+                                      <TableCell className="py-2">
+                                        <div className="line-clamp-2 text-sm leading-snug">{row.text}</div>
+                                        {row.context && (
+                                          <div className="text-xs text-muted-foreground mt-0.5 truncate">{row.context}</div>
+                                        )}
                                       </TableCell>
-                                      <TableCell>
-                                        <div className="line-clamp-2 text-sm">{row.text}</div>
-                                        {row.entities && (
-                                          <div className="flex gap-1 mt-1 flex-wrap">
-                                            {row.entities.split(', ').slice(0, 3).map((entity: string, i: number) => (
-                                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">
+                                      <TableCell className="py-2">
+                                        {row.entities ? (
+                                          <div className="flex gap-1 flex-wrap">
+                                            {row.entities.split(', ').slice(0, 2).map((entity: string, i: number) => (
+                                              <span
+                                                key={i}
+                                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium"
+                                              >
                                                 {entity}
                                               </span>
                                             ))}
-                                            {row.entities.split(', ').length > 3 && (
+                                            {row.entities.split(', ').length > 2 && (
                                               <span className="text-[10px] text-muted-foreground">
-                                                +{row.entities.split(', ').length - 3}
+                                                +{row.entities.split(', ').length - 2}
                                               </span>
                                             )}
                                           </div>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground">-</span>
                                         )}
                                       </TableCell>
-                                      <TableCell className="text-xs text-muted-foreground truncate max-w-[150px]" title={row.context}>
-                                        {row.context || '-'}
+                                      <TableCell className="text-xs py-2">
+                                        {occurredDisplay || <span className="text-muted-foreground">-</span>}
                                       </TableCell>
-                                      <TableCell className="text-xs">
-                                        {occurredDisplay ? (
-                                          <span className="flex items-center gap-1">
-                                            <Calendar className="h-3 w-3" />
-                                            {occurredDisplay}
-                                          </span>
-                                        ) : '-'}
+                                      <TableCell className="text-xs py-2">
+                                        {mentionedDisplay || <span className="text-muted-foreground">-</span>}
                                       </TableCell>
-                                      <TableCell className="text-xs">
-                                        {mentionedDisplay ? (
-                                          <span className="flex items-center gap-1">
-                                            <Calendar className="h-3 w-3" />
-                                            {mentionedDisplay}
-                                          </span>
-                                        ) : '-'}
-                                      </TableCell>
-                                      <TableCell>
+                                      <TableCell className="py-2">
                                         <Button
                                           onClick={(e) => {
                                             e.stopPropagation();
@@ -428,7 +520,7 @@ export function DataView({ factType }: DataViewProps) {
                                           }}
                                           size="sm"
                                           variant="ghost"
-                                          className="h-7 w-7 p-0"
+                                          className="h-6 w-6 p-0"
                                           title="Copy ID"
                                         >
                                           {copiedId === row.id ? (
@@ -447,9 +539,9 @@ export function DataView({ factType }: DataViewProps) {
 
                           {/* Pagination Controls */}
                           {totalPages > 1 && (
-                            <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                              <div className="text-sm text-muted-foreground">
-                                Showing {startIndex + 1} to {Math.min(endIndex, filteredRows.length)} of {filteredRows.length}
+                            <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                              <div className="text-xs text-muted-foreground">
+                                {startIndex + 1}-{Math.min(endIndex, filteredTableRows.length)} of {filteredTableRows.length}
                               </div>
                               <div className="flex items-center gap-1">
                                 <Button
@@ -457,20 +549,20 @@ export function DataView({ factType }: DataViewProps) {
                                   size="sm"
                                   onClick={() => setCurrentPage(1)}
                                   disabled={currentPage === 1}
-                                  className="h-8 w-8 p-0"
+                                  className="h-7 w-7 p-0"
                                 >
-                                  <ChevronsLeft className="h-4 w-4" />
+                                  <ChevronsLeft className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                   disabled={currentPage === 1}
-                                  className="h-8 w-8 p-0"
+                                  className="h-7 w-7 p-0"
                                 >
-                                  <ChevronLeft className="h-4 w-4" />
+                                  <ChevronLeft className="h-3 w-3" />
                                 </Button>
-                                <span className="text-sm px-3">
+                                <span className="text-xs px-2">
                                   {currentPage} / {totalPages}
                                 </span>
                                 <Button
@@ -478,18 +570,18 @@ export function DataView({ factType }: DataViewProps) {
                                   size="sm"
                                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                   disabled={currentPage === totalPages}
-                                  className="h-8 w-8 p-0"
+                                  className="h-7 w-7 p-0"
                                 >
-                                  <ChevronRight className="h-4 w-4" />
+                                  <ChevronRight className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => setCurrentPage(totalPages)}
                                   disabled={currentPage === totalPages}
-                                  className="h-8 w-8 p-0"
+                                  className="h-7 w-7 p-0"
                                 >
-                                  <ChevronsRight className="h-4 w-4" />
+                                  <ChevronsRight className="h-3 w-3" />
                                 </Button>
                               </div>
                             </div>
@@ -499,7 +591,7 @@ export function DataView({ factType }: DataViewProps) {
                     })()
                   ) : (
                     <div className="text-center py-12 text-muted-foreground">
-                      {data.table_rows ? 'No memories match your search' : 'No memories found'}
+                      {data.table_rows?.length > 0 ? 'No memories match your filter' : 'No memories found'}
                     </div>
                   )}
                 </div>
@@ -519,7 +611,7 @@ export function DataView({ factType }: DataViewProps) {
           )}
 
           {viewMode === 'timeline' && (
-            <TimelineView data={data} />
+            <TimelineView data={data} filteredRows={filteredTableRows} />
           )}
         </>
       ) : (
@@ -537,17 +629,17 @@ export function DataView({ factType }: DataViewProps) {
 // Timeline View Component - Custom compact timeline with zoom and navigation
 type Granularity = 'year' | 'month' | 'week' | 'day';
 
-function TimelineView({ data }: { data: any }) {
+function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }) {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
 
-  // Filter and sort items that have occurred_start dates
+  // Filter and sort items that have occurred_start dates (using filtered data)
   const { sortedItems, itemsWithoutDates } = useMemo(() => {
-    if (!data?.table_rows) return { sortedItems: [], itemsWithoutDates: [] };
+    if (!filteredRows || filteredRows.length === 0) return { sortedItems: [], itemsWithoutDates: [] };
 
-    const withDates = data.table_rows
+    const withDates = filteredRows
       .filter((row: any) => row.occurred_start)
       .sort((a: any, b: any) => {
         const dateA = new Date(a.occurred_start).getTime();
@@ -555,19 +647,10 @@ function TimelineView({ data }: { data: any }) {
         return dateA - dateB;
       });
 
-    const withoutDates = data.table_rows.filter((row: any) => !row.occurred_start);
-
-    // Debug logging
-    console.log('Timeline data:', {
-      total: data.table_rows.length,
-      withDates: withDates.length,
-      withoutDates: withoutDates.length,
-      sampleWithDate: withDates[0],
-      sampleWithoutDate: withoutDates[0]
-    });
+    const withoutDates = filteredRows.filter((row: any) => !row.occurred_start);
 
     return { sortedItems: withDates, itemsWithoutDates: withoutDates };
-  }, [data]);
+  }, [filteredRows]);
 
   // Group items by granularity
   const timelineGroups = useMemo(() => {
@@ -697,9 +780,9 @@ function TimelineView({ data }: { data: any }) {
   };
 
   return (
-    <div className="flex gap-3 px-4">
+    <div className="px-4">
       {/* Timeline */}
-      <div className={`transition-all ${selectedItem ? 'w-2/3' : 'w-full'}`}>
+      <div>
         {/* Controls */}
         <div className="flex items-center justify-between mb-3 gap-4">
           <div className="text-xs text-muted-foreground">
@@ -853,7 +936,7 @@ function TimelineView({ data }: { data: any }) {
                       {item.entities && (
                         <div className="flex gap-1 mt-1 flex-wrap">
                           {item.entities.split(', ').slice(0, 3).map((entity: string, i: number) => (
-                            <span key={i} className="text-[9px] px-1 py-0.5 rounded bg-secondary text-secondary-foreground">
+                            <span key={i} className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                               {entity}
                             </span>
                           ))}

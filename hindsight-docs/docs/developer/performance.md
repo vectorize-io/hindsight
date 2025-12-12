@@ -8,7 +8,7 @@ Hindsight's performance is optimized across three key operations:
 
 - **Retain (Ingestion)**: Batch processing with async operations for large-scale memory storage
 - **Recall (Search)**: Sub-second semantic search with configurable thinking budgets
-- **Reflect (Reasoning)**: Personality-aware answer generation with controllable compute
+- **Reflect (Reasoning)**: Disposition-aware answer generation with controllable compute
 
 ## Design Philosophy: Optimized for Fast Reads
 

@@ -38,6 +38,55 @@ import os
 console = Console()
 
 
+def get_model_config() -> Dict[str, Dict[str, str]]:
+    """
+    Get the model configuration for all three LLM roles.
+
+    Reads directly from environment variables without instantiating LLM clients.
+
+    Returns:
+        Dict with 'hindsight', 'answer_generation', and 'judge' keys,
+        each containing 'provider' and 'model' info.
+    """
+    # Memory/Hindsight config (base config)
+    memory_provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq")
+    memory_model = os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b")
+
+    # Answer generation config (falls back to memory config)
+    answer_provider = os.getenv("HINDSIGHT_API_ANSWER_LLM_PROVIDER", memory_provider)
+    answer_model = os.getenv("HINDSIGHT_API_ANSWER_LLM_MODEL", memory_model)
+
+    # Judge config (falls back to memory config)
+    judge_provider = os.getenv("HINDSIGHT_API_JUDGE_LLM_PROVIDER", memory_provider)
+    judge_model = os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", memory_model)
+
+    return {
+        'hindsight': {
+            'provider': memory_provider,
+            'model': memory_model,
+        },
+        'answer_generation': {
+            'provider': answer_provider,
+            'model': answer_model,
+        },
+        'judge': {
+            'provider': judge_provider,
+            'model': judge_model,
+        }
+    }
+
+
+def print_model_config():
+    """Print the model configuration to console."""
+    config = get_model_config()
+
+    console.print("\n[bold cyan]Model Configuration:[/bold cyan]")
+    console.print(f"  Hindsight:         {config['hindsight']['provider']}/{config['hindsight']['model']}")
+    console.print(f"  Answer Generation: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+    console.print(f"  LLM Judge:         {config['judge']['provider']}/{config['judge']['model']}")
+    console.print()
+
+
 async def create_memory_engine() -> MemoryEngine:
     """
     Create and initialize a MemoryEngine instance from environment variables.
@@ -268,7 +317,7 @@ If it's correct, set correct=true.
                         response_format=JudgeResponse,
                         scope="judge",
                         temperature=0,
-                        max_tokens=4096
+                        max_completion_tokens=4096
                     )
 
                     return judgement.correct, judgement.reasoning
@@ -411,16 +460,27 @@ class BenchmarkRunner:
             # Use MemoryEngine directly
             # Map thinking_budget to budget level
             budget = Budget.LOW if thinking_budget <= 30 else Budget.MID if thinking_budget <= 70 else Budget.HIGH
+
+            import time
+            recall_start_time = time.time()
             search_result = await self.memory.recall_async(
                 bank_id=agent_id,
                 query=question,
                 budget=budget,
                 max_tokens=max_tokens,
-                fact_type=["world", "bank"],
+                fact_type=["world", "experience"],
                 question_date=question_date,
                 include_entities=True,
-                include_chunks=True
+                max_entity_tokens=2048,
+                include_chunks=True,
+
             )
+            recall_time = time.time() - recall_start_time
+
+            # Log recall stats
+            num_results = len(search_result.results) if search_result.results else 0
+            num_chunks = len(search_result.chunks) if search_result.chunks else 0
+            num_entities = len(search_result.entities) if search_result.entities else 0
 
             # Convert entire RecallResult to dictionary for answer generation
             recall_result_dict = search_result.model_dump()
@@ -780,6 +840,9 @@ class BenchmarkRunner:
         console.print(f"\n[bold cyan]Benchmark Evaluation[/bold cyan]")
         console.print("=" * 80)
 
+        # Print model configuration
+        print_model_config()
+
         # Load dataset
         console.print(f"\n[1] Loading dataset from {dataset_path}...")
         items = self.dataset.load(dataset_path, max_items)
@@ -869,6 +932,7 @@ class BenchmarkRunner:
             'total_invalid': total_invalid,
             'total_valid': total_valid,
             'num_items': len(items),
+            'model_config': get_model_config(),
             'item_results': all_results
         }
 
@@ -1130,6 +1194,15 @@ class BenchmarkRunner:
         """Display benchmark results in a formatted table."""
         console.print("\n[bold green]✓ Benchmark Complete![/bold green]\n")
 
+        # Display model configuration
+        if 'model_config' in results:
+            config = results['model_config']
+            console.print("[bold cyan]Model Configuration:[/bold cyan]")
+            console.print(f"  Hindsight:         {config['hindsight']['provider']}/{config['hindsight']['model']}")
+            console.print(f"  Answer Generation: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+            console.print(f"  LLM Judge:         {config['judge']['provider']}/{config['judge']['model']}")
+            console.print()
+
         # Display results table
         table = Table(title="Benchmark Results", box=box.ROUNDED)
         table.add_column("Item ID", style="cyan")
@@ -1244,6 +1317,7 @@ class BenchmarkRunner:
             'total_invalid': total_invalid,
             'total_valid': total_valid,
             'num_items': len(all_results),
+            'model_config': get_model_config(),
             'item_results': all_results
         }
 

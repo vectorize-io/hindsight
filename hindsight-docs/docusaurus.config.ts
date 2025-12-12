@@ -1,12 +1,11 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
-import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 const config: Config = {
   title: 'Hindsight',
   tagline: 'Entity-Aware Memory System for AI Agents',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   future: {
     v4: true,
@@ -16,8 +15,8 @@ const config: Config = {
     mermaid: true,
   },
 
-  url: 'https://vectorize-io.github.io',
-  baseUrl: '/hindsight/',
+  url: 'https://hindsight.vectorize.io',
+  baseUrl: '/',
 
   organizationName: 'vectorize-io',
   projectName: 'hindsight',
@@ -50,7 +49,9 @@ const config: Config = {
       tagName: 'link',
       attributes: {
         rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Nunito+Sans:wght@400;500;600;700;800&display=swap',
+        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap',
+        media: 'print',
+        onload: "this.media='all'",
       },
     },
   ],
@@ -63,7 +64,6 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/vectorize-io/hindsight/tree/main/hindsight-docs/',
           routeBasePath: '/',
-          docItemComponent: '@theme/ApiItem',
         },
         blog: false,
         theme: {
@@ -71,28 +71,48 @@ const config: Config = {
         },
       } satisfies Preset.Options,
     ],
-  ],
-
-  plugins: [
     [
-      'docusaurus-plugin-openapi-docs',
+      'redocusaurus',
       {
-        id: 'api',
-        docsPluginId: 'default',
-        config: {
-          hindsight: {
-            specPath: 'openapi.json',
-            outputDir: 'docs/api-reference/endpoints',
-            sidebarOptions: {
-              groupPathsBy: 'tag',
+        specs: [
+          {
+            id: 'hindsight-api',
+            spec: 'openapi.json',
+            route: '/api-reference',
+            url: '/openapi.json',
+          },
+        ],
+        theme: {
+          primaryColor: '#0074d9',
+          sidebar: {
+            backgroundColor: '#09090b',
+          },
+          rightPanel: {
+            backgroundColor: '#18181b',
+          },
+          typography: {
+            fontSize: '15px',
+            fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+            headings: {
+              fontFamily: "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             },
-          } satisfies OpenApiPlugin.Options,
+            code: {
+              fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace",
+              fontSize: '13px',
+            },
+          },
+        },
+        config: {
+          scrollYOffset: 60,
+          nativeScrollbars: true,
+          expandSingleSchemaField: true,
+          expandResponses: '200,201',
         },
       },
     ],
   ],
 
-  themes: ['docusaurus-theme-openapi-docs', '@docusaurus/theme-mermaid'],
+  themes: ['@docusaurus/theme-mermaid'],
 
   themeConfig: {
     image: 'img/hindsight-social-card.jpg',
@@ -101,51 +121,51 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Hindsight',
       logo: {
         alt: 'Hindsight Logo',
-        src: 'img/logo.svg',
+        src: 'img/logo.png',
+        style: { height: '32px' },
       },
       items: [
         {
-          type: 'custom-iconLink',
+          type: 'doc',
+          docId: 'developer/index',
           position: 'left',
-          icon: 'code',
           label: 'Developer',
-          to: '/',
+          className: 'navbar-item-developer',
         },
         {
-          type: 'custom-iconLink',
+          type: 'doc',
+          docId: 'sdks/python',
           position: 'left',
-          icon: 'package',
           label: 'SDKs',
-          to: '/sdks/python',
+          className: 'navbar-item-sdks',
         },
         {
-          type: 'custom-iconLink',
-          position: 'left',
-          icon: 'file-code',
-          label: 'API Reference',
           to: '/api-reference',
+          position: 'left',
+          label: 'API Reference',
+          className: 'navbar-item-api',
         },
         {
-          type: 'custom-iconLink',
+          type: 'doc',
+          docId: 'cookbook/index',
           position: 'left',
-          icon: 'book-open',
           label: 'Cookbook',
-          to: '/cookbook',
+          className: 'navbar-item-cookbook',
         },
         {
-          type: 'custom-iconLink',
+          type: 'doc',
+          docId: 'changelog/index',
           position: 'left',
-          icon: 'clock',
           label: 'Changelog',
-          to: '/changelog',
+          className: 'navbar-item-changelog',
         },
         {
           href: 'https://github.com/vectorize-io/hindsight',
-          label: 'GitHub',
           position: 'right',
+          className: 'header-github-link',
+          'aria-label': 'GitHub repository',
         },
       ],
     },
@@ -165,7 +185,7 @@ const config: Config = {
             },
             {
               label: 'API Reference',
-              to: '/api-reference',
+              to: '/api-reference/',
             },
           ],
         },
@@ -179,7 +199,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Hindsight. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Hindsight.`,
     },
     prism: {
       theme: prismThemes.github,
@@ -189,24 +209,39 @@ const config: Config = {
     mermaid: {
       theme: {
         light: 'base',
-        dark: 'dark',
+        dark: 'base',
       },
       options: {
         themeVariables: {
-          primaryColor: '#6366f1',
+          // Gradient start (#0074d9 blue) for nodes
+          primaryColor: '#0074d9',
           primaryTextColor: '#ffffff',
-          primaryBorderColor: '#4f46e5',
-          secondaryColor: '#f1f5f9',
-          secondaryTextColor: '#1e293b',
-          secondaryBorderColor: '#cbd5e1',
-          tertiaryColor: '#e0e7ff',
-          lineColor: '#94a3b8',
+          primaryBorderColor: '#005db0',
+          // Gradient end (#009296 teal) for edges/clusters
+          secondaryColor: '#009296',
+          secondaryTextColor: '#ffffff',
+          secondaryBorderColor: '#007a7d',
+          // Tertiary
+          tertiaryColor: '#e6f7f8',
+          tertiaryTextColor: '#1e293b',
+          // Lines and edges - gradient end color
+          lineColor: '#009296',
+          // Text
           textColor: '#1e293b',
-          mainBkg: '#ffffff',
-          nodeBorder: '#4f46e5',
-          clusterBkg: '#f8fafc',
-          clusterBorder: '#e2e8f0',
-          fontFamily: 'system-ui, -apple-system, sans-serif',
+          // Node specific - gradient start
+          nodeBkg: '#0074d9',
+          nodeTextColor: '#ffffff',
+          nodeBorder: '#005db0',
+          // Main background
+          mainBkg: '#0074d9',
+          // Clusters/subgraphs - gradient end
+          clusterBkg: 'rgba(0, 146, 150, 0.08)',
+          clusterBorder: '#009296',
+          // Labels
+          edgeLabelBackground: 'transparent',
+          labelBackground: 'transparent',
+          // Font - Inter to match body text
+          fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         },
       },
     },

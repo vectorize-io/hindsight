@@ -289,7 +289,8 @@ class SearchTracer:
         results: List[tuple],  # List of (doc_id, data) tuples
         duration_seconds: float,
         score_field: str,  # e.g., "similarity", "bm25_score"
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        fact_type: Optional[str] = None
     ):
         """
         Record results from a single retrieval method.
@@ -300,6 +301,7 @@ class SearchTracer:
             duration_seconds: Time taken for this retrieval
             score_field: Field name containing the score in data dict
             metadata: Optional metadata about this retrieval method
+            fact_type: Fact type this retrieval was for (world, experience, opinion)
         """
         retrieval_results = []
         for rank, (doc_id, data) in enumerate(results, start=1):
@@ -313,7 +315,7 @@ class SearchTracer:
                     text=data.get("text", ""),
                     context=data.get("context", ""),
                     event_date=data.get("event_date"),
-                    fact_type=data.get("fact_type"),
+                    fact_type=data.get("fact_type") or fact_type,
                     score=score,
                     score_name=score_field,
                 )
@@ -322,6 +324,7 @@ class SearchTracer:
         self.retrieval_results.append(
             RetrievalMethodResults(
                 method_name=method_name,
+                fact_type=fact_type,
                 results=retrieval_results,
                 duration_seconds=duration_seconds,
                 metadata=metadata or {},
@@ -367,8 +370,10 @@ class SearchTracer:
             rank_change = rrf_rank - rank  # Positive = moved up
 
             # Extract score components (only include non-None values)
+            # Keys from ScoredResult.to_dict(): cross_encoder_score, cross_encoder_score_normalized,
+            # rrf_normalized, temporal, recency, combined_score, weight
             score_components = {}
-            for key in ["semantic_similarity", "bm25_score", "rrf_score", "recency_normalized", "frequency_normalized"]:
+            for key in ["cross_encoder_score", "cross_encoder_score_normalized", "rrf_score", "rrf_normalized", "temporal", "recency", "combined_score"]:
                 if key in result and result[key] is not None:
                     score_components[key] = result[key]
 

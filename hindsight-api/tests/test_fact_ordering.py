@@ -19,14 +19,11 @@ async def test_fact_ordering_within_conversation(memory):
     # Get/create agent (auto-creates with defaults)
     await memory.get_bank_profile(bank_id)
 
-    # Update personality to match Marcus
-    await memory.update_bank_personality(bank_id, {
-        "openness": 0.7,
-        "conscientiousness": 0.6,
-        "extraversion": 0.8,
-        "agreeableness": 0.5,
-        "neuroticism": 0.3,
-        "bias_strength": 0.5
+    # Update disposition to match Marcus
+    await memory.update_bank_disposition(bank_id, {
+        "skepticism": 3,
+        "literalism": 3,
+        "empathy": 3
     })
 
     # A conversation where Marcus changes his position
@@ -53,7 +50,7 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
     results = await memory.recall_async(
         bank_id=bank_id,
         query="Marcus prediction Rams",
-        fact_type=['bank', 'world'],
+        fact_type=['opinion', 'experience', 'world'],
         budget=Budget.LOW,
         max_tokens=8192
     )
@@ -62,8 +59,8 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
     for i, result in enumerate(results.results):
         print(f"{i+1}. [{result.mentioned_at}] {result.text[:100]}")
 
-    # Get all agent facts (Marcus's statements)
-    agent_facts = [r for r in results.results if r.fact_type == 'bank']
+    # Get all opinion facts (Marcus's predictions/statements)
+    agent_facts = [r for r in results.results if r.fact_type == 'opinion']
 
     print(f"\n=== Agent facts (Marcus's statements) ===")
     for i, fact in enumerate(agent_facts):
@@ -156,13 +153,13 @@ Alice: I reconsidered the team's experience level.
     results = await memory.recall_async(
         bank_id=bank_id,
         query="Alice preference React Vue",
-        fact_type=['bank'],
+        fact_type=['opinion', 'experience'],
         budget=Budget.LOW,
         max_tokens=8192
     )
 
     print(f"\n=== Retrieved {len(results.results)} agent facts ===")
-    agent_facts = [r for r in results.results if r.fact_type == 'bank']
+    agent_facts = [r for r in results.results if r.fact_type in ('opinion', 'experience')]
 
     for i, fact in enumerate(agent_facts):
         print(f"{i+1}. [{fact.mentioned_at}] {fact.text[:80]}")

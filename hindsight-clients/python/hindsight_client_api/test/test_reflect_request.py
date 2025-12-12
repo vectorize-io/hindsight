@@ -38,9 +38,6 @@ class TestReflectRequest(unittest.TestCase):
                 query = '',
                 budget = 'low',
                 context = '',
-                filters = [
-                    {key=source, match_unset=true, value=slack}
-                    ],
                 include = hindsight_client_api.models.reflect_include_options.ReflectIncludeOptions(
                     facts = hindsight_client_api.models.facts_include_options.FactsIncludeOptions(), )
             )

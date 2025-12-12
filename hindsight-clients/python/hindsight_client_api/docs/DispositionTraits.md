@@ -1,17 +1,14 @@
 # DispositionTraits
 
-Disposition traits based on Big Five model.
+Disposition traits that influence how memories are formed and interpreted.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**openness** | **float** | Openness to experience (0-1) | 
-**conscientiousness** | **float** | Conscientiousness (0-1) | 
-**extraversion** | **float** | Extraversion (0-1) | 
-**agreeableness** | **float** | Agreeableness (0-1) | 
-**neuroticism** | **float** | Neuroticism (0-1) | 
-**bias_strength** | **float** | How strongly disposition influences opinions (0-1) | 
+**skepticism** | **int** | How skeptical vs trusting (1&#x3D;trusting, 5&#x3D;skeptical) | 
+**literalism** | **int** | How literally to interpret information (1&#x3D;flexible, 5&#x3D;literal) | 
+**empathy** | **int** | How much to consider emotional context (1&#x3D;detached, 5&#x3D;empathetic) | 
 
 ## Example
 

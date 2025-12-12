@@ -22,14 +22,14 @@ Hindsight solves these problems with a memory system designed specifically for A
 
 ```mermaid
 graph TB
-    subgraph app[Your Application]
+    subgraph app["<b>Your Application</b>"]
         Agent[AI Agent]
     end
 
-    subgraph hindsight[Hindsight]
+    subgraph hindsight["<b>Hindsight</b>"]
         API[API Server]
 
-        subgraph bank[Memory Bank]
+        subgraph bank["<b>Memory Bank</b>"]
             Documents[Documents]
             Memories[Memories]
             Entities[Entities]
@@ -86,35 +86,34 @@ graph LR
 | **Graph** | Related entities, indirect connections |
 | **Temporal** | "last spring", "in June", time ranges |
 
-### Personality Framework (CARA)
+### Disposition Traits
 
-Memory banks have Big Five personality traits that influence opinion formation:
+Memory banks have disposition traits that influence how opinions are formed during Reflect:
 
-| Trait | Low | High |
-|-------|-----|------|
-| **Openness** | Prefers proven methods | Embraces new ideas |
-| **Conscientiousness** | Flexible, spontaneous | Systematic, organized |
-| **Extraversion** | Independent | Collaborative |
-| **Agreeableness** | Direct, analytical | Diplomatic, harmonious |
-| **Neuroticism** | Calm, optimistic | Risk-aware, cautious |
+| Trait | Scale | Low (1) | High (5) |
+|-------|-------|---------|----------|
+| **Skepticism** | 1-5 | Trusting | Skeptical |
+| **Literalism** | 1-5 | Flexible interpretation | Literal interpretation |
+| **Empathy** | 1-5 | Detached | Empathetic |
 
-The `bias_strength` parameter (0-1) controls how much personality influences opinions.
+These traits only affect the `reflect` operation, not `recall`.
 
 ## Next Steps
 
 ### Getting Started
 - [**Quick Start**](/developer/api/quickstart) — Install and get up and running in 60 seconds
+- [**RAG vs Hindsight**](/developer/rag-vs-hindsight) — See how Hindsight differs from traditional RAG with real examples
 
 ### Core Concepts
 - [**Retain**](/developer/retain) — How memories are stored with multi-dimensional facts
 - [**Recall**](/developer/retrieval) — How TEMPR's 4-way search retrieves memories
-- [**Reflect**](/developer/reflect) — How personality influences reasoning and opinion formation
+- [**Reflect**](/developer/reflect) — How disposition influences reasoning and opinion formation
 
 ### API Methods
 - [**Retain**](/developer/api/retain) — Store information in memory banks
 - [**Recall**](/developer/api/recall) — Search and retrieve memories
-- [**Reflect**](/developer/api/reflect) — Reason with personality
-- [**Memory Banks**](/developer/api/memory-banks) — Configure personality and background
+- [**Reflect**](/developer/api/reflect) — Reason with disposition
+- [**Memory Banks**](/developer/api/memory-banks) — Configure disposition and background
 - [**Entities**](/developer/api/entities) — Track people, places, and concepts
 - [**Documents**](/developer/api/documents) — Manage document sources
 - [**Operations**](/developer/api/operations) — Monitor async tasks

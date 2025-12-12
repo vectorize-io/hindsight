@@ -16,7 +16,14 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 use std::time::{Duration, Instant};
+
+// Brand gradient colors: #0074d9 -> #009296
+const BRAND_START: Color = Color::Rgb(0, 116, 217);  // #0074d9
+const BRAND_END: Color = Color::Rgb(0, 146, 150);    // #009296
+const BRAND_MID: Color = Color::Rgb(0, 131, 183);    // Midpoint
 
 /// Main view types (like k9s contexts)
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +66,12 @@ enum QueryMode {
 enum InputMode {
     Normal,
     Query,
+}
+
+/// Query result from background thread
+enum QueryResult {
+    Recall(Result<Vec<RecallResult>, String>),
+    Reflect(Result<String, String>),
 }
 
 /// Application state
@@ -114,6 +127,9 @@ struct App {
     auto_refresh_enabled: bool,
     last_refresh: Instant,
     refresh_interval: Duration,
+
+    // Background query receiver
+    query_receiver: Option<Receiver<QueryResult>>,
 }
 
 impl App {
@@ -160,6 +176,8 @@ impl App {
             auto_refresh_enabled: true,
             last_refresh: Instant::now(),
             refresh_interval: Duration::from_secs(5),
+
+            query_receiver: None,
         };
 
         // Select first item by default
@@ -288,60 +306,106 @@ impl App {
         Ok(())
     }
 
-    fn execute_query(&mut self) -> Result<()> {
+    fn execute_query(&mut self) {
         if let View::Query(bank_id) = &self.view {
             if self.query_text.is_empty() {
                 self.error_message = "Query cannot be empty".to_string();
-                return Ok(());
+                return;
             }
 
             self.loading = true;
             self.error_message.clear();
+            self.input_mode = InputMode::Normal;
 
-            match self.query_mode {
-                QueryMode::Recall => {
-                    let request = RecallRequest {
-                        query: self.query_text.clone(),
-                        types: None,
-                        budget: Some(self.query_budget.clone()),
-                        max_tokens: self.query_max_tokens,
-                        trace: false,
-                        query_timestamp: None,
-                        filters: None,
-                        include: None,
-                    };
+            // Create channel for receiving results
+            let (tx, rx) = mpsc::channel();
+            self.query_receiver = Some(rx);
 
-                    let response = self.client.recall(bank_id, &request, false)?;
-                    self.query_results = response.results;
+            // Clone data for the thread
+            let client = self.client.clone();
+            let bank_id = bank_id.clone();
+            let query_mode = self.query_mode.clone();
+            let query_text = self.query_text.clone();
+            let query_budget = self.query_budget.clone();
+            let query_max_tokens = self.query_max_tokens;
 
+            // Spawn background thread
+            thread::spawn(move || {
+                match query_mode {
+                    QueryMode::Recall => {
+                        let request = RecallRequest {
+                            query: query_text,
+                            types: None,
+                            budget: Some(query_budget),
+                            max_tokens: query_max_tokens,
+                            trace: false,
+                            query_timestamp: None,
+                            include: None,
+                        };
+
+                        let result = client.recall(&bank_id, &request, false)
+                            .map(|r| r.results)
+                            .map_err(|e| e.to_string());
+
+                        let _ = tx.send(QueryResult::Recall(result));
+                    }
+                    QueryMode::Reflect => {
+                        let request = ReflectRequest {
+                            query: query_text,
+                            budget: Some(query_budget),
+                            context: None,
+                            include: None,
+                        };
+
+                        let result = client.reflect(&bank_id, &request, false)
+                            .map(|r| r.text)
+                            .map_err(|e| e.to_string());
+
+                        let _ = tx.send(QueryResult::Reflect(result));
+                    }
+                }
+            });
+        }
+    }
+
+    fn check_query_result(&mut self) {
+        if let Some(receiver) = &self.query_receiver {
+            match receiver.try_recv() {
+                Ok(QueryResult::Recall(Ok(results))) => {
+                    self.query_results = results;
                     if !self.query_results.is_empty() {
                         self.query_results_state.select(Some(0));
                     }
-
                     self.loading = false;
                     self.status_message = format!("Found {} results", self.query_results.len());
+                    self.query_receiver = None;
                 }
-                QueryMode::Reflect => {
-                    let request = ReflectRequest {
-                        query: self.query_text.clone(),
-                        budget: Some(self.query_budget.clone()),
-                        context: None,
-                        filters: None,
-                        include: None,
-                    };
-
-                    let response = self.client.reflect(bank_id, &request, false)?;
-                    self.query_response = response.text;
-
+                Ok(QueryResult::Recall(Err(e))) => {
+                    self.error_message = format!("Recall failed: {}", e);
+                    self.loading = false;
+                    self.query_receiver = None;
+                }
+                Ok(QueryResult::Reflect(Ok(text))) => {
+                    self.query_response = text;
                     self.loading = false;
                     self.status_message = "Reflection complete".to_string();
+                    self.query_receiver = None;
+                }
+                Ok(QueryResult::Reflect(Err(e))) => {
+                    self.error_message = format!("Reflect failed: {}", e);
+                    self.loading = false;
+                    self.query_receiver = None;
+                }
+                Err(TryRecvError::Empty) => {
+                    // Still waiting for result
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.error_message = "Query thread disconnected".to_string();
+                    self.loading = false;
+                    self.query_receiver = None;
                 }
             }
-
-            self.input_mode = InputMode::Normal;
         }
-
-        Ok(())
     }
 
     fn toggle_query_mode(&mut self) {
@@ -595,7 +659,6 @@ impl App {
                     }
                 }
             }
-            _ => {}
         }
         Ok(())
     }
@@ -703,64 +766,64 @@ fn render_control_bar(f: &mut Frame, app: &App, area: Rect) {
     // Build contextual shortcuts based on view and input mode
     let shortcuts = match (&app.view, &app.input_mode) {
         (View::Banks, InputMode::Normal) => vec![
-            ("Enter", "Select", Color::Cyan),
-            ("R", "Refresh", Color::Yellow),
-            ("?", "Help", Color::Magenta),
+            ("Enter", "Select", BRAND_START),
+            ("R", "Refresh", BRAND_MID),
+            ("?", "Help", BRAND_END),
             ("q", "Quit", Color::Red),
         ],
         (View::Memories(_), InputMode::Normal) => vec![
-            ("Enter", "View", Color::Cyan),
-            ("/", "Query", Color::Green),
-            ("←→", "Scroll", Color::Cyan),
-            ("n", "Next", Color::Green),
-            ("p", "Prev", Color::Green),
-            ("Esc", "Back", Color::Yellow),
-            ("R", "Refresh", Color::Yellow),
-            ("?", "Help", Color::Magenta),
+            ("Enter", "View", BRAND_START),
+            ("/", "Query", BRAND_MID),
+            ("←→", "Scroll", BRAND_START),
+            ("n", "Next", BRAND_MID),
+            ("p", "Prev", BRAND_MID),
+            ("Esc", "Back", BRAND_END),
+            ("R", "Refresh", BRAND_END),
+            ("?", "Help", BRAND_END),
             ("q", "Quit", Color::Red),
         ],
         (View::Entities(_), InputMode::Normal) => vec![
-            ("Enter", "View", Color::Cyan),
-            ("/", "Query", Color::Green),
-            ("←→", "Scroll", Color::Cyan),
-            ("Esc", "Back", Color::Yellow),
-            ("R", "Refresh", Color::Yellow),
-            ("?", "Help", Color::Magenta),
+            ("Enter", "View", BRAND_START),
+            ("/", "Query", BRAND_MID),
+            ("←→", "Scroll", BRAND_START),
+            ("Esc", "Back", BRAND_END),
+            ("R", "Refresh", BRAND_END),
+            ("?", "Help", BRAND_END),
             ("q", "Quit", Color::Red),
         ],
         (View::Documents(_), InputMode::Normal) => vec![
-            ("Enter", "View", Color::Cyan),
-            ("/", "Query", Color::Green),
-            ("←→", "Scroll", Color::Cyan),
+            ("Enter", "View", BRAND_START),
+            ("/", "Query", BRAND_MID),
+            ("←→", "Scroll", BRAND_START),
             ("Del", "Delete", Color::Red),
-            ("Esc", "Back", Color::Yellow),
-            ("R", "Refresh", Color::Yellow),
-            ("?", "Help", Color::Magenta),
+            ("Esc", "Back", BRAND_END),
+            ("R", "Refresh", BRAND_END),
+            ("?", "Help", BRAND_END),
             ("q", "Quit", Color::Red),
         ],
         (View::Query(_), InputMode::Normal) => {
             let mut shortcuts = vec![
-                ("/", "Query", Color::Green),
-                ("m", "Mode", Color::Cyan),
+                ("/", "Query", BRAND_MID),
+                ("m", "Mode", BRAND_START),
             ];
             if app.query_mode == QueryMode::Recall {
-                shortcuts.push(("←→", "Scroll", Color::Cyan));
+                shortcuts.push(("←→", "Scroll", BRAND_START));
             }
             shortcuts.extend_from_slice(&[
-                ("b", "Budget", Color::Yellow),
-                ("+/-", "Tokens", Color::Yellow),
-                ("Esc", "Back", Color::Yellow),
-                ("?", "Help", Color::Magenta),
+                ("b", "Budget", BRAND_END),
+                ("+/-", "Tokens", BRAND_END),
+                ("Esc", "Back", BRAND_END),
+                ("?", "Help", BRAND_END),
                 ("q", "Quit", Color::Red),
             ]);
             shortcuts
         },
         (View::Query(_), InputMode::Query) => vec![
-            ("Enter", "Execute", Color::Green),
+            ("Enter", "Execute", BRAND_MID),
             ("Esc", "Cancel", Color::Red),
         ],
         _ => vec![
-            ("?", "Help", Color::Magenta),
+            ("?", "Help", BRAND_END),
             ("q", "Quit", Color::Red),
         ],
     };
@@ -792,9 +855,9 @@ fn render_control_bar(f: &mut Frame, app: &App, area: Rect) {
     let context_widget = Paragraph::new(context_info)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(BRAND_START))
             .title(" Context "))
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Left);
     f.render_widget(context_widget, columns[0]);
 
@@ -830,7 +893,7 @@ fn render_control_bar(f: &mut Frame, app: &App, area: Rect) {
     let shortcuts_widget = Paragraph::new(shortcut_lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(BRAND_START))
             .title(" Shortcuts "))
         .alignment(Alignment::Left);
 
@@ -847,7 +910,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let title = format!("Hindsight Explorer - {}{}", app.view.title(), bank_info);
 
     let header = Paragraph::new(title)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
 
@@ -862,11 +925,11 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(&app.error_message),
         ])
     } else if app.loading {
-        Line::from(Span::styled(" Loading...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
+        Line::from(Span::styled(" Loading...", Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD)))
     } else if !app.status_message.is_empty() {
         Line::from(vec![
             Span::raw(" "),
-            Span::styled(&app.status_message, Style::default().fg(Color::Green)),
+            Span::styled(&app.status_message, Style::default().fg(BRAND_MID)),
         ])
     } else {
         Line::from("")
@@ -931,7 +994,7 @@ fn render_memories(f: &mut Frame, app: &mut App, area: Rect) {
 
         let metadata = Paragraph::new(metadata_text)
             .block(Block::default().borders(Borders::ALL).title("Memory Metadata"))
-            .style(Style::default().fg(Color::Cyan));
+            .style(Style::default().fg(BRAND_START));
 
         f.render_widget(metadata, chunks[0]);
 
@@ -949,7 +1012,7 @@ fn render_memories(f: &mut Frame, app: &mut App, area: Rect) {
         let mut items = vec![
             // Header row
             ListItem::new(format!("{:<10} {:<18} {:<18} {}", "TYPE", "MENTIONED AT", "OCCURRED AT", "TEXT"))
-                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .style(Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))
         ];
 
         // Data rows
@@ -1005,7 +1068,7 @@ fn render_entities(f: &mut Frame, app: &mut App, area: Rect) {
 
         let metadata = Paragraph::new(metadata_text)
             .block(Block::default().borders(Borders::ALL).title("Entity Details (Esc to close)"))
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(BRAND_START))
             .wrap(Wrap { trim: false });
 
         f.render_widget(metadata, area);
@@ -1014,7 +1077,7 @@ fn render_entities(f: &mut Frame, app: &mut App, area: Rect) {
         let mut items = vec![
             // Header row
             ListItem::new(format!("{:<40} {:<15} {:<10}", "NAME", "TYPE", "MENTIONS"))
-                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .style(Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))
         ];
 
         // Data rows
@@ -1074,7 +1137,7 @@ fn render_documents(f: &mut Frame, app: &mut App, area: Rect) {
 
         let metadata = Paragraph::new(metadata_text)
             .block(Block::default().borders(Borders::ALL).title("Document Metadata"))
-            .style(Style::default().fg(Color::Cyan));
+            .style(Style::default().fg(BRAND_START));
 
         f.render_widget(metadata, chunks[0]);
 
@@ -1094,7 +1157,7 @@ fn render_documents(f: &mut Frame, app: &mut App, area: Rect) {
         let mut items = vec![
             // Header row
             ListItem::new(format!("{:<40} {:<20} {}", "ID", "TYPE", "CREATED"))
-                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .style(Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))
         ];
 
         // Data rows
@@ -1140,7 +1203,7 @@ fn render_query(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Query input
     let query_style = if app.input_mode == InputMode::Query {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(BRAND_END)
     } else {
         Style::default()
     };
@@ -1156,6 +1219,38 @@ fn render_query(f: &mut Frame, app: &mut App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title(title));
 
     f.render_widget(query, chunks[0]);
+
+    // Show loading indicator if loading
+    if app.loading {
+        let loading_text = match app.query_mode {
+            QueryMode::Recall => "Searching memories...",
+            QueryMode::Reflect => "Reflecting on memories...",
+        };
+
+        // Create animated dots based on time
+        let dots = ".".repeat(((std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() / 500) % 4) as usize);
+
+        let loading_lines = vec![
+            Line::from(""),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("    ", Style::default()),
+                Span::styled(format!("{}{}", loading_text, dots), Style::default().fg(BRAND_MID).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("    Please wait while we process your query...", Style::default().fg(Color::DarkGray))),
+        ];
+
+        let loading_widget = Paragraph::new(loading_lines)
+            .block(Block::default().borders(Borders::ALL).title(format!("{} in progress", mode_label)))
+            .alignment(Alignment::Left);
+
+        f.render_widget(loading_widget, chunks[1]);
+        return;
+    }
 
     // Results or Response based on mode
     match app.query_mode {
@@ -1183,7 +1278,7 @@ fn render_query(f: &mut Frame, app: &mut App, area: Rect) {
 
                 let metadata = Paragraph::new(metadata_text)
                     .block(Block::default().borders(Borders::ALL).title("Recall Result Metadata"))
-                    .style(Style::default().fg(Color::Cyan));
+                    .style(Style::default().fg(BRAND_START));
 
                 f.render_widget(metadata, recall_chunks[0]);
 
@@ -1199,7 +1294,7 @@ fn render_query(f: &mut Frame, app: &mut App, area: Rect) {
                 let mut items = vec![
                     // Header row
                     ListItem::new(format!("{:<10} {:<18} {:<18} {}", "TYPE", "OCCURRED START", "OCCURRED END", "TEXT"))
-                        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                        .style(Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))
                 ];
 
                 // Data rows
@@ -1251,17 +1346,17 @@ fn render_query(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_help(f: &mut Frame, area: Rect) {
     let help_text = vec![
-        Line::from(Span::styled("Hindsight Explorer - Keyboard Shortcuts", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("Hindsight Explorer - Keyboard Shortcuts", Style::default().fg(BRAND_START).add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Navigation Flow", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("Navigation Flow", Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD)),
         ]),
         Line::from("  1. Start by selecting a bank (Enter)"),
         Line::from("  2. View memories, entities, or documents for that bank"),
         Line::from("  3. Press / from any view to query (recall/reflect)"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Basic Navigation", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("Basic Navigation", Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD)),
         ]),
         Line::from("  ↑/↓, j/k    - Navigate up/down in lists"),
         Line::from("  ←/→, h/l    - Scroll text left/right in tables"),
@@ -1269,7 +1364,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  Esc         - Go back / close detail view"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Query View", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("Query View", Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD)),
         ]),
         Line::from("  /           - Start or edit query (from any non-bank view)"),
         Line::from("  m           - Toggle mode (Recall ↔ Reflect)"),
@@ -1278,7 +1373,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  Enter       - Execute query"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("General", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("General", Style::default().fg(BRAND_END).add_modifier(Modifier::BOLD)),
         ]),
         Line::from("  R           - Refresh current view"),
         Line::from("  ?           - Toggle this help screen"),
@@ -1402,7 +1497,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
                         match key.code {
                             KeyCode::Enter => {
                                 if matches!(app.view, View::Query(_)) {
-                                    app.execute_query()?;
+                                    app.execute_query();
                                 }
                             }
                             KeyCode::Esc => {
@@ -1424,6 +1519,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
                 }
             }
         }
+
+        // Check for query results from background thread
+        app.check_query_result();
 
         // Auto-refresh check
         app.do_auto_refresh()?;

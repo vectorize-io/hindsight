@@ -31,7 +31,6 @@ hindsight_client_api/docs/IncludeOptions.md
 hindsight_client_api/docs/ListDocumentsResponse.md
 hindsight_client_api/docs/ListMemoryUnitsResponse.md
 hindsight_client_api/docs/MemoryItem.md
-hindsight_client_api/docs/MetadataFilter.md
 hindsight_client_api/docs/MonitoringApi.md
 hindsight_client_api/docs/RecallRequest.md
 hindsight_client_api/docs/RecallResponse.md
@@ -72,7 +71,6 @@ hindsight_client_api/models/include_options.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/memory_item.py
-hindsight_client_api/models/metadata_filter.py
 hindsight_client_api/models/recall_request.py
 hindsight_client_api/models/recall_response.py
 hindsight_client_api/models/recall_result.py
@@ -113,7 +111,6 @@ hindsight_client_api/test/test_include_options.py
 hindsight_client_api/test/test_list_documents_response.py
 hindsight_client_api/test/test_list_memory_units_response.py
 hindsight_client_api/test/test_memory_item.py
-hindsight_client_api/test/test_metadata_filter.py
 hindsight_client_api/test/test_monitoring_api.py
 hindsight_client_api/test/test_recall_request.py
 hindsight_client_api/test/test_recall_response.py

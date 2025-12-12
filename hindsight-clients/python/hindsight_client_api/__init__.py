@@ -54,7 +54,6 @@ __all__ = [
     "ListDocumentsResponse",
     "ListMemoryUnitsResponse",
     "MemoryItem",
-    "MetadataFilter",
     "RecallRequest",
     "RecallResponse",
     "RecallResult",
@@ -110,7 +109,6 @@ from hindsight_client_api.models.include_options import IncludeOptions as Includ
 from hindsight_client_api.models.list_documents_response import ListDocumentsResponse as ListDocumentsResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse as ListMemoryUnitsResponse
 from hindsight_client_api.models.memory_item import MemoryItem as MemoryItem
-from hindsight_client_api.models.metadata_filter import MetadataFilter as MetadataFilter
 from hindsight_client_api.models.recall_request import RecallRequest as RecallRequest
 from hindsight_client_api.models.recall_response import RecallResponse as RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult as RecallResult

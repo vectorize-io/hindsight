@@ -27,7 +27,7 @@ def llm_config():
     model = os.getenv("HINDSIGHT_LLM_MODEL", "openai/gpt-oss-120b")
 
     if not api_key:
-        pytest.skip("LLM API key not configured. Set HINDSIGHT_LLM_API_KEY environment variable.")
+        raise Exception("LLM API key not configured. Set HINDSIGHT_LLM_API_KEY environment variable.")
 
     return {
         "llm_provider": provider,

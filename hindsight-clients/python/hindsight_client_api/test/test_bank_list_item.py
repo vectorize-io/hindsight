@@ -37,7 +37,7 @@ class TestBankListItem(unittest.TestCase):
             return BankListItem(
                 bank_id = '',
                 name = '',
-                disposition = {agreeableness=0.7, bias_strength=0.7, conscientiousness=0.6, extraversion=0.5, neuroticism=0.3, openness=0.8},
+                disposition = {empathy=3, literalism=3, skepticism=3},
                 background = '',
                 created_at = '',
                 updated_at = ''
@@ -46,7 +46,7 @@ class TestBankListItem(unittest.TestCase):
             return BankListItem(
                 bank_id = '',
                 name = '',
-                disposition = {agreeableness=0.7, bias_strength=0.7, conscientiousness=0.6, extraversion=0.5, neuroticism=0.3, openness=0.8},
+                disposition = {empathy=3, literalism=3, skepticism=3},
                 background = '',
         )
         """

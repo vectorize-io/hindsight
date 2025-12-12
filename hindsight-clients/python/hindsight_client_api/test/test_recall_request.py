@@ -43,9 +43,6 @@ class TestRecallRequest(unittest.TestCase):
                 max_tokens = 56,
                 trace = True,
                 query_timestamp = '',
-                filters = [
-                    {key=source, match_unset=true, value=slack}
-                    ],
                 include = hindsight_client_api.models.include_options.IncludeOptions(
                     entities = hindsight_client_api.models.entity_include_options.EntityIncludeOptions(
                         max_tokens = 56, ), 

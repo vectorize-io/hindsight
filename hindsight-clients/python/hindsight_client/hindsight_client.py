@@ -50,7 +50,9 @@ class Hindsight:
         client.retain(bank_id="alice", content="Alice loves AI")
 
         # Recall memories
-        results = client.recall(bank_id="alice", query="What does Alice like?")
+        response = client.recall(bank_id="alice", query="What does Alice like?")
+        for r in response.results:
+            print(r.text)
 
         # Generate contextual answer
         answer = client.reflect(bank_id="alice", query="What are my interests?")
@@ -125,8 +127,8 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata'
-            document_id: Optional document ID for grouping memories
+            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata', 'document_id'
+            document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
@@ -138,13 +140,14 @@ class Hindsight:
                 timestamp=item.get("timestamp"),
                 context=item.get("context"),
                 metadata=item.get("metadata"),
+                # Use item's document_id if provided, otherwise fall back to batch-level document_id
+                document_id=item.get("document_id") or document_id,
             )
             for item in items
         ]
 
         request_obj = retain_request.RetainRequest(
             items=memory_items,
-            document_id=document_id,
             async_=retain_async,
         )
 
@@ -157,7 +160,13 @@ class Hindsight:
         types: Optional[List[str]] = None,
         max_tokens: int = 4096,
         budget: str = "mid",
-    ) -> List[RecallResult]:
+        trace: bool = False,
+        query_timestamp: Optional[str] = None,
+        include_entities: bool = False,
+        max_entity_tokens: int = 500,
+        include_chunks: bool = False,
+        max_chunk_tokens: int = 8192,
+    ) -> RecallResponse:
         """
         Recall memories using semantic similarity.
 
@@ -167,20 +176,34 @@ class Hindsight:
             types: Optional list of fact types to filter (world, experience, opinion, observation)
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
+            trace: Enable trace output (default: False)
+            query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
+            include_entities: Include entity observations in results (default: False)
+            max_entity_tokens: Maximum tokens for entity observations (default: 500)
+            include_chunks: Include raw text chunks in results (default: False)
+            max_chunk_tokens: Maximum tokens for chunks (default: 8192)
 
         Returns:
-            List of RecallResult objects
+            RecallResponse with results, optional entities, optional chunks, and optional trace
         """
+        from hindsight_client_api.models import include_options, entity_include_options, chunk_include_options
+
+        include_opts = include_options.IncludeOptions(
+            entities=entity_include_options.EntityIncludeOptions(max_tokens=max_entity_tokens) if include_entities else None,
+            chunks=chunk_include_options.ChunkIncludeOptions(max_tokens=max_chunk_tokens) if include_chunks else None,
+        )
+
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
             budget=budget,
             max_tokens=max_tokens,
-            trace=False,
+            trace=trace,
+            query_timestamp=query_timestamp,
+            include=include_opts,
         )
 
-        response = _run_async(self._api.recall_memories(bank_id, request_obj))
-        return response.results if hasattr(response, 'results') else []
+        return _run_async(self._api.recall_memories(bank_id, request_obj))
 
     def reflect(
         self,
@@ -209,55 +232,6 @@ class Hindsight:
 
         return _run_async(self._api.reflect(bank_id, request_obj))
 
-    # Full-featured methods (expose more options)
-
-    def recall_memories(
-        self,
-        bank_id: str,
-        query: str,
-        types: Optional[List[str]] = None,
-        budget: str = "mid",
-        max_tokens: int = 4096,
-        trace: bool = False,
-        query_timestamp: Optional[str] = None,
-        include_entities: bool = True,
-        max_entity_tokens: int = 500,
-    ) -> RecallResponse:
-        """
-        Recall memories with all options (full-featured).
-
-        Args:
-            bank_id: The memory bank ID
-            query: Search query
-            types: Optional list of fact types to filter (world, experience, opinion, observation)
-            budget: Budget level - "low", "mid", or "high"
-            max_tokens: Maximum tokens in results
-            trace: Enable trace output
-            query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
-            include_entities: Include entity observations in results (default: True)
-            max_entity_tokens: Maximum tokens for entity observations (default: 500)
-
-        Returns:
-            RecallResponse with results, optional entities, and optional trace
-        """
-        from hindsight_client_api.models import include_options, entity_include_options
-
-        include_opts = include_options.IncludeOptions(
-            entities=entity_include_options.EntityIncludeOptions(max_tokens=max_entity_tokens) if include_entities else None
-        )
-
-        request_obj = recall_request.RecallRequest(
-            query=query,
-            types=types,
-            budget=budget,
-            max_tokens=max_tokens,
-            trace=trace,
-            query_timestamp=query_timestamp,
-            include=include_opts,
-        )
-
-        return _run_async(self._api.recall_memories(bank_id, request_obj))
-
     def list_memories(
         self,
         bank_id: str,
@@ -280,19 +254,19 @@ class Hindsight:
         bank_id: str,
         name: Optional[str] = None,
         background: Optional[str] = None,
-        personality: Optional[Dict[str, float]] = None,
+        disposition: Optional[Dict[str, float]] = None,
     ) -> BankProfileResponse:
         """Create or update a memory bank."""
-        from hindsight_client_api.models import create_bank_request, personality_traits
+        from hindsight_client_api.models import create_bank_request, disposition_traits
 
-        personality_obj = None
-        if personality:
-            personality_obj = personality_traits.PersonalityTraits(**personality)
+        disposition_obj = None
+        if disposition:
+            disposition_obj = disposition_traits.DispositionTraits(**disposition)
 
         request_obj = create_bank_request.CreateBankRequest(
             name=name,
             background=background,
-            personality=personality_obj,
+            disposition=disposition_obj,
         )
 
         return _run_async(self._api.create_or_update_bank(bank_id, request_obj))
@@ -311,8 +285,8 @@ class Hindsight:
 
         Args:
             bank_id: The memory bank ID
-            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata'
-            document_id: Optional document ID for grouping memories
+            items: List of memory items with 'content' and optional 'timestamp', 'context', 'metadata', 'document_id'
+            document_id: Optional document ID for grouping memories (applied to items that don't have their own)
             retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
@@ -324,13 +298,14 @@ class Hindsight:
                 timestamp=item.get("timestamp"),
                 context=item.get("context"),
                 metadata=item.get("metadata"),
+                # Use item's document_id if provided, otherwise fall back to batch-level document_id
+                document_id=item.get("document_id") or document_id,
             )
             for item in items
         ]
 
         request_obj = retain_request.RetainRequest(
             items=memory_items,
-            document_id=document_id,
             async_=retain_async,
         )
 

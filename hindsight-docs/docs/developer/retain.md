@@ -8,16 +8,12 @@ When you call `retain()`, Hindsight transforms conversations and documents into 
 
 ## What Retain Does
 
-```
-Your Content
-     ↓
-Extract Rich Facts
-     ↓
-Identify Entities
-     ↓
-Build Connections
-     ↓
-Searchable Memory Bank
+```mermaid
+graph LR
+    A[Your Content] --> B[Extract Facts]
+    B --> C[Identify Entities]
+    C --> D[Build Connections]
+    D --> E[Memory Bank]
 ```
 
 ---
@@ -188,5 +184,5 @@ All stored in your isolated **memory bank**, ready for `recall()` and `reflect()
 ## Next Steps
 
 - [**Recall**](./retrieval) — How multi-strategy search retrieves relevant memories
-- [**Reflect**](./reflect) — How personality influences reasoning and opinion formation
+- [**Reflect**](./reflect) — How disposition influences reasoning and opinion formation
 - [API Reference](./api/retain) — Code examples for retaining memories

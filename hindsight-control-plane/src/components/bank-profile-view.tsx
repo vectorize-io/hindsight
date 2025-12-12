@@ -4,20 +4,15 @@ import { useState, useEffect } from 'react';
 import { client } from '@/lib/api';
 import { useBank } from '@/lib/bank-context';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { RefreshCw, Save, User, Brain, FileText, Clock, AlertCircle, CheckCircle, Database, Link2, FolderOpen, Activity } from 'lucide-react';
-import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
+import { RefreshCw, Save, Brain, FileText, Clock, AlertCircle, CheckCircle, Database, Link2, FolderOpen, Activity } from 'lucide-react';
 
 interface DispositionTraits {
-  openness: number;
-  conscientiousness: number;
-  extraversion: number;
-  agreeableness: number;
-  neuroticism: number;
-  bias_strength: number;
+  skepticism: number;
+  literalism: number;
+  empathy: number;
 }
 
 interface BankProfile {
@@ -57,51 +52,30 @@ interface Operation {
 }
 
 const TRAIT_LABELS: Record<keyof DispositionTraits, { label: string; shortLabel: string; description: string; lowLabel: string; highLabel: string }> = {
-  openness: {
-    label: 'Openness',
-    shortLabel: 'O',
-    description: 'Openness to experience - curiosity, creativity, and willingness to try new things',
-    lowLabel: 'Practical',
-    highLabel: 'Creative'
+  skepticism: {
+    label: 'Skepticism',
+    shortLabel: 'S',
+    description: 'How skeptical vs trusting when forming opinions',
+    lowLabel: 'Trusting',
+    highLabel: 'Skeptical'
   },
-  conscientiousness: {
-    label: 'Conscientiousness',
-    shortLabel: 'C',
-    description: 'Organization, dependability, and self-discipline',
+  literalism: {
+    label: 'Literalism',
+    shortLabel: 'L',
+    description: 'How literally to interpret information when forming opinions',
     lowLabel: 'Flexible',
-    highLabel: 'Organized'
+    highLabel: 'Literal'
   },
-  extraversion: {
-    label: 'Extraversion',
+  empathy: {
+    label: 'Empathy',
     shortLabel: 'E',
-    description: 'Sociability, assertiveness, and positive emotions',
-    lowLabel: 'Reserved',
-    highLabel: 'Outgoing'
-  },
-  agreeableness: {
-    label: 'Agreeableness',
-    shortLabel: 'A',
-    description: 'Cooperation, trust, and altruism',
-    lowLabel: 'Skeptical',
-    highLabel: 'Trusting'
-  },
-  neuroticism: {
-    label: 'Neuroticism',
-    shortLabel: 'N',
-    description: 'Emotional instability and tendency toward negative emotions',
-    lowLabel: 'Calm',
-    highLabel: 'Sensitive'
-  },
-  bias_strength: {
-    label: 'Influence',
-    shortLabel: 'I',
-    description: 'How strongly disposition traits influence opinions and responses',
-    lowLabel: 'Neutral',
-    highLabel: 'Strong'
+    description: 'How much to consider emotional context when forming opinions',
+    lowLabel: 'Detached',
+    highLabel: 'Empathetic'
   }
 };
 
-function DispositionRadarChart({ disposition, editMode, editDisposition, onEditChange }: {
+function DispositionEditor({ disposition, editMode, editDisposition, onEditChange }: {
   disposition: DispositionTraits;
   editMode: boolean;
   editDisposition: DispositionTraits;
@@ -109,92 +83,47 @@ function DispositionRadarChart({ disposition, editMode, editDisposition, onEditC
 }) {
   const data = editMode ? editDisposition : disposition;
 
-  const chartData = [
-    { trait: 'Openness', value: Math.round(data.openness * 100), fullMark: 100 },
-    { trait: 'Conscientiousness', value: Math.round(data.conscientiousness * 100), fullMark: 100 },
-    { trait: 'Extraversion', value: Math.round(data.extraversion * 100), fullMark: 100 },
-    { trait: 'Agreeableness', value: Math.round(data.agreeableness * 100), fullMark: 100 },
-    { trait: 'Neuroticism', value: Math.round(data.neuroticism * 100), fullMark: 100 },
-  ];
-
   return (
     <div className="space-y-4">
-      <div className="h-[280px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <RadarChart cx="50%" cy="50%" outerRadius="70%" data={chartData}>
-            <PolarGrid stroke="hsl(var(--border))" />
-            <PolarAngleAxis
-              dataKey="trait"
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-            />
-            <PolarRadiusAxis
-              angle={90}
-              domain={[0, 100]}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-              tickCount={5}
-            />
-            <Radar
-              name="Disposition"
-              dataKey="value"
-              stroke="hsl(var(--primary))"
-              fill="hsl(var(--primary))"
-              fillOpacity={0.3}
-              strokeWidth={2}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: 'hsl(var(--card))',
-                border: '1px solid hsl(var(--border))',
-                borderRadius: '8px',
-                color: 'hsl(var(--foreground))'
-              }}
-              formatter={(value: number) => [`${value}%`, 'Score']}
-            />
-          </RadarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {editMode && (
-        <div className="grid grid-cols-2 gap-3">
-          {(Object.keys(TRAIT_LABELS) as Array<keyof DispositionTraits>).filter(t => t !== 'bias_strength').map((trait) => (
-            <div key={trait} className="space-y-1">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-medium text-muted-foreground">{TRAIT_LABELS[trait].label}</label>
-                <span className="text-xs text-primary font-semibold">{Math.round(editDisposition[trait] * 100)}%</span>
+      {(Object.keys(TRAIT_LABELS) as Array<keyof DispositionTraits>).map((trait) => (
+        <div key={trait} className="space-y-2">
+          <div className="flex justify-between items-center">
+            <div>
+              <label className="text-sm font-medium text-foreground">{TRAIT_LABELS[trait].label}</label>
+              <p className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].description}</p>
+            </div>
+            <span className="text-sm font-bold text-primary">{data[trait]}/5</span>
+          </div>
+          {editMode ? (
+            <>
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>{TRAIT_LABELS[trait].lowLabel}</span>
+                <span>{TRAIT_LABELS[trait].highLabel}</span>
               </div>
               <input
                 type="range"
-                min="0"
-                max="100"
-                value={Math.round(editDisposition[trait] * 100)}
-                onChange={(e) => onEditChange(trait, parseInt(e.target.value) / 100)}
-                className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                min="1"
+                max="5"
+                step="1"
+                value={editDisposition[trait]}
+                onChange={(e) => onEditChange(trait, parseInt(e.target.value))}
+                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
               />
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].lowLabel}</span>
+              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all"
+                  style={{ width: `${((data[trait] - 1) / 4) * 100}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].highLabel}</span>
             </div>
-          ))}
+          )}
         </div>
-      )}
-
-      {/* Influence Strength - always shown */}
-      <div className="pt-3 border-t border-border">
-        <div className="flex justify-between items-center mb-2">
-          <div>
-            <label className="text-sm font-medium text-foreground">Disposition Influence</label>
-            <p className="text-xs text-muted-foreground">How strongly traits affect responses</p>
-          </div>
-          <span className="text-sm font-bold text-primary">{Math.round(data.bias_strength * 100)}%</span>
-        </div>
-        {editMode && (
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={Math.round(editDisposition.bias_strength * 100)}
-            onChange={(e) => onEditChange('bias_strength', parseInt(e.target.value) / 100)}
-            className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-          />
-        )}
-      </div>
+      ))}
     </div>
   );
 }
@@ -209,15 +138,11 @@ export function BankProfileView() {
   const [editMode, setEditMode] = useState(false);
 
   // Edit state
-  const [editName, setEditName] = useState('');
   const [editBackground, setEditBackground] = useState('');
   const [editDisposition, setEditDisposition] = useState<DispositionTraits>({
-    openness: 0.5,
-    conscientiousness: 0.5,
-    extraversion: 0.5,
-    agreeableness: 0.5,
-    neuroticism: 0.5,
-    bias_strength: 0.5
+    skepticism: 3,
+    literalism: 3,
+    empathy: 3
   });
 
   const loadData = async () => {
@@ -235,7 +160,6 @@ export function BankProfileView() {
       setOperations((opsData as any)?.operations || []);
 
       // Initialize edit state
-      setEditName(profileData.name);
       setEditBackground(profileData.background);
       setEditDisposition(profileData.disposition);
     } catch (error) {
@@ -252,7 +176,6 @@ export function BankProfileView() {
     setSaving(true);
     try {
       await client.updateBankProfile(currentBank, {
-        name: editName,
         background: editBackground,
         disposition: editDisposition
       });
@@ -268,7 +191,6 @@ export function BankProfileView() {
 
   const handleCancel = () => {
     if (profile) {
-      setEditName(profile.name);
       setEditBackground(profile.background);
       setEditDisposition(profile.disposition);
     }
@@ -435,11 +357,11 @@ export function BankProfileView() {
               <Brain className="w-5 h-5 text-primary" />
               Disposition Profile
             </CardTitle>
-            <CardDescription>Big Five disposition traits that influence responses</CardDescription>
+            <CardDescription>Traits that shape how opinions are formed via Reflect</CardDescription>
           </CardHeader>
           <CardContent>
             {profile && (
-              <DispositionRadarChart
+              <DispositionEditor
                 disposition={profile.disposition}
                 editMode={editMode}
                 editDisposition={editDisposition}
@@ -449,39 +371,15 @@ export function BankProfileView() {
           </CardContent>
         </Card>
 
-        {/* Basic Info & Background */}
+        {/* Background */}
         <div className="space-y-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <User className="w-5 h-5 text-primary" />
-                Identity
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Display Name</label>
-                {editMode ? (
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Enter a name for this bank"
-                    className="mt-1"
-                  />
-                ) : (
-                  <p className="mt-1 text-lg font-medium text-foreground">{profile?.name || 'Unnamed'}</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <FileText className="w-5 h-5 text-primary" />
                 Background
               </CardTitle>
-              <CardDescription>Context that shapes how memories are interpreted</CardDescription>
+              <CardDescription>Context used when forming opinions via Reflect</CardDescription>
             </CardHeader>
             <CardContent>
               {editMode ? (

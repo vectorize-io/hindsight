@@ -4,13 +4,10 @@ sidebar_position: 7
 
 # Entities
 
-Entities are the people, organizations, places, and concepts that Hindsight automatically tracks across your memory bank.
+Entities are the people, organizations, places, and concepts that Hindsight automatically extracts and tracks across your memory bank.
 
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
-
-:::tip Prerequisites
-Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
+:::info Automatic Feature
+You don't need to do anything to use entities—Hindsight extracts them automatically when you call `retain`. However, understanding how entities work is important because they power key features in [recall](./recall) and [reflect](./reflect).
 :::
 
 ## Why Entities Matter
@@ -21,243 +18,95 @@ Entities improve recall quality in two ways:
 
 2. **Observations** — Hindsight synthesizes high-level summaries about each entity from multiple facts. Including entity observations in recall provides richer context.
 
-:::tip Include Entities in Recall
-Use `include_entities=True` in your recall calls to get entity observations alongside fact results. See [Recall](./recall) for details.
-:::
+## What Gets Extracted?
 
-## What Are Entities?
+When you retain information, the LLM extracts named entities from each fact:
 
-When you retain information, Hindsight automatically identifies and tracks entities:
+- **People** — Names like "Alice", "Dr. Smith", "CEO John"
+- **Organizations** — Companies, teams, institutions
+- **Places** — Cities, countries, specific locations
+- **Products/Objects** — Software, tools, significant items
+- **Concepts** — Abstract themes like "career growth", "friendship"
 
-<Tabs>
-<TabItem value="python" label="Python">
+**Example:**
 
-```python
-from hindsight_client import Hindsight
-
-client = Hindsight(base_url="http://localhost:8888")
-
-client.retain(
-    bank_id="my-bank",
-    content="Alice works at Google in Mountain View. She specializes in TensorFlow."
-)
 ```
+Content: "Alice works at Google in Mountain View. She specializes in TensorFlow."
 
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-import { HindsightClient } from '@vectorize-io/hindsight-client';
-
-const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
-
-await client.retain('my-bank', 'Alice works at Google in Mountain View. She specializes in TensorFlow.');
+Entities extracted:
+- Alice (person)
+- Google (organization)
+- Mountain View (location)
+- TensorFlow (product)
 ```
-
-</TabItem>
-</Tabs>
-
-**Entities extracted:**
-- **Alice** (person)
-- **Google** (organization)
-- **Mountain View** (location)
-- **TensorFlow** (product)
 
 ## Entity Resolution
 
-Multiple mentions are unified into a single entity:
+When the same entity is mentioned multiple times (possibly with different names), Hindsight resolves them to a single canonical entity using a scoring algorithm:
 
-- "Alice" + "Alice Chen" + "Alice C." → one person
-- "Bob" + "Robert Chen" → one person (nickname)
-- Context-aware: "Apple (company)" vs "apple (fruit)"
+### Resolution Factors
 
-## List Entities
+1. **Name similarity (50%)** — How closely the text matches existing entity names. Handles variations like "Alice" vs "Alice Chen" or partial matches.
 
-Get all entities tracked in a memory bank:
+2. **Co-occurrence (30%)** — Entities that frequently appear together are more likely to be the same. If "Alice" always appears with "Google" and "TensorFlow", a new mention of "Alice" near those entities scores higher for matching.
 
-<Tabs>
-<TabItem value="python" label="Python">
+3. **Temporal proximity (20%)** — Recent mentions are weighted more heavily. If an entity was seen in the last 7 days, new similar mentions are more likely to match.
 
-```python
-# Using the low-level API
-from hindsight_client_api import ApiClient, Configuration
-from hindsight_client_api.api import DefaultApi
+### Resolution Threshold
 
-config = Configuration(host="http://localhost:8888")
-api_client = ApiClient(config)
-api = DefaultApi(api_client)
+A match requires a combined score above **0.6** (60%). Below this threshold, Hindsight creates a new entity rather than risk merging distinct entities.
 
-# List all entities
-response = api.list_entities(bank_id="my-bank")
-
-for entity in response.items:
-    print(f"{entity.canonical_name}: {entity.mention_count} mentions")
-
-# List with pagination
-response = api.list_entities(
-    bank_id="my-bank",
-    limit=50,
-    offset=0
-)
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-import { sdk, createClient, createConfig } from '@vectorize-io/hindsight-client';
-
-const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
-
-// List all entities
-const response = await sdk.listEntities({
-    client: apiClient,
-    path: { bank_id: 'my-bank' }
-});
-
-for (const entity of response.data.items) {
-    console.log(`${entity.canonical_name}: ${entity.mention_count} mentions`);
-}
-
-// List with pagination
-const paginated = await sdk.listEntities({
-    client: apiClient,
-    path: { bank_id: 'my-bank' },
-    query: { limit: 50, offset: 0 }
-});
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-# List all entities
-hindsight entities list my-bank
-
-# With limit
-hindsight entities list my-bank --limit 50
-```
-
-</TabItem>
-</Tabs>
-
-## Get Entity Details
-
-Retrieve detailed information about a specific entity:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-# Get entity details with observations
-entity = api.get_entity(
-    bank_id="my-bank",
-    entity_id="entity-uuid"
-)
-
-print(f"Entity: {entity.canonical_name}")
-print(f"First seen: {entity.first_seen}")
-print(f"Mentions: {entity.mention_count}")
-
-# Observations (synthesized summaries)
-for obs in entity.observations:
-    print(f"  - {obs.text}")
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-// Get entity details
-const entity = await sdk.getEntity({
-    client: apiClient,
-    path: { bank_id: 'my-bank', entity_id: 'entity-uuid' }
-});
-
-console.log(`Entity: ${entity.data.canonical_name}`);
-console.log(`First seen: ${entity.data.first_seen}`);
-console.log(`Mentions: ${entity.data.mention_count}`);
-
-// Observations
-for (const obs of entity.data.observations) {
-    console.log(`  - ${obs.text}`);
-}
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-# Get entity details
-hindsight entities get my-bank entity-uuid
-```
-
-</TabItem>
-</Tabs>
+This means:
+- Exact name matches with recent co-occurring entities → strong match
+- Partial name matches without context → likely creates new entity
+- Same name in completely different contexts → may create separate entities
 
 ## Entity Observations
 
-Observations are high-level summaries automatically synthesized from multiple facts:
+Observations are **derived state**—high-level summaries that Hindsight automatically synthesizes from the facts associated with an entity. They provide a condensed view of what the system knows about important entities.
 
-**Facts about Alice:**
+**Example:**
+
+Facts about Alice:
 - "Alice works at Google"
 - "Alice is a software engineer"
 - "Alice specializes in ML"
+- "Alice joined Google in 2020"
+- "Alice leads the search team"
 
-**Observation created:**
-- "Alice is a software engineer at Google specializing in ML"
+Observation created:
+- "Alice is a software engineer at Google who joined in 2020, specializes in ML, and leads the search team"
 
-Observations are generated in the background after retaining information.
+### How Observations Work
 
-## Regenerate Observations
+Observations are **not generated for every entity**. When you retain new documents:
 
-Force regeneration of entity observations:
+1. **Top entities selected** — Hindsight identifies the top 5 most-mentioned entities in the batch
+2. **Threshold check** — Only entities with at least 5 facts get observations
+3. **Regeneration** — Observations are regenerated using the entity's most recent 50 facts
+4. **Old observations replaced** — Previous observations are deleted and new ones created
 
-<Tabs>
-<TabItem value="python" label="Python">
+This means:
+- Frequently mentioned entities get observations; rarely mentioned ones don't
+- Observations stay up-to-date as new information is retained
+- The system prioritizes entities that matter most to your memory bank
 
-```python
-# Regenerate observations for an entity
-api.regenerate_entity_observations(
-    bank_id="my-bank",
-    entity_id="entity-uuid"
-)
-```
+### Observations vs Opinions
 
-</TabItem>
-<TabItem value="node" label="Node.js">
+Observations are **objective summaries**—they synthesize facts without any bias or perspective. This is different from [opinions](./opinions), which are influenced by the memory bank's disposition.
 
-```typescript
-// Regenerate observations
-await sdk.regenerateEntityObservations({
-    client: apiClient,
-    path: { bank_id: 'my-bank', entity_id: 'entity-uuid' }
-});
-```
+| | Observations | Opinions |
+|---|---|---|
+| **Purpose** | Summarize what's known about an entity | Express the bank's perspective on a topic |
+| **Disposition influence** | No | Yes |
+| **Scope** | Per-entity | Any topic |
+| **Generation** | Automatic (top entities) | On-demand via reflect |
 
-</TabItem>
-</Tabs>
+### Using Observations
 
-## Entity Response Format
-
-```json
-{
-  "id": "entity-uuid",
-  "canonical_name": "Alice Chen",
-  "first_seen": "2024-01-15T10:30:00Z",
-  "last_seen": "2024-03-20T14:22:00Z",
-  "mention_count": 47,
-  "observations": [
-    {
-      "text": "Alice is a software engineer at Google specializing in ML",
-      "mentioned_at": "2024-03-20T15:00:00Z"
-    }
-  ]
-}
-```
+Observations are included in recall results when you set `include_entities=True`. They provide quick context about key entities without retrieving all underlying facts.
 
 ## Next Steps
 
-- [**Memory Banks**](./memory-banks) — Configure bank personality
-- [**Documents**](./documents) — Track document sources
-- [**Operations**](./operations) — Monitor background tasks
+- [**Recall**](./recall) — Use entities in memory retrieval
+- [**Reflect**](./reflect) — Get entity-aware responses

@@ -126,18 +126,20 @@ class EntityResolver:
 
         # Resolve each entity using pre-fetched candidates
         entity_ids = [None] * len(entities_data)
-        entities_to_update = []  # (entity_id, unit_event_date)
-        entities_to_create = []  # (idx, entity_data)
+        entities_to_update = []  # (entity_id, event_date)
+        entities_to_create = []  # (idx, entity_data, event_date)
 
         for idx, entity_data in enumerate(entities_data):
             entity_text = entity_data['text']
             nearby_entities = entity_data.get('nearby_entities', [])
+            # Use per-entity date if available, otherwise fall back to batch-level date
+            entity_event_date = entity_data.get('event_date', unit_event_date)
 
             candidates = all_candidates.get(entity_text, [])
 
             if not candidates:
                 # Will create new entity
-                entities_to_create.append((idx, entity_data))
+                entities_to_create.append((idx, entity_data, entity_event_date))
                 continue
 
             # Score candidates
@@ -165,9 +167,9 @@ class EntityResolver:
                     score += co_entity_score * 0.3
 
                 # 3. Temporal proximity (0-0.2)
-                if last_seen:
+                if last_seen and entity_event_date:
                     # Normalize timezone awareness for comparison
-                    event_date_utc = unit_event_date if unit_event_date.tzinfo else unit_event_date.replace(tzinfo=timezone.utc)
+                    event_date_utc = entity_event_date if entity_event_date.tzinfo else entity_event_date.replace(tzinfo=timezone.utc)
                     last_seen_utc = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=timezone.utc)
                     days_diff = abs((event_date_utc - last_seen_utc).total_seconds() / 86400)
                     if days_diff < 7:
@@ -183,9 +185,9 @@ class EntityResolver:
 
             if best_score > threshold:
                 entity_ids[idx] = best_candidate
-                entities_to_update.append((best_candidate, unit_event_date))
+                entities_to_update.append((best_candidate, entity_event_date))
             else:
-                entities_to_create.append((idx, entity_data))
+                entities_to_create.append((idx, entity_data, entity_event_date))
 
         # Batch update existing entities
         if entities_to_update:
@@ -199,29 +201,54 @@ class EntityResolver:
                 entities_to_update
             )
 
-        # Create new entities using INSERT ... ON CONFLICT to handle race conditions
-        # This ensures that if two concurrent transactions try to create the same entity,
-        # only one succeeds and the other gets the existing ID
+        # Batch create new entities using COPY + INSERT for maximum speed
+        # This handles duplicates via ON CONFLICT and returns all IDs
         if entities_to_create:
-            for idx, entity_data in entities_to_create:
-                # Use INSERT ... ON CONFLICT to atomically get-or-create
-                # The unique index is on (bank_id, LOWER(canonical_name))
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                    VALUES ($1, $2, $3, $4, 1)
-                    ON CONFLICT (bank_id, LOWER(canonical_name))
-                    DO UPDATE SET
-                        mention_count = entities.mention_count + 1,
-                        last_seen = EXCLUDED.last_seen
-                    RETURNING id
-                    """,
-                    bank_id,
-                    entity_data['text'],
-                    unit_event_date,
-                    unit_event_date
-                )
-                entity_ids[idx] = row['id']
+            # Group entities by canonical name (lowercase) to handle duplicates within batch
+            # For duplicates, we only insert once and reuse the ID
+            unique_entities = {}  # lowercase_name -> (entity_data, event_date, [indices])
+            for idx, entity_data, event_date in entities_to_create:
+                name_lower = entity_data['text'].lower()
+                if name_lower not in unique_entities:
+                    unique_entities[name_lower] = (entity_data, event_date, [idx])
+                else:
+                    # Same entity appears multiple times - add index to list
+                    unique_entities[name_lower][2].append(idx)
+
+            # Batch insert unique entities and get their IDs
+            # Use a single query with unnest for speed
+            entity_names = []
+            entity_dates = []
+            indices_map = []  # Maps result index -> list of original indices
+
+            for name_lower, (entity_data, event_date, indices) in unique_entities.items():
+                entity_names.append(entity_data['text'])
+                entity_dates.append(event_date)
+                indices_map.append(indices)
+
+            # Batch INSERT ... ON CONFLICT with RETURNING
+            # This is much faster than individual inserts
+            rows = await conn.fetch(
+                """
+                INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count)
+                SELECT $1, name, event_date, event_date, 1
+                FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
+                ON CONFLICT (bank_id, LOWER(canonical_name))
+                DO UPDATE SET
+                    mention_count = entities.mention_count + 1,
+                    last_seen = EXCLUDED.last_seen
+                RETURNING id
+                """,
+                bank_id,
+                entity_names,
+                entity_dates
+            )
+
+            # Map returned IDs back to original indices
+            for result_idx, row in enumerate(rows):
+                entity_id = row['id']
+                for original_idx in indices_map[result_idx]:
+                    entity_ids[original_idx] = entity_id
 
         return entity_ids
 

@@ -21,7 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.include_options import IncludeOptions
-from hindsight_client_api.models.metadata_filter import MetadataFilter
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -35,9 +34,8 @@ class RecallRequest(BaseModel):
     max_tokens: Optional[StrictInt] = 4096
     trace: Optional[StrictBool] = False
     query_timestamp: Optional[StrictStr] = None
-    filters: Optional[List[MetadataFilter]] = None
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
-    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "filters", "include"]
+    __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,13 +76,6 @@ class RecallRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in filters (list)
-        _items = []
-        if self.filters:
-            for _item_filters in self.filters:
-                if _item_filters:
-                    _items.append(_item_filters.to_dict())
-            _dict['filters'] = _items
         # override the default output from pydantic by calling `to_dict()` of include
         if self.include:
             _dict['include'] = self.include.to_dict()
@@ -97,11 +88,6 @@ class RecallRequest(BaseModel):
         # and model_fields_set contains the field
         if self.query_timestamp is None and "query_timestamp" in self.model_fields_set:
             _dict['query_timestamp'] = None
-
-        # set to None if filters (nullable) is None
-        # and model_fields_set contains the field
-        if self.filters is None and "filters" in self.model_fields_set:
-            _dict['filters'] = None
 
         return _dict
 
@@ -121,7 +107,6 @@ class RecallRequest(BaseModel):
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "trace": obj.get("trace") if obj.get("trace") is not None else False,
             "query_timestamp": obj.get("query_timestamp"),
-            "filters": [MetadataFilter.from_dict(_item) for _item in obj["filters"]] if obj.get("filters") is not None else None,
             "include": IncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None
         })
         return _obj

@@ -3,8 +3,8 @@ Database migration management using Alembic.
 
 This module provides programmatic access to run database migrations
 on application startup. It is designed to be safe for concurrent
-execution - Alembic uses PostgreSQL transactions to prevent
-conflicts when multiple instances start simultaneously.
+execution using PostgreSQL advisory locks to coordinate between
+distributed workers.
 
 Important: All migrations must be backward-compatible to allow
 safe rolling deployments.
@@ -19,19 +19,51 @@ from typing import Optional
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import create_engine, text
 
 logger = logging.getLogger(__name__)
 
+# Advisory lock ID for migrations (arbitrary unique number)
+MIGRATION_LOCK_ID = 123456789
+
+
+def _run_migrations_internal(database_url: str, script_location: str) -> None:
+    """
+    Internal function to run migrations without locking.
+    """
+    logger.info(f"Running database migrations to head...")
+    logger.info(f"Database URL: {database_url}")
+    logger.info(f"Script location: {script_location}")
+
+    # Create Alembic configuration programmatically (no alembic.ini needed)
+    alembic_cfg = Config()
+
+    # Set the script location (where alembic versions are stored)
+    alembic_cfg.set_main_option("script_location", script_location)
+
+    # Set the database URL
+    alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+
+    # Configure logging (optional, but helps with debugging)
+    # Uses Python's logging system instead of alembic.ini
+    alembic_cfg.set_main_option("prepend_sys_path", ".")
+
+    # Set path_separator to avoid deprecation warning
+    alembic_cfg.set_main_option("path_separator", "os")
+
+    # Run migrations to head (latest version)
+    command.upgrade(alembic_cfg, "head")
+
+    logger.info("Database migrations completed successfully")
 
 
 def run_migrations(database_url: str, script_location: Optional[str] = None) -> None:
     """
     Run database migrations to the latest version using programmatic Alembic configuration.
 
-    This function is safe to call on every application startup:
-    - Alembic checks the current schema version in the database
-    - Only missing migrations are applied
-    - PostgreSQL transactions prevent concurrent migration conflicts
+    This function is safe to call from multiple distributed workers simultaneously:
+    - Uses PostgreSQL advisory lock to ensure only one worker runs migrations at a time
+    - Other workers wait for the lock, then verify migrations are complete
     - If schema is already up-to-date, this is a fast no-op
 
     Args:
@@ -56,11 +88,11 @@ def run_migrations(database_url: str, script_location: Optional[str] = None) -> 
     try:
         # Determine script location
         if script_location is None:
-            # Default: use the alembic directory in the hindsight_api package
-            # This file is in: hindsight-api/hindsight_api/migrations.py
-            # Default location is: hindsight-api/alembic
-            package_root = Path(__file__).parent.parent
-            script_location = str(package_root / "alembic")
+            # Default: use the alembic directory inside the hindsight_api package
+            # This file is in: hindsight_api/migrations.py
+            # Alembic is in: hindsight_api/alembic/
+            package_dir = Path(__file__).parent
+            script_location = str(package_dir / "alembic")
 
         script_path = Path(script_location)
         if not script_path.exists():
@@ -69,32 +101,22 @@ def run_migrations(database_url: str, script_location: Optional[str] = None) -> 
                 "Database migrations cannot be run."
             )
 
-        logger.info(f"Running database migrations to head...")
-        logger.info(f"Database URL: {database_url}")
-        logger.info(f"Script location: {script_location}")
+        # Use PostgreSQL advisory lock to coordinate between distributed workers
+        engine = create_engine(database_url)
+        with engine.connect() as conn:
+            # pg_advisory_lock blocks until the lock is acquired
+            # The lock is automatically released when the connection closes
+            logger.debug(f"Acquiring migration advisory lock (id={MIGRATION_LOCK_ID})...")
+            conn.execute(text(f"SELECT pg_advisory_lock({MIGRATION_LOCK_ID})"))
+            logger.debug("Migration advisory lock acquired")
 
-        # Create Alembic configuration programmatically (no alembic.ini needed)
-        alembic_cfg = Config()
-
-        # Set the script location (where alembic versions are stored)
-        alembic_cfg.set_main_option("script_location", script_location)
-
-        # Set the database URL
-        alembic_cfg.set_main_option("sqlalchemy.url", database_url)
-
-        # Configure logging (optional, but helps with debugging)
-        # Uses Python's logging system instead of alembic.ini
-        alembic_cfg.set_main_option("prepend_sys_path", ".")
-
-        # Set path_separator to avoid deprecation warning
-        alembic_cfg.set_main_option("path_separator", "os")
-
-        # Run migrations to head (latest version)
-        # Note: Alembic may call sys.exit() on errors instead of raising exceptions
-        # We rely on the outer try/except and logging to catch issues
-        command.upgrade(alembic_cfg, "head")
-
-        logger.info("Database migrations completed successfully")
+            try:
+                # Run migrations while holding the lock
+                _run_migrations_internal(database_url, script_location)
+            finally:
+                # Explicitly release the lock (also released on connection close)
+                conn.execute(text(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_ID})"))
+                logger.debug("Migration advisory lock released")
 
     except FileNotFoundError:
         logger.error(f"Alembic script location not found at {script_location}")
@@ -140,8 +162,8 @@ def check_migration_status(database_url: Optional[str] = None, script_location: 
 
         # Get head revision from migration scripts
         if script_location is None:
-            package_root = Path(__file__).parent.parent
-            script_location = str(package_root / "alembic")
+            package_dir = Path(__file__).parent
+            script_location = str(package_dir / "alembic")
 
         script_path = Path(script_location)
         if not script_path.exists():

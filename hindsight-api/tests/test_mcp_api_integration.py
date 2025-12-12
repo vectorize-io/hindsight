@@ -17,12 +17,11 @@ from hindsight_api.api import create_app
 @pytest_asyncio.fixture
 async def mcp_server(memory):
     """Start the FastAPI app with MCP enabled and return the SSE URL."""
+    # Memory is already initialized by the conftest fixture (with migrations)
     app = create_app(
         memory,
-        run_migrations=False,
         initialize_memory=False,
-        mcp_enabled=True,
-        default_agent_id="test_mcp_agent"
+        mcp_api_enabled=True
     )
 
     # Use httpx to create a test server

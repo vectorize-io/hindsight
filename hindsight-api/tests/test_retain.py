@@ -3,7 +3,7 @@ Test retain function and chunk storage.
 """
 import pytest
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from hindsight_api.engine.memory_engine import Budget
 
 logger = logging.getLogger(__name__)
@@ -1592,6 +1592,136 @@ async def test_all_link_types_together(memory):
 
             logger.info(f"Successfully created {len(link_types_found)} different link types")
             logger.info("All major link types (temporal, semantic, entity) are working correctly")
+
+    finally:
+        await memory.delete_bank(bank_id)
+
+
+@pytest.mark.asyncio
+async def test_semantic_links_within_same_batch(memory):
+    """
+    Test that semantic links are created between facts retained in the SAME batch.
+
+    This is a regression test - semantic links should connect similar facts
+    even when they are retained together in a single call.
+    """
+    bank_id = f"test_semantic_batch_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Retain multiple semantically similar facts in ONE batch
+        contents = [
+            {"content": "Alice is an expert in Python programming and machine learning.", "context": "team skills"},
+            {"content": "Bob specializes in Python development and data science.", "context": "team skills"},
+            {"content": "Charlie works with Python for backend API development.", "context": "team skills"},
+        ]
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents
+        )
+
+        # Flatten the list of lists
+        unit_ids = [uid for sublist in result for uid in sublist]
+
+        assert len(unit_ids) >= 3, f"Should have created at least 3 facts, got {len(unit_ids)}"
+        logger.info(f"Created {len(unit_ids)} facts in single batch")
+
+        # Query semantic links between these units
+        async with memory._pool.acquire() as conn:
+            semantic_links = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE from_unit_id::text = ANY($1)
+                  AND to_unit_id::text = ANY($1)
+                  AND link_type = 'semantic'
+                """,
+                unit_ids
+            )
+
+            logger.info(f"Found {len(semantic_links)} semantic links within the batch")
+
+            # All three facts mention Python - they should be linked to each other
+            assert len(semantic_links) > 0, (
+                "REGRESSION: Semantic links should be created between similar facts "
+                "retained in the same batch, but none were found"
+            )
+
+            # Log the links for debugging
+            for link in semantic_links:
+                logger.info(f"  Semantic link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
+
+    finally:
+        await memory.delete_bank(bank_id)
+
+
+@pytest.mark.asyncio
+async def test_temporal_links_within_same_batch(memory):
+    """
+    Test that temporal links are created between facts retained in the SAME batch.
+
+    This is a regression test - temporal links should connect facts with nearby
+    event dates even when they are retained together in a single call.
+    """
+    bank_id = f"test_temporal_batch_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Retain multiple facts with nearby timestamps in ONE batch
+        base_date = datetime(2024, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+        contents = [
+            {
+                "content": "Morning standup: Alice presented the sprint goals.",
+                "context": "daily meeting",
+                "event_date": base_date
+            },
+            {
+                "content": "Bob demoed the new feature after standup.",
+                "context": "daily meeting",
+                "event_date": base_date + timedelta(hours=1)  # 1 hour later
+            },
+            {
+                "content": "Charlie reviewed the pull requests in the afternoon.",
+                "context": "daily meeting",
+                "event_date": base_date + timedelta(hours=4)  # 4 hours later
+            },
+        ]
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents
+        )
+
+        # Flatten the list of lists
+        unit_ids = [uid for sublist in result for uid in sublist]
+
+        assert len(unit_ids) >= 3, f"Should have created at least 3 facts, got {len(unit_ids)}"
+        logger.info(f"Created {len(unit_ids)} facts in single batch")
+
+        # Query temporal links between these units
+        async with memory._pool.acquire() as conn:
+            temporal_links = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE from_unit_id::text = ANY($1)
+                  AND to_unit_id::text = ANY($1)
+                  AND link_type = 'temporal'
+                """,
+                unit_ids
+            )
+
+            logger.info(f"Found {len(temporal_links)} temporal links within the batch")
+
+            # All three facts are within 24 hours - they should be linked to each other
+            assert len(temporal_links) > 0, (
+                "REGRESSION: Temporal links should be created between facts with nearby dates "
+                "retained in the same batch, but none were found"
+            )
+
+            # Log the links for debugging
+            for link in temporal_links:
+                logger.info(f"  Temporal link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
 
     finally:
         await memory.delete_bank(bank_id)

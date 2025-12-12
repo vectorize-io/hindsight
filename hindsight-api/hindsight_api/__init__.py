@@ -16,11 +16,15 @@ from .engine.search.trace import (
     SearchPhaseMetrics,
 )
 from .engine.search.tracer import SearchTracer
-from .engine.embeddings import Embeddings, SentenceTransformersEmbeddings
+from .engine.embeddings import Embeddings, LocalSTEmbeddings, RemoteTEIEmbeddings
+from .engine.cross_encoder import CrossEncoderModel, LocalSTCrossEncoder, RemoteTEICrossEncoder
 from .engine.llm_wrapper import LLMConfig
+from .config import HindsightConfig, get_config
 
 __all__ = [
     "MemoryEngine",
+    "HindsightConfig",
+    "get_config",
     "SearchTrace",
     "SearchTracer",
     "QueryInfo",
@@ -32,7 +36,11 @@ __all__ = [
     "SearchSummary",
     "SearchPhaseMetrics",
     "Embeddings",
-    "SentenceTransformersEmbeddings",
+    "LocalSTEmbeddings",
+    "RemoteTEIEmbeddings",
+    "CrossEncoderModel",
+    "LocalSTCrossEncoder",
+    "RemoteTEICrossEncoder",
     "LLMConfig",
 ]
 __version__ = "0.1.0"

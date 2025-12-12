@@ -17,8 +17,8 @@ pub fn list(
 
     let response = client.list_operations(agent_id, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -62,8 +62,8 @@ pub fn cancel(
 
     let response = client.cancel_operation(agent_id, operation_id, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {

@@ -27,7 +27,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Check, ChevronsUpDown, Plus, FileText } from 'lucide-react';
+import { Check, ChevronsUpDown, Plus, FileText, Moon, Sun, Github } from 'lucide-react';
+import { useTheme } from '@/lib/theme-context';
+import Image from 'next/image';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
@@ -36,6 +38,7 @@ function BankSelectorInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentBank, setCurrentBank, banks, loadBanks } = useBank();
+  const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newBankId, setNewBankId] = React.useState('');
@@ -119,26 +122,34 @@ function BankSelectorInner() {
   };
 
   return (
-    <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary">
-      <div className="flex items-center gap-2.5 text-sm">
-        <span className="font-medium">Memory Bank:</span>
+    <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
+      <div className="flex items-center gap-4 text-sm">
+        {/* Logo */}
+        <Image src="/logo.png" alt="Hindsight" width={40} height={40} className="h-10 w-auto" unoptimized />
+
+        {/* Separator */}
+        <div className="h-8 w-px bg-border" />
+
+        {/* Memory Bank Selector */}
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
               role="combobox"
               aria-expanded={open}
-              className="w-[300px] justify-between font-bold border-2 border-primary hover:bg-accent"
+              className="w-[250px] justify-between font-bold border-2 border-primary hover:bg-accent"
             >
               {currentBank || "Select a memory bank..."}
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[300px] p-0">
+          <PopoverContent className="w-[250px] p-0">
             <Command>
-              <CommandInput placeholder="Search memory banks..." />
+              {sortedBanks.length > 0 && (
+                <CommandInput placeholder="Search memory banks..." />
+              )}
               <CommandList>
-                <CommandEmpty>No memory bank found.</CommandEmpty>
+                <CommandEmpty>No memory banks yet.</CommandEmpty>
                 <CommandGroup>
                   {sortedBanks.map((bank) => (
                     <CommandItem
@@ -165,33 +176,72 @@ function BankSelectorInner() {
                   ))}
                 </CommandGroup>
               </CommandList>
+              {/* Footer: Create new bank */}
+              <div className="border-t border-border p-1">
+                <button
+                  className="w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setOpen(false);
+                    setCreateDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Create new bank</span>
+                </button>
+              </div>
             </Command>
           </PopoverContent>
         </Popover>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 border-2 border-primary hover:bg-accent gap-1.5"
-          onClick={() => setCreateDialogOpen(true)}
-          title="Create new memory bank"
-        >
-          <Plus className="h-4 w-4" />
-          <span>New Bank</span>
-        </Button>
+        {/* Separator */}
+        <div className="h-8 w-px bg-border" />
 
+        {/* Add Document Button */}
         {currentBank && (
           <Button
             variant="outline"
             size="sm"
-            className="h-9 border-2 border-secondary hover:bg-secondary/20 gap-1.5"
+            className="h-9 gap-1.5"
             onClick={() => setDocDialogOpen(true)}
             title="Add document to current bank"
           >
-            <FileText className="h-4 w-4" />
-            <span>New Document</span>
+            <Plus className="h-4 w-4" />
+            <span>Add Document</span>
           </Button>
         )}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* GitHub Link */}
+        <a
+          href="https://github.com/vectorize-io/hindsight"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+          title="View on GitHub"
+        >
+          <Github className="h-5 w-5" />
+          <span className="text-sm font-medium">GitHub</span>
+        </a>
+
+        {/* Separator */}
+        <div className="h-8 w-px bg-border" />
+
+        {/* Dark Mode Toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleTheme}
+          className="h-9 w-9"
+          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        >
+          {theme === 'light' ? (
+            <Moon className="h-5 w-5" />
+          ) : (
+            <Sun className="h-5 w-5" />
+          )}
+        </Button>
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogContent className="sm:max-w-[425px]">
@@ -333,16 +383,31 @@ function BankSelectorInner() {
 export function BankSelector() {
   return (
     <Suspense fallback={
-      <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary">
-        <div className="flex items-center gap-2.5 text-sm">
-          <span className="font-medium">Memory Bank:</span>
+      <div className="bg-card text-card-foreground px-5 py-3 border-b-4 border-primary-gradient">
+        <div className="flex items-center gap-4 text-sm">
+          <Image src="/logo.png" alt="Hindsight" width={40} height={40} className="h-10 w-auto" unoptimized />
+          <div className="h-8 w-px bg-border" />
           <Button
             variant="outline"
-            className="w-[300px] justify-between font-bold border-2 border-primary"
+            className="w-[250px] justify-between font-bold border-2 border-primary"
             disabled
           >
             Loading...
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+          <div className="flex-1" />
+          <a
+            href="https://github.com/vectorize-io/hindsight"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
+          >
+            <Github className="h-5 w-5" />
+            <span className="text-sm font-medium">GitHub</span>
+          </a>
+          <div className="h-8 w-px bg-border" />
+          <Button variant="ghost" size="icon" className="h-9 w-9" disabled>
+            <Moon className="h-5 w-5" />
           </Button>
         </div>
       </div>

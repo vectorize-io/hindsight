@@ -6,6 +6,17 @@ sidebar_position: 4
 
 When you call `reflect()`, Hindsight doesn't just retrieve facts — it **reasons** about them through the lens of the bank's unique disposition, forming new opinions and generating contextual responses.
 
+```mermaid
+graph LR
+    A[Query] --> B[Recall Memories]
+    B --> C[Load Disposition]
+    C --> D[Reason]
+    D --> E[Form Opinions]
+    E --> F[Response]
+```
+
+---
+
 ## Why Reflect?
 
 Most AI systems can retrieve facts, but they can't **reason** about them in a consistent way. Every response is generated fresh without a stable perspective or evolving beliefs.
@@ -41,29 +52,15 @@ With reflect:
 
 ---
 
-## The Reflect Process
+## Disposition Traits
 
-1. **Recall** relevant memories based on the query
-2. **Load** the bank's disposition traits and background
-3. **Reason** about the memories through the disposition lens
-4. **Form** new opinions with confidence scores
-5. **Return** response, sources, and any new beliefs
+When you create a memory bank, you can configure its disposition using three traits. These traits influence how the bank interprets information and forms opinions during `reflect()`:
 
----
-
-## Disposition Framework (CARA)
-
-When you create a memory bank, you can configure its disposition using **Big Five traits**. These traits influence how the bank interprets information and forms opinions:
-
-You can also provide a natural language **background** that describes the bank's identity and perspective, which shapes how these traits are applied.
-
-| Trait | Low | High |
-|-------|-----|------|
-| **Openness** | Prefers proven methods | Embraces new ideas |
-| **Conscientiousness** | Flexible, spontaneous | Systematic, organized |
-| **Extraversion** | Independent | Collaborative |
-| **Agreeableness** | Direct, analytical | Diplomatic, harmonious |
-| **Neuroticism** | Calm, optimistic | Risk-aware, cautious |
+| Trait | Scale | Low (1) | High (5) |
+|-------|-------|---------|----------|
+| **Skepticism** | 1-5 | Trusting, accepts information at face value | Skeptical, questions and doubts claims |
+| **Literalism** | 1-5 | Flexible interpretation, reads between the lines | Literal interpretation, takes things at face value |
+| **Empathy** | 1-5 | Detached, focuses on facts | Empathetic, considers emotional context |
 
 ### Background: Natural Language Identity
 
@@ -75,25 +72,17 @@ client.create_bank(
     background="I am a senior software architect with 15 years of distributed "
                "systems experience. I prefer simplicity over cutting-edge technology.",
     disposition={
-        "openness": 0.3,  # Prefers proven methods
-        "conscientiousness": 0.9,  # Highly organized
-        # ... other traits
+        "skepticism": 4,   # Questions new technologies
+        "literalism": 4,   # Focuses on concrete specs
+        "empathy": 2       # Prioritizes technical facts
     }
 )
 ```
 
 The background provides context that shapes how disposition traits are applied:
-- "I prefer simplicity" + low openness → consistently favors established solutions
+- "I prefer simplicity" + high skepticism → questions complex solutions
 - "15 years experience" → responses reference this expertise
 - First-person perspective → creates consistent voice
-
-### Bias Strength
-
-The `bias_strength` parameter (0-1) controls how much disposition influences reasoning:
-
-- **0.0**: Purely evidence-based
-- **0.5**: Balanced disposition and evidence
-- **1.0**: Strongly disposition-driven
 
 ---
 
@@ -105,11 +94,11 @@ When `reflect()` encounters a question that warrants forming an opinion, disposi
 
 Two banks with different dispositions, given identical facts about remote work:
 
-**Bank A** (high openness, low conscientiousness):
-> "Remote work unlocks creative flexibility and spontaneous innovation. The freedom to work from anywhere enables breakthrough thinking."
+**Bank A** (low skepticism, high empathy):
+> "Remote work enables flexibility and work-life balance. The team seems happier and more productive when they can choose their environment."
 
-**Bank B** (low openness, high conscientiousness):
-> "Remote work lacks the structure and accountability needed for consistent performance. In-person collaboration is more reliable."
+**Bank B** (high skepticism, low empathy):
+> "Remote work claims need verification. What are the actual productivity metrics? The anecdotal benefits may not translate to measurable outcomes."
 
 **Same facts → Different conclusions** because disposition shapes interpretation.
 
@@ -144,11 +133,11 @@ Different use cases benefit from different disposition configurations:
 
 | Use Case | Recommended Traits | Why |
 |----------|-------------------|-----|
-| **Customer Support** | High agreeableness<br/>Low neuroticism | Diplomatic, calm under pressure |
-| **Code Review** | High conscientiousness<br/>Low agreeableness | Detail-oriented, direct feedback |
-| **Creative Writing** | High openness<br/>High extraversion | Embraces novelty, expressive |
-| **Risk Analysis** | High neuroticism<br/>High conscientiousness | Risk-aware, methodical |
-| **Research Assistant** | High openness<br/>High conscientiousness | Curious, thorough |
+| **Customer Support** | skepticism: 2, literalism: 2, empathy: 5 | Trusting, flexible, understanding |
+| **Code Review** | skepticism: 4, literalism: 5, empathy: 2 | Questions assumptions, precise, direct |
+| **Legal Analysis** | skepticism: 5, literalism: 5, empathy: 2 | Highly skeptical, exact interpretation |
+| **Therapist/Coach** | skepticism: 2, literalism: 2, empathy: 5 | Supportive, reads between lines |
+| **Research Assistant** | skepticism: 4, literalism: 3, empathy: 3 | Questions claims, balanced interpretation |
 
 ---
 

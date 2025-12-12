@@ -118,7 +118,7 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
         SET updated_at = NOW()
         """,
         bank_id,
-        '{"openness": 0.5, "conscientiousness": 0.5, "extraversion": 0.5, "agreeableness": 0.5, "neuroticism": 0.5, "bias_strength": 0.5}',
+        '{"skepticism": 3, "literalism": 3, "empathy": 3}',
         ""
     )
 

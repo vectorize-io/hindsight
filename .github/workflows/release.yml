@@ -219,6 +219,9 @@ jobs:
 
   release-helm-chart:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
     - uses: actions/checkout@v4
@@ -228,11 +231,17 @@ jobs:
       with:
         version: 'latest'
 
+    - name: Log in to GHCR
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
     - name: Lint Helm chart
       run: helm lint helm/hindsight
 
     - name: Package Helm chart
       run: helm package helm/hindsight --destination ./helm-packages
+
+    - name: Push to GHCR OCI
+      run: helm push helm-packages/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

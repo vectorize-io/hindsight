@@ -35,11 +35,11 @@ class TestUpdateDispositionRequest(unittest.TestCase):
         model = UpdateDispositionRequest()
         if include_optional:
             return UpdateDispositionRequest(
-                disposition = {agreeableness=0.7, bias_strength=0.7, conscientiousness=0.6, extraversion=0.5, neuroticism=0.3, openness=0.8}
+                disposition = {empathy=3, literalism=3, skepticism=3}
             )
         else:
             return UpdateDispositionRequest(
-                disposition = {agreeableness=0.7, bias_strength=0.7, conscientiousness=0.6, extraversion=0.5, neuroticism=0.3, openness=0.8},
+                disposition = {empathy=3, literalism=3, skepticism=3},
         )
         """
 

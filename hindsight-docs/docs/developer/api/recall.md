@@ -2,18 +2,22 @@
 sidebar_position: 2
 ---
 
-# Search Facts
+# Recall Memories
 
-Retrieve memories using multi-strategy search.
+Retrieve memories using multi-strategy recall.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+
+:::info How Recall Works
+Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](/developer/retrieval) guide.
+:::
 
 :::tip Prerequisites
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
 :::
 
-## Basic Search
+## Basic Recall
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -23,7 +27,9 @@ from hindsight_client import Hindsight
 
 client = Hindsight(base_url="http://localhost:8888")
 
-client.recall(bank_id="my-bank", query="What does Alice do?")
+response = client.recall(bank_id="my-bank", query="What does Alice do?")
+for r in response.results:
+    print(f"{r.text} (score: {r.weight:.2f})")
 ```
 
 </TabItem>
@@ -34,20 +40,23 @@ import { HindsightClient } from '@vectorize-io/hindsight-client';
 
 const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
 
-await client.recall('my-bank', 'What does Alice do?');
+const response = await client.recall('my-bank', 'What does Alice do?');
+for (const r of response.results) {
+    console.log(`${r.text} (score: ${r.weight})`);
+}
 ```
 
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-hindsight memory search my-bank "What does Alice do?"
+hindsight recall my-bank "What does Alice do?"
 ```
 
 </TabItem>
 </Tabs>
 
-## Search Parameters
+## Recall Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -55,43 +64,15 @@ hindsight memory search my-bank "What does Alice do?"
 | `types` | list | all | Filter: `world`, `experience`, `opinion` |
 | `budget` | string | "mid" | Budget level: "low", "mid", "high" |
 | `max_tokens` | int | 4096 | Token budget for results |
+| `trace` | bool | false | Enable trace output for debugging |
+| `include_entities` | bool | false | Include entity observations |
+| `max_entity_tokens` | int | 500 | Token budget for entity observations |
 
 <Tabs>
 <TabItem value="python" label="Python">
 
 ```python
-results = client.recall(
-    bank_id="my-bank",
-    query="What does Alice do?",
-    types=["world", "experience"],
-    budget="high",
-    max_tokens=8000
-)
-```
-
-</TabItem>
-<TabItem value="node" label="Node.js">
-
-```typescript
-const results = await client.recall('my-bank', 'What does Alice do?', {
-    budget: 'high',
-    maxTokens: 8000
-});
-```
-
-</TabItem>
-</Tabs>
-
-## Full-Featured Search
-
-For more control, use the full-featured recall method:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-# Full response with trace info
-response = client.recall_memories(
+response = client.recall(
     bank_id="my-bank",
     query="What does Alice do?",
     types=["world", "experience"],
@@ -103,22 +84,20 @@ response = client.recall_memories(
 )
 
 # Access results
-for r in response["results"]:
-    print(f"{r['text']} (score: {r['weight']:.2f})")
+for r in response.results:
+    print(f"{r.text} (score: {r.weight:.2f})")
 
 # Access entity observations (if include_entities=True)
-if "entities" in response:
-    for entity in response["entities"]:
-        print(f"Entity: {entity['name']}")
+if response.entities:
+    for entity in response.entities:
+        print(f"Entity: {entity.name}")
 ```
 
 </TabItem>
 <TabItem value="node" label="Node.js">
 
 ```typescript
-// Full response with trace info
-const response = await client.recallMemories('my-bank', {
-    query: 'What does Alice do?',
+const response = await client.recall('my-bank', 'What does Alice do?', {
     types: ['world', 'experience'],
     budget: 'high',
     maxTokens: 8000,
@@ -134,44 +113,9 @@ for (const r of response.results) {
 </TabItem>
 </Tabs>
 
-## Temporal Queries
-
-Hindsight automatically detects time expressions and activates temporal search:
-
-<Tabs>
-<TabItem value="python" label="Python">
-
-```python
-# These queries activate temporal-graph retrieval
-results = client.recall(bank_id="my-bank", query="What did Alice do last spring?")
-results = client.recall(bank_id="my-bank", query="What happened in June?")
-results = client.recall(bank_id="my-bank", query="Events from last year")
-```
-
-</TabItem>
-<TabItem value="cli" label="CLI">
-
-```bash
-hindsight memory search my-bank "What did Alice do last spring?"
-hindsight memory search my-bank "What happened between March and May?"
-```
-
-</TabItem>
-</Tabs>
-
-Supported temporal expressions:
-
-| Expression | Parsed As |
-|------------|-----------|
-| "last spring" | March 1 - May 31 (previous year) |
-| "in June" | June 1-30 (current/nearest year) |
-| "last year" | Jan 1 - Dec 31 (previous year) |
-| "last week" | 7 days ago - today |
-| "between March and May" | March 1 - May 31 |
-
 ## Filter by Fact Type
 
-Search specific memory networks:
+Recall specific memory types:
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -210,20 +154,23 @@ facts = client.recall(
 <TabItem value="cli" label="CLI">
 
 ```bash
-hindsight memory search my-bank "Python" --fact-type opinion
-hindsight memory search my-bank "Alice" --fact-type world,experience
+hindsight recall my-bank "Python" --fact-type opinion
+hindsight recall my-bank "Alice" --fact-type world,experience
 ```
 
 </TabItem>
 </Tabs>
 
-:::info How Recall Works
-Learn about the four search strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](/developer/retrieval) guide.
+:::warning About Opinions
+Opinions are beliefs formed during [reflect](/developer/api/reflect) operations. Unlike world facts and experience, opinions are subjective interpretations and may not represent objective truth. Depending on your use case:
+- **Exclude opinions** (`types=["world", "experience"]`) when you need factual, verifiable information
+- **Include opinions** when you want the agent's perspective or formed beliefs
+- **Use opinions alone** (`types=["opinion"]`) only when specifically asking about the agent's views
 :::
 
 ## Token Budget Management
 
-Hindsight is built for AI agents, not humans. Traditional search systems return "top-k" results, but agents don't think in terms of result counts—they think in tokens. An agent's context window is measured in tokens, and that's exactly how Hindsight measures results.
+Hindsight is built for AI agents, not humans. Traditional retrieval systems return "top-k" results, but agents don't think in terms of result counts—they think in tokens. An agent's context window is measured in tokens, and that's exactly how Hindsight measures results.
 
 The `max_tokens` parameter lets you control how much of your agent's context budget to spend on memories:
 
@@ -237,9 +184,9 @@ results = client.recall(bank_id="my-bank", query="Alice's email", max_tokens=500
 
 This design means you never have to guess whether 10 results or 50 results will fit your context. Just specify the token budget and Hindsight returns as many relevant memories as will fit.
 
-### Additional Context: Chunks and Entity Observations
+## Include Related Context
 
-For the most relevant memories, you can optionally retrieve additional context—each with its own token budget:
+Beyond the core memory results, you can optionally retrieve additional context—each with its own token budget:
 
 | Option | Parameter | Description |
 |--------|-----------|-------------|
@@ -247,19 +194,16 @@ For the most relevant memories, you can optionally retrieve additional context�
 | **Entity Observations** | `include_entities`, `max_entity_tokens` | Related observations about entities mentioned in results |
 
 ```python
-response = client.recall_memories(
+response = client.recall(
     bank_id="my-bank",
     query="What does Alice do?",
     max_tokens=4096,              # Budget for memories
-    include_chunks=True,
-    max_chunk_tokens=2000,        # Budget for raw chunks
     include_entities=True,
     max_entity_tokens=1000        # Budget for entity observations
 )
 
 # Access the additional context
-chunks = response.get("chunks", {})
-entities = response.get("entities", [])
+entities = response.entities or []
 ```
 
 This gives your agent richer context while maintaining precise control over total token consumption.
@@ -268,7 +212,7 @@ This gives your agent richer context while maintaining precise control over tota
 
 The `budget` parameter controls graph traversal depth:
 
-- **"low"**: Fast, shallow search — good for simple lookups
+- **"low"**: Fast, shallow retrieval — good for simple lookups
 - **"mid"**: Balanced — default for most queries
 - **"high"**: Deep exploration — finds indirect connections
 

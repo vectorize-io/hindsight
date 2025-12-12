@@ -13,12 +13,9 @@ from ..response_models import DispositionTraits
 logger = logging.getLogger(__name__)
 
 DEFAULT_DISPOSITION = {
-    "openness": 0.5,
-    "conscientiousness": 0.5,
-    "extraversion": 0.5,
-    "agreeableness": 0.5,
-    "neuroticism": 0.5,
-    "bias_strength": 0.5,
+    "skepticism": 3,
+    "literalism": 3,
+    "empathy": 3,
 }
 
 
@@ -32,7 +29,7 @@ class BankProfile(TypedDict):
 class BackgroundMergeResponse(BaseModel):
     """LLM response for background merge with disposition inference."""
     background: str = Field(description="Merged background in first person perspective")
-    disposition: DispositionTraits = Field(description="Inferred Big Five disposition traits")
+    disposition: DispositionTraits = Field(description="Inferred disposition traits (skepticism, literalism, empathy)")
 
 
 async def get_bank_profile(pool, bank_id: str) -> BankProfile:
@@ -92,7 +89,7 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
 async def update_bank_disposition(
     pool,
     bank_id: str,
-    disposition: Dict[str, float]
+    disposition: Dict[str, int]
 ) -> None:
     """
     Update bank disposition traits.
@@ -100,7 +97,7 @@ async def update_bank_disposition(
     Args:
         pool: Database connection pool
         bank_id: bank IDentifier
-        disposition: Dict with Big Five traits + bias_strength (all 0-1)
+        disposition: Dict with skepticism, literalism, empathy (all 1-5)
     """
     # Ensure bank exists first
     await get_bank_profile(pool, bank_id)
@@ -223,13 +220,10 @@ Instructions:
 3. Keep additions that don't conflict
 4. Output in FIRST PERSON ("I") perspective
 5. Be concise - keep merged background under 500 characters
-6. Infer Big Five disposition traits from the merged background:
-   - Openness: 0.0-1.0 (creativity, curiosity, openness to new ideas)
-   - Conscientiousness: 0.0-1.0 (organization, discipline, goal-directed)
-   - Extraversion: 0.0-1.0 (sociability, assertiveness, energy from others)
-   - Agreeableness: 0.0-1.0 (cooperation, empathy, consideration)
-   - Neuroticism: 0.0-1.0 (emotional sensitivity, anxiety, stress response)
-   - Bias Strength: 0.0-1.0 (how much disposition influences opinions)
+6. Infer disposition traits from the merged background (each 1-5 integer):
+   - Skepticism: 1-5 (1=trusting, takes things at face value; 5=skeptical, questions everything)
+   - Literalism: 1-5 (1=flexible interpretation, reads between lines; 5=literal, exact interpretation)
+   - Empathy: 1-5 (1=detached, focuses on facts; 5=empathetic, considers emotional context)
 
 CRITICAL: You MUST respond with ONLY a valid JSON object. No markdown, no code blocks, no explanations. Just the JSON.
 
@@ -237,22 +231,19 @@ Format:
 {{
   "background": "the merged background text in first person",
   "disposition": {{
-    "openness": 0.7,
-    "conscientiousness": 0.6,
-    "extraversion": 0.5,
-    "agreeableness": 0.8,
-    "neuroticism": 0.4,
-    "bias_strength": 0.6
+    "skepticism": 3,
+    "literalism": 3,
+    "empathy": 3
   }}
 }}
 
 Trait inference examples:
-- "creative artist" → openness: 0.8+, bias_strength: 0.6
-- "organized engineer" → conscientiousness: 0.8+, openness: 0.5-0.6
-- "startup founder" → openness: 0.8+, extraversion: 0.7+, neuroticism: 0.3-0.4
-- "risk-averse analyst" → openness: 0.3-0.4, conscientiousness: 0.8+, neuroticism: 0.6+
-- "rational and diligent" → conscientiousness: 0.7+, openness: 0.6+
-- "passionate and dramatic" → extraversion: 0.7+, neuroticism: 0.6+, openness: 0.7+"""
+- "I'm a lawyer" → skepticism: 4, literalism: 5, empathy: 2
+- "I'm a therapist" → skepticism: 2, literalism: 2, empathy: 5
+- "I'm an engineer" → skepticism: 3, literalism: 4, empathy: 3
+- "I've been burned before by trusting people" → skepticism: 5, literalism: 3, empathy: 3
+- "I try to understand what people really mean" → skepticism: 3, literalism: 2, empathy: 4
+- "I take contracts very seriously" → skepticism: 4, literalism: 5, empathy: 2"""
     else:
         prompt = f"""You are helping maintain a memory bank's background/profile.
 
@@ -282,7 +273,7 @@ Merged background:"""
                     response_format=BackgroundMergeResponse,
                     scope="bank_background",
                     temperature=0.3,
-                    max_tokens=8192
+                    max_completion_tokens=8192
                 )
                 logger.info(f"Successfully got structured response: background={parsed.background[:100]}")
 
@@ -300,7 +291,7 @@ Merged background:"""
             messages=messages,
             scope="bank_background",
             temperature=0.3,
-            max_tokens=8192
+            max_completion_tokens=8192
         )
 
         logger.info(f"LLM response for background merge (first 500 chars): {content[:500]}")
@@ -349,13 +340,12 @@ Merged background:"""
 
             # Validate disposition values
             disposition = result.get("disposition", {})
-            for key in ["openness", "conscientiousness", "extraversion",
-                       "agreeableness", "neuroticism", "bias_strength"]:
+            for key in ["skepticism", "literalism", "empathy"]:
                 if key not in disposition:
-                    disposition[key] = 0.5  # Default to neutral
+                    disposition[key] = 3  # Default to neutral
                 else:
-                    # Clamp to [0, 1]
-                    disposition[key] = max(0.0, min(1.0, float(disposition[key])))
+                    # Clamp to [1, 5] and convert to int
+                    disposition[key] = max(1, min(5, int(disposition[key])))
 
             result["disposition"] = disposition
 

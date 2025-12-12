@@ -15,7 +15,6 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -32,7 +31,7 @@ spec:
       - name: api
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+        image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default .Values.version }}"
         imagePullPolicy: {{ .Values.api.image.pullPolicy }}
         ports:
         - name: http
@@ -48,29 +47,16 @@ spec:
               name: {{ include "hindsight.fullname" . }}-secret
               key: postgres-password
         {{- end }}
-        - name: HINDSIGHT_API_LLM_PROVIDER
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "hindsight.fullname" . }}-config
-              key: llm-provider
-        - name: HINDSIGHT_API_LLM_MODEL
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "hindsight.fullname" . }}-config
-              key: llm-model
-        {{- if and .Values.api.secrets (hasKey .Values.api.secrets "HINDSIGHT_API_LLM_API_KEY") }}
-        - name: HINDSIGHT_API_LLM_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "hindsight.fullname" . }}-secret
-              key: llm-api-key
+        {{- range $key, $value := .Values.api.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
         {{- end }}
-        {{- if and .Values.api.secrets (hasKey .Values.api.secrets "HINDSIGHT_API_LLM_BASE_URL") }}
-        - name: HINDSIGHT_API_LLM_BASE_URL
+        {{- range $key, $value := .Values.api.secrets }}
+        - name: {{ $key }}
           valueFrom:
             secretKeyRef:
-              name: {{ include "hindsight.fullname" . }}-secret
-              key: llm-base-url
+              name: {{ include "hindsight.fullname" $ }}-secret
+              key: {{ $key }}
         {{- end }}
         livenessProbe:
           {{- toYaml .Values.api.livenessProbe | nindent 10 }}

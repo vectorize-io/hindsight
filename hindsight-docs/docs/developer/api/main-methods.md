@@ -206,9 +206,9 @@ hindsight recall my-bank "Tell me about Alice" -v
 
 ---
 
-## Reflect: Reason with Personality
+## Reflect: Reason with Disposition
 
-Generate personality-aware responses that form opinions based on evidence.
+Generate disposition-aware responses that form opinions based on evidence.
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -288,9 +288,9 @@ hindsight reflect my-bank "Analyze our tech stack" --budget high
 </TabItem>
 </Tabs>
 
-**What happens:** Memories are recalled, bank personality is loaded, LLM reasons through evidence, new opinions are formed and stored.
+**What happens:** Memories are recalled, bank disposition is loaded, LLM reasons through evidence, new opinions are formed and stored.
 
-**See:** [Reflect Details](./reflect) for personality configuration.
+**See:** [Reflect Details](./reflect) for disposition configuration.
 
 ---
 
@@ -303,7 +303,7 @@ hindsight reflect my-bank "Analyze our tech stack" --budget high
 | **Output** | Memory IDs | Ranked facts | Reasoned response + opinions |
 | **Uses LLM** | Yes (extraction) | No | Yes (generation) |
 | **Forms opinions** | No | No | Yes |
-| **Personality** | No | No | Yes |
+| **Disposition** | No | No | Yes |
 
 ---
 
@@ -311,5 +311,5 @@ hindsight reflect my-bank "Analyze our tech stack" --budget high
 
 - [**Retain**](./retain) — Advanced options for storing memories
 - [**Recall**](./recall) — Tuning search quality and performance
-- [**Reflect**](./reflect) — Configuring personality and opinions
-- [**Memory Banks**](./memory-banks) — Managing memory bank personality
+- [**Reflect**](./reflect) — Configuring disposition and opinions
+- [**Memory Banks**](./memory-banks) — Managing memory bank disposition

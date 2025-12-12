@@ -17,7 +17,7 @@ def utcnow():
     """Get current UTC time."""
     return datetime.now(timezone.utc)
 
-from .types import RetainContent, ExtractedFact, ProcessedFact
+from .types import RetainContent, ExtractedFact, ProcessedFact, EntityLink
 from . import (
     fact_extraction,
     embedding_processing,
@@ -25,7 +25,8 @@ from . import (
     chunk_storage,
     fact_storage,
     entity_processing,
-    link_creation
+    link_creation,
+    observation_regeneration
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,6 @@ async def retain_batch(
     task_backend,
     format_date_fn,
     duplicate_checker_fn,
-    regenerate_observations_fn,
     bank_id: str,
     contents_dicts: List[Dict[str, Any]],
     document_id: Optional[str] = None,
@@ -58,7 +58,6 @@ async def retain_batch(
         task_backend: Task backend for background jobs
         format_date_fn: Function to format datetime to readable string
         duplicate_checker_fn: Function to check for duplicate facts
-        regenerate_observations_fn: Async function to regenerate observations for entities
         bank_id: Bank identifier
         contents_dicts: List of content dictionaries
         document_id: Optional document ID
@@ -288,49 +287,58 @@ async def retain_batch(
 
             # Create temporal links
             step_start = time.time()
-            await link_creation.create_temporal_links_batch(conn, bank_id, unit_ids)
-            log_buffer.append(f"[7] Temporal links: {time.time() - step_start:.3f}s")
+            temporal_link_count = await link_creation.create_temporal_links_batch(conn, bank_id, unit_ids)
+            log_buffer.append(f"[7] Temporal links: {temporal_link_count} links in {time.time() - step_start:.3f}s")
 
             # Create semantic links
             step_start = time.time()
             embeddings_for_links = [fact.embedding for fact in non_duplicate_facts]
-            await link_creation.create_semantic_links_batch(conn, bank_id, unit_ids, embeddings_for_links)
-            log_buffer.append(f"[8] Semantic links: {time.time() - step_start:.3f}s")
+            semantic_link_count = await link_creation.create_semantic_links_batch(conn, bank_id, unit_ids, embeddings_for_links)
+            log_buffer.append(f"[8] Semantic links: {semantic_link_count} links in {time.time() - step_start:.3f}s")
 
             # Insert entity links
             step_start = time.time()
             if entity_links:
                 await entity_processing.insert_entity_links_batch(conn, entity_links)
-            log_buffer.append(f"[9] Entity links: {time.time() - step_start:.3f}s")
+            log_buffer.append(f"[9] Entity links: {len(entity_links) if entity_links else 0} links in {time.time() - step_start:.3f}s")
 
             # Create causal links
             step_start = time.time()
             causal_link_count = await link_creation.create_causal_links_batch(conn, unit_ids, non_duplicate_facts)
             log_buffer.append(f"[10] Causal links: {causal_link_count} links in {time.time() - step_start:.3f}s")
 
+            # Regenerate observations INSIDE transaction for atomicity
+            await observation_regeneration.regenerate_observations_batch(
+                conn,
+                embeddings_model,
+                llm_config,
+                bank_id,
+                entity_links,
+                log_buffer
+            )
+
             # Map results back to original content items
             result_unit_ids = _map_results_to_contents(
                 contents, extracted_facts, is_duplicate_flags, unit_ids
             )
 
-            total_time = time.time() - start_time
-            log_buffer.append(f"{'='*60}")
-            log_buffer.append(f"RETAIN_BATCH COMPLETE: {len(unit_ids)} units in {total_time:.3f}s")
-            if document_ids_added:
-                log_buffer.append(f"Documents: {', '.join(document_ids_added)}")
-            log_buffer.append(f"{'='*60}")
-
-            logger.info("\n" + "\n".join(log_buffer) + "\n")
-
-        # Trigger background tasks AFTER transaction commits
+        # Trigger background tasks AFTER transaction commits (opinion reinforcement only)
         await _trigger_background_tasks(
             task_backend,
-            regenerate_observations_fn,
             bank_id,
             unit_ids,
-            non_duplicate_facts,
-            entity_links
+            non_duplicate_facts
         )
+
+        # Log final summary
+        total_time = time.time() - start_time
+        log_buffer.append(f"{'='*60}")
+        log_buffer.append(f"RETAIN_BATCH COMPLETE: {len(unit_ids)} units in {total_time:.3f}s")
+        if document_ids_added:
+            log_buffer.append(f"Documents: {', '.join(document_ids_added)}")
+        log_buffer.append(f"{'='*60}")
+
+        logger.info("\n" + "\n".join(log_buffer) + "\n")
 
         return result_unit_ids
 
@@ -367,13 +375,11 @@ def _map_results_to_contents(
 
 async def _trigger_background_tasks(
     task_backend,
-    regenerate_observations_fn,
     bank_id: str,
     unit_ids: List[str],
     facts: List[ProcessedFact],
-    entity_links: List
 ) -> None:
-    """Trigger opinion reinforcement and observation regeneration (sync)."""
+    """Trigger opinion reinforcement as background task (after transaction commits)."""
     # Trigger opinion reinforcement if there are entities
     fact_entities = [[e.name for e in fact.entities] for fact in facts]
     if any(fact_entities):
@@ -384,22 +390,3 @@ async def _trigger_background_tasks(
             'unit_texts': [fact.fact_text for fact in facts],
             'unit_entities': fact_entities
         })
-
-    # Regenerate observations synchronously for top entities
-    TOP_N_ENTITIES = 5
-    MIN_FACTS_THRESHOLD = 5
-
-    if entity_links and regenerate_observations_fn:
-        unique_entity_ids = set()
-        for link in entity_links:
-            # links are tuples: (unit_id, entity_id, confidence)
-            if len(link) >= 2 and link[1]:
-                unique_entity_ids.add(str(link[1]))
-
-        if unique_entity_ids:
-            # Run observation regeneration synchronously
-            await regenerate_observations_fn(
-                bank_id=bank_id,
-                entity_ids=list(unique_entity_ids)[:TOP_N_ENTITIES],
-                min_facts=MIN_FACTS_THRESHOLD
-            )

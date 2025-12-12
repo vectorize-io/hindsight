@@ -58,14 +58,13 @@ pub fn recall(
         max_tokens,
         trace,
         query_timestamp: None,
-        filters: None,
         include,
     };
 
     let response = client.recall(agent_id, &request, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -100,14 +99,13 @@ pub fn reflect(
         query,
         budget: Some(parse_budget(&budget)),
         context,
-        filters: None,
         include: None,
     };
 
     let response = client.reflect(agent_id, &request, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -156,8 +154,8 @@ pub fn retain(
 
     let response = client.retain(agent_id, &request, r#async, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -276,8 +274,8 @@ pub fn retain_files(
 
     let response = client.retain(agent_id, &request, r#async, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -314,8 +312,8 @@ pub fn delete(
 
     let response = client.delete_memory(agent_id, unit_id, verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {
@@ -347,12 +345,12 @@ pub fn clear(
     if !yes && output_format == OutputFormat::Pretty {
         let message = if let Some(ft) = &fact_type {
             format!(
-                "Are you sure you want to clear all '{}' memories for agent '{}'? This cannot be undone.",
+                "Are you sure you want to clear all '{}' memories for bank '{}'? This cannot be undone.",
                 ft, agent_id
             )
         } else {
             format!(
-                "Are you sure you want to clear ALL memories for agent '{}'? This cannot be undone.",
+                "Are you sure you want to clear ALL memories for bank '{}'? This cannot be undone.",
                 agent_id
             )
         };
@@ -379,8 +377,8 @@ pub fn clear(
 
     let response = client.clear_memories(agent_id, fact_type.as_deref(), verbose);
 
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
+    if let Some(mut sp) = spinner {
+        sp.finish();
     }
 
     match response {

@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",
-    "start": "docusaurus start",
-    "build": "docusaurus build",
+    "generate-llms": "node scripts/generate-llms-full.js",
+    "start": "npm run generate-llms && docusaurus start",
+    "build": "npm run generate-llms && docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
@@ -20,13 +21,11 @@
     "@docusaurus/theme-common": "^3.9.2",
     "@docusaurus/theme-mermaid": "^3.9.2",
     "@mdx-js/react": "^3.0.0",
-    "@phosphor-icons/react": "^2.1.10",
     "clsx": "^2.0.0",
-    "docusaurus-plugin-openapi-docs": "^4.5.1",
-    "docusaurus-theme-openapi-docs": "^4.5.1",
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "redocusaurus": "^2.5.0"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.9.2",
@@ -48,5 +47,10 @@
   },
   "engines": {
     "node": ">=20.0"
+  },
+  "overrides": {
+    "openapi-to-postmanv2": {
+      "js-yaml": "4.1.1"
+    }
   }
 }
