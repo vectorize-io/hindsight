@@ -67,7 +67,7 @@ export function MemoryDetailPanel({
               <p className="text-sm text-muted-foreground mt-1">Full memory content and metadata</p>
             </div>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={onClose}
               className="h-8 w-8 p-0"
@@ -80,14 +80,14 @@ export function MemoryDetailPanel({
             {/* Full Text */}
             <div>
               <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Full Text</div>
-              <div className="text-sm whitespace-pre-wrap leading-relaxed">{memory.text}</div>
+              <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">{memory.text}</div>
             </div>
 
             {/* Context */}
             {memory.context && (
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Context</div>
-                <div className="text-sm">{memory.context}</div>
+                <div className="text-sm text-foreground">{memory.context}</div>
               </div>
             )}
 
@@ -95,7 +95,7 @@ export function MemoryDetailPanel({
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Occurred</div>
-                <div className="text-sm font-medium">
+                <div className="text-sm font-medium text-foreground">
                   {memory.occurred_start
                     ? new Date(memory.occurred_start).toLocaleString()
                     : 'N/A'}
@@ -103,7 +103,7 @@ export function MemoryDetailPanel({
               </div>
               <div className="p-4 bg-muted/50 rounded-lg">
                 <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Mentioned</div>
-                <div className="text-sm font-medium">
+                <div className="text-sm font-medium text-foreground">
                   {memory.mentioned_at
                     ? new Date(memory.mentioned_at).toLocaleString()
                     : 'N/A'}
@@ -159,7 +159,7 @@ export function MemoryDetailPanel({
                 {memory.document_id && (
                   <Button
                     onClick={() => openDocumentModal(memory.document_id)}
-                    variant="outline"
+                    variant="secondary"
                     className="flex-1"
                   >
                     View Document
@@ -168,7 +168,7 @@ export function MemoryDetailPanel({
                 {memory.chunk_id && (
                   <Button
                     onClick={() => openChunkModal(memory.chunk_id)}
-                    variant="outline"
+                    variant="secondary"
                     className="flex-1"
                   >
                     View Chunk
@@ -300,7 +300,7 @@ export function MemoryDetailPanel({
                 <Button
                   onClick={() => openDocumentModal(memory.document_id)}
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   className={`flex-1 ${compact ? 'h-7 text-xs' : ''}`}
                 >
                   View Document
@@ -310,7 +310,7 @@ export function MemoryDetailPanel({
                 <Button
                   onClick={() => openChunkModal(memory.chunk_id)}
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   className={`flex-1 ${compact ? 'h-7 text-xs' : ''}`}
                 >
                   View Chunk

@@ -122,17 +122,17 @@ export function DocumentsView() {
                         className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? 'bg-primary/10' : ''}`}
                         onClick={() => viewDocumentText(doc.id)}
                       >
-                        <TableCell title={doc.id}>
+                        <TableCell title={doc.id} className="text-card-foreground">
                           {doc.id.length > 30 ? doc.id.substring(0, 30) + '...' : doc.id}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="text-card-foreground">
                           {doc.created_at ? new Date(doc.created_at).toLocaleString() : 'N/A'}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="text-card-foreground">
                           {doc.retain_params?.context || '-'}
                         </TableCell>
-                        <TableCell>{doc.text_length?.toLocaleString()} chars</TableCell>
-                        <TableCell>{doc.memory_unit_count}</TableCell>
+                        <TableCell className="text-card-foreground">{doc.text_length?.toLocaleString()} chars</TableCell>
+                        <TableCell className="text-card-foreground">{doc.memory_unit_count}</TableCell>
                         <TableCell>
                           <Button
                             onClick={(e) => {
@@ -140,7 +140,7 @@ export function DocumentsView() {
                               viewDocumentText(doc.id);
                             }}
                             size="sm"
-                            variant={selectedDocument?.id === doc.id ? 'default' : 'outline'}
+                            variant={selectedDocument?.id === doc.id ? 'default' : 'secondary'}
                             title="View original text"
                           >
                             View Text
@@ -171,7 +171,7 @@ export function DocumentsView() {
                     <p className="text-sm text-muted-foreground mt-1">Original document text and metadata</p>
                   </div>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => setSelectedDocument(null)}
                     className="h-9 px-3 gap-2"
@@ -193,7 +193,7 @@ export function DocumentsView() {
                     {/* Document ID */}
                     <div className="p-4 bg-muted/50 rounded-lg">
                       <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Document ID</div>
-                      <code className="text-sm font-mono break-all text-foreground">{selectedDocument.id}</code>
+                      <div className="text-sm font-mono break-all text-card-foreground">{selectedDocument.id}</div>
                     </div>
 
                     {/* Created & Memory Units */}
@@ -201,11 +201,11 @@ export function DocumentsView() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-4 bg-muted/50 rounded-lg">
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Created</div>
-                          <div className="text-sm font-medium text-foreground">{new Date(selectedDocument.created_at).toLocaleString()}</div>
+                          <div className="text-sm font-medium text-card-foreground">{new Date(selectedDocument.created_at).toLocaleString()}</div>
                         </div>
                         <div className="p-4 bg-muted/50 rounded-lg">
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Memory Units</div>
-                          <div className="text-sm font-medium text-foreground">{selectedDocument.memory_unit_count}</div>
+                          <div className="text-sm font-medium text-card-foreground">{selectedDocument.memory_unit_count}</div>
                         </div>
                       </div>
                     )}
@@ -214,7 +214,7 @@ export function DocumentsView() {
                     {selectedDocument.original_text && (
                       <div className="p-4 bg-muted/50 rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Text Length</div>
-                        <div className="text-sm font-medium text-foreground">{selectedDocument.original_text.length.toLocaleString()} characters</div>
+                        <div className="text-sm font-medium text-card-foreground">{selectedDocument.original_text.length.toLocaleString()} characters</div>
                       </div>
                     )}
 
@@ -222,7 +222,7 @@ export function DocumentsView() {
                     {selectedDocument.retain_params && (
                       <div className="p-4 bg-muted/50 rounded-lg">
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Retain Parameters</div>
-                        <div className="text-sm space-y-2">
+                        <div className="text-sm space-y-2 text-card-foreground">
                           {selectedDocument.retain_params.context && (
                             <div><span className="font-semibold">Context:</span> {selectedDocument.retain_params.context}</div>
                           )}
@@ -232,7 +232,7 @@ export function DocumentsView() {
                           {selectedDocument.retain_params.metadata && (
                             <div className="mt-2">
                               <span className="font-semibold">Metadata:</span>
-                              <pre className="mt-1 text-xs bg-background p-2 rounded">{JSON.stringify(selectedDocument.retain_params.metadata, null, 2)}</pre>
+                              <pre className="mt-1 text-xs bg-background p-2 rounded text-card-foreground">{JSON.stringify(selectedDocument.retain_params.metadata, null, 2)}</pre>
                             </div>
                           )}
                         </div>
@@ -244,7 +244,7 @@ export function DocumentsView() {
                       <div>
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Original Text</div>
                         <div className="p-4 bg-muted/50 rounded-lg border border-border max-h-[400px] overflow-y-auto">
-                          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">{selectedDocument.original_text}</pre>
+                          <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-card-foreground">{selectedDocument.original_text}</pre>
                         </div>
                       </div>
                     )}

@@ -94,7 +94,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                       <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                         Document ID
                       </div>
-                      <div className="text-sm font-mono break-all">{data.id}</div>
+                      <div className="text-sm font-mono break-all text-foreground">{data.id}</div>
                     </div>
                     {data.created_at && (
                       <div className="grid grid-cols-2 gap-3">
@@ -102,7 +102,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                             Created
                           </div>
-                          <div className="text-sm">
+                          <div className="text-sm text-foreground">
                             {new Date(data.created_at).toLocaleString()}
                           </div>
                         </div>
@@ -110,7 +110,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                           <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                             Memory Units
                           </div>
-                          <div className="text-sm">{data.memory_unit_count}</div>
+                          <div className="text-sm text-foreground">{data.memory_unit_count}</div>
                         </div>
                       </div>
                     )}
@@ -119,7 +119,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                           Text Length
                         </div>
-                        <div className="text-sm">
+                        <div className="text-sm text-foreground">
                           {data.original_text.length.toLocaleString()} characters
                         </div>
                       </div>
@@ -132,7 +132,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         Original Text
                       </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                        <pre className="text-sm whitespace-pre-wrap font-mono">
+                        <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
                           {data.original_text}
                         </pre>
                       </div>
@@ -146,7 +146,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                       <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                         Chunk ID
                       </div>
-                      <div className="text-sm font-mono break-all">
+                      <div className="text-sm font-mono break-all text-foreground">
                         {data.chunk_id}
                       </div>
                     </div>
@@ -155,7 +155,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                           Document ID
                         </div>
-                        <div className="text-sm font-mono break-all">
+                        <div className="text-sm font-mono break-all text-foreground">
                           {data.document_id}
                         </div>
                       </div>
@@ -163,7 +163,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                           Chunk Index
                         </div>
-                        <div className="text-sm">{data.chunk_index}</div>
+                        <div className="text-sm text-foreground">{data.chunk_index}</div>
                       </div>
                     </div>
                     {data.created_at && (
@@ -171,7 +171,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                           Created
                         </div>
-                        <div className="text-sm">
+                        <div className="text-sm text-foreground">
                           {new Date(data.created_at).toLocaleString()}
                         </div>
                       </div>
@@ -181,7 +181,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
                           Text Length
                         </div>
-                        <div className="text-sm">
+                        <div className="text-sm text-foreground">
                           {data.chunk_text.length.toLocaleString()} characters
                         </div>
                       </div>
@@ -194,7 +194,7 @@ export function DocumentChunkModal({ type, id, onClose }: DocumentChunkModalProp
                         Chunk Text
                       </div>
                       <div className="p-4 bg-muted rounded-lg border border-border max-h-[300px] overflow-y-auto">
-                        <pre className="text-sm whitespace-pre-wrap font-mono">
+                        <pre className="text-sm whitespace-pre-wrap font-mono text-foreground">
                           {data.chunk_text}
                         </pre>
                       </div>

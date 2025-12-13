@@ -441,3 +441,32 @@ jobs:
       run: |
         echo "=== API Server Logs ==="
         cat /tmp/api-server.log || echo "No API server log found"
+
+  test-litellm-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build litellm integration
+      working-directory: ./hindsight-integrations/litellm
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/litellm
+      run: uv sync --extra dev
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/litellm
+      run: uv run pytest tests -v

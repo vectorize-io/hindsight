@@ -175,9 +175,13 @@ class LLMProvider:
             is_reasoning_model = any(x in model_lower for x in ["gpt-5", "o1", "o3"])
 
             # For GPT-4 and GPT-4.1 models, cap max_completion_tokens to 32000
+            # For GPT-4o models, cap to 16384
             is_gpt4_model = any(x in model_lower for x in ["gpt-4.1", "gpt-4-"])
+            is_gpt4o_model = "gpt-4o" in model_lower
             if max_completion_tokens is not None:
-                if is_gpt4_model and max_completion_tokens > 32000:
+                if is_gpt4o_model and max_completion_tokens > 16384:
+                    max_completion_tokens = 16384
+                elif is_gpt4_model and max_completion_tokens > 32000:
                     max_completion_tokens = 32000
                 # For reasoning models, max_completion_tokens includes reasoning + output tokens
                 # Enforce minimum of 16000 to ensure enough space for both

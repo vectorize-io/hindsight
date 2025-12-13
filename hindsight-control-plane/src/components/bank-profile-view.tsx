@@ -239,7 +239,7 @@ export function BankProfileView() {
         <div className="flex gap-2">
           {editMode ? (
             <>
-              <Button onClick={handleCancel} variant="outline" disabled={saving}>
+              <Button onClick={handleCancel} variant="secondary" disabled={saving}>
                 Cancel
               </Button>
               <Button onClick={handleSave} disabled={saving}>
@@ -258,7 +258,7 @@ export function BankProfileView() {
             </>
           ) : (
             <>
-              <Button onClick={loadData} variant="outline" size="sm">
+              <Button onClick={loadData} variant="secondary" size="sm">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>

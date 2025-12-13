@@ -126,10 +126,10 @@ export function EntitiesView() {
                       selectedEntity?.id === entity.id ? 'bg-primary/10' : ''
                     }`}
                   >
-                    <TableCell className="font-medium">{entity.canonical_name}</TableCell>
-                    <TableCell>{entity.mention_count}</TableCell>
-                    <TableCell>{formatDate(entity.first_seen)}</TableCell>
-                    <TableCell>{formatDate(entity.last_seen)}</TableCell>
+                    <TableCell className="font-medium text-card-foreground">{entity.canonical_name}</TableCell>
+                    <TableCell className="text-card-foreground">{entity.mention_count}</TableCell>
+                    <TableCell className="text-card-foreground">{formatDate(entity.first_seen)}</TableCell>
+                    <TableCell className="text-card-foreground">{formatDate(entity.last_seen)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -154,7 +154,7 @@ export function EntitiesView() {
             {/* Header */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">
               <div>
-                <h3 className="text-xl font-bold text-foreground">{selectedEntity.canonical_name}</h3>
+                <h3 className="text-xl font-bold text-card-foreground">{selectedEntity.canonical_name}</h3>
                 <p className="text-sm text-muted-foreground mt-1">Entity details</p>
               </div>
               <Button
@@ -172,11 +172,11 @@ export function EntitiesView() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Mentions</div>
-                  <div className="text-lg font-semibold text-foreground">{selectedEntity.mention_count}</div>
+                  <div className="text-lg font-semibold text-card-foreground">{selectedEntity.mention_count}</div>
                 </div>
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-2">First Seen</div>
-                  <div className="text-sm font-medium text-foreground">{formatDate(selectedEntity.first_seen)}</div>
+                  <div className="text-sm font-medium text-card-foreground">{formatDate(selectedEntity.first_seen)}</div>
                 </div>
               </div>
 
@@ -206,7 +206,7 @@ export function EntitiesView() {
                   <ul className="space-y-2">
                     {selectedEntity.observations.map((obs, idx) => (
                       <li key={idx} className="p-3 bg-muted/50 rounded-lg">
-                        <div className="text-sm text-foreground">{obs.text}</div>
+                        <div className="text-sm text-card-foreground">{obs.text}</div>
                         {obs.mentioned_at && (
                           <div className="text-xs text-muted-foreground mt-2">
                             {formatDate(obs.mentioned_at)}

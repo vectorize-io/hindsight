@@ -480,7 +480,7 @@ export function DataView({ factType }: DataViewProps) {
                                       }`}
                                     >
                                       <TableCell className="py-2">
-                                        <div className="line-clamp-2 text-sm leading-snug">{row.text}</div>
+                                        <div className="line-clamp-2 text-sm leading-snug text-foreground">{row.text}</div>
                                         {row.context && (
                                           <div className="text-xs text-muted-foreground mt-0.5 truncate">{row.context}</div>
                                         )}
@@ -506,10 +506,10 @@ export function DataView({ factType }: DataViewProps) {
                                           <span className="text-xs text-muted-foreground">-</span>
                                         )}
                                       </TableCell>
-                                      <TableCell className="text-xs py-2">
+                                      <TableCell className="text-xs py-2 text-foreground">
                                         {occurredDisplay || <span className="text-muted-foreground">-</span>}
                                       </TableCell>
-                                      <TableCell className="text-xs py-2">
+                                      <TableCell className="text-xs py-2 text-foreground">
                                         {mentionedDisplay || <span className="text-muted-foreground">-</span>}
                                       </TableCell>
                                       <TableCell className="py-2">
@@ -519,7 +519,7 @@ export function DataView({ factType }: DataViewProps) {
                                             copyToClipboard(row.id);
                                           }}
                                           size="sm"
-                                          variant="ghost"
+                                          variant="secondary"
                                           className="h-6 w-6 p-0"
                                           title="Copy ID"
                                         >
@@ -799,7 +799,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
             {/* Zoom controls */}
             <div className="flex items-center border border-border rounded mr-2">
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={zoomOut}
                 disabled={granularity === 'year'}
@@ -808,11 +808,11 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
               >
                 <ZoomOut className="h-3 w-3" />
               </Button>
-              <span className="text-[10px] px-2 min-w-[50px] text-center border-x border-border">
+              <span className="text-[10px] px-2 min-w-[50px] text-center border-x border-border text-foreground">
                 {granularityLabels[granularity]}
               </span>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={zoomIn}
                 disabled={granularity === 'day'}
@@ -826,7 +826,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
             {/* Navigation controls */}
             <div className="flex items-center border border-border rounded">
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={() => scrollToGroup(0)}
                 disabled={timelineGroups.length <= 1}
@@ -836,7 +836,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
                 <ChevronsLeft className="h-3 w-3" />
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={() => scrollToGroup(currentIndex - 1)}
                 disabled={currentIndex === 0}
@@ -845,11 +845,11 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
               >
                 <ChevronLeft className="h-3 w-3" />
               </Button>
-              <span className="text-[10px] px-2 min-w-[60px] text-center border-x border-border">
+              <span className="text-[10px] px-2 min-w-[60px] text-center border-x border-border text-foreground">
                 {currentIndex + 1} / {timelineGroups.length}
               </span>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={() => scrollToGroup(currentIndex + 1)}
                 disabled={currentIndex >= timelineGroups.length - 1}
@@ -859,7 +859,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
                 <ChevronRight className="h-3 w-3" />
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={() => scrollToGroup(timelineGroups.length - 1)}
                 disabled={timelineGroups.length <= 1}

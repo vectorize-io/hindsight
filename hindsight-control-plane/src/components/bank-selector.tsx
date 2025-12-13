@@ -266,7 +266,7 @@ function BankSelectorInner() {
             </div>
             <DialogFooter>
               <Button
-                variant="outline"
+                variant="secondary"
                 onClick={() => {
                   setCreateDialogOpen(false);
                   setNewBankId('');
@@ -295,7 +295,7 @@ function BankSelectorInner() {
             </DialogHeader>
             <div className="py-4 space-y-4">
               <div>
-                <label className="font-bold block mb-1 text-sm">Content *</label>
+                <label className="font-bold block mb-1 text-sm text-foreground">Content *</label>
                 <Textarea
                   value={docContent}
                   onChange={(e) => setDocContent(e.target.value)}
@@ -306,7 +306,7 @@ function BankSelectorInner() {
               </div>
 
               <div>
-                <label className="font-bold block mb-1 text-sm">Context</label>
+                <label className="font-bold block mb-1 text-sm text-foreground">Context</label>
                 <Input
                   type="text"
                   value={docContext}
@@ -317,16 +317,17 @@ function BankSelectorInner() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="font-bold block mb-1 text-sm">Event Date</label>
+                  <label className="font-bold block mb-1 text-sm text-foreground">Event Date</label>
                   <Input
                     type="datetime-local"
                     value={docEventDate}
                     onChange={(e) => setDocEventDate(e.target.value)}
+                    className="text-foreground"
                   />
                 </div>
 
                 <div>
-                  <label className="font-bold block mb-1 text-sm">Document ID</label>
+                  <label className="font-bold block mb-1 text-sm text-foreground">Document ID</label>
                   <Input
                     type="text"
                     value={docDocumentId}
@@ -342,7 +343,7 @@ function BankSelectorInner() {
                   checked={docAsync}
                   onCheckedChange={(checked) => setDocAsync(checked as boolean)}
                 />
-                <label htmlFor="async-doc" className="text-sm cursor-pointer">
+                <label htmlFor="async-doc" className="text-sm cursor-pointer text-foreground">
                   Process in background (async)
                 </label>
               </div>
@@ -353,7 +354,7 @@ function BankSelectorInner() {
             </div>
             <DialogFooter>
               <Button
-                variant="outline"
+                variant="secondary"
                 onClick={() => {
                   setDocDialogOpen(false);
                   setDocContent('');

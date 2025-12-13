@@ -54,7 +54,9 @@ class EmbeddedPostgres:
                 loop = asyncio.get_event_loop()
                 info = await loop.run_in_executor(None, pg0.start)
                 logger.info(f"PostgreSQL started on port {self.port}")
-                return info.uri
+                # Construct URI manually since pg0-embedded may return None
+                uri = info.uri if info and info.uri else f"postgresql://{self.username}:{self.password}@localhost:{self.port}/{self.database}"
+                return uri
             except Exception as e:
                 last_error = str(e)
                 if attempt < max_retries:
@@ -89,9 +91,9 @@ class EmbeddedPostgres:
         pg0 = self._get_pg0()
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, pg0.info)
-        if info is None or not info.running:
-            raise RuntimeError("PostgreSQL server is not running or URI not available")
-        return info.uri
+        # Construct URI manually since pg0-embedded may return None
+        uri = info.uri if info and info.uri else f"postgresql://{self.username}:{self.password}@localhost:{self.port}/{self.database}"
+        return uri
 
     async def is_running(self) -> bool:
         """Check if the PostgreSQL server is currently running."""

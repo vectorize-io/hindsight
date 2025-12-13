@@ -181,3 +181,12 @@ code, pre {
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+
+/* Fix datetime-local calendar icon visibility in both light and dark modes */
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.5);
+}
+
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
