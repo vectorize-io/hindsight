@@ -587,7 +587,10 @@ jobs:
 
     - name: Write test summary
       if: always()
-      run: cat /tmp/doc-test-summary.md >> $GITHUB_STEP_SUMMARY
+      run: |
+        echo "=== Documentation Test Summary ==="
+        cat /tmp/doc-test-summary.md
+        cat /tmp/doc-test-summary.md >> $GITHUB_STEP_SUMMARY
 
     - name: Show API server logs
       if: always()
