@@ -540,6 +540,13 @@ jobs:
       working-directory: ./hindsight-clients/typescript
       run: npm install -g .
 
+    - name: Make TypeScript client available for temp files
+      run: |
+        # ESM modules don't use NODE_PATH, so create node_modules in /tmp
+        # where test scripts are written
+        mkdir -p /tmp/node_modules/@vectorize-io
+        ln -s ${{ github.workspace }}/hindsight-clients/typescript /tmp/node_modules/@vectorize-io/hindsight-client
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
@@ -576,9 +583,11 @@ jobs:
 
     - name: Test documentation examples
       working-directory: ./hindsight-api
-      env:
-        NODE_PATH: /usr/local/lib/node_modules
       run: uv run python ../scripts/test-doc-examples.py
+
+    - name: Write test summary
+      if: always()
+      run: cat /tmp/doc-test-summary.md >> $GITHUB_STEP_SUMMARY
 
     - name: Show API server logs
       if: always()

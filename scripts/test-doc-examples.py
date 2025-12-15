@@ -134,7 +134,7 @@ def extract_code_blocks(file_path: str) -> list[CodeExample]:
     return examples
 
 
-def analyze_example_with_llm(client: OpenAI, example: CodeExample, hindsight_url: str) -> dict:
+def analyze_example_with_llm(client: OpenAI, example: CodeExample, hindsight_url: str, repo_root: str) -> dict:
     """Use LLM to analyze a code example and determine how to test it."""
 
     prompt = f"""Analyze this code example from documentation and determine how to test it.
@@ -142,6 +142,7 @@ def analyze_example_with_llm(client: OpenAI, example: CodeExample, hindsight_url
 File: {example.file_path}
 Language: {example.language}
 Line: {example.line_number}
+Repository root: {repo_root}
 
 Context around the code:
 {example.context}
@@ -161,9 +162,18 @@ IMPORTANT RULES:
 - Mark Docker/server setup examples as NOT testable (reason: "Server setup example - server already running")
 - Mark pip/npm install commands as NOT testable (reason: "Package installation command")
 - Mark code fragments that define classes/functions without calling them as NOT testable (reason: "Code fragment - defines but doesn't execute")
+- Mark helm commands as NOT testable (reason: "Helm chart testing not supported")
 - Use unique bank_id names like "doc-test-<random-uuid>" to avoid conflicts
 - For cleanup, use requests.delete("{hindsight_url}/v1/default/banks/<bank_id>") - there is NO delete_bank() method
 - For Python, wrap in try/finally to ensure cleanup runs, print "TEST PASSED" on success
+
+WORKING DIRECTORY RULES:
+- The test script will run from a temp directory, NOT from the repository
+- Repository root is: {repo_root}
+- If an example uses 'cd <dir>' or requires a specific working directory, convert to absolute paths
+- For example: 'cd hindsight-api && uv run pytest' becomes 'cd {repo_root}/hindsight-api && uv run pytest'
+- For cargo commands: run them from the correct absolute path (e.g., 'cd {repo_root}/hindsight-clients/rust && cargo test')
+- Always use absolute paths based on the repository root when the example implies a specific directory
 
 EXACT HINDSIGHT PYTHON CLIENT API (use EXACTLY these signatures):
 ```python
@@ -368,13 +378,13 @@ def safe_print(*args, **kwargs):
         sys.stdout.flush()
 
 
-def test_example(openai_client: OpenAI, example: CodeExample, hindsight_url: str, debug: bool = False) -> TestResult:
+def test_example(openai_client: OpenAI, example: CodeExample, hindsight_url: str, repo_root: str, debug: bool = False) -> TestResult:
     """Test a single code example."""
     safe_print(f"  Testing {example.file_path}:{example.line_number} ({example.language})")
 
     try:
         # Analyze with LLM
-        analysis = analyze_example_with_llm(openai_client, example, hindsight_url)
+        analysis = analyze_example_with_llm(openai_client, example, hindsight_url, repo_root)
 
         if debug and analysis.get("test_script"):
             safe_print(f"    [DEBUG] Generated script:\n{analysis.get('test_script')}")
@@ -627,7 +637,7 @@ def main():
     def run_test(args):
         idx, example = args
         safe_print(f"\n[{idx}/{len(all_examples)}] Testing example...")
-        return test_example(client, example, hindsight_url, debug=debug)
+        return test_example(client, example, hindsight_url, repo_root, debug=debug)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
@@ -644,11 +654,10 @@ def main():
     # Print report
     print_report(report)
 
-    # Write GitHub Actions summary if running in CI
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        write_github_summary(report, summary_path)
-        print(f"GitHub summary written to {summary_path}")
+    # Write summary to file for CI
+    summary_path = "/tmp/doc-test-summary.md"
+    write_github_summary(report, summary_path)
+    print(f"Summary written to {summary_path}")
 
     # Exit with appropriate code
     sys.exit(1 if report.failed > 0 else 0)
