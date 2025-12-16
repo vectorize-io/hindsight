@@ -608,15 +608,15 @@ def main():
     failures = [r for r in report.results if not r.success and not r.skip_reason]
 
     if failures:
-        print(f"\n=== Analyzing {len(failures)} failures ===")
+        print(f"\n=== Analyzing {len(failures)} failures (parallel) ===")
 
         doc_bugs = []
         test_issues = []
+        results_lock = threading.Lock()
+        completed = [0]  # Use list for mutable counter in closure
 
-        for i, result in enumerate(failures, 1):
-            safe_print(f"  [{i}/{len(failures)}] Analyzing {result.example.file_path}:{result.example.line_number}...")
+        def analyze_one(result: TestResult) -> None:
             analysis = analyze_failure(client, result, repo_root, model)
-
             entry = {
                 "file": result.example.file_path,
                 "line": result.example.line_number,
@@ -624,12 +624,26 @@ def main():
                 "analysis": analysis
             }
 
-            if analysis.get("is_doc_bug", True):
-                doc_bugs.append(entry)
-                safe_print(f"       → DOC BUG: {analysis.get('reason', '')[:50]}")
-            else:
-                test_issues.append(entry)
-                safe_print(f"       → Test issue: {analysis.get('reason', '')[:50]}")
+            with results_lock:
+                completed[0] += 1
+                idx = completed[0]
+                if analysis.get("is_doc_bug", True):
+                    doc_bugs.append(entry)
+                    safe_print(f"  [{idx}/{len(failures)}] {result.example.file_path}:{result.example.line_number}")
+                    safe_print(f"       → DOC BUG: {analysis.get('reason', '')[:50]}")
+                else:
+                    test_issues.append(entry)
+                    safe_print(f"  [{idx}/{len(failures)}] {result.example.file_path}:{result.example.line_number}")
+                    safe_print(f"       → Test issue: {analysis.get('reason', '')[:50]}")
+
+        # Run analysis in parallel (limit concurrency to avoid rate limits)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(analyze_one, result) for result in failures]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    safe_print(f"  Analysis error: {e}")
 
         # Write summary
         print(f"\n=== RESULTS ===")
