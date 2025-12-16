@@ -65,14 +65,7 @@ By default, memories are stored in a bank called `mcp`. To use a different bank:
 
 ## Environment Variables
 
-All standard [Hindsight configuration variables](/developer/configuration) are supported. The most relevant ones:
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `HINDSIGHT_API_LLM_API_KEY` | Yes | - | API key for the LLM provider |
-| `HINDSIGHT_API_LLM_PROVIDER` | No | `openai` | LLM provider |
-| `HINDSIGHT_API_LLM_MODEL` | No | `gpt-4o-mini` | Model for fact extraction |
-| `HINDSIGHT_API_LOG_LEVEL` | No | `info` | Log level |
+All standard [Hindsight configuration variables](/developer/configuration) are supported.
 
 ### Local MCP Specific
 
