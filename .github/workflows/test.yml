@@ -536,7 +536,7 @@ jobs:
 
     - name: Build and install Python client
       run: |
-        cd hindsight-clients/python && uv build
+        (cd hindsight-clients/python && uv build)
         uv pip install "$(ls dist/hindsight_client-*.whl)"
 
     - name: Install TypeScript client
