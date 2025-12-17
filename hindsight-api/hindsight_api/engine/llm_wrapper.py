@@ -207,7 +207,7 @@ class LLMProvider:
             # Handle Anthropic provider separately
             if self.provider == "anthropic":
                 return await self._call_anthropic(
-                    messages, response_format, max_retries, initial_backoff, max_backoff, skip_validation, start_time
+                    messages, response_format, max_completion_tokens, max_retries, initial_backoff, max_backoff, skip_validation, start_time
                 )
 
             call_params = {
@@ -370,6 +370,7 @@ class LLMProvider:
         self,
         messages: list[dict[str, str]],
         response_format: Any | None,
+        max_completion_tokens: int | None,
         max_retries: int,
         initial_backoff: float,
         max_backoff: float,
@@ -409,7 +410,7 @@ class LLMProvider:
         call_params = {
             "model": self.model,
             "messages": anthropic_messages,
-            "max_tokens": 4096,  # Default reasonable max tokens
+            "max_tokens": max_completion_tokens if max_completion_tokens is not None else 4096,
         }
 
         if system_prompt:
