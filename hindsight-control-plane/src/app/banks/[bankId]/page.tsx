@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
 import { BankSelector } from "@/components/bank-selector";
 import { Sidebar } from "@/components/sidebar";
 import { DataView } from "@/components/data-view";
@@ -10,7 +9,6 @@ import { EntitiesView } from "@/components/entities-view";
 import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
-import { useBank } from "@/lib/bank-context";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "opinion";
@@ -19,18 +17,10 @@ export default function BankPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentBank, setCurrentBank } = useBank();
 
   const bankId = params.bankId as string;
   const view = (searchParams.get("view") || "profile") as NavItem;
   const subTab = (searchParams.get("subTab") || "world") as DataSubTab;
-
-  // Sync URL bank with context
-  useEffect(() => {
-    if (bankId && bankId !== currentBank) {
-      setCurrentBank(bankId);
-    }
-  }, [bankId, currentBank, setCurrentBank]);
 
   const handleTabChange = (tab: NavItem) => {
     router.push(`/banks/${bankId}?view=${tab}`);
