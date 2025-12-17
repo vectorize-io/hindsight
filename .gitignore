@@ -40,8 +40,3 @@ hindsight-dev/benchmarks/locomo/results/
 hindsight-dev/benchmarks/longmemeval/results/
 hindsight-cli/target
 hindsight-clients/rust/target
-
-# Personal AI assistant context files
-GEMINI.md
-claude_api.md
-AGENTS.md
