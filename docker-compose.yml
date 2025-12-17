@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: hindsight
+      POSTGRES_DB: hindsight
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U hindsight" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hindsight:
+    image: hindsight-local
+    build:
+      context: .
+      dockerfile: docker/standalone/Dockerfile
+    ports:
+      - "8888:8888" # API
+      - "9999:9999" # Control Plane
+    environment:
+      # Database Configuration (Connect to 'db' service)
+      - HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight@db:5432/hindsight
+
+      # LLM Configuration (Driven by .env, with Docker-specific base URL override)
+      - HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_API_LLM_PROVIDER}
+      - HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_API_LLM_API_KEY}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL}
+      # Use host.docker.internal to reach LM Studio on the host machine
+      - HINDSIGHT_API_LLM_BASE_URL=http://host.docker.internal:2222/v1
+
+      # Enable both components
+      - HINDSIGHT_ENABLE_API=true
+      - HINDSIGHT_ENABLE_CP=true
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:

@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Global semaphore to limit concurrent LLM requests across all instances
-_global_llm_semaphore = asyncio.Semaphore(32)
+# Set HINDSIGHT_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama)
+_llm_max_concurrent = int(os.getenv("HINDSIGHT_LLM_MAX_CONCURRENT", "32"))
+_global_llm_semaphore = asyncio.Semaphore(_llm_max_concurrent)
 
 
 class OutputTooLongError(Exception):
