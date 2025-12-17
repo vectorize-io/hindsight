@@ -88,6 +88,21 @@ class LLMProvider:
         if self.provider not in ("ollama", "lmstudio") and not self.api_key:
             raise ValueError(f"API key not found for {self.provider}")
 
+        # Get timeout config
+        timeout_env = os.getenv("HINDSIGHT_API_LLM_TIMEOUT")
+        if timeout_env:
+            self.timeout = float(timeout_env)
+        elif self.provider in ("lmstudio", "ollama"):
+            # Dynamic heuristic for local models
+            model_lower = self.model.lower()
+            # Match common large model sizes: 30b+, 70b+, MoE patterns
+            if any(x in model_lower for x in ("30b", "33b", "34b", "65b", "70b", "72b", "8x7b", "8x22b", "giant")):
+                self.timeout = 1200.0  # 20 mins for large models
+            else:
+                self.timeout = 300.0   # 5 mins for standard/small models
+        else:
+            self.timeout = None
+
         # Create client based on provider
         self._client = None
         self._gemini_client = None
@@ -102,16 +117,27 @@ class LLMProvider:
             anthropic_kwargs = {"api_key": self.api_key}
             if self.base_url:
                 anthropic_kwargs["base_url"] = self.base_url
+            if self.timeout:
+                anthropic_kwargs["timeout"] = self.timeout
             self._anthropic_client = AsyncAnthropic(**anthropic_kwargs)
         elif self.provider in ("ollama", "lmstudio"):
             # Use dummy key if not provided for local
             api_key = self.api_key or "local"
-            self._client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, max_retries=0)
+            client_kwargs = {
+                "api_key": api_key,
+                "base_url": self.base_url,
+                "max_retries": 0
+            }
+            if self.timeout:
+                client_kwargs["timeout"] = self.timeout
+            self._client = AsyncOpenAI(**client_kwargs)
         else:
             # Only pass base_url if it's set (OpenAI uses default URL otherwise)
             client_kwargs = {"api_key": self.api_key, "max_retries": 0}
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
+            if self.timeout:
+                client_kwargs["timeout"] = self.timeout
             self._client = AsyncOpenAI(**client_kwargs)
 
     async def verify_connection(self) -> None:
@@ -262,7 +288,9 @@ class LLMProvider:
                         if self.provider not in ("lmstudio", "ollama"):
                             call_params["response_format"] = {"type": "json_object"}
                         
+                        logger.info(f"[LLM DEBUG] Sending request to {self.provider}/{self.model} (timeout={getattr(self, 'timeout', 'None')})")
                         response = await self._client.chat.completions.create(**call_params)
+                        logger.info(f"[LLM DEBUG] Received response from {self.provider}/{self.model}")
 
                         content = response.choices[0].message.content
 
