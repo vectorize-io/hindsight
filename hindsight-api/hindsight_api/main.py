@@ -185,7 +185,7 @@ def main():
         mcp_enabled=config.mcp_enabled,
     )
 
-    uvicorn.run(**uvicorn_config)
+    uvicorn.run(**uvicorn_config)  # type: ignore[invalid-argument-type] - dict kwargs
 
 
 if __name__ == "__main__":

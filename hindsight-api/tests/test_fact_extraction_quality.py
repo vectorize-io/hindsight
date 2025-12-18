@@ -897,7 +897,7 @@ class TestDispositionInference:
     """Tests for LLM-based disposition trait inference from background."""
 
     @pytest.mark.asyncio
-    async def test_background_merge_with_disposition_inference(self, memory):
+    async def test_background_merge_with_disposition_inference(self, memory, request_context):
         """Test that background merge infers disposition traits by default."""
         import uuid
         bank_id = f"test_infer_{uuid.uuid4().hex[:8]}"
@@ -905,7 +905,8 @@ class TestDispositionInference:
         result = await memory.merge_bank_background(
             bank_id,
             "I am a creative software engineer who loves innovation and trying new technologies",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         assert "background" in result
@@ -923,30 +924,31 @@ class TestDispositionInference:
             assert 1 <= disposition[trait] <= 5
 
     @pytest.mark.asyncio
-    async def test_background_merge_without_disposition_inference(self, memory):
+    async def test_background_merge_without_disposition_inference(self, memory, request_context):
         """Test that background merge skips disposition inference when disabled."""
         import uuid
         bank_id = f"test_no_infer_{uuid.uuid4().hex[:8]}"
 
-        initial_profile = await memory.get_bank_profile(bank_id)
+        initial_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
         initial_disposition = initial_profile["disposition"]
 
         result = await memory.merge_bank_background(
             bank_id,
             "I am a data scientist",
-            update_disposition=False
+            update_disposition=False,
+            request_context=request_context,
         )
 
         assert "background" in result
         assert "disposition" not in result
 
-        final_profile = await memory.get_bank_profile(bank_id)
+        final_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
         final_disposition = final_profile["disposition"]
 
         assert initial_disposition == final_disposition
 
     @pytest.mark.asyncio
-    async def test_disposition_inference_for_lawyer(self, memory):
+    async def test_disposition_inference_for_lawyer(self, memory, request_context):
         """Test disposition inference for lawyer profile (high skepticism, high literalism)."""
         import uuid
         bank_id = f"test_lawyer_{uuid.uuid4().hex[:8]}"
@@ -954,7 +956,8 @@ class TestDispositionInference:
         result = await memory.merge_bank_background(
             bank_id,
             "I am a lawyer who focuses on contract details and never takes claims at face value",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         disposition = result["disposition"]
@@ -964,7 +967,7 @@ class TestDispositionInference:
         assert disposition["literalism"] >= 3
 
     @pytest.mark.asyncio
-    async def test_disposition_inference_for_therapist(self, memory):
+    async def test_disposition_inference_for_therapist(self, memory, request_context):
         """Test disposition inference for therapist profile (high empathy)."""
         import uuid
         bank_id = f"test_therapist_{uuid.uuid4().hex[:8]}"
@@ -972,7 +975,8 @@ class TestDispositionInference:
         result = await memory.merge_bank_background(
             bank_id,
             "I am a therapist who deeply understands and connects with people's emotional struggles",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         disposition = result["disposition"]
@@ -981,7 +985,7 @@ class TestDispositionInference:
         assert disposition["empathy"] >= 3
 
     @pytest.mark.asyncio
-    async def test_disposition_updates_in_database(self, memory):
+    async def test_disposition_updates_in_database(self, memory, request_context):
         """Test that inferred disposition is actually stored in database."""
         import uuid
         bank_id = f"test_db_update_{uuid.uuid4().hex[:8]}"
@@ -989,12 +993,13 @@ class TestDispositionInference:
         result = await memory.merge_bank_background(
             bank_id,
             "I am an innovative designer",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         inferred_disposition = result["disposition"]
 
-        profile = await memory.get_bank_profile(bank_id)
+        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
         db_disposition = profile["disposition"]
 
         # Compare values (db_disposition is a Pydantic model)
@@ -1003,7 +1008,7 @@ class TestDispositionInference:
         assert db_disposition.empathy == inferred_disposition["empathy"]
 
     @pytest.mark.asyncio
-    async def test_multiple_background_merges_update_disposition(self, memory):
+    async def test_multiple_background_merges_update_disposition(self, memory, request_context):
         """Test that each background merge can update disposition."""
         import uuid
         bank_id = f"test_multi_merge_{uuid.uuid4().hex[:8]}"
@@ -1011,14 +1016,16 @@ class TestDispositionInference:
         result1 = await memory.merge_bank_background(
             bank_id,
             "I am a software engineer",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
         disposition1 = result1["disposition"]
 
         result2 = await memory.merge_bank_background(
             bank_id,
             "I love creative problem solving and innovation",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
         disposition2 = result2["disposition"]
 
@@ -1026,7 +1033,7 @@ class TestDispositionInference:
         assert "creative" in result2["background"].lower() or "innovation" in result2["background"].lower()
 
     @pytest.mark.asyncio
-    async def test_background_merge_conflict_resolution_with_disposition(self, memory):
+    async def test_background_merge_conflict_resolution_with_disposition(self, memory, request_context):
         """Test that conflicts are resolved and disposition reflects final background."""
         import uuid
         bank_id = f"test_conflict_{uuid.uuid4().hex[:8]}"
@@ -1034,13 +1041,15 @@ class TestDispositionInference:
         await memory.merge_bank_background(
             bank_id,
             "I was born in Colorado and prefer stability",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         result = await memory.merge_bank_background(
             bank_id,
             "You were born in Texas and are very skeptical of people",
-            update_disposition=True
+            update_disposition=True,
+            request_context=request_context,
         )
 
         background = result["background"]

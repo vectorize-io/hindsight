@@ -10,11 +10,110 @@ This implements a sophisticated memory architecture that combines:
 """
 
 import asyncio
+import contextvars
 import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
+
+# Context variable for current schema (async-safe, per-task isolation)
+_current_schema: contextvars.ContextVar[str] = contextvars.ContextVar("current_schema", default="public")
+
+
+def get_current_schema() -> str:
+    """Get the current schema from context (default: 'public')."""
+    return _current_schema.get()
+
+
+def fq_table(table_name: str) -> str:
+    """
+    Get fully-qualified table name with current schema.
+
+    Example:
+        fq_table("memory_units") -> "public.memory_units"
+        fq_table("memory_units") -> "tenant_xyz.memory_units" (if schema is set)
+    """
+    return f"{get_current_schema()}.{table_name}"
+
+
+# Tables that must be schema-qualified (for runtime validation)
+_PROTECTED_TABLES = frozenset(
+    [
+        "memory_units",
+        "memory_links",
+        "unit_entities",
+        "entities",
+        "entity_cooccurrences",
+        "banks",
+        "documents",
+        "chunks",
+        "async_operations",
+    ]
+)
+
+# Enable runtime SQL validation (can be disabled in production for performance)
+_VALIDATE_SQL_SCHEMAS = True
+
+
+class UnqualifiedTableError(Exception):
+    """Raised when SQL contains unqualified table references."""
+
+    pass
+
+
+def validate_sql_schema(sql: str) -> None:
+    """
+    Validate that SQL doesn't contain unqualified table references.
+
+    This is a runtime safety check to prevent cross-tenant data access.
+    Raises UnqualifiedTableError if any protected table is referenced
+    without a schema prefix.
+
+    Args:
+        sql: The SQL query to validate
+
+    Raises:
+        UnqualifiedTableError: If unqualified table reference found
+    """
+    if not _VALIDATE_SQL_SCHEMAS:
+        return
+
+    import re
+
+    sql_upper = sql.upper()
+
+    for table in _PROTECTED_TABLES:
+        table_upper = table.upper()
+
+        # Pattern: SQL keyword followed by unqualified table name
+        # Matches: FROM memory_units, JOIN memory_units, INTO memory_units, UPDATE memory_units
+        patterns = [
+            rf"FROM\s+{table_upper}(?:\s|$|,|\)|;)",
+            rf"JOIN\s+{table_upper}(?:\s|$|,|\)|;)",
+            rf"INTO\s+{table_upper}(?:\s|$|\()",
+            rf"UPDATE\s+{table_upper}(?:\s|$)",
+            rf"DELETE\s+FROM\s+{table_upper}(?:\s|$|;)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, sql_upper)
+            if match:
+                # Check if it's actually qualified (preceded by schema.)
+                # Look backwards from match to see if there's a dot
+                start = match.start()
+                # Find the table name position in the match
+                table_pos = sql_upper.find(table_upper, start)
+                if table_pos > 0:
+                    # Check character before table name (skip whitespace)
+                    prefix = sql[:table_pos].rstrip()
+                    if not prefix.endswith("."):
+                        raise UnqualifiedTableError(
+                            f"Unqualified table reference '{table}' in SQL. "
+                            f"Use fq_table('{table}') for schema safety. "
+                            f"SQL snippet: ...{sql[max(0, start - 10) : start + 50]}..."
+                        )
+
 
 import asyncpg
 import numpy as np
@@ -22,27 +121,11 @@ from pydantic import BaseModel, Field
 
 from .cross_encoder import CrossEncoderModel
 from .embeddings import Embeddings, create_embeddings_from_env
+from .interface import MemoryEngineInterface
 
 if TYPE_CHECKING:
-    pass
-
-
-class RetainContentDict(TypedDict, total=False):
-    """Type definition for content items in retain_batch_async.
-
-    Fields:
-        content: Text content to store (required)
-        context: Context about the content (optional)
-        event_date: When the content occurred (optional, defaults to now)
-        metadata: Custom key-value metadata (optional)
-        document_id: Document ID for this content item (optional)
-    """
-
-    content: str  # Required
-    context: str
-    event_date: datetime
-    metadata: dict[str, str]
-    document_id: str
+    from hindsight_api.extensions import OperationValidatorExtension, TenantExtension
+    from hindsight_api.models import RequestContext
 
 
 from enum import Enum
@@ -54,6 +137,7 @@ from .query_analyzer import QueryAnalyzer
 from .response_models import VALID_RECALL_FACT_TYPES, EntityObservation, EntityState, MemoryFact, ReflectResult
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
+from .retain.types import RetainContentDict
 from .search import observation_utils, think_utils
 from .search.reranking import CrossEncoderReranker
 from .task_backend import AsyncIOQueueBackend, TaskBackend
@@ -91,7 +175,7 @@ def _get_tiktoken_encoding():
     return _TIKTOKEN_ENCODING
 
 
-class MemoryEngine:
+class MemoryEngine(MemoryEngineInterface):
     """
     Advanced memory system using temporal and semantic linking with PostgreSQL.
 
@@ -116,6 +200,8 @@ class MemoryEngine:
         pool_max_size: int = 100,
         task_backend: TaskBackend | None = None,
         run_migrations: bool = True,
+        operation_validator: "OperationValidatorExtension | None" = None,
+        tenant_extension: "TenantExtension | None" = None,
     ):
         """
         Initialize the temporal + semantic memory system.
@@ -137,6 +223,10 @@ class MemoryEngine:
             pool_max_size: Maximum number of connections in the pool (default: 100)
             task_backend: Custom task backend. If not provided, uses AsyncIOQueueBackend.
             run_migrations: Whether to run database migrations during initialize(). Default: True
+            operation_validator: Optional extension to validate operations before execution.
+                                If provided, retain/recall/reflect operations will be validated.
+            tenant_extension: Optional extension for multi-tenancy and API key authentication.
+                             If provided, operations require a RequestContext for authentication.
         """
         # Load config from environment for any missing parameters
         from ..config import get_config
@@ -147,6 +237,8 @@ class MemoryEngine:
         db_url = db_url or config.database_url
         memory_llm_provider = memory_llm_provider or config.llm_provider
         memory_llm_api_key = memory_llm_api_key or config.llm_api_key
+        if not memory_llm_api_key:
+            raise ValueError("LLM API key is required. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
         memory_llm_model = memory_llm_model or config.llm_model
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
         # Track pg0 instance (if used)
@@ -243,6 +335,60 @@ class MemoryEngine:
         # initialize encoding eagerly to avoid delaying the first time
         _get_tiktoken_encoding()
 
+        # Store operation validator extension (optional)
+        self._operation_validator = operation_validator
+
+        # Store tenant extension (optional)
+        self._tenant_extension = tenant_extension
+
+    async def _validate_operation(self, validation_coro) -> None:
+        """
+        Run validation if an operation validator is configured.
+
+        Args:
+            validation_coro: Coroutine that returns a ValidationResult
+
+        Raises:
+            OperationValidationError: If validation fails
+        """
+        if self._operation_validator is None:
+            return
+
+        from hindsight_api.extensions import OperationValidationError
+
+        result = await validation_coro
+        if not result.allowed:
+            raise OperationValidationError(result.reason or "Operation not allowed")
+
+    async def _authenticate_tenant(self, request_context: "RequestContext | None") -> str:
+        """
+        Authenticate tenant and set schema in context variable.
+
+        The schema is stored in a contextvar for async-safe, per-task isolation.
+        Use fq_table(table_name) to get fully-qualified table names.
+
+        Args:
+            request_context: The request context with API key. Required if tenant_extension is configured.
+
+        Returns:
+            Schema name that was set in the context.
+
+        Raises:
+            AuthenticationError: If authentication fails or request_context is missing when required.
+        """
+        if self._tenant_extension is None:
+            _current_schema.set("public")
+            return "public"
+
+        from hindsight_api.extensions import AuthenticationError
+
+        if request_context is None:
+            raise AuthenticationError("RequestContext is required when tenant extension is configured")
+
+        tenant_context = await self._tenant_extension.authenticate(request_context)
+        _current_schema.set(tenant_context.schema_name)
+        return tenant_context.schema_name
+
     async def _handle_access_count_update(self, task_dict: dict[str, Any]):
         """
         Handler for access count update tasks.
@@ -260,7 +406,8 @@ class MemoryEngine:
             uuid_list = [uuid.UUID(nid) for nid in node_ids]
             async with acquire_with_retry(pool) as conn:
                 await conn.execute(
-                    "UPDATE memory_units SET access_count = access_count + 1 WHERE id = ANY($1::uuid[])", uuid_list
+                    f"UPDATE {fq_table('memory_units')} SET access_count = access_count + 1 WHERE id = ANY($1::uuid[])",
+                    uuid_list,
                 )
         except Exception as e:
             logger.error(f"Access count handler: Error updating access counts: {e}")
@@ -274,13 +421,19 @@ class MemoryEngine:
         """
         try:
             bank_id = task_dict.get("bank_id")
+            if not bank_id:
+                raise ValueError("bank_id is required for batch retain task")
             contents = task_dict.get("contents", [])
 
             logger.info(
                 f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
             )
 
-            await self.retain_batch_async(bank_id=bank_id, contents=contents)
+            # Use internal request context for background tasks
+            from hindsight_api.models import RequestContext
+
+            internal_context = RequestContext()
+            await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=internal_context)
 
             logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
         except Exception as e:
@@ -311,7 +464,8 @@ class MemoryEngine:
                 pool = await self._get_pool()
                 async with acquire_with_retry(pool) as conn:
                     result = await conn.fetchrow(
-                        "SELECT operation_id FROM async_operations WHERE operation_id = $1", uuid.UUID(operation_id)
+                        f"SELECT operation_id FROM {fq_table('async_operations')} WHERE operation_id = $1",
+                        uuid.UUID(operation_id),
                     )
                     if not result:
                         # Operation was cancelled, skip processing
@@ -369,7 +523,9 @@ class MemoryEngine:
         try:
             pool = await self._get_pool()
             async with acquire_with_retry(pool) as conn:
-                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", uuid.UUID(operation_id))
+                await conn.execute(
+                    f"DELETE FROM {fq_table('async_operations')} WHERE operation_id = $1", uuid.UUID(operation_id)
+                )
         except Exception as e:
             logger.error(f"Failed to delete async operation record {operation_id}: {e}")
 
@@ -383,8 +539,8 @@ class MemoryEngine:
 
             async with acquire_with_retry(pool) as conn:
                 await conn.execute(
-                    """
-                    UPDATE async_operations
+                    f"""
+                    UPDATE {fq_table("async_operations")}
                     SET status = 'failed', error_message = $2
                     WHERE operation_id = $1
                     """,
@@ -413,7 +569,7 @@ class MemoryEngine:
                 kwargs = {"name": self._pg0_instance_name}
                 if self._pg0_port is not None:
                     kwargs["port"] = self._pg0_port
-                pg0 = EmbeddedPostgres(**kwargs)
+                pg0 = EmbeddedPostgres(**kwargs)  # type: ignore[invalid-argument-type] - dict kwargs
                 # Check if pg0 is already running before we start it
                 was_already_running = await pg0.is_running()
                 self.db_url = await pg0.ensure_running()
@@ -460,6 +616,8 @@ class MemoryEngine:
         if self._run_migrations:
             from ..migrations import run_migrations
 
+            if not self.db_url:
+                raise ValueError("Database URL is required for migrations")
             logger.info("Running database migrations...")
             run_migrations(self.db_url)
 
@@ -628,9 +786,9 @@ class MemoryEngine:
 
         fetch_start = time_mod.time()
         existing_facts = await conn.fetch(
-            """
+            f"""
             SELECT id, text, embedding
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE bank_id = $1
               AND event_date BETWEEN $2 AND $3
             """,
@@ -692,6 +850,7 @@ class MemoryEngine:
         content: str,
         context: str = "",
         event_date: datetime | None = None,
+        request_context: "RequestContext | None" = None,
     ) -> list[str]:
         """
         Store content as memory units (synchronous wrapper).
@@ -704,12 +863,16 @@ class MemoryEngine:
             content: Text content to store
             context: Context about when/why this memory was formed
             event_date: When the event occurred (defaults to now)
+            request_context: Request context for authentication (optional, uses internal context if not provided)
 
         Returns:
             List of created unit IDs
         """
         # Run async version synchronously
-        return asyncio.run(self.retain_async(bank_id, content, context, event_date))
+        from hindsight_api.models import RequestContext as RC
+
+        ctx = request_context if request_context is not None else RC()
+        return asyncio.run(self.retain_async(bank_id, content, context, event_date, request_context=ctx))
 
     async def retain_async(
         self,
@@ -720,6 +883,8 @@ class MemoryEngine:
         document_id: str | None = None,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
+        *,
+        request_context: "RequestContext",
     ) -> list[str]:
         """
         Store content as memory units with temporal and semantic links (ASYNC version).
@@ -734,12 +899,15 @@ class MemoryEngine:
             document_id: Optional document ID for tracking (always upserts if document already exists)
             fact_type_override: Override fact type ('world', 'experience', 'opinion')
             confidence_score: Confidence score for opinions (0.0 to 1.0)
+            request_context: Request context for authentication.
 
         Returns:
             List of created unit IDs
         """
         # Build content dict
-        content_dict: RetainContentDict = {"content": content, "context": context, "event_date": event_date}
+        content_dict: RetainContentDict = {"content": content, "context": context}  # type: ignore[typeddict-item] - building incrementally
+        if event_date:
+            content_dict["event_date"] = event_date
         if document_id:
             content_dict["document_id"] = document_id
 
@@ -747,6 +915,7 @@ class MemoryEngine:
         result = await self.retain_batch_async(
             bank_id=bank_id,
             contents=[content_dict],
+            request_context=request_context,
             fact_type_override=fact_type_override,
             confidence_score=confidence_score,
         )
@@ -758,6 +927,8 @@ class MemoryEngine:
         self,
         bank_id: str,
         contents: list[RetainContentDict],
+        *,
+        request_context: "RequestContext",
         document_id: str | None = None,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
@@ -812,6 +983,24 @@ class MemoryEngine:
 
         if not contents:
             return []
+
+        # Authenticate tenant and set schema in context (for fq_table())
+        await self._authenticate_tenant(request_context)
+
+        # Validate operation if validator is configured
+        contents_copy = [dict(c) for c in contents]  # Convert TypedDict to regular dict for extension
+        if self._operation_validator:
+            from hindsight_api.extensions import RetainContext
+
+            ctx = RetainContext(
+                bank_id=bank_id,
+                contents=contents_copy,
+                request_context=request_context,
+                document_id=document_id,
+                fact_type_override=fact_type_override,
+                confidence_score=confidence_score,
+            )
+            await self._validate_operation(self._operation_validator.validate_retain(ctx))
 
         # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
         if document_id:
@@ -876,17 +1065,39 @@ class MemoryEngine:
             logger.info(
                 f"RETAIN_BATCH_ASYNC (chunked) COMPLETE: {len(all_results)} results from {len(contents)} contents in {total_time:.3f}s"
             )
-            return all_results
+            result = all_results
+        else:
+            # Small batch - use internal method directly
+            result = await self._retain_batch_async_internal(
+                bank_id=bank_id,
+                contents=contents,
+                document_id=document_id,
+                is_first_batch=True,
+                fact_type_override=fact_type_override,
+                confidence_score=confidence_score,
+            )
 
-        # Small batch - use internal method directly
-        return await self._retain_batch_async_internal(
-            bank_id=bank_id,
-            contents=contents,
-            document_id=document_id,
-            is_first_batch=True,
-            fact_type_override=fact_type_override,
-            confidence_score=confidence_score,
-        )
+        # Call post-operation hook if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions import RetainResult
+
+            result_ctx = RetainResult(
+                bank_id=bank_id,
+                contents=contents_copy,
+                request_context=request_context,
+                document_id=document_id,
+                fact_type_override=fact_type_override,
+                confidence_score=confidence_score,
+                unit_ids=result,
+                success=True,
+                error=None,
+            )
+            try:
+                await self._operation_validator.on_retain_complete(result_ctx)
+            except Exception as e:
+                logger.warning(f"Post-retain hook error (non-fatal): {e}")
+
+        return result
 
     async def _retain_batch_async_internal(
         self,
@@ -961,22 +1172,36 @@ class MemoryEngine:
         Returns:
             Tuple of (results, trace)
         """
-        # Run async version synchronously
-        return asyncio.run(self.recall_async(bank_id, query, [fact_type], budget, max_tokens, enable_trace))
+        # Run async version synchronously - deprecated sync method, passing None for request_context
+        from hindsight_api.models import RequestContext
+
+        return asyncio.run(
+            self.recall_async(
+                bank_id,
+                query,
+                budget=budget,
+                max_tokens=max_tokens,
+                enable_trace=enable_trace,
+                fact_type=[fact_type],
+                request_context=RequestContext(),
+            )
+        )
 
     async def recall_async(
         self,
         bank_id: str,
         query: str,
-        fact_type: list[str],
-        budget: Budget = Budget.MID,
+        *,
+        budget: Budget | None = None,
         max_tokens: int = 4096,
         enable_trace: bool = False,
+        fact_type: list[str] | None = None,
         question_date: datetime | None = None,
         include_entities: bool = False,
-        max_entity_tokens: int = 1024,
+        max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        request_context: "RequestContext",
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -1010,6 +1235,13 @@ class MemoryEngine:
             - entities: Optional dict of entity states (if include_entities=True)
             - chunks: Optional dict of chunks (if include_chunks=True)
         """
+        # Authenticate tenant and set schema in context (for fq_table())
+        await self._authenticate_tenant(request_context)
+
+        # Default to all fact types if not specified
+        if fact_type is None:
+            fact_type = list(VALID_RECALL_FACT_TYPES)
+
         # Validate fact types early
         invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
         if invalid_types:
@@ -1018,17 +1250,40 @@ class MemoryEngine:
                 f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
             )
 
-        # Map budget enum to thinking_budget number
+        # Validate operation if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions import RecallContext
+
+            ctx = RecallContext(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                budget=budget,
+                max_tokens=max_tokens,
+                enable_trace=enable_trace,
+                fact_types=list(fact_type),
+                question_date=question_date,
+                include_entities=include_entities,
+                max_entity_tokens=max_entity_tokens,
+                include_chunks=include_chunks,
+                max_chunk_tokens=max_chunk_tokens,
+            )
+            await self._validate_operation(self._operation_validator.validate_recall(ctx))
+
+        # Map budget enum to thinking_budget number (default to MID if None)
         budget_mapping = {Budget.LOW: 100, Budget.MID: 300, Budget.HIGH: 1000}
-        thinking_budget = budget_mapping[budget]
+        effective_budget = budget if budget is not None else Budget.MID
+        thinking_budget = budget_mapping[effective_budget]
 
         # Backpressure: limit concurrent recalls to prevent overwhelming the database
+        result = None
+        error_msg = None
         async with self._search_semaphore:
             # Retry loop for connection errors
             max_retries = 3
             for attempt in range(max_retries + 1):
                 try:
-                    return await self._search_with_retries(
+                    result = await self._search_with_retries(
                         bank_id,
                         query,
                         fact_type,
@@ -1040,7 +1295,9 @@ class MemoryEngine:
                         max_entity_tokens,
                         include_chunks,
                         max_chunk_tokens,
+                        request_context,
                     )
+                    break  # Success - exit retry loop
                 except Exception as e:
                     # Check if it's a connection error
                     is_connection_error = (
@@ -1058,9 +1315,89 @@ class MemoryEngine:
                         )
                         await asyncio.sleep(wait_time)
                     else:
-                        # Not a connection error or out of retries - raise
+                        # Not a connection error or out of retries - call post-hook and raise
+                        error_msg = str(e)
+                        if self._operation_validator:
+                            from hindsight_api.extensions.operation_validator import RecallResult
+
+                            result_ctx = RecallResult(
+                                bank_id=bank_id,
+                                query=query,
+                                request_context=request_context,
+                                budget=budget,
+                                max_tokens=max_tokens,
+                                enable_trace=enable_trace,
+                                fact_types=list(fact_type),
+                                question_date=question_date,
+                                include_entities=include_entities,
+                                max_entity_tokens=max_entity_tokens,
+                                include_chunks=include_chunks,
+                                max_chunk_tokens=max_chunk_tokens,
+                                result=None,
+                                success=False,
+                                error=error_msg,
+                            )
+                            try:
+                                await self._operation_validator.on_recall_complete(result_ctx)
+                            except Exception as hook_err:
+                                logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
                         raise
-            raise Exception("Exceeded maximum retries for search due to connection errors.")
+            else:
+                # Exceeded max retries
+                error_msg = "Exceeded maximum retries for search due to connection errors."
+                if self._operation_validator:
+                    from hindsight_api.extensions.operation_validator import RecallResult
+
+                    result_ctx = RecallResult(
+                        bank_id=bank_id,
+                        query=query,
+                        request_context=request_context,
+                        budget=budget,
+                        max_tokens=max_tokens,
+                        enable_trace=enable_trace,
+                        fact_types=list(fact_type),
+                        question_date=question_date,
+                        include_entities=include_entities,
+                        max_entity_tokens=max_entity_tokens,
+                        include_chunks=include_chunks,
+                        max_chunk_tokens=max_chunk_tokens,
+                        result=None,
+                        success=False,
+                        error=error_msg,
+                    )
+                    try:
+                        await self._operation_validator.on_recall_complete(result_ctx)
+                    except Exception as hook_err:
+                        logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
+                raise Exception(error_msg)
+
+        # Call post-operation hook for success
+        if self._operation_validator and result is not None:
+            from hindsight_api.extensions.operation_validator import RecallResult
+
+            result_ctx = RecallResult(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                budget=budget,
+                max_tokens=max_tokens,
+                enable_trace=enable_trace,
+                fact_types=list(fact_type),
+                question_date=question_date,
+                include_entities=include_entities,
+                max_entity_tokens=max_entity_tokens,
+                include_chunks=include_chunks,
+                max_chunk_tokens=max_chunk_tokens,
+                result=result,
+                success=True,
+                error=None,
+            )
+            try:
+                await self._operation_validator.on_recall_complete(result_ctx)
+            except Exception as e:
+                logger.warning(f"Post-recall hook error (non-fatal): {e}")
+
+        return result
 
     async def _search_with_retries(
         self,
@@ -1075,6 +1412,7 @@ class MemoryEngine:
         max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        request_context: "RequestContext" = None,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -1465,10 +1803,10 @@ class MemoryEngine:
                 if unit_ids:
                     async with acquire_with_retry(pool) as entity_conn:
                         entity_rows = await entity_conn.fetch(
-                            """
+                            f"""
                             SELECT ue.unit_id, e.id as entity_id, e.canonical_name
-                            FROM unit_entities ue
-                            JOIN entities e ON ue.entity_id = e.id
+                            FROM {fq_table("unit_entities")} ue
+                            JOIN {fq_table("entities")} e ON ue.entity_id = e.id
                             WHERE ue.unit_id = ANY($1::uuid[])
                             """,
                             unit_ids,
@@ -1534,7 +1872,9 @@ class MemoryEngine:
                     if total_entity_tokens >= max_entity_tokens:
                         break
 
-                    observations = await self.get_entity_observations(bank_id, entity_id, limit=5)
+                    observations = await self.get_entity_observations(
+                        bank_id, entity_id, limit=5, request_context=request_context
+                    )
 
                     # Calculate tokens for this entity's observations
                     entity_tokens = 0
@@ -1572,9 +1912,9 @@ class MemoryEngine:
                     # Fetch chunk data from database using chunk_ids (no ORDER BY to preserve input order)
                     async with acquire_with_retry(pool) as conn:
                         chunks_rows = await conn.fetch(
-                            """
+                            f"""
                             SELECT chunk_id, chunk_text, chunk_index
-                            FROM chunks
+                            FROM {fq_table("chunks")}
                             WHERE chunk_id = ANY($1::text[])
                             """,
                             chunk_ids_ordered,
@@ -1671,25 +2011,33 @@ class MemoryEngine:
 
         return filtered_results, total_tokens
 
-    async def get_document(self, document_id: str, bank_id: str) -> dict[str, Any] | None:
+    async def get_document(
+        self,
+        document_id: str,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
         """
         Retrieve document metadata and statistics.
 
         Args:
             document_id: Document ID to retrieve
             bank_id: bank ID that owns the document
+            request_context: Request context for authentication.
 
         Returns:
             Dictionary with document info or None if not found
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             doc = await conn.fetchrow(
-                """
+                f"""
                 SELECT d.id, d.bank_id, d.original_text, d.content_hash,
                        d.created_at, d.updated_at, COUNT(mu.id) as unit_count
-                FROM documents d
-                LEFT JOIN memory_units mu ON mu.document_id = d.id
+                FROM {fq_table("documents")} d
+                LEFT JOIN {fq_table("memory_units")} mu ON mu.document_id = d.id
                 WHERE d.id = $1 AND d.bank_id = $2
                 GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at
                 """,
@@ -1706,37 +2054,52 @@ class MemoryEngine:
                 "original_text": doc["original_text"],
                 "content_hash": doc["content_hash"],
                 "memory_unit_count": doc["unit_count"],
-                "created_at": doc["created_at"],
-                "updated_at": doc["updated_at"],
+                "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
+                "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
             }
 
-    async def delete_document(self, document_id: str, bank_id: str) -> dict[str, int]:
+    async def delete_document(
+        self,
+        document_id: str,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, int]:
         """
         Delete a document and all its associated memory units and links.
 
         Args:
             document_id: Document ID to delete
             bank_id: bank ID that owns the document
+            request_context: Request context for authentication.
 
         Returns:
             Dictionary with counts of deleted items
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
                 # Count units before deletion
                 units_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM memory_units WHERE document_id = $1", document_id
+                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
                 )
 
                 # Delete document (cascades to memory_units and all their links)
                 deleted = await conn.fetchval(
-                    "DELETE FROM documents WHERE id = $1 AND bank_id = $2 RETURNING id", document_id, bank_id
+                    f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id",
+                    document_id,
+                    bank_id,
                 )
 
                 return {"document_deleted": 1 if deleted else 0, "memory_units_deleted": units_count if deleted else 0}
 
-    async def delete_memory_unit(self, unit_id: str) -> dict[str, Any]:
+    async def delete_memory_unit(
+        self,
+        unit_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
         """
         Delete a single memory unit and all its associated links.
 
@@ -1747,15 +2110,19 @@ class MemoryEngine:
 
         Args:
             unit_id: UUID of the memory unit to delete
+            request_context: Request context for authentication.
 
         Returns:
             Dictionary with deletion result
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
                 # Delete the memory unit (cascades to links and associations)
-                deleted = await conn.fetchval("DELETE FROM memory_units WHERE id = $1 RETURNING id", unit_id)
+                deleted = await conn.fetchval(
+                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
+                )
 
                 return {
                     "success": deleted is not None,
@@ -1765,7 +2132,13 @@ class MemoryEngine:
                     else "Memory unit not found",
                 }
 
-    async def delete_bank(self, bank_id: str, fact_type: str | None = None) -> dict[str, int]:
+    async def delete_bank(
+        self,
+        bank_id: str,
+        fact_type: str | None = None,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, int]:
         """
         Delete all data for a specific agent (multi-tenant cleanup).
 
@@ -1780,10 +2153,12 @@ class MemoryEngine:
         Args:
             bank_id: bank ID to delete
             fact_type: Optional fact type filter (world, experience, opinion). If provided, only deletes memories of that type.
+            request_context: Request context for authentication.
 
         Returns:
             Dictionary with counts of deleted items
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
@@ -1793,12 +2168,14 @@ class MemoryEngine:
                     if fact_type:
                         # Delete only memories of a specific fact type
                         units_count = await conn.fetchval(
-                            "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1 AND fact_type = $2",
+                            f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
                             bank_id,
                             fact_type,
                         )
                         await conn.execute(
-                            "DELETE FROM memory_units WHERE bank_id = $1 AND fact_type = $2", bank_id, fact_type
+                            f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
+                            bank_id,
+                            fact_type,
                         )
 
                         # Note: We don't delete entities when fact_type is specified,
@@ -1807,26 +2184,26 @@ class MemoryEngine:
                     else:
                         # Delete all data for the bank
                         units_count = await conn.fetchval(
-                            "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1", bank_id
+                            f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id
                         )
                         entities_count = await conn.fetchval(
-                            "SELECT COUNT(*) FROM entities WHERE bank_id = $1", bank_id
+                            f"SELECT COUNT(*) FROM {fq_table('entities')} WHERE bank_id = $1", bank_id
                         )
                         documents_count = await conn.fetchval(
-                            "SELECT COUNT(*) FROM documents WHERE bank_id = $1", bank_id
+                            f"SELECT COUNT(*) FROM {fq_table('documents')} WHERE bank_id = $1", bank_id
                         )
 
                         # Delete documents (cascades to chunks)
-                        await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
+                        await conn.execute(f"DELETE FROM {fq_table('documents')} WHERE bank_id = $1", bank_id)
 
                         # Delete memory units (cascades to unit_entities, memory_links)
-                        await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+                        await conn.execute(f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1", bank_id)
 
                         # Delete entities (cascades to unit_entities, entity_cooccurrences, memory_links with entity_id)
-                        await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+                        await conn.execute(f"DELETE FROM {fq_table('entities')} WHERE bank_id = $1", bank_id)
 
                         # Delete the bank profile itself
-                        await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
+                        await conn.execute(f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
 
                         return {
                             "memory_units_deleted": units_count,
@@ -1838,17 +2215,25 @@ class MemoryEngine:
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
 
-    async def get_graph_data(self, bank_id: str | None = None, fact_type: str | None = None):
+    async def get_graph_data(
+        self,
+        bank_id: str | None = None,
+        fact_type: str | None = None,
+        *,
+        request_context: "RequestContext",
+    ):
         """
         Get graph data for visualization.
 
         Args:
             bank_id: Filter by bank ID
             fact_type: Filter by fact type (world, experience, opinion)
+            request_context: Request context for authentication.
 
         Returns:
             Dict with nodes, edges, and table_rows
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             # Get memory units, optionally filtered by bank_id and fact_type
@@ -1871,7 +2256,7 @@ class MemoryEngine:
             units = await conn.fetch(
                 f"""
                 SELECT id, text, event_date, context, occurred_start, occurred_end, mentioned_at, document_id, chunk_id, fact_type
-                FROM memory_units
+                FROM {fq_table("memory_units")}
                 {where_clause}
                 ORDER BY mentioned_at DESC NULLS LAST, event_date DESC
                 LIMIT 1000
@@ -1884,15 +2269,15 @@ class MemoryEngine:
             unit_ids = [row["id"] for row in units]
             if unit_ids:
                 links = await conn.fetch(
-                    """
+                    f"""
                     SELECT DISTINCT ON (LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid))
                         ml.from_unit_id,
                         ml.to_unit_id,
                         ml.link_type,
                         ml.weight,
                         e.canonical_name as entity_name
-                    FROM memory_links ml
-                    LEFT JOIN entities e ON ml.entity_id = e.id
+                    FROM {fq_table("memory_links")} ml
+                    LEFT JOIN {fq_table("entities")} e ON ml.entity_id = e.id
                     WHERE ml.from_unit_id = ANY($1::uuid[]) AND ml.to_unit_id = ANY($1::uuid[])
                     ORDER BY LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid), ml.weight DESC
                 """,
@@ -1902,10 +2287,10 @@ class MemoryEngine:
                 links = []
 
             # Get entity information
-            unit_entities = await conn.fetch("""
+            unit_entities = await conn.fetch(f"""
                 SELECT ue.unit_id, e.canonical_name
-                FROM unit_entities ue
-                JOIN entities e ON ue.entity_id = e.id
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON ue.entity_id = e.id
                 ORDER BY ue.unit_id
             """)
 
@@ -2017,11 +2402,13 @@ class MemoryEngine:
 
     async def list_memory_units(
         self,
-        bank_id: str | None = None,
+        bank_id: str,
+        *,
         fact_type: str | None = None,
         search_query: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        request_context: "RequestContext",
     ):
         """
         List memory units for table view with optional full-text search.
@@ -2032,10 +2419,12 @@ class MemoryEngine:
             search_query: Full-text search query (searches text and context fields)
             limit: Maximum number of results to return
             offset: Offset for pagination
+            request_context: Request context for authentication.
 
         Returns:
             Dict with items (list of memory units) and total count
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             # Build query conditions
@@ -2064,7 +2453,7 @@ class MemoryEngine:
             # Get total count
             count_query = f"""
                 SELECT COUNT(*) as total
-                FROM memory_units
+                FROM {fq_table("memory_units")}
                 {where_clause}
             """
             count_result = await conn.fetchrow(count_query, *query_params)
@@ -2082,7 +2471,7 @@ class MemoryEngine:
             units = await conn.fetch(
                 f"""
                 SELECT id, text, event_date, context, fact_type, mentioned_at, occurred_start, occurred_end, chunk_id
-                FROM memory_units
+                FROM {fq_table("memory_units")}
                 {where_clause}
                 ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
                 LIMIT {limit_param} OFFSET {offset_param}
@@ -2094,10 +2483,10 @@ class MemoryEngine:
             if units:
                 unit_ids = [row["id"] for row in units]
                 unit_entities = await conn.fetch(
-                    """
+                    f"""
                     SELECT ue.unit_id, e.canonical_name
-                    FROM unit_entities ue
-                    JOIN entities e ON ue.entity_id = e.id
+                    FROM {fq_table("unit_entities")} ue
+                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
                     WHERE ue.unit_id = ANY($1::uuid[])
                     ORDER BY ue.unit_id
                 """,
@@ -2138,7 +2527,15 @@ class MemoryEngine:
 
             return {"items": items, "total": total, "limit": limit, "offset": offset}
 
-    async def list_documents(self, bank_id: str, search_query: str | None = None, limit: int = 100, offset: int = 0):
+    async def list_documents(
+        self,
+        bank_id: str,
+        *,
+        search_query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: "RequestContext",
+    ):
         """
         List documents with optional search and pagination.
 
@@ -2147,10 +2544,12 @@ class MemoryEngine:
             search_query: Search in document ID
             limit: Maximum number of results
             offset: Offset for pagination
+            request_context: Request context for authentication.
 
         Returns:
             Dict with items (list of documents without original_text) and total count
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             # Build query conditions
@@ -2173,7 +2572,7 @@ class MemoryEngine:
             # Get total count
             count_query = f"""
                 SELECT COUNT(*) as total
-                FROM documents
+                FROM {fq_table("documents")}
                 {where_clause}
             """
             count_result = await conn.fetchrow(count_query, *query_params)
@@ -2198,7 +2597,7 @@ class MemoryEngine:
                     updated_at,
                     LENGTH(original_text) as text_length,
                     retain_params
-                FROM documents
+                FROM {fq_table("documents")}
                 {where_clause}
                 ORDER BY created_at DESC
                 LIMIT {limit_param} OFFSET {offset_param}
@@ -2224,7 +2623,7 @@ class MemoryEngine:
                 unit_counts = await conn.fetch(
                     f"""
                     SELECT document_id, bank_id, COUNT(*) as unit_count
-                    FROM memory_units
+                    FROM {fq_table("memory_units")}
                     WHERE {where_clause_count}
                     GROUP BY document_id, bank_id
                 """,
@@ -2258,75 +2657,27 @@ class MemoryEngine:
 
             return {"items": items, "total": total, "limit": limit, "offset": offset}
 
-    async def get_document(self, document_id: str, bank_id: str):
-        """
-        Get a specific document including its original_text.
-
-        Args:
-            document_id: Document ID
-            bank_id: bank ID
-
-        Returns:
-            Dict with document details including original_text, or None if not found
-        """
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
-            doc = await conn.fetchrow(
-                """
-                SELECT
-                    id,
-                    bank_id,
-                    original_text,
-                    content_hash,
-                    created_at,
-                    updated_at,
-                    retain_params
-                FROM documents
-                WHERE id = $1 AND bank_id = $2
-            """,
-                document_id,
-                bank_id,
-            )
-
-            if not doc:
-                return None
-
-            # Get memory unit count
-            unit_count_row = await conn.fetchrow(
-                """
-                SELECT COUNT(*) as unit_count
-                FROM memory_units
-                WHERE document_id = $1 AND bank_id = $2
-            """,
-                document_id,
-                bank_id,
-            )
-
-            return {
-                "id": doc["id"],
-                "bank_id": doc["bank_id"],
-                "original_text": doc["original_text"],
-                "content_hash": doc["content_hash"],
-                "created_at": doc["created_at"].isoformat() if doc["created_at"] else "",
-                "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else "",
-                "memory_unit_count": unit_count_row["unit_count"] if unit_count_row else 0,
-                "retain_params": doc["retain_params"] if doc["retain_params"] else None,
-            }
-
-    async def get_chunk(self, chunk_id: str):
+    async def get_chunk(
+        self,
+        chunk_id: str,
+        *,
+        request_context: "RequestContext",
+    ):
         """
         Get a specific chunk by its ID.
 
         Args:
             chunk_id: Chunk ID (format: bank_id_document_id_chunk_index)
+            request_context: Request context for authentication.
 
         Returns:
             Dict with chunk details including chunk_text, or None if not found
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             chunk = await conn.fetchrow(
-                """
+                f"""
                 SELECT
                     chunk_id,
                     document_id,
@@ -2334,7 +2685,7 @@ class MemoryEngine:
                     chunk_index,
                     chunk_text,
                     created_at
-                FROM chunks
+                FROM {fq_table("chunks")}
                 WHERE chunk_id = $1
             """,
                 chunk_id,
@@ -2500,11 +2851,11 @@ Guidelines:
             async with acquire_with_retry(pool) as conn:
                 # Find all opinions related to these entities
                 opinions = await conn.fetch(
-                    """
+                    f"""
                     SELECT DISTINCT mu.id, mu.text, mu.confidence_score, e.canonical_name
-                    FROM memory_units mu
-                    JOIN unit_entities ue ON mu.id = ue.unit_id
-                    JOIN entities e ON ue.entity_id = e.id
+                    FROM {fq_table("memory_units")} mu
+                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
+                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
                     WHERE mu.bank_id = $1
                       AND mu.fact_type = 'opinion'
                       AND e.canonical_name = ANY($2::text[])
@@ -2559,8 +2910,8 @@ Guidelines:
                             if evaluation["action"] == "update" and evaluation["new_text"]:
                                 # Update both text and confidence
                                 await conn.execute(
-                                    """
-                                    UPDATE memory_units
+                                    f"""
+                                    UPDATE {fq_table("memory_units")}
                                     SET text = $1, confidence_score = $2, updated_at = NOW()
                                     WHERE id = $3
                                     """,
@@ -2571,8 +2922,8 @@ Guidelines:
                             else:
                                 # Only update confidence
                                 await conn.execute(
-                                    """
-                                    UPDATE memory_units
+                                    f"""
+                                    UPDATE {fq_table("memory_units")}
                                     SET confidence_score = $1, updated_at = NOW()
                                     WHERE id = $2
                                     """,
@@ -2591,32 +2942,61 @@ Guidelines:
 
     # ==================== bank profile Methods ====================
 
-    async def get_bank_profile(self, bank_id: str) -> "bank_utils.BankProfile":
+    async def get_bank_profile(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
         """
         Get bank profile (name, disposition + background).
         Auto-creates agent with default values if not exists.
 
         Args:
             bank_id: bank IDentifier
+            request_context: Request context for authentication.
 
         Returns:
-            BankProfile with name, typed DispositionTraits, and background
+            Dict with name, disposition traits, and background
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
-        return await bank_utils.get_bank_profile(pool, bank_id)
+        profile = await bank_utils.get_bank_profile(pool, bank_id)
+        disposition = profile["disposition"]
+        return {
+            "bank_id": bank_id,
+            "name": profile["name"],
+            "disposition": disposition,
+            "background": profile["background"],
+        }
 
-    async def update_bank_disposition(self, bank_id: str, disposition: dict[str, int]) -> None:
+    async def update_bank_disposition(
+        self,
+        bank_id: str,
+        disposition: dict[str, int],
+        *,
+        request_context: "RequestContext",
+    ) -> None:
         """
         Update bank disposition traits.
 
         Args:
             bank_id: bank IDentifier
             disposition: Dict with skepticism, literalism, empathy (all 1-5)
+            request_context: Request context for authentication.
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         await bank_utils.update_bank_disposition(pool, bank_id, disposition)
 
-    async def merge_bank_background(self, bank_id: str, new_info: str, update_disposition: bool = True) -> dict:
+    async def merge_bank_background(
+        self,
+        bank_id: str,
+        new_info: str,
+        *,
+        update_disposition: bool = True,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
         """
         Merge new background information with existing background using LLM.
         Normalizes to first person ("I") and resolves conflicts.
@@ -2626,20 +3006,30 @@ Guidelines:
             bank_id: bank IDentifier
             new_info: New background information to add/merge
             update_disposition: If True, infer Big Five traits from background (default: True)
+            request_context: Request context for authentication.
 
         Returns:
             Dict with 'background' (str) and optionally 'disposition' (dict) keys
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         return await bank_utils.merge_bank_background(pool, self._llm_config, bank_id, new_info, update_disposition)
 
-    async def list_banks(self) -> list:
+    async def list_banks(
+        self,
+        *,
+        request_context: "RequestContext",
+    ) -> list[dict[str, Any]]:
         """
         List all agents in the system.
+
+        Args:
+            request_context: Request context for authentication.
 
         Returns:
             List of dicts with bank_id, name, disposition, background, created_at, updated_at
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         return await bank_utils.list_banks(pool)
 
@@ -2649,8 +3039,10 @@ Guidelines:
         self,
         bank_id: str,
         query: str,
-        budget: Budget = Budget.LOW,
-        context: str = None,
+        *,
+        budget: Budget | None = None,
+        context: str | None = None,
+        request_context: "RequestContext",
     ) -> ReflectResult:
         """
         Reflect and formulate an answer using bank identity, world facts, and opinions.
@@ -2679,6 +3071,22 @@ Guidelines:
         if self._llm_config is None:
             raise ValueError("Memory LLM API key not set. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
 
+        # Authenticate tenant and set schema in context (for fq_table())
+        await self._authenticate_tenant(request_context)
+
+        # Validate operation if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions import ReflectContext
+
+            ctx = ReflectContext(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                budget=budget,
+                context=context,
+            )
+            await self._validate_operation(self._operation_validator.validate_reflect(ctx))
+
         reflect_start = time.time()
         reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         log_buffer = []
@@ -2694,6 +3102,7 @@ Guidelines:
             enable_trace=False,
             fact_type=["experience", "world", "opinion"],
             include_entities=True,
+            request_context=request_context,
         )
         recall_time = time.time() - recall_start
 
@@ -2714,7 +3123,7 @@ Guidelines:
         opinion_facts_text = think_utils.format_facts_for_prompt(opinion_results)
 
         # Get bank profile (name, disposition + background)
-        profile = await self.get_bank_profile(bank_id)
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
         name = profile["name"]
         disposition = profile["disposition"]  # Typed as DispositionTraits
         background = profile["background"]
@@ -2758,11 +3167,32 @@ Guidelines:
         logger.info("\n" + "\n".join(log_buffer))
 
         # Return response with facts split by type
-        return ReflectResult(
+        result = ReflectResult(
             text=answer_text,
             based_on={"world": world_results, "experience": agent_results, "opinion": opinion_results},
             new_opinions=[],  # Opinions are being extracted asynchronously
         )
+
+        # Call post-operation hook if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import ReflectResultContext
+
+            result_ctx = ReflectResultContext(
+                bank_id=bank_id,
+                query=query,
+                request_context=request_context,
+                budget=budget,
+                context=context,
+                result=result,
+                success=True,
+                error=None,
+            )
+            try:
+                await self._operation_validator.on_reflect_complete(result_ctx)
+            except Exception as e:
+                logger.warning(f"Post-reflect hook error (non-fatal): {e}")
+
+        return result
 
     async def _extract_and_store_opinions_async(self, bank_id: str, answer_text: str, query: str):
         """
@@ -2784,6 +3214,10 @@ Guidelines:
                 from datetime import datetime
 
                 current_time = datetime.now(UTC)
+                # Use internal request context for background tasks
+                from hindsight_api.models import RequestContext
+
+                internal_context = RequestContext()
                 for opinion in new_opinions:
                     await self.retain_async(
                         bank_id=bank_id,
@@ -2792,12 +3226,20 @@ Guidelines:
                         event_date=current_time,
                         fact_type_override="opinion",
                         confidence_score=opinion.confidence,
+                        request_context=internal_context,
                     )
 
         except Exception as e:
             logger.warning(f"[REFLECT] Failed to extract/store opinions: {str(e)}")
 
-    async def get_entity_observations(self, bank_id: str, entity_id: str, limit: int = 10) -> list[EntityObservation]:
+    async def get_entity_observations(
+        self,
+        bank_id: str,
+        entity_id: str,
+        *,
+        limit: int = 10,
+        request_context: "RequestContext",
+    ) -> list[Any]:
         """
         Get observations linked to an entity.
 
@@ -2805,17 +3247,19 @@ Guidelines:
             bank_id: bank IDentifier
             entity_id: Entity UUID to get observations for
             limit: Maximum number of observations to return
+            request_context: Request context for authentication.
 
         Returns:
             List of EntityObservation objects
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT mu.text, mu.mentioned_at
-                FROM memory_units mu
-                JOIN unit_entities ue ON mu.id = ue.unit_id
+                FROM {fq_table("memory_units")} mu
+                JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
                 WHERE mu.bank_id = $1
                   AND mu.fact_type = 'observation'
                   AND ue.entity_id = $2
@@ -2833,23 +3277,31 @@ Guidelines:
                 observations.append(EntityObservation(text=row["text"], mentioned_at=mentioned_at))
             return observations
 
-    async def list_entities(self, bank_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    async def list_entities(
+        self,
+        bank_id: str,
+        *,
+        limit: int = 100,
+        request_context: "RequestContext",
+    ) -> list[dict[str, Any]]:
         """
         List all entities for a bank.
 
         Args:
             bank_id: bank IDentifier
             limit: Maximum number of entities to return
+            request_context: Request context for authentication.
 
         Returns:
             List of entity dicts with id, canonical_name, mention_count, first_seen, last_seen
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
-                FROM entities
+                FROM {fq_table("entities")}
                 WHERE bank_id = $1
                 ORDER BY mention_count DESC, last_seen DESC
                 LIMIT $2
@@ -2884,7 +3336,15 @@ Guidelines:
                 )
             return entities
 
-    async def get_entity_state(self, bank_id: str, entity_id: str, entity_name: str, limit: int = 10) -> EntityState:
+    async def get_entity_state(
+        self,
+        bank_id: str,
+        entity_id: str,
+        entity_name: str,
+        *,
+        limit: int = 10,
+        request_context: "RequestContext",
+    ) -> EntityState:
         """
         Get the current state (mental model) of an entity.
 
@@ -2893,16 +3353,26 @@ Guidelines:
             entity_id: Entity UUID
             entity_name: Canonical name of the entity
             limit: Maximum number of observations to include
+            request_context: Request context for authentication.
 
         Returns:
             EntityState with observations
         """
-        observations = await self.get_entity_observations(bank_id, entity_id, limit)
+        observations = await self.get_entity_observations(
+            bank_id, entity_id, limit=limit, request_context=request_context
+        )
         return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=observations)
 
     async def regenerate_entity_observations(
-        self, bank_id: str, entity_id: str, entity_name: str, version: str | None = None, conn=None
-    ) -> list[str]:
+        self,
+        bank_id: str,
+        entity_id: str,
+        entity_name: str,
+        *,
+        version: str | None = None,
+        conn=None,
+        request_context: "RequestContext",
+    ) -> None:
         """
         Regenerate observations for an entity by:
         1. Checking version for deduplication (if provided)
@@ -2917,10 +3387,9 @@ Guidelines:
             entity_name: Canonical name of the entity
             version: Entity's last_seen timestamp when task was created (for deduplication)
             conn: Optional database connection (for transactional atomicity with caller)
-
-        Returns:
-            List of created observation IDs
+            request_context: Request context for authentication.
         """
+        await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         entity_uuid = uuid.UUID(entity_id)
 
@@ -2942,9 +3411,9 @@ Guidelines:
         # Step 1: Check version for deduplication
         if version:
             current_last_seen = await fetchval_with_conn(
-                """
+                f"""
                 SELECT last_seen
-                FROM entities
+                FROM {fq_table("entities")}
                 WHERE id = $1 AND bank_id = $2
                 """,
                 entity_uuid,
@@ -2956,10 +3425,10 @@ Guidelines:
 
         # Step 2: Get all facts mentioning this entity (exclude observations themselves)
         rows = await fetch_with_conn(
-            """
+            f"""
             SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
-            FROM memory_units mu
-            JOIN unit_entities ue ON mu.id = ue.unit_id
+            FROM {fq_table("memory_units")} mu
+            JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
             WHERE mu.bank_id = $1
               AND ue.entity_id = $2
               AND mu.fact_type IN ('world', 'experience')
@@ -2999,12 +3468,12 @@ Guidelines:
         async def do_db_operations(db_conn):
             # Delete old observations for this entity
             await db_conn.execute(
-                """
-                DELETE FROM memory_units
+                f"""
+                DELETE FROM {fq_table("memory_units")}
                 WHERE id IN (
                     SELECT mu.id
-                    FROM memory_units mu
-                    JOIN unit_entities ue ON mu.id = ue.unit_id
+                    FROM {fq_table("memory_units")} mu
+                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
                     WHERE mu.bank_id = $1
                       AND mu.fact_type = 'observation'
                       AND ue.entity_id = $2
@@ -3023,8 +3492,8 @@ Guidelines:
 
             for obs_text, embedding in zip(observations, embeddings):
                 result = await db_conn.fetchrow(
-                    """
-                    INSERT INTO memory_units (
+                    f"""
+                    INSERT INTO {fq_table("memory_units")} (
                         bank_id, text, embedding, context, event_date,
                         occurred_start, occurred_end, mentioned_at,
                         fact_type, access_count
@@ -3046,8 +3515,8 @@ Guidelines:
 
                 # Link observation to entity
                 await db_conn.execute(
-                    """
-                    INSERT INTO unit_entities (unit_id, entity_id)
+                    f"""
+                    INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
                     VALUES ($1, $2)
                     """,
                     uuid.UUID(obs_id),
@@ -3066,7 +3535,12 @@ Guidelines:
                     return await do_db_operations(acquired_conn)
 
     async def _regenerate_observations_sync(
-        self, bank_id: str, entity_ids: list[str], min_facts: int = 5, conn=None
+        self,
+        bank_id: str,
+        entity_ids: list[str],
+        min_facts: int = 5,
+        conn=None,
+        request_context: "RequestContext | None" = None,
     ) -> None:
         """
         Regenerate observations for entities synchronously (called during retain).
@@ -3089,8 +3563,8 @@ Guidelines:
         if conn is not None:
             # Use the provided connection (transactional with caller)
             entity_rows = await conn.fetch(
-                """
-                SELECT id, canonical_name FROM entities
+                f"""
+                SELECT id, canonical_name FROM {fq_table("entities")}
                 WHERE id = ANY($1) AND bank_id = $2
                 """,
                 entity_uuids,
@@ -3099,10 +3573,10 @@ Guidelines:
             entity_names = {row["id"]: row["canonical_name"] for row in entity_rows}
 
             fact_counts = await conn.fetch(
-                """
+                f"""
                 SELECT ue.entity_id, COUNT(*) as cnt
-                FROM unit_entities ue
-                JOIN memory_units mu ON ue.unit_id = mu.id
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("memory_units")} mu ON ue.unit_id = mu.id
                 WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
                 GROUP BY ue.entity_id
                 """,
@@ -3115,8 +3589,8 @@ Guidelines:
             pool = await self._get_pool()
             async with pool.acquire() as acquired_conn:
                 entity_rows = await acquired_conn.fetch(
-                    """
-                    SELECT id, canonical_name FROM entities
+                    f"""
+                    SELECT id, canonical_name FROM {fq_table("entities")}
                     WHERE id = ANY($1) AND bank_id = $2
                     """,
                     entity_uuids,
@@ -3125,10 +3599,10 @@ Guidelines:
                 entity_names = {row["id"]: row["canonical_name"] for row in entity_rows}
 
                 fact_counts = await acquired_conn.fetch(
-                    """
+                    f"""
                     SELECT ue.entity_id, COUNT(*) as cnt
-                    FROM unit_entities ue
-                    JOIN memory_units mu ON ue.unit_id = mu.id
+                    FROM {fq_table("unit_entities")} ue
+                    JOIN {fq_table("memory_units")} mu ON ue.unit_id = mu.id
                     WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
                     GROUP BY ue.entity_id
                     """,
@@ -3150,10 +3624,17 @@ Guidelines:
         if not entities_to_process:
             return
 
+        # Use internal context if not provided (for internal/background calls)
+        from hindsight_api.models import RequestContext as RC
+
+        ctx = request_context if request_context is not None else RC()
+
         # Process all entities in PARALLEL (LLM calls are the bottleneck)
         async def process_entity(entity_id: str, entity_name: str):
             try:
-                await self.regenerate_entity_observations(bank_id, entity_id, entity_name, version=None, conn=conn)
+                await self.regenerate_entity_observations(
+                    bank_id, entity_id, entity_name, version=None, conn=conn, request_context=ctx
+                )
             except Exception as e:
                 logger.error(f"[OBSERVATIONS] Error processing entity {entity_id}: {e}")
 
@@ -3170,6 +3651,10 @@ Guidelines:
         """
         try:
             bank_id = task_dict.get("bank_id")
+            # Use internal request context for background tasks
+            from hindsight_api.models import RequestContext
+
+            internal_context = RequestContext()
 
             # New format: multiple entity_ids
             if "entity_ids" in task_dict:
@@ -3192,7 +3677,7 @@ Guidelines:
 
                             # First check if entity exists
                             entity_exists = await conn.fetchrow(
-                                "SELECT canonical_name FROM entities WHERE id = $1 AND bank_id = $2",
+                                f"SELECT canonical_name FROM {fq_table('entities')} WHERE id = $1 AND bank_id = $2",
                                 entity_uuid,
                                 bank_id,
                             )
@@ -3206,14 +3691,17 @@ Guidelines:
                             # Count facts linked to this entity
                             fact_count = (
                                 await conn.fetchval(
-                                    "SELECT COUNT(*) FROM unit_entities WHERE entity_id = $1", entity_uuid
+                                    f"SELECT COUNT(*) FROM {fq_table('unit_entities')} WHERE entity_id = $1",
+                                    entity_uuid,
                                 )
                                 or 0
                             )
 
                             # Only regenerate if entity has enough facts
                             if fact_count >= min_facts:
-                                await self.regenerate_entity_observations(bank_id, entity_id, entity_name, version=None)
+                                await self.regenerate_entity_observations(
+                                    bank_id, entity_id, entity_name, version=None, request_context=internal_context
+                                )
                             else:
                                 logger.debug(
                                     f"[OBSERVATIONS] Skipping {entity_name} ({fact_count} facts < {min_facts} threshold)"
@@ -3233,10 +3721,297 @@ Guidelines:
                     logger.error(f"[OBSERVATIONS] Missing required fields in task: {task_dict}")
                     return
 
-                await self.regenerate_entity_observations(bank_id, entity_id, entity_name, version)
+                # Type assertions after validation
+                assert isinstance(bank_id, str) and isinstance(entity_id, str) and isinstance(entity_name, str)
+                await self.regenerate_entity_observations(
+                    bank_id, entity_id, entity_name, version=version, request_context=internal_context
+                )
 
         except Exception as e:
             logger.error(f"[OBSERVATIONS] Error regenerating observations: {e}")
             import traceback
 
             traceback.print_exc()
+
+    # =========================================================================
+    # Statistics & Operations (for HTTP API layer)
+    # =========================================================================
+
+    async def get_bank_stats(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Get statistics about memory nodes and links for a bank."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            # Get node counts by fact_type
+            node_stats = await conn.fetch(
+                f"""
+                SELECT fact_type, COUNT(*) as count
+                FROM {fq_table("memory_units")}
+                WHERE bank_id = $1
+                GROUP BY fact_type
+                """,
+                bank_id,
+            )
+
+            # Get link counts by link_type
+            link_stats = await conn.fetch(
+                f"""
+                SELECT ml.link_type, COUNT(*) as count
+                FROM {fq_table("memory_links")} ml
+                JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
+                WHERE mu.bank_id = $1
+                GROUP BY ml.link_type
+                """,
+                bank_id,
+            )
+
+            # Get link counts by fact_type (from nodes)
+            link_fact_type_stats = await conn.fetch(
+                f"""
+                SELECT mu.fact_type, COUNT(*) as count
+                FROM {fq_table("memory_links")} ml
+                JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
+                WHERE mu.bank_id = $1
+                GROUP BY mu.fact_type
+                """,
+                bank_id,
+            )
+
+            # Get link counts by fact_type AND link_type
+            link_breakdown_stats = await conn.fetch(
+                f"""
+                SELECT mu.fact_type, ml.link_type, COUNT(*) as count
+                FROM {fq_table("memory_links")} ml
+                JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
+                WHERE mu.bank_id = $1
+                GROUP BY mu.fact_type, ml.link_type
+                """,
+                bank_id,
+            )
+
+            # Get pending and failed operations counts
+            ops_stats = await conn.fetch(
+                f"""
+                SELECT status, COUNT(*) as count
+                FROM {fq_table("async_operations")}
+                WHERE bank_id = $1
+                GROUP BY status
+                """,
+                bank_id,
+            )
+
+            return {
+                "bank_id": bank_id,
+                "node_counts": {row["fact_type"]: row["count"] for row in node_stats},
+                "link_counts": {row["link_type"]: row["count"] for row in link_stats},
+                "link_counts_by_fact_type": {row["fact_type"]: row["count"] for row in link_fact_type_stats},
+                "link_breakdown": [
+                    {"fact_type": row["fact_type"], "link_type": row["link_type"], "count": row["count"]}
+                    for row in link_breakdown_stats
+                ],
+                "operations": {row["status"]: row["count"] for row in ops_stats},
+            }
+
+    async def get_entity(
+        self,
+        bank_id: str,
+        entity_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Get entity details including metadata and observations."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            entity_row = await conn.fetchrow(
+                f"""
+                SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
+                FROM {fq_table("entities")}
+                WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                uuid.UUID(entity_id),
+            )
+
+        if not entity_row:
+            return None
+
+        # Get observations for the entity
+        observations = await self.get_entity_observations(bank_id, entity_id, limit=20, request_context=request_context)
+
+        return {
+            "id": str(entity_row["id"]),
+            "canonical_name": entity_row["canonical_name"],
+            "mention_count": entity_row["mention_count"],
+            "first_seen": entity_row["first_seen"].isoformat() if entity_row["first_seen"] else None,
+            "last_seen": entity_row["last_seen"].isoformat() if entity_row["last_seen"] else None,
+            "metadata": entity_row["metadata"] or {},
+            "observations": observations,
+        }
+
+    async def list_operations(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> list[dict[str, Any]]:
+        """List async operations for a bank."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            operations = await conn.fetch(
+                f"""
+                SELECT operation_id, bank_id, operation_type, created_at, status, error_message, result_metadata
+                FROM {fq_table("async_operations")}
+                WHERE bank_id = $1
+                ORDER BY created_at DESC
+                """,
+                bank_id,
+            )
+
+            def parse_metadata(metadata):
+                if metadata is None:
+                    return {}
+                if isinstance(metadata, str):
+                    import json
+
+                    return json.loads(metadata)
+                return metadata
+
+            return [
+                {
+                    "id": str(row["operation_id"]),
+                    "task_type": row["operation_type"],
+                    "items_count": parse_metadata(row["result_metadata"]).get("items_count", 0),
+                    "document_id": parse_metadata(row["result_metadata"]).get("document_id"),
+                    "created_at": row["created_at"].isoformat(),
+                    "status": row["status"],
+                    "error_message": row["error_message"],
+                }
+                for row in operations
+            ]
+
+    async def cancel_operation(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Cancel a pending async operation."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        op_uuid = uuid.UUID(operation_id)
+
+        async with acquire_with_retry(pool) as conn:
+            # Check if operation exists and belongs to this memory bank
+            result = await conn.fetchrow(
+                f"SELECT bank_id FROM {fq_table('async_operations')} WHERE operation_id = $1 AND bank_id = $2",
+                op_uuid,
+                bank_id,
+            )
+
+            if not result:
+                raise ValueError(f"Operation {operation_id} not found for bank {bank_id}")
+
+            # Delete the operation
+            await conn.execute(f"DELETE FROM {fq_table('async_operations')} WHERE operation_id = $1", op_uuid)
+
+            return {
+                "success": True,
+                "message": f"Operation {operation_id} cancelled",
+                "operation_id": operation_id,
+                "bank_id": bank_id,
+            }
+
+    async def update_bank(
+        self,
+        bank_id: str,
+        *,
+        name: str | None = None,
+        background: str | None = None,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Update bank name and/or background."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            if name is not None:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("banks")}
+                    SET name = $2, updated_at = NOW()
+                    WHERE bank_id = $1
+                    """,
+                    bank_id,
+                    name,
+                )
+
+            if background is not None:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("banks")}
+                    SET background = $2, updated_at = NOW()
+                    WHERE bank_id = $1
+                    """,
+                    bank_id,
+                    background,
+                )
+
+        # Return updated profile
+        return await self.get_bank_profile(bank_id, request_context=request_context)
+
+    async def submit_async_retain(
+        self,
+        bank_id: str,
+        contents: list[dict[str, Any]],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Submit a batch retain operation to run asynchronously."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        import json
+
+        operation_id = uuid.uuid4()
+
+        # Insert operation record into database
+        async with acquire_with_retry(pool) as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
+                VALUES ($1, $2, $3, $4)
+                """,
+                operation_id,
+                bank_id,
+                "retain",
+                json.dumps({"items_count": len(contents)}),
+            )
+
+        # Submit task to background queue
+        await self._task_backend.submit_task(
+            {
+                "type": "batch_retain",
+                "operation_id": str(operation_id),
+                "bank_id": bank_id,
+                "contents": contents,
+            }
+        )
+
+        logger.info(f"Retain task queued for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}")
+
+        return {
+            "operation_id": str(operation_id),
+            "items_count": len(contents),
+        }

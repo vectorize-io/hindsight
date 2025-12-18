@@ -10,6 +10,7 @@ import pytest
 from datetime import datetime, timezone
 from hindsight_api.engine.search.types import RetrievalResult, MergedCandidate, ScoredResult
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api import RequestContext
 
 
 class TestRRFNormalization:
@@ -125,7 +126,7 @@ class TestCombinedScoringFormula:
 
 
 @pytest.mark.asyncio
-async def test_trace_has_normalized_rrf(memory):
+async def test_trace_has_normalized_rrf(memory, request_context):
     """Integration test: verify trace contains normalized RRF values, not raw."""
     bank_id = f"test_scoring_{datetime.now(timezone.utc).timestamp()}"
 
@@ -135,21 +136,25 @@ async def test_trace_has_normalized_rrf(memory):
             bank_id=bank_id,
             content="Python is a programming language created by Guido van Rossum",
             context="tech facts",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="JavaScript was created by Brendan Eich at Netscape",
             context="tech facts",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="The Eiffel Tower is located in Paris, France",
             context="geography facts",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="Mount Everest is the tallest mountain on Earth",
             context="geography facts",
+            request_context=request_context,
         )
 
         # Search with tracing
@@ -160,6 +165,7 @@ async def test_trace_has_normalized_rrf(memory):
             budget=Budget.LOW,
             max_tokens=1024,
             enable_trace=True,
+            request_context=request_context,
         )
 
         assert result.trace is not None, "Trace should be present"
@@ -210,11 +216,11 @@ async def test_trace_has_normalized_rrf(memory):
             print(f"  - First result score components: {sc}")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_rrf_normalized_not_raw_in_trace(memory):
+async def test_rrf_normalized_not_raw_in_trace(memory, request_context):
     """Verify that raw RRF scores (0.04-0.06 range) don't appear as normalized values."""
     bank_id = f"test_rrf_raw_{datetime.now(timezone.utc).timestamp()}"
 
@@ -225,6 +231,7 @@ async def test_rrf_normalized_not_raw_in_trace(memory):
                 bank_id=bank_id,
                 content=f"Test fact number {i} about various topics",
                 context="test context",
+                request_context=request_context,
             )
 
         result = await memory.recall_async(
@@ -234,6 +241,7 @@ async def test_rrf_normalized_not_raw_in_trace(memory):
             budget=Budget.LOW,
             max_tokens=512,
             enable_trace=True,
+            request_context=request_context,
         )
 
         trace = result.trace
@@ -268,11 +276,11 @@ async def test_rrf_normalized_not_raw_in_trace(memory):
         print("\n✓ RRF raw vs normalized test passed!")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_combined_score_matches_components(memory):
+async def test_combined_score_matches_components(memory, request_context):
     """Verify the final score actually equals the weighted sum of components."""
     bank_id = f"test_combined_{datetime.now(timezone.utc).timestamp()}"
 
@@ -281,11 +289,13 @@ async def test_combined_score_matches_components(memory):
             bank_id=bank_id,
             content="The quick brown fox jumps over the lazy dog",
             context="test",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="A quick test of the emergency broadcast system",
             context="test",
+            request_context=request_context,
         )
 
         result = await memory.recall_async(
@@ -295,6 +305,7 @@ async def test_combined_score_matches_components(memory):
             budget=Budget.LOW,
             max_tokens=512,
             enable_trace=True,
+            request_context=request_context,
         )
 
         trace = result.trace
@@ -320,4 +331,4 @@ async def test_combined_score_matches_components(memory):
         print("\n✓ Combined score verification test passed!")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)

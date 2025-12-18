@@ -44,7 +44,11 @@ class Hindsight:
         ```python
         from hindsight_client import Hindsight
 
+        # Without authentication
         client = Hindsight(base_url="http://localhost:8888")
+
+        # With API key authentication
+        client = Hindsight(base_url="http://localhost:8888", api_key="your-api-key")
 
         # Store a memory
         client.retain(bank_id="alice", content="Alice loves AI")
@@ -59,15 +63,16 @@ class Hindsight:
         ```
     """
 
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, api_key: Optional[str] = None, timeout: float = 30.0):
         """
         Initialize the Hindsight client.
 
         Args:
             base_url: The base URL of the Hindsight API server
+            api_key: Optional API key for authentication (sent as Bearer token)
             timeout: Request timeout in seconds (default: 30.0)
         """
-        config = hindsight_client_api.Configuration(host=base_url)
+        config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
         self._api = default_api.DefaultApi(self._api_client)
 

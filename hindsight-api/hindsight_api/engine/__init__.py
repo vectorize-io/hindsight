@@ -11,7 +11,13 @@ from .cross_encoder import CrossEncoderModel, LocalSTCrossEncoder, RemoteTEICros
 from .db_utils import acquire_with_retry
 from .embeddings import Embeddings, LocalSTEmbeddings, RemoteTEIEmbeddings
 from .llm_wrapper import LLMConfig
-from .memory_engine import MemoryEngine
+from .memory_engine import (
+    MemoryEngine,
+    UnqualifiedTableError,
+    fq_table,
+    get_current_schema,
+    validate_sql_schema,
+)
 from .response_models import MemoryFact, RecallResult, ReflectResult
 from .search.trace import (
     EntryPoint,
@@ -49,4 +55,9 @@ __all__ = [
     "RecallResult",
     "ReflectResult",
     "MemoryFact",
+    # Schema safety utilities
+    "fq_table",
+    "get_current_schema",
+    "validate_sql_schema",
+    "UnqualifiedTableError",
 ]

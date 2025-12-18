@@ -5,7 +5,14 @@
  * ```typescript
  * import { HindsightClient } from '@vectorize-io/hindsight-client';
  *
+ * // Without authentication
  * const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
+ *
+ * // With API key authentication
+ * const client = new HindsightClient({
+ *   baseUrl: 'http://localhost:8888',
+ *   apiKey: 'your-api-key'
+ * });
  *
  * // Retain a memory
  * await client.retain('alice', 'Alice loves AI');
@@ -37,6 +44,10 @@ import type {
 
 export interface HindsightClientOptions {
     baseUrl: string;
+    /**
+     * Optional API key for authentication (sent as Bearer token in Authorization header)
+     */
+    apiKey?: string;
 }
 
 export interface MemoryItemInput {
@@ -54,6 +65,9 @@ export class HindsightClient {
         this.client = createClient(
             createConfig({
                 baseUrl: options.baseUrl,
+                headers: options.apiKey
+                    ? { Authorization: `Bearer ${options.apiKey}` }
+                    : undefined,
             })
         );
     }

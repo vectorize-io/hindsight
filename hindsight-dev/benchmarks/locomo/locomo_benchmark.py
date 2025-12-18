@@ -3,28 +3,28 @@ LoComo-specific benchmark implementations.
 
 Provides dataset, answer generator, and evaluator for the LoComo benchmark.
 """
-import sys
-from pathlib import Path
 
-from benchmarks.common.benchmark_runner import BenchmarkRunner
-
-import json
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Tuple, Optional
 import asyncio
-import pydantic
-from openai import AsyncOpenAI
+import json
 import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from benchmarks.common.benchmark_runner import BenchmarkDataset, LLMAnswerGenerator, LLMAnswerEvaluator
+import pydantic
 from hindsight_api.engine.llm_wrapper import LLMConfig
+from openai import AsyncOpenAI
+
+from benchmarks.common.benchmark_runner import BenchmarkDataset, BenchmarkRunner, LLMAnswerEvaluator, LLMAnswerGenerator
+
 
 class LoComoDataset(BenchmarkDataset):
     """LoComo dataset implementation."""
 
     def load(self, path: Path, max_items: Optional[int] = None) -> List[Dict[str, Any]]:
         """Load LoComo dataset from JSON file."""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             dataset = json.load(f)
 
         if max_items:
@@ -34,7 +34,7 @@ class LoComoDataset(BenchmarkDataset):
 
     def get_item_id(self, item: Dict) -> str:
         """Get sample ID from LoComo item."""
-        return item['sample_id']
+        return item["sample_id"]
 
     def prepare_sessions_for_ingestion(self, item: Dict) -> List[Dict[str, Any]]:
         """
@@ -45,12 +45,12 @@ class LoComoDataset(BenchmarkDataset):
         Returns:
             List of session dicts, each containing 'content', 'context', 'event_date', 'document_id'
         """
-        conv = item['conversation']
-        speaker_a = conv['speaker_a']
-        speaker_b = conv['speaker_b']
+        conv = item["conversation"]
+        speaker_a = conv["speaker_a"]
+        speaker_b = conv["speaker_b"]
 
         # Get all session keys sorted
-        session_keys = sorted([k for k in conv.keys() if k.startswith('session_') and not k.endswith('_date_time')])
+        session_keys = sorted([k for k in conv.keys() if k.startswith("session_") and not k.endswith("_date_time")])
 
         session_items = []
 
@@ -65,12 +65,14 @@ class LoComoDataset(BenchmarkDataset):
             session_date = self._parse_date(conv.get(date_key))
             session_content = json.dumps(session_data)
             document_id = f"{item['sample_id']}_{session_key}"
-            session_items.append({
-                "content": session_content,
-                "context": f"Conversation between {speaker_a} and {speaker_b} ({session_key} of {item['sample_id']})",
-                "event_date": session_date,
-                "document_id": document_id
-            })
+            session_items.append(
+                {
+                    "content": session_content,
+                    "context": f"Conversation between {speaker_a} and {speaker_b} ({session_key} of {item['sample_id']})",
+                    "event_date": session_date,
+                    "document_id": document_id,
+                }
+            )
 
         return session_items
 
@@ -81,7 +83,7 @@ class LoComoDataset(BenchmarkDataset):
         Returns:
             List of QA dicts with 'question', 'answer', 'category'
         """
-        return item['qa']
+        return item["qa"]
 
     def _parse_date(self, date_string: str) -> datetime:
         """Parse LoComo date format to datetime."""
@@ -95,6 +97,7 @@ class LoComoDataset(BenchmarkDataset):
 
 class QuestionAnswer(pydantic.BaseModel):
     """Answer format for LoComo questions."""
+
     answer: str
     reasoning: str
 
@@ -113,7 +116,7 @@ class LoComoAnswerGenerator(LLMAnswerGenerator):
         question: str,
         recall_result: Dict[str, Any],
         question_date: Optional[datetime] = None,
-        question_type: Optional[str] = None
+        question_type: Optional[str] = None,
     ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
         """
         Generate answer from retrieved memories using Groq.
@@ -141,7 +144,7 @@ class LoComoAnswerGenerator(LLMAnswerGenerator):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a helpful expert assistant answering questions from lme_experiment users based on the provided context."
+                        "content": "You are a helpful expert assistant answering questions from lme_experiment users based on the provided context.",
                     },
                     {
                         "role": "user",
@@ -165,11 +168,11 @@ Context:
 Question: {question}
 Answer:
 
-"""
-                    }
+""",
+                    },
                 ],
                 response_format=QuestionAnswer,
-                scope="memory"
+                scope="memory",
             )
             return answer_obj.answer, answer_obj.reasoning, None
         except Exception as e:
@@ -183,7 +186,7 @@ class LoComoThinkAnswerGenerator(LLMAnswerGenerator):
     so it doesn't need external search to be performed by the benchmark runner.
     """
 
-    def __init__(self, memory: 'MemoryEngine', agent_id: str, thinking_budget: int = 500):
+    def __init__(self, memory: "MemoryEngine", agent_id: str, thinking_budget: int = 500):
         """Initialize with memory instance and agent_id.
 
         Args:
@@ -204,7 +207,7 @@ class LoComoThinkAnswerGenerator(LLMAnswerGenerator):
         question: str,
         recall_result: Dict[str, Any],
         question_date: Optional[datetime] = None,
-        question_type: Optional[str] = None
+        question_type: Optional[str] = None,
     ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
         """
         Generate answer using the integrated think API.
@@ -235,9 +238,9 @@ class LoComoThinkAnswerGenerator(LLMAnswerGenerator):
 
             # Extract memories from based_on
             based_on = result.based_on
-            world_facts = based_on.get('world', [])
-            agent_facts = based_on.get('agent', [])
-            opinion_facts = based_on.get('opinion', [])
+            world_facts = based_on.get("world", [])
+            agent_facts = based_on.get("agent", [])
+            opinion_facts = based_on.get("opinion", [])
 
             # Combine all facts into retrieved_memories
             retrieved_memories = []
@@ -271,7 +274,7 @@ async def run_benchmark(
     api_url: str = None,
     max_concurrent_questions_override: int = None,
     only_failed: bool = False,
-    only_invalid: bool = False
+    only_invalid: bool = False,
 ):
     """
     Run the LoComo benchmark.
@@ -287,6 +290,7 @@ async def run_benchmark(
         only_invalid: If True, only run conversations that have invalid questions (is_invalid=True)
     """
     from rich.console import Console
+
     console = Console()
 
     # Load previous results if filtering for failed/invalid conversations
@@ -294,35 +298,41 @@ async def run_benchmark(
     invalid_conversation_ids = set()
     if only_failed or only_invalid:
         suffix = "_think" if use_think else ""
-        results_filename = f'benchmark_results{suffix}.json'
-        results_path = Path(__file__).parent / 'results' / results_filename
+        results_filename = f"benchmark_results{suffix}.json"
+        results_path = Path(__file__).parent / "results" / results_filename
 
         if not results_path.exists():
-            console.print(f"[red]Error: Cannot use --only-failed or --only-invalid without existing results file[/red]")
+            console.print("[red]Error: Cannot use --only-failed or --only-invalid without existing results file[/red]")
             console.print(f"[yellow]Results file not found: {results_path}[/yellow]")
             return
 
-        with open(results_path, 'r') as f:
+        with open(results_path, "r") as f:
             previous_results = json.load(f)
 
         # Extract conversation IDs that have failed or invalid questions
-        for item_result in previous_results.get('item_results', []):
-            item_id = item_result['item_id']
-            for detail in item_result['metrics'].get('detailed_results', []):
-                if only_failed and detail.get('is_correct') == False and not detail.get('is_invalid', False):
+        for item_result in previous_results.get("item_results", []):
+            item_id = item_result["item_id"]
+            for detail in item_result["metrics"].get("detailed_results", []):
+                if only_failed and detail.get("is_correct") == False and not detail.get("is_invalid", False):
                     failed_conversation_ids.add(item_id)
-                if only_invalid and detail.get('is_invalid', False):
+                if only_invalid and detail.get("is_invalid", False):
                     invalid_conversation_ids.add(item_id)
 
         if only_failed:
-            console.print(f"[cyan]Filtering to {len(failed_conversation_ids)} conversations with failed questions (is_correct=False)[/cyan]")
+            console.print(
+                f"[cyan]Filtering to {len(failed_conversation_ids)} conversations with failed questions (is_correct=False)[/cyan]"
+            )
         if only_invalid:
-            console.print(f"[cyan]Filtering to {len(invalid_conversation_ids)} conversations with invalid questions (is_invalid=True)[/cyan]")
+            console.print(
+                f"[cyan]Filtering to {len(invalid_conversation_ids)} conversations with invalid questions (is_invalid=True)[/cyan]"
+            )
 
         target_ids = failed_conversation_ids if only_failed else invalid_conversation_ids
         if not target_ids:
             filter_type = "failed" if only_failed else "invalid"
-            console.print(f"[yellow]No conversations with {filter_type} questions found in previous results. Nothing to run.[/yellow]")
+            console.print(
+                f"[yellow]No conversations with {filter_type} questions found in previous results. Nothing to run.[/yellow]"
+            )
             return
 
     # Initialize components
@@ -331,18 +341,16 @@ async def run_benchmark(
     # Use remote API client if api_url is provided, otherwise use local memory
     if api_url:
         from benchmarks.common.benchmark_runner import HindsightClientAdapter
+
         memory = HindsightClientAdapter(base_url=api_url)
         await memory.initialize()
     else:
         from benchmarks.common.benchmark_runner import create_memory_engine
+
         memory = await create_memory_engine()
 
     if use_think:
-        answer_generator = LoComoThinkAnswerGenerator(
-            memory=memory,
-            agent_id="locomo",
-            thinking_budget=500
-        )
+        answer_generator = LoComoThinkAnswerGenerator(memory=memory, agent_id="locomo", thinking_budget=500)
         max_concurrent_questions = max_concurrent_questions_override or 4
         eval_semaphore_size = 4
     else:
@@ -356,14 +364,11 @@ async def run_benchmark(
 
     # Create benchmark runner
     runner = BenchmarkRunner(
-        dataset=dataset,
-        answer_generator=answer_generator,
-        answer_evaluator=answer_evaluator,
-        memory=memory
+        dataset=dataset, answer_generator=answer_generator, answer_evaluator=answer_evaluator, memory=memory
     )
 
     # Filter dataset if using --only-failed or --only-invalid
-    dataset_path = Path(__file__).parent / 'datasets' / 'locomo10.json'
+    dataset_path = Path(__file__).parent / "datasets" / "locomo10.json"
 
     if only_failed or only_invalid:
         # Load and filter dataset
@@ -374,14 +379,16 @@ async def run_benchmark(
 
         # Temporarily replace dataset's load method
         original_load = dataset.load
+
         def filtered_load(path: Path, max_items: Optional[int] = None):
             return filtered_items[:max_items] if max_items else filtered_items
+
         dataset.load = filtered_load
 
     # Determine output filename based on mode
     suffix = "_think" if use_think else ""
-    results_filename = f'benchmark_results{suffix}.json'
-    output_path = Path(__file__).parent / 'results' / results_filename
+    results_filename = f"benchmark_results{suffix}.json"
+    output_path = Path(__file__).parent / "results" / results_filename
 
     # Create results directory if it doesn't exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,7 +413,7 @@ async def run_benchmark(
         clear_agent_per_item=True,  # Use unique agent ID per conversation
         max_concurrent_items=3,  # Process up to 3 conversations in parallel
         output_path=output_path,  # Save results incrementally
-        merge_with_existing=merge_with_existing
+        merge_with_existing=merge_with_existing,
     )
 
     # Display results (final save already happened incrementally)
@@ -430,14 +437,10 @@ def generate_markdown_table(results: dict, use_think: bool = False):
     4 = Open-domain
     """
     from rich.console import Console
+
     console = Console()
 
-    category_names = {
-        '1': 'Multi-hop',
-        '2': 'Single-hop',
-        '3': 'Temporal',
-        '4': 'Open-domain'
-    }
+    category_names = {"1": "Multi-hop", "2": "Single-hop", "3": "Temporal", "4": "Open-domain"}
 
     # Build markdown content
     lines = []
@@ -446,33 +449,41 @@ def generate_markdown_table(results: dict, use_think: bool = False):
     lines.append("")
 
     # Add model configuration
-    if 'model_config' in results:
-        config = results['model_config']
+    if "model_config" in results:
+        config = results["model_config"]
         lines.append("## Model Configuration")
         lines.append("")
         lines.append(f"- **Hindsight**: {config['hindsight']['provider']}/{config['hindsight']['model']}")
-        lines.append(f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+        lines.append(
+            f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}"
+        )
         lines.append(f"- **LLM Judge**: {config['judge']['provider']}/{config['judge']['model']}")
         lines.append("")
 
-    lines.append(f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})")
+    lines.append(
+        f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})"
+    )
     lines.append("")
-    lines.append("| Sample ID | Sessions | Questions | Correct | Accuracy | Multi-hop | Single-hop | Temporal | Open-domain |")
-    lines.append("|-----------|----------|-----------|---------|----------|-----------|------------|----------|-------------|")
+    lines.append(
+        "| Sample ID | Sessions | Questions | Correct | Accuracy | Multi-hop | Single-hop | Temporal | Open-domain |"
+    )
+    lines.append(
+        "|-----------|----------|-----------|---------|----------|-----------|------------|----------|-------------|"
+    )
 
-    for item_result in results['item_results']:
-        item_id = item_result['item_id']
-        num_sessions = item_result['num_sessions']
-        metrics = item_result['metrics']
+    for item_result in results["item_results"]:
+        item_id = item_result["item_id"]
+        num_sessions = item_result["num_sessions"]
+        metrics = item_result["metrics"]
 
         # Calculate category accuracies
-        cat_stats = metrics.get('category_stats', {})
+        cat_stats = metrics.get("category_stats", {})
         cat_accuracies = {}
 
-        for cat_id in ['1', '2', '3', '4']:
+        for cat_id in ["1", "2", "3", "4"]:
             if cat_id in cat_stats:
                 stats = cat_stats[cat_id]
-                acc = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
+                acc = (stats["correct"] / stats["total"] * 100) if stats["total"] > 0 else 0
                 cat_accuracies[cat_id] = f"{acc:.1f}% ({stats['correct']}/{stats['total']})"
             else:
                 cat_accuracies[cat_id] = "N/A"
@@ -485,28 +496,48 @@ def generate_markdown_table(results: dict, use_think: bool = False):
 
     # Write to file with suffix
     suffix = "_think" if use_think else ""
-    output_file = Path(__file__).parent / 'results' / f'results_table{suffix}.md'
+    output_file = Path(__file__).parent / "results" / f"results_table{suffix}.md"
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text('\n'.join(lines))
+    output_file.write_text("\n".join(lines))
     console.print(f"\n[green]✓[/green] Results table saved to {output_file}")
 
 
 if __name__ == "__main__":
-    import logging
     import argparse
+    import logging
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    parser = argparse.ArgumentParser(description='Run LoComo benchmark')
-    parser.add_argument('--max-conversations', type=int, default=None, help='Maximum conversations to evaluate')
-    parser.add_argument('--max-questions', type=int, default=None, help='Maximum questions per conversation')
-    parser.add_argument('--skip-ingestion', action='store_true', help='Skip ingestion and use existing data')
-    parser.add_argument('--use-think', action='store_true', help='Use think API instead of search + LLM')
-    parser.add_argument('--conversation', type=str, default=None, help='Run only specific conversation (e.g., "conv-26")')
-    parser.add_argument('--api-url', type=str, default=None, help='Hindsight API URL (default: use local memory, example: http://localhost:8888)')
-    parser.add_argument('--max-concurrent-questions', type=int, default=None, help='Max concurrent questions per conversation (default: 4 for think, 10 for search)')
-    parser.add_argument('--only-failed', action='store_true', help='Only run conversations that have failed questions (is_correct=False). Requires existing results file.')
-    parser.add_argument('--only-invalid', action='store_true', help='Only run conversations that have invalid questions (is_invalid=True). Requires existing results file.')
+    parser = argparse.ArgumentParser(description="Run LoComo benchmark")
+    parser.add_argument("--max-conversations", type=int, default=None, help="Maximum conversations to evaluate")
+    parser.add_argument("--max-questions", type=int, default=None, help="Maximum questions per conversation")
+    parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion and use existing data")
+    parser.add_argument("--use-think", action="store_true", help="Use think API instead of search + LLM")
+    parser.add_argument(
+        "--conversation", type=str, default=None, help='Run only specific conversation (e.g., "conv-26")'
+    )
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        default=None,
+        help="Hindsight API URL (default: use local memory, example: http://localhost:8888)",
+    )
+    parser.add_argument(
+        "--max-concurrent-questions",
+        type=int,
+        default=None,
+        help="Max concurrent questions per conversation (default: 4 for think, 10 for search)",
+    )
+    parser.add_argument(
+        "--only-failed",
+        action="store_true",
+        help="Only run conversations that have failed questions (is_correct=False). Requires existing results file.",
+    )
+    parser.add_argument(
+        "--only-invalid",
+        action="store_true",
+        help="Only run conversations that have invalid questions (is_invalid=True). Requires existing results file.",
+    )
 
     args = parser.parse_args()
 
@@ -514,14 +545,16 @@ if __name__ == "__main__":
     if args.only_failed and args.only_invalid:
         parser.error("Cannot use both --only-failed and --only-invalid at the same time")
 
-    results = asyncio.run(run_benchmark(
-        max_conversations=args.max_conversations,
-        max_questions_per_conv=args.max_questions,
-        skip_ingestion=args.skip_ingestion,
-        use_think=args.use_think,
-        conversation=args.conversation,
-        api_url=args.api_url,
-        max_concurrent_questions_override=args.max_concurrent_questions,
-        only_failed=args.only_failed,
-        only_invalid=args.only_invalid
-    ))
+    results = asyncio.run(
+        run_benchmark(
+            max_conversations=args.max_conversations,
+            max_questions_per_conv=args.max_questions,
+            skip_ingestion=args.skip_ingestion,
+            use_think=args.use_think,
+            conversation=args.conversation,
+            api_url=args.api_url,
+            max_concurrent_questions_override=args.max_concurrent_questions,
+            only_failed=args.only_failed,
+            only_invalid=args.only_invalid,
+        )
+    )

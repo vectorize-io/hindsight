@@ -3,21 +3,20 @@ LongMemEval-specific benchmark implementations.
 
 Provides dataset, answer generator, and evaluator for the LongMemEval benchmark.
 """
-import sys
-from pathlib import Path
 
-from benchmarks.common.benchmark_runner import BenchmarkRunner
-
-import json
-from datetime import datetime, timezone
-from typing import List, Dict, Any, Tuple, Optional
 import asyncio
-import pydantic
-from openai import AsyncOpenAI
+import json
 import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from benchmarks.common.benchmark_runner import BenchmarkDataset, LLMAnswerGenerator, LLMAnswerEvaluator
+import pydantic
 from hindsight_api.engine.llm_wrapper import LLMConfig
+from openai import AsyncOpenAI
+
+from benchmarks.common.benchmark_runner import BenchmarkDataset, BenchmarkRunner, LLMAnswerEvaluator, LLMAnswerGenerator
 
 
 class LongMemEvalDataset(BenchmarkDataset):
@@ -25,7 +24,7 @@ class LongMemEvalDataset(BenchmarkDataset):
 
     def load(self, path: Path, max_items: Optional[int] = None) -> List[Dict[str, Any]]:
         """Load LongMemEval dataset from JSON file."""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             dataset = json.load(f)
 
         if max_items:
@@ -67,7 +66,7 @@ class LongMemEvalDataset(BenchmarkDataset):
             for turn in session_turns:
                 if isinstance(turn, dict):
                     # Create a copy without has_answer
-                    cleaned_turn = {k: v for k, v in turn.items() if k != 'has_answer'}
+                    cleaned_turn = {k: v for k, v in turn.items() if k != "has_answer"}
                     cleaned_turns.append(cleaned_turn)
                 else:
                     cleaned_turns.append(turn)
@@ -75,12 +74,14 @@ class LongMemEvalDataset(BenchmarkDataset):
             session_content = json.dumps(cleaned_turns)
             question_id = item.get("question_id", "unknown")
             document_id = f"{question_id}_{session_id}"
-            batch_contents.append({
-                "content": session_content,
-                "context": f"Session {document_id} - you are the assistant in this conversation - happened on {session_date.strftime('%Y-%m-%d %H:%M:%S')} UTC.",
-                "event_date": session_date,
-                "document_id": document_id
-            })
+            batch_contents.append(
+                {
+                    "content": session_content,
+                    "context": f"Session {document_id} - you are the assistant in this conversation - happened on {session_date.strftime('%Y-%m-%d %H:%M:%S')} UTC.",
+                    "event_date": session_date,
+                    "document_id": document_id,
+                }
+            )
 
         return batch_contents
 
@@ -95,22 +96,24 @@ class LongMemEvalDataset(BenchmarkDataset):
         """
         # Parse question_date if available
         question_date = None
-        if 'question_date' in item:
-            question_date = self._parse_date(item['question_date'])
+        if "question_date" in item:
+            question_date = self._parse_date(item["question_date"])
 
-        return [{
-            'question': item.get("question", ""),
-            'answer': item.get("answer", ""),
-            'category': item.get("question_type", "unknown"),
-            'question_date': question_date
-        }]
+        return [
+            {
+                "question": item.get("question", ""),
+                "answer": item.get("answer", ""),
+                "category": item.get("question_type", "unknown"),
+                "question_date": question_date,
+            }
+        ]
 
     def _parse_date(self, date_str: str) -> datetime:
         """Parse date string to datetime object."""
         try:
             # LongMemEval format: "2023/05/20 (Sat) 02:21"
             # Try to parse the main part before the day name
-            date_str_cleaned = date_str.split('(')[0].strip() if '(' in date_str else date_str
+            date_str_cleaned = date_str.split("(")[0].strip() if "(" in date_str else date_str
 
             # Try multiple formats
             for fmt in ["%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"]:
@@ -121,7 +124,7 @@ class LongMemEvalDataset(BenchmarkDataset):
                     continue
 
             # Fallback: try ISO format
-            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except Exception:
             raise ValueError(f"Failed to parse date string: {date_str}")
 
@@ -129,6 +132,7 @@ class LongMemEvalDataset(BenchmarkDataset):
 class QuestionAnswer(pydantic.BaseModel):
     answer: str
     reasoning: Optional[str] = None
+
 
 class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
     """LongMemEval-specific answer generator using configurable LLM provider."""
@@ -202,10 +206,7 @@ class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
                 chunk_text = chunk_info.get("chunk_text", "")
 
             # Build the formatted fact entry
-            entry_parts = [
-                f"Fact {i} ({fact_type}): {fact_text}",
-                f"When: {when_str}"
-            ]
+            entry_parts = [f"Fact {i} ({fact_type}): {fact_text}", f"When: {when_str}"]
 
             # Add context field if present
             context = fact.get("context")
@@ -217,7 +218,7 @@ class LongMemEvalAnswerGenerator(LLMAnswerGenerator):
                 # Truncate very long chunks
                 if len(chunk_text) > 1000:
                     chunk_text = chunk_text[:1000] + "..."
-                entry_parts.append(f"Source chunk:\n  \"{chunk_text}\"")
+                entry_parts.append(f'Source chunk:\n  "{chunk_text}"')
 
             formatted_parts.append("\n".join(entry_parts))
 
@@ -326,43 +327,43 @@ The context contains memory facts extracted from previous conversations, each wi
             return ""
 
     async def generate_answer(
-                self,
-                question: str,
-                recall_result: Dict[str, Any],
-                question_date: Optional[datetime] = None,
-                question_type: Optional[str] = None
-        ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
-            """
-            Generate answer from retrieved memories using Groq.
+        self,
+        question: str,
+        recall_result: Dict[str, Any],
+        question_date: Optional[datetime] = None,
+        question_type: Optional[str] = None,
+    ) -> Tuple[str, str, Optional[List[Dict[str, Any]]]]:
+        """
+        Generate answer from retrieved memories using Groq.
 
-            Args:
-                question: The question text
-                recall_result: Full RecallResult dict containing results, entities, chunks, and trace
-                question_date: Date when the question was asked (for temporal context)
-                question_type: Question category (e.g., 'single-session-user', 'multi-session-assistant')
+        Args:
+            question: The question text
+            recall_result: Full RecallResult dict containing results, entities, chunks, and trace
+            question_date: Date when the question was asked (for temporal context)
+            question_type: Question category (e.g., 'single-session-user', 'multi-session-assistant')
 
-            Returns:
-                Tuple of (answer, reasoning, None)
-                - None indicates to use the memories from recall_result
-            """
-            # Format context based on selected mode
-            if self.context_format == "structured":
-                context = self._format_context_structured(recall_result)
-            else:
-                context = self._format_context_json(recall_result)
+        Returns:
+            Tuple of (answer, reasoning, None)
+            - None indicates to use the memories from recall_result
+        """
+        # Format context based on selected mode
+        if self.context_format == "structured":
+            context = self._format_context_structured(recall_result)
+        else:
+            context = self._format_context_json(recall_result)
 
-            context_instructions = self._get_context_instructions()
+        context_instructions = self._get_context_instructions()
 
-            # Format question date if provided
-            formatted_question_date = question_date.strftime('%Y-%m-%d %H:%M:%S UTC') if question_date else "Not specified"
+        # Format question date if provided
+        formatted_question_date = question_date.strftime("%Y-%m-%d %H:%M:%S UTC") if question_date else "Not specified"
 
-            # Use LLM to generate answer
-            try:
-                answer_obj = await self.llm_config.call(
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"""You are a helpful assistant that must answer user questions based on the previous conversations.
+        # Use LLM to generate answer
+        try:
+            answer_obj = await self.llm_config.call(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""You are a helpful assistant that must answer user questions based on the previous conversations.
 
 {context_instructions}**Answer Guidelines:**
 1. Start by scanning retrieved context to understand the facts and events that happened and the timeline.
@@ -393,20 +394,20 @@ Retrieved Context:
 
 
 Answer:
-"""
-                        }
-                    ],
-                    response_format=QuestionAnswer,
-                    scope="memory",
-                    max_completion_tokens=32768,
-                )
-                reasoning_text = answer_obj.reasoning or ""
-                if reasoning_text:
-                    reasoning_text = reasoning_text + " "
-                reasoning_text += f"(question date: {formatted_question_date})"
-                return answer_obj.answer, reasoning_text, None
-            except Exception as e:
-                return f"Error generating answer: {str(e)}", "Error occurred during answer generation.", None
+""",
+                    }
+                ],
+                response_format=QuestionAnswer,
+                scope="memory",
+                max_completion_tokens=32768,
+            )
+            reasoning_text = answer_obj.reasoning or ""
+            if reasoning_text:
+                reasoning_text = reasoning_text + " "
+            reasoning_text += f"(question date: {formatted_question_date})"
+            return answer_obj.answer, reasoning_text, None
+        except Exception as e:
+            return f"Error generating answer: {str(e)}", "Error occurred during answer generation.", None
 
 
 async def run_benchmark(
@@ -425,7 +426,7 @@ async def run_benchmark(
     max_concurrent_items: int = 1,
     results_filename: str = "benchmark_results.json",
     context_format: str = "json",
-    source_results: str = None
+    source_results: str = None,
 ):
     """
     Run the LongMemEval benchmark.
@@ -449,13 +450,16 @@ async def run_benchmark(
         source_results: Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json.
     """
     from rich.console import Console
+
     console = Console()
 
     # Validate mutually exclusive arguments
     # --max-instances-per-category can't be combined with --max-instances or --category
     # But --category CAN be combined with --max-instances (to limit questions within a category)
     if max_instances_per_category is not None and (max_instances is not None or category is not None):
-        console.print("[red]Error: --max-questions-per-category cannot be combined with --max-instances or --category[/red]")
+        console.print(
+            "[red]Error: --max-questions-per-category cannot be combined with --max-instances or --category[/red]"
+        )
         return
 
     # Validate --only-ingested can't be combined with other dataset filters
@@ -480,8 +484,10 @@ async def run_benchmark(
     dataset_path = Path(__file__).parent / "datasets" / "longmemeval_s_cleaned.json"
     if not dataset_path.exists():
         if not download_dataset(dataset_path):
-            console.print(f"[red]Failed to download dataset. Please download manually:[/red]")
-            console.print("[yellow]curl -L 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json' -o benchmarks/longmemeval/datasets/longmemeval_s_cleaned.json[/yellow]")
+            console.print("[red]Failed to download dataset. Please download manually:[/red]")
+            console.print(
+                "[yellow]curl -L 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json' -o benchmarks/longmemeval/datasets/longmemeval_s_cleaned.json[/yellow]"
+            )
             return
 
     # Initialize components
@@ -499,9 +505,10 @@ async def run_benchmark(
 
         # Group by category and take max_instances_per_category from each
         from collections import defaultdict
+
         category_items = defaultdict(list)
         for item in original_dataset_items:
-            cat = item.get('question_type', 'unknown')
+            cat = item.get("question_type", "unknown")
             category_items[cat].append(item)
 
         # Take up to max_instances_per_category from each category
@@ -518,30 +525,34 @@ async def run_benchmark(
     invalid_question_ids = set()
     if only_failed or only_invalid:
         # Use source_results if specified, otherwise default to benchmark_results.json
-        source_file = source_results if source_results else 'benchmark_results.json'
-        results_path = Path(__file__).parent / 'results' / source_file
+        source_file = source_results if source_results else "benchmark_results.json"
+        results_path = Path(__file__).parent / "results" / source_file
         if not results_path.exists():
-            console.print(f"[red]Error: Cannot use --only-failed or --only-invalid without existing results file[/red]")
+            console.print("[red]Error: Cannot use --only-failed or --only-invalid without existing results file[/red]")
             console.print(f"[yellow]Results file not found: {results_path}[/yellow]")
             return
 
         console.print(f"[cyan]Reading failed/invalid questions from: {source_file}[/cyan]")
-        with open(results_path, 'r') as f:
+        with open(results_path, "r") as f:
             previous_results = json.load(f)
 
         # Extract question IDs that failed or are invalid
-        for item_result in previous_results.get('item_results', []):
-            item_id = item_result['item_id']
-            for detail in item_result['metrics'].get('detailed_results', []):
-                if only_failed and detail.get('is_correct') == False and not detail.get('is_invalid', False):
+        for item_result in previous_results.get("item_results", []):
+            item_id = item_result["item_id"]
+            for detail in item_result["metrics"].get("detailed_results", []):
+                if only_failed and detail.get("is_correct") == False and not detail.get("is_invalid", False):
                     failed_question_ids.add(item_id)
-                if only_invalid and detail.get('is_invalid', False):
+                if only_invalid and detail.get("is_invalid", False):
                     invalid_question_ids.add(item_id)
 
         if only_failed:
-            console.print(f"[cyan]Filtering to {len(failed_question_ids)} questions that failed (is_correct=False)[/cyan]")
+            console.print(
+                f"[cyan]Filtering to {len(failed_question_ids)} questions that failed (is_correct=False)[/cyan]"
+            )
         if only_invalid:
-            console.print(f"[cyan]Filtering to {len(invalid_question_ids)} questions that were invalid (is_invalid=True)[/cyan]")
+            console.print(
+                f"[cyan]Filtering to {len(invalid_question_ids)} questions that were invalid (is_invalid=True)[/cyan]"
+            )
 
     # Filter dataset by category if specified
     if category:
@@ -550,11 +561,11 @@ async def run_benchmark(
             # Load full dataset without max_instances limit for filtering
             original_dataset_items = dataset.load(dataset_path, max_items=None)
 
-        filtered_items = [item for item in original_dataset_items if item.get('question_type') == category]
+        filtered_items = [item for item in original_dataset_items if item.get("question_type") == category]
 
         if not filtered_items:
             console.print(f"[yellow]No questions found for category '{category}'. Available categories:[/yellow]")
-            available_categories = set(item.get('question_type', 'unknown') for item in original_dataset_items)
+            available_categories = set(item.get("question_type", "unknown") for item in original_dataset_items)
             for cat in sorted(available_categories):
                 console.print(f"  - {cat}")
             return
@@ -562,7 +573,9 @@ async def run_benchmark(
         total_found = len(filtered_items)
         will_run = min(total_found, max_instances) if max_instances else total_found
         if max_instances and total_found > max_instances:
-            console.print(f"[green]Found {total_found} questions for category '{category}' (will run {will_run} due to --max-instances)[/green]")
+            console.print(
+                f"[green]Found {total_found} questions for category '{category}' (will run {will_run} due to --max-instances)[/green]"
+            )
         else:
             console.print(f"[green]Found {total_found} questions for category '{category}'[/green]")
 
@@ -588,7 +601,9 @@ async def run_benchmark(
         total_found = len(filtered_items)
         will_run = min(total_found, max_instances) if max_instances else total_found
         if max_instances and total_found > max_instances:
-            console.print(f"[green]Found {total_found} {filter_type} items to re-evaluate (will run {will_run} due to --max-instances)[/green]")
+            console.print(
+                f"[green]Found {total_found} {filter_type} items to re-evaluate (will run {will_run} due to --max-instances)[/green]"
+            )
         else:
             console.print(f"[green]Found {total_found} {filter_type} items to re-evaluate[/green]")
 
@@ -600,6 +615,7 @@ async def run_benchmark(
 
     # Create local memory engine
     from benchmarks.common.benchmark_runner import create_memory_engine
+
     memory = await create_memory_engine()
 
     # Filter by only_ingested: only run items whose memory bank already exists
@@ -623,10 +639,9 @@ async def run_benchmark(
             # Check if bank has any memory units
             async with pool.acquire() as conn:
                 result = await conn.fetchrow(
-                    "SELECT COUNT(*) as count FROM memory_units WHERE bank_id = $1 LIMIT 1",
-                    agent_id
+                    "SELECT COUNT(*) as count FROM memory_units WHERE bank_id = $1 LIMIT 1", agent_id
                 )
-                if result['count'] > 0:
+                if result["count"] > 0:
                     ingested_items.append(item)
 
         filtered_items = ingested_items
@@ -638,34 +653,43 @@ async def run_benchmark(
 
     # Create benchmark runner
     runner = BenchmarkRunner(
-        dataset=dataset,
-        answer_generator=answer_generator,
-        answer_evaluator=answer_evaluator,
-        memory=memory
+        dataset=dataset, answer_generator=answer_generator, answer_evaluator=answer_evaluator, memory=memory
     )
 
     # If filtering by category, failed, invalid, only_ingested, or max_instances_per_category, we need to use a custom dataset that only returns those items
     # We'll temporarily replace the dataset's load method
     if filtered_items is not None:
         original_load = dataset.load
+
         def filtered_load(path: Path, max_items: Optional[int] = None):
             return filtered_items[:max_items] if max_items else filtered_items
+
         dataset.load = filtered_load
 
     # Run benchmark
     # Single-phase approach: each question gets its own isolated agent_id
     # This ensures each question only has access to its own context
-    output_path = Path(__file__).parent / 'results' / results_filename
+    output_path = Path(__file__).parent / "results" / results_filename
 
     # Create results directory if it doesn't exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    merge_with_existing = (filln or question_id is not None or only_failed or only_invalid or only_ingested or category is not None or max_instances_per_category is not None)
+    merge_with_existing = (
+        filln
+        or question_id is not None
+        or only_failed
+        or only_invalid
+        or only_ingested
+        or category is not None
+        or max_instances_per_category is not None
+    )
 
     results = await runner.run(
         dataset_path=dataset_path,
         agent_id="longmemeval",  # Will be suffixed with question_id per item
-        max_items=max_instances if not max_instances_per_category else None,  # Don't apply max_items when using per-category limit
+        max_items=max_instances
+        if not max_instances_per_category
+        else None,  # Don't apply max_items when using per-category limit
         max_questions_per_item=max_questions_per_instance,
         thinking_budget=thinking_budget,
         max_tokens=max_tokens,
@@ -678,7 +702,7 @@ async def run_benchmark(
         specific_item=question_id,  # Optional filter for specific question ID
         max_concurrent_items=max_concurrent_items,  # Parallel instance processing
         output_path=output_path,  # Save results incrementally
-        merge_with_existing=merge_with_existing  # Merge when using --fill, --category, --only-failed, --only-invalid flags or specific question
+        merge_with_existing=merge_with_existing,  # Merge when using --fill, --category, --only-failed, --only-invalid flags or specific question
     )
 
     # Display results (final save already happened incrementally)
@@ -702,12 +726,14 @@ def download_dataset(dataset_path: Path) -> bool:
         True if successful, False otherwise
     """
     import subprocess
+
     from rich.console import Console
+
     console = Console()
 
     url = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
 
-    console.print(f"[yellow]Dataset not found. Downloading from HuggingFace...[/yellow]")
+    console.print("[yellow]Dataset not found. Downloading from HuggingFace...[/yellow]")
     console.print(f"[dim]URL: {url}[/dim]")
     console.print(f"[dim]Destination: {dataset_path}[/dim]")
 
@@ -720,18 +746,18 @@ def download_dataset(dataset_path: Path) -> bool:
             ["curl", "-L", "-o", str(dataset_path), url],
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=300,  # 5 minute timeout
         )
 
         if result.returncode == 0 and dataset_path.exists():
-            console.print(f"[green]✓ Dataset downloaded successfully[/green]")
+            console.print("[green]✓ Dataset downloaded successfully[/green]")
             return True
         else:
             console.print(f"[red]✗ Download failed: {result.stderr}[/red]")
             return False
 
     except subprocess.TimeoutExpired:
-        console.print(f"[red]✗ Download timed out after 5 minutes[/red]")
+        console.print("[red]✗ Download timed out after 5 minutes[/red]")
         return False
     except Exception as e:
         console.print(f"[red]✗ Download error: {e}[/red]")
@@ -740,22 +766,23 @@ def download_dataset(dataset_path: Path) -> bool:
 
 def generate_type_report(results: dict):
     """Generate a detailed report by question type."""
-    from rich.table import Table
     from rich.console import Console
+    from rich.table import Table
+
     console = Console()
 
     # Aggregate stats by question type
     type_stats = {}
 
-    for item_result in results['item_results']:
-        metrics = item_result['metrics']
-        by_category = metrics.get('category_stats', {})
+    for item_result in results["item_results"]:
+        metrics = item_result["metrics"]
+        by_category = metrics.get("category_stats", {})
 
         for qtype, stats in by_category.items():
             if qtype not in type_stats:
-                type_stats[qtype] = {'total': 0, 'correct': 0}
-            type_stats[qtype]['total'] += stats['total']
-            type_stats[qtype]['correct'] += stats['correct']
+                type_stats[qtype] = {"total": 0, "correct": 0}
+            type_stats[qtype]["total"] += stats["total"]
+            type_stats[qtype]["correct"] += stats["correct"]
 
     # Display table
     table = Table(title="Performance by Question Type")
@@ -765,13 +792,8 @@ def generate_type_report(results: dict):
     table.add_column("Accuracy", justify="right", style="magenta")
 
     for qtype, stats in sorted(type_stats.items()):
-        acc = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
-        table.add_row(
-            qtype,
-            str(stats['total']),
-            str(stats['correct']),
-            f"{acc:.1f}%"
-        )
+        acc = (stats["correct"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        table.add_row(qtype, str(stats["total"]), str(stats["correct"]), f"{acc:.1f}%")
 
     console.print("\n")
     console.print(table)
@@ -780,21 +802,22 @@ def generate_type_report(results: dict):
 def generate_markdown_table(results: dict, json_output_path: Path):
     """Generate a markdown results table with model configuration."""
     from rich.console import Console
+
     console = Console()
 
     # Aggregate stats by question type
     type_stats = {}
 
-    for item_result in results['item_results']:
-        metrics = item_result['metrics']
-        by_category = metrics.get('category_stats', {})
+    for item_result in results["item_results"]:
+        metrics = item_result["metrics"]
+        by_category = metrics.get("category_stats", {})
 
         for qtype, stats in by_category.items():
             if qtype not in type_stats:
-                type_stats[qtype] = {'total': 0, 'correct': 0, 'invalid': 0}
-            type_stats[qtype]['total'] += stats['total']
-            type_stats[qtype]['correct'] += stats['correct']
-            type_stats[qtype]['invalid'] += stats.get('invalid', 0)
+                type_stats[qtype] = {"total": 0, "correct": 0, "invalid": 0}
+            type_stats[qtype]["total"] += stats["total"]
+            type_stats[qtype]["correct"] += stats["correct"]
+            type_stats[qtype]["invalid"] += stats.get("invalid", 0)
 
     # Build markdown content
     lines = []
@@ -802,16 +825,20 @@ def generate_markdown_table(results: dict, json_output_path: Path):
     lines.append("")
 
     # Add model configuration
-    if 'model_config' in results:
-        config = results['model_config']
+    if "model_config" in results:
+        config = results["model_config"]
         lines.append("## Model Configuration")
         lines.append("")
         lines.append(f"- **Hindsight**: {config['hindsight']['provider']}/{config['hindsight']['model']}")
-        lines.append(f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}")
+        lines.append(
+            f"- **Answer Generation**: {config['answer_generation']['provider']}/{config['answer_generation']['model']}"
+        )
         lines.append(f"- **LLM Judge**: {config['judge']['provider']}/{config['judge']['model']}")
         lines.append("")
 
-    lines.append(f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})")
+    lines.append(
+        f"**Overall Accuracy**: {results['overall_accuracy']:.2f}% ({results['total_correct']}/{results['total_questions']})"
+    )
     lines.append("")
 
     # Results by question type
@@ -822,34 +849,36 @@ def generate_markdown_table(results: dict, json_output_path: Path):
 
     for qtype in sorted(type_stats.keys()):
         stats = type_stats[qtype]
-        valid_total = stats['total'] - stats['invalid']
-        acc = (stats['correct'] / valid_total * 100) if valid_total > 0 else 0
-        invalid_str = str(stats['invalid']) if stats['invalid'] > 0 else "-"
+        valid_total = stats["total"] - stats["invalid"]
+        acc = (stats["correct"] / valid_total * 100) if valid_total > 0 else 0
+        invalid_str = str(stats["invalid"]) if stats["invalid"] > 0 else "-"
         lines.append(f"| {qtype} | {stats['total']} | {stats['correct']} | {invalid_str} | {acc:.1f}% |")
 
     # Add overall row
-    total_invalid = results.get('total_invalid', 0)
+    total_invalid = results.get("total_invalid", 0)
     invalid_str = str(total_invalid) if total_invalid > 0 else "-"
-    lines.append(f"| **OVERALL** | **{results['total_questions']}** | **{results['total_correct']}** | **{invalid_str}** | **{results['overall_accuracy']:.1f}%** |")
+    lines.append(
+        f"| **OVERALL** | **{results['total_questions']}** | **{results['total_correct']}** | **{invalid_str}** | **{results['overall_accuracy']:.1f}%** |"
+    )
 
     # Write to file (same directory as JSON, but .md extension)
-    md_output_path = json_output_path.with_suffix('.md')
-    md_output_path.write_text('\n'.join(lines))
+    md_output_path = json_output_path.with_suffix(".md")
+    md_output_path.write_text("\n".join(lines))
     console.print(f"\n[green]✓[/green] Results table saved to {md_output_path}")
 
 
 if __name__ == "__main__":
-    import logging
     import argparse
+    import logging
 
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(description="Run LongMemEval benchmark")
     parser.add_argument(
         "--max-instances",
         type=int,
         default=None,
-        help="Limit TOTAL number of questions to evaluate (default: all 500). For per-category limits, use --max-questions-per-category instead."
+        help="Limit TOTAL number of questions to evaluate (default: all 500). For per-category limits, use --max-questions-per-category instead.",
     )
     parser.add_argument(
         "--max-instances-per-category",
@@ -857,87 +886,72 @@ if __name__ == "__main__":
         type=int,
         default=None,
         dest="max_instances_per_category",
-        help="Limit number of questions per category (e.g., 20 = 20 questions from each of the 6 categories = 120 total). Cannot be combined with --max-instances or --category."
+        help="Limit number of questions per category (e.g., 20 = 20 questions from each of the 6 categories = 120 total). Cannot be combined with --max-instances or --category.",
     )
     parser.add_argument(
-        "--max-questions",
-        type=int,
-        default=None,
-        help="Limit number of questions per instance (for quick testing)"
+        "--max-questions", type=int, default=None, help="Limit number of questions per instance (for quick testing)"
     )
     parser.add_argument(
-        "--thinking-budget",
-        type=int,
-        default=500,
-        help="Thinking budget for spreading activation search"
+        "--thinking-budget", type=int, default=500, help="Thinking budget for spreading activation search"
     )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=8192,
-        help="Maximum tokens to retrieve from memories"
-    )
-    parser.add_argument(
-        "--skip-ingestion",
-        action="store_true",
-        help="Skip ingestion and use existing data"
-    )
+    parser.add_argument("--max-tokens", type=int, default=8192, help="Maximum tokens to retrieve from memories")
+    parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion and use existing data")
     parser.add_argument(
         "--fill",
         action="store_true",
-        help="Only process questions not already in results file (for resuming interrupted runs)"
+        help="Only process questions not already in results file (for resuming interrupted runs)",
     )
     parser.add_argument(
         "--question-id",
         type=str,
         default=None,
-        help="Filter to specific question ID (e.g., 'e47becba'). Useful with --skip-ingestion to test a single question."
+        help="Filter to specific question ID (e.g., 'e47becba'). Useful with --skip-ingestion to test a single question.",
     )
     parser.add_argument(
         "--only-failed",
         action="store_true",
-        help="Only run questions that were previously marked as incorrect (is_correct=False). Requires existing results file."
+        help="Only run questions that were previously marked as incorrect (is_correct=False). Requires existing results file.",
     )
     parser.add_argument(
         "--only-invalid",
         action="store_true",
-        help="Only run questions that were previously marked as invalid (is_invalid=True). Requires existing results file."
+        help="Only run questions that were previously marked as invalid (is_invalid=True). Requires existing results file.",
     )
     parser.add_argument(
         "--only-ingested",
         action="store_true",
-        help="Only run questions whose memory bank already exists (has been ingested). Automatically skips ingestion. Cannot be combined with --only-failed, --only-invalid, --category, --question-id, or --max-instances-per-category."
+        help="Only run questions whose memory bank already exists (has been ingested). Automatically skips ingestion. Cannot be combined with --only-failed, --only-invalid, --category, --question-id, or --max-instances-per-category.",
     )
     parser.add_argument(
         "--category",
         type=str,
         default=None,
-        help="Filter questions by category/question_type. Available categories: 'single-session-user', 'multi-session', 'single-session-preference', 'temporal-reasoning', 'knowledge-update', 'single-session-assistant'. Can be combined with --max-instances to limit questions within the category."
+        help="Filter questions by category/question_type. Available categories: 'single-session-user', 'multi-session', 'single-session-preference', 'temporal-reasoning', 'knowledge-update', 'single-session-assistant'. Can be combined with --max-instances to limit questions within the category.",
     )
     parser.add_argument(
         "--parallel",
         type=int,
         default=1,
-        help="Number of instances to process in parallel (default: 1 for sequential). Higher values speed up evaluation but use more memory."
+        help="Number of instances to process in parallel (default: 1 for sequential). Higher values speed up evaluation but use more memory.",
     )
     parser.add_argument(
         "--results-filename",
         type=str,
         default="benchmark_results.json",
-        help="Filename for results output (default: benchmark_results.json). Saved in results/ directory."
+        help="Filename for results output (default: benchmark_results.json). Saved in results/ directory.",
     )
     parser.add_argument(
         "--context-format",
         type=str,
         choices=["json", "structured"],
         default="json",
-        help="How to format context for answer generation. 'json' (raw JSON dump, original behavior) or 'structured' (human-readable format with facts grouped with source chunks). Default: json."
+        help="How to format context for answer generation. 'json' (raw JSON dump, original behavior) or 'structured' (human-readable format with facts grouped with source chunks). Default: json.",
     )
     parser.add_argument(
         "--source-results",
         type=str,
         default=None,
-        help="Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json if not specified."
+        help="Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json if not specified.",
     )
 
     args = parser.parse_args()
@@ -951,21 +965,23 @@ if __name__ == "__main__":
     if args.max_instances_per_category is not None and (args.max_instances is not None or args.category is not None):
         parser.error("--max-questions-per-category cannot be combined with --max-instances or --category")
 
-    results = asyncio.run(run_benchmark(
-        max_instances=args.max_instances,
-        max_instances_per_category=args.max_instances_per_category,
-        max_questions_per_instance=args.max_questions,
-        thinking_budget=args.thinking_budget,
-        max_tokens=args.max_tokens,
-        skip_ingestion=args.skip_ingestion,
-        filln=args.fill,
-        question_id=args.question_id,
-        only_failed=args.only_failed,
-        only_invalid=args.only_invalid,
-        only_ingested=args.only_ingested,
-        category=args.category,
-        max_concurrent_items=args.parallel,
-        results_filename=args.results_filename,
-        context_format=args.context_format,
-        source_results=args.source_results
-    ))
+    results = asyncio.run(
+        run_benchmark(
+            max_instances=args.max_instances,
+            max_instances_per_category=args.max_instances_per_category,
+            max_questions_per_instance=args.max_questions,
+            thinking_budget=args.thinking_budget,
+            max_tokens=args.max_tokens,
+            skip_ingestion=args.skip_ingestion,
+            filln=args.fill,
+            question_id=args.question_id,
+            only_failed=args.only_failed,
+            only_invalid=args.only_invalid,
+            only_ingested=args.only_ingested,
+            category=args.category,
+            max_concurrent_items=args.parallel,
+            results_filename=args.results_filename,
+            context_format=args.context_format,
+            source_results=args.source_results,
+        )
+    )

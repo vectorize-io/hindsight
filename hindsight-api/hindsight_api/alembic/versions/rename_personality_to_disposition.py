@@ -9,7 +9,7 @@ Create Date: 2024-12-04
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -19,17 +19,25 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _get_target_schema() -> str:
+    """Get the target schema name (tenant schema or 'public')."""
+    schema = context.config.get_main_option("target_schema")
+    return schema if schema else "public"
+
+
 def upgrade() -> None:
     """Rename personality column to disposition in banks table (if it exists)."""
     conn = op.get_bind()
+    target_schema = _get_target_schema()
 
     # Check if 'personality' column exists (old database)
     result = conn.execute(
         sa.text("""
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'banks' AND column_name = 'personality'
-    """)
+        WHERE table_schema = :schema AND table_name = 'banks' AND column_name = 'personality'
+    """),
+        {"schema": target_schema},
     )
     has_personality = result.fetchone() is not None
 
@@ -38,8 +46,9 @@ def upgrade() -> None:
         sa.text("""
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'banks' AND column_name = 'disposition'
-    """)
+        WHERE table_schema = :schema AND table_name = 'banks' AND column_name = 'disposition'
+    """),
+        {"schema": target_schema},
     )
     has_disposition = result.fetchone() is not None
 
@@ -63,12 +72,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert disposition column back to personality."""
     conn = op.get_bind()
+    target_schema = _get_target_schema()
     result = conn.execute(
         sa.text("""
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'banks' AND column_name = 'disposition'
-    """)
+        WHERE table_schema = :schema AND table_name = 'banks' AND column_name = 'disposition'
+    """),
+        {"schema": target_schema},
     )
     if result.fetchone():
         op.alter_column("banks", "disposition", new_column_name="personality")

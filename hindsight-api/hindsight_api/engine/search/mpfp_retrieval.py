@@ -20,6 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..db_utils import acquire_with_retry
+from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
 from .types import RetrievalResult
 
@@ -217,10 +218,10 @@ async def load_typed_adjacency(pool, bank_id: str) -> TypedAdjacency:
     """
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT ml.from_unit_id, ml.to_unit_id, ml.link_type, ml.weight
-            FROM memory_links ml
-            JOIN memory_units mu ON ml.from_unit_id = mu.id
+            FROM {fq_table("memory_links")} ml
+            JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
             WHERE mu.bank_id = $1
               AND ml.weight >= 0.1
             ORDER BY ml.from_unit_id, ml.weight DESC
@@ -252,10 +253,10 @@ async def fetch_memory_units_by_ids(
 
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT id, text, context, event_date, occurred_start, occurred_end,
                    mentioned_at, access_count, embedding, fact_type, document_id, chunk_id
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE id = ANY($1::uuid[])
               AND fact_type = $2
             """,
@@ -418,9 +419,9 @@ class MPFPGraphRetriever(GraphRetriever):
         """Fallback: find semantic seeds via embedding search."""
         async with acquire_with_retry(pool) as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT id, 1 - (embedding <=> $1::vector) AS similarity
-                FROM memory_units
+                FROM {fq_table("memory_units")}
                 WHERE bank_id = $2
                   AND embedding IS NOT NULL
                   AND fact_type = $3

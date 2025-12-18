@@ -8,7 +8,7 @@ import os
 import filelock
 from pathlib import Path
 from dotenv import load_dotenv
-from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings
+from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings, RequestContext
 
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
@@ -97,6 +97,12 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     run_migrations(url)
 
     return url
+
+
+@pytest.fixture(scope="function")
+def request_context():
+    """Provide a default RequestContext for tests."""
+    return RequestContext()
 
 
 @pytest.fixture(scope="session")

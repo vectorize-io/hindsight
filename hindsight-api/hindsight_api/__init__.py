@@ -21,9 +21,11 @@ from .engine.search.trace import (
     WeightComponents,
 )
 from .engine.search.tracer import SearchTracer
+from .models import RequestContext
 
 __all__ = [
     "MemoryEngine",
+    "RequestContext",
     "HindsightConfig",
     "get_config",
     "SearchTrace",

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -33,9 +33,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.memory_engine import Budget
+from hindsight_api.engine.memory_engine import Budget, fq_table
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
+from hindsight_api.extensions import HttpExtension, load_extension
 from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
+from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +339,7 @@ class RetainResponse(BaseModel):
     success: bool
     bank_id: str
     items_count: int
-    async_: bool = Field(
+    is_async: bool = Field(
         alias="async", serialization_alias="async", description="Whether the operation was processed asynchronously"
     )
 
@@ -706,7 +708,11 @@ class DeleteResponse(BaseModel):
     deleted_count: int | None = None
 
 
-def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
+def create_app(
+    memory: MemoryEngine,
+    initialize_memory: bool = True,
+    http_extension: HttpExtension | None = None,
+) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
@@ -714,6 +720,8 @@ def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
         memory: MemoryEngine instance (already initialized with required parameters).
                 Migrations are controlled by the MemoryEngine's run_migrations parameter.
         initialize_memory: Whether to initialize memory system on startup (default: True)
+        http_extension: Optional HTTP extension to mount custom endpoints under /extension/.
+                       If None, attempts to load from HINDSIGHT_API_HTTP_EXTENSION env var.
 
     Returns:
         Configured FastAPI application
@@ -723,6 +731,11 @@ def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
         In that case, you should call memory.initialize() manually before starting the server
         and memory.close() when shutting down.
     """
+    # Load HTTP extension from environment if not provided
+    if http_extension is None:
+        http_extension = load_extension("HTTP", HttpExtension)
+        if http_extension:
+            logging.info(f"Loaded HTTP extension: {http_extension.__class__.__name__}")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -746,7 +759,17 @@ def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
             await memory.initialize()
             logging.info("Memory system initialized")
 
+        # Call HTTP extension startup hook
+        if http_extension:
+            await http_extension.on_startup()
+            logging.info("HTTP extension started")
+
         yield
+
+        # Call HTTP extension shutdown hook
+        if http_extension:
+            await http_extension.on_shutdown()
+            logging.info("HTTP extension stopped")
 
         # Shutdown: Cleanup memory system
         await memory.close()
@@ -775,11 +798,35 @@ def create_app(memory: MemoryEngine, initialize_memory: bool = True) -> FastAPI:
     # Register all routes
     _register_routes(app)
 
+    # Mount HTTP extension router if available
+    if http_extension:
+        extension_router = http_extension.get_router(memory)
+        app.include_router(extension_router, prefix="/ext", tags=["Extension"])
+        logging.info("HTTP extension router mounted at /ext/")
+
     return app
 
 
 def _register_routes(app: FastAPI):
     """Register all API routes on the given app instance."""
+
+    def get_request_context(authorization: str | None = Header(default=None)) -> RequestContext:
+        """
+        Extract request context from Authorization header.
+
+        Supports:
+        - Bearer token: "Bearer <api_key>"
+        - Direct API key: "<api_key>"
+
+        Returns RequestContext with extracted API key (may be None if no auth header).
+        """
+        api_key = None
+        if authorization:
+            if authorization.lower().startswith("bearer "):
+                api_key = authorization[7:].strip()
+            else:
+                api_key = authorization.strip()
+        return RequestContext(api_key=api_key)
 
     @app.get(
         "/health",
@@ -821,10 +868,12 @@ def _register_routes(app: FastAPI):
         operation_id="get_graph",
         tags=["Memory"],
     )
-    async def api_graph(bank_id: str, type: str | None = None):
+    async def api_graph(
+        bank_id: str, type: str | None = None, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Get graph data from database, filtered by bank_id and optionally by type."""
         try:
-            data = await app.state.memory.get_graph_data(bank_id, type)
+            data = await app.state.memory.get_graph_data(bank_id, type, request_context=request_context)
             return data
         except Exception as e:
             import traceback
@@ -841,7 +890,14 @@ def _register_routes(app: FastAPI):
         operation_id="list_memories",
         tags=["Memory"],
     )
-    async def api_list(bank_id: str, type: str | None = None, q: str | None = None, limit: int = 100, offset: int = 0):
+    async def api_list(
+        bank_id: str,
+        type: str | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """
         List memory units for table view with optional full-text search.
 
@@ -857,7 +913,12 @@ def _register_routes(app: FastAPI):
         """
         try:
             data = await app.state.memory.list_memory_units(
-                bank_id=bank_id, fact_type=type, search_query=q, limit=limit, offset=offset
+                bank_id=bank_id,
+                fact_type=type,
+                search_query=q,
+                limit=limit,
+                offset=offset,
+                request_context=request_context,
             )
             return data
         except Exception as e:
@@ -880,7 +941,9 @@ def _register_routes(app: FastAPI):
         operation_id="recall_memories",
         tags=["Memory"],
     )
-    async def api_recall(bank_id: str, request: RecallRequest):
+    async def api_recall(
+        bank_id: str, request: RecallRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Run a recall and return results with trace."""
         metrics = get_metrics_collector()
 
@@ -923,6 +986,7 @@ def _register_routes(app: FastAPI):
                     max_entity_tokens=max_entity_tokens,
                     include_chunks=include_chunks,
                     max_chunk_tokens=max_chunk_tokens,
+                    request_context=request_context,
                 )
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
@@ -995,14 +1059,20 @@ def _register_routes(app: FastAPI):
         operation_id="reflect",
         tags=["Memory"],
     )
-    async def api_reflect(bank_id: str, request: ReflectRequest):
+    async def api_reflect(
+        bank_id: str, request: ReflectRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         metrics = get_metrics_collector()
 
         try:
             # Use the memory system's reflect_async method (record metrics)
             with metrics.record_operation("reflect", bank_id=bank_id, budget=request.budget.value):
                 core_result = await app.state.memory.reflect_async(
-                    bank_id=bank_id, query=request.query, budget=request.budget, context=request.context
+                    bank_id=bank_id,
+                    query=request.query,
+                    budget=request.budget,
+                    context=request.context,
+                    request_context=request_context,
                 )
 
             # Convert core MemoryFact objects to API ReflectFact objects if facts are requested
@@ -1041,10 +1111,10 @@ def _register_routes(app: FastAPI):
         operation_id="list_banks",
         tags=["Banks"],
     )
-    async def api_list_banks():
+    async def api_list_banks(request_context: RequestContext = Depends(get_request_context)):
         """Get list of all banks with their profiles."""
         try:
-            banks = await app.state.memory.list_banks()
+            banks = await app.state.memory.list_banks(request_context=request_context)
             return BankListResponse(banks=banks)
         except Exception as e:
             import traceback
@@ -1067,9 +1137,9 @@ def _register_routes(app: FastAPI):
             async with acquire_with_retry(pool) as conn:
                 # Get node counts by fact_type
                 node_stats = await conn.fetch(
-                    """
+                    f"""
                     SELECT fact_type, COUNT(*) as count
-                    FROM memory_units
+                    FROM {fq_table("memory_units")}
                     WHERE bank_id = $1
                     GROUP BY fact_type
                     """,
@@ -1078,10 +1148,10 @@ def _register_routes(app: FastAPI):
 
                 # Get link counts by link_type
                 link_stats = await conn.fetch(
-                    """
+                    f"""
                     SELECT ml.link_type, COUNT(*) as count
-                    FROM memory_links ml
-                    JOIN memory_units mu ON ml.from_unit_id = mu.id
+                    FROM {fq_table("memory_links")} ml
+                    JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
                     WHERE mu.bank_id = $1
                     GROUP BY ml.link_type
                     """,
@@ -1090,10 +1160,10 @@ def _register_routes(app: FastAPI):
 
                 # Get link counts by fact_type (from nodes)
                 link_fact_type_stats = await conn.fetch(
-                    """
+                    f"""
                     SELECT mu.fact_type, COUNT(*) as count
-                    FROM memory_links ml
-                    JOIN memory_units mu ON ml.from_unit_id = mu.id
+                    FROM {fq_table("memory_links")} ml
+                    JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
                     WHERE mu.bank_id = $1
                     GROUP BY mu.fact_type
                     """,
@@ -1102,10 +1172,10 @@ def _register_routes(app: FastAPI):
 
                 # Get link counts by fact_type AND link_type
                 link_breakdown_stats = await conn.fetch(
-                    """
+                    f"""
                     SELECT mu.fact_type, ml.link_type, COUNT(*) as count
-                    FROM memory_links ml
-                    JOIN memory_units mu ON ml.from_unit_id = mu.id
+                    FROM {fq_table("memory_links")} ml
+                    JOIN {fq_table("memory_units")} mu ON ml.from_unit_id = mu.id
                     WHERE mu.bank_id = $1
                     GROUP BY mu.fact_type, ml.link_type
                     """,
@@ -1114,9 +1184,9 @@ def _register_routes(app: FastAPI):
 
                 # Get pending and failed operations counts
                 ops_stats = await conn.fetch(
-                    """
+                    f"""
                     SELECT status, COUNT(*) as count
-                    FROM async_operations
+                    FROM {fq_table("async_operations")}
                     WHERE bank_id = $1
                     GROUP BY status
                     """,
@@ -1128,9 +1198,9 @@ def _register_routes(app: FastAPI):
 
                 # Get document count
                 doc_count_result = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT COUNT(*) as count
-                    FROM documents
+                    FROM {fq_table("documents")}
                     WHERE bank_id = $1
                     """,
                     bank_id,
@@ -1184,11 +1254,13 @@ def _register_routes(app: FastAPI):
         tags=["Entities"],
     )
     async def api_list_entities(
-        bank_id: str, limit: int = Query(default=100, description="Maximum number of entities to return")
+        bank_id: str,
+        limit: int = Query(default=100, description="Maximum number of entities to return"),
+        request_context: RequestContext = Depends(get_request_context),
     ):
         """List entities for a memory bank."""
         try:
-            entities = await app.state.memory.list_entities(bank_id, limit=limit)
+            entities = await app.state.memory.list_entities(bank_id, limit=limit, request_context=request_context)
             return EntityListResponse(items=[EntityListItem(**e) for e in entities])
         except Exception as e:
             import traceback
@@ -1205,37 +1277,26 @@ def _register_routes(app: FastAPI):
         operation_id="get_entity",
         tags=["Entities"],
     )
-    async def api_get_entity(bank_id: str, entity_id: str):
+    async def api_get_entity(
+        bank_id: str, entity_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Get entity details with observations."""
         try:
-            # First get the entity metadata
-            pool = await app.state.memory._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                entity_row = await conn.fetchrow(
-                    """
-                    SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
-                    FROM entities
-                    WHERE bank_id = $1 AND id = $2
-                    """,
-                    bank_id,
-                    uuid.UUID(entity_id),
-                )
+            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
 
-            if not entity_row:
+            if entity is None:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
 
-            # Get observations for the entity
-            observations = await app.state.memory.get_entity_observations(bank_id, entity_id, limit=20)
-
             return EntityDetailResponse(
-                id=str(entity_row["id"]),
-                canonical_name=entity_row["canonical_name"],
-                mention_count=entity_row["mention_count"],
-                first_seen=entity_row["first_seen"].isoformat() if entity_row["first_seen"] else None,
-                last_seen=entity_row["last_seen"].isoformat() if entity_row["last_seen"] else None,
-                metadata=_parse_metadata(entity_row["metadata"]),
+                id=entity["id"],
+                canonical_name=entity["canonical_name"],
+                mention_count=entity["mention_count"],
+                first_seen=entity["first_seen"],
+                last_seen=entity["last_seen"],
+                metadata=_parse_metadata(entity["metadata"]),
                 observations=[
-                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at) for obs in observations
+                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
+                    for obs in entity["observations"]
                 ],
             )
         except HTTPException:
@@ -1255,42 +1316,40 @@ def _register_routes(app: FastAPI):
         operation_id="regenerate_entity_observations",
         tags=["Entities"],
     )
-    async def api_regenerate_entity_observations(bank_id: str, entity_id: str):
+    async def api_regenerate_entity_observations(
+        bank_id: str,
+        entity_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """Regenerate observations for an entity."""
         try:
-            # First get the entity metadata
-            pool = await app.state.memory._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                entity_row = await conn.fetchrow(
-                    """
-                    SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
-                    FROM entities
-                    WHERE bank_id = $1 AND id = $2
-                    """,
-                    bank_id,
-                    uuid.UUID(entity_id),
-                )
+            # Get the entity to verify it exists and get canonical_name
+            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
 
-            if not entity_row:
+            if entity is None:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
 
             # Regenerate observations
             await app.state.memory.regenerate_entity_observations(
-                bank_id=bank_id, entity_id=entity_id, entity_name=entity_row["canonical_name"]
+                bank_id=bank_id,
+                entity_id=entity_id,
+                entity_name=entity["canonical_name"],
+                request_context=request_context,
             )
 
-            # Get updated observations
-            observations = await app.state.memory.get_entity_observations(bank_id, entity_id, limit=20)
+            # Get updated entity with new observations
+            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
 
             return EntityDetailResponse(
-                id=str(entity_row["id"]),
-                canonical_name=entity_row["canonical_name"],
-                mention_count=entity_row["mention_count"],
-                first_seen=entity_row["first_seen"].isoformat() if entity_row["first_seen"] else None,
-                last_seen=entity_row["last_seen"].isoformat() if entity_row["last_seen"] else None,
-                metadata=_parse_metadata(entity_row["metadata"]),
+                id=entity["id"],
+                canonical_name=entity["canonical_name"],
+                mention_count=entity["mention_count"],
+                first_seen=entity["first_seen"],
+                last_seen=entity["last_seen"],
+                metadata=_parse_metadata(entity["metadata"]),
                 observations=[
-                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at) for obs in observations
+                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
+                    for obs in entity["observations"]
                 ],
             )
         except HTTPException:
@@ -1310,7 +1369,13 @@ def _register_routes(app: FastAPI):
         operation_id="list_documents",
         tags=["Documents"],
     )
-    async def api_list_documents(bank_id: str, q: str | None = None, limit: int = 100, offset: int = 0):
+    async def api_list_documents(
+        bank_id: str,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
         """
         List documents for a memory bank with optional search.
 
@@ -1321,7 +1386,9 @@ def _register_routes(app: FastAPI):
             offset: Offset for pagination (default: 0)
         """
         try:
-            data = await app.state.memory.list_documents(bank_id=bank_id, search_query=q, limit=limit, offset=offset)
+            data = await app.state.memory.list_documents(
+                bank_id=bank_id, search_query=q, limit=limit, offset=offset, request_context=request_context
+            )
             return data
         except Exception as e:
             import traceback
@@ -1338,7 +1405,9 @@ def _register_routes(app: FastAPI):
         operation_id="get_document",
         tags=["Documents"],
     )
-    async def api_get_document(bank_id: str, document_id: str):
+    async def api_get_document(
+        bank_id: str, document_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
         """
         Get a specific document with its original text.
 
@@ -1347,7 +1416,7 @@ def _register_routes(app: FastAPI):
             document_id: Document ID (from path)
         """
         try:
-            document = await app.state.memory.get_document(document_id, bank_id)
+            document = await app.state.memory.get_document(document_id, bank_id, request_context=request_context)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
             return document
@@ -1368,7 +1437,7 @@ def _register_routes(app: FastAPI):
         operation_id="get_chunk",
         tags=["Documents"],
     )
-    async def api_get_chunk(chunk_id: str):
+    async def api_get_chunk(chunk_id: str, request_context: RequestContext = Depends(get_request_context)):
         """
         Get a specific chunk with its text.
 
@@ -1376,7 +1445,7 @@ def _register_routes(app: FastAPI):
             chunk_id: Chunk ID (from path, format: bank_id_document_id_chunk_index)
         """
         try:
-            chunk = await app.state.memory.get_chunk(chunk_id)
+            chunk = await app.state.memory.get_chunk(chunk_id, request_context=request_context)
             if not chunk:
                 raise HTTPException(status_code=404, detail="Chunk not found")
             return chunk
@@ -1401,7 +1470,9 @@ def _register_routes(app: FastAPI):
         operation_id="delete_document",
         tags=["Documents"],
     )
-    async def api_delete_document(bank_id: str, document_id: str):
+    async def api_delete_document(
+        bank_id: str, document_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
         """
         Delete a document and all its associated memory units and links.
 
@@ -1410,7 +1481,7 @@ def _register_routes(app: FastAPI):
             document_id: Document ID to delete (from path)
         """
         try:
-            result = await app.state.memory.delete_document(document_id, bank_id)
+            result = await app.state.memory.delete_document(document_id, bank_id, request_context=request_context)
 
             if result["document_deleted"] == 0:
                 raise HTTPException(status_code=404, detail="Document not found")
@@ -1437,45 +1508,14 @@ def _register_routes(app: FastAPI):
         operation_id="list_operations",
         tags=["Operations"],
     )
-    async def api_list_operations(bank_id: str):
+    async def api_list_operations(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """List all async operations (pending and failed) for a memory bank."""
         try:
-            pool = await app.state.memory._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                operations = await conn.fetch(
-                    """
-                    SELECT operation_id, bank_id, operation_type, created_at, status, error_message, result_metadata
-                    FROM async_operations
-                    WHERE bank_id = $1
-                    ORDER BY created_at DESC
-                    """,
-                    bank_id,
-                )
-
-                def parse_metadata(metadata):
-                    """Parse result_metadata which may be a string or dict."""
-                    if metadata is None:
-                        return {}
-                    if isinstance(metadata, str):
-                        return json.loads(metadata)
-                    return metadata
-
-                return {
-                    "bank_id": bank_id,
-                    "operations": [
-                        {
-                            "id": str(row["operation_id"]),
-                            "task_type": row["operation_type"],
-                            "items_count": parse_metadata(row["result_metadata"]).get("items_count", 0),
-                            "document_id": parse_metadata(row["result_metadata"]).get("document_id"),
-                            "created_at": row["created_at"].isoformat(),
-                            "status": row["status"],
-                            "error_message": row["error_message"],
-                        }
-                        for row in operations
-                    ],
-                }
-
+            operations = await app.state.memory.list_operations(bank_id, request_context=request_context)
+            return {
+                "bank_id": bank_id,
+                "operations": operations,
+            }
         except Exception as e:
             import traceback
 
@@ -1490,39 +1530,21 @@ def _register_routes(app: FastAPI):
         operation_id="cancel_operation",
         tags=["Operations"],
     )
-    async def api_cancel_operation(bank_id: str, operation_id: str):
+    async def api_cancel_operation(
+        bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Cancel a pending async operation."""
         try:
             # Validate UUID format
             try:
-                op_uuid = uuid.UUID(operation_id)
+                uuid.UUID(operation_id)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
 
-            pool = await app.state.memory._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                # Check if operation exists and belongs to this memory bank
-                result = await conn.fetchrow(
-                    "SELECT bank_id FROM async_operations WHERE operation_id = $1 AND bank_id = $2", op_uuid, bank_id
-                )
-
-                if not result:
-                    raise HTTPException(
-                        status_code=404, detail=f"Operation {operation_id} not found for memory bank {bank_id}"
-                    )
-
-                # Delete the operation
-                await conn.execute("DELETE FROM async_operations WHERE operation_id = $1", op_uuid)
-
-                return {
-                    "success": True,
-                    "message": f"Operation {operation_id} cancelled",
-                    "operation_id": operation_id,
-                    "bank_id": bank_id,
-                }
-
-        except HTTPException:
-            raise
+            result = await app.state.memory.cancel_operation(bank_id, operation_id, request_context=request_context)
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             import traceback
 
@@ -1538,10 +1560,10 @@ def _register_routes(app: FastAPI):
         operation_id="get_bank_profile",
         tags=["Banks"],
     )
-    async def api_get_bank_profile(bank_id: str):
+    async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Get memory bank profile (disposition + background)."""
         try:
-            profile = await app.state.memory.get_bank_profile(bank_id)
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             # Convert DispositionTraits object to dict for Pydantic
             disposition_dict = (
                 profile["disposition"].model_dump()
@@ -1569,14 +1591,18 @@ def _register_routes(app: FastAPI):
         operation_id="update_bank_disposition",
         tags=["Banks"],
     )
-    async def api_update_bank_disposition(bank_id: str, request: UpdateDispositionRequest):
+    async def api_update_bank_disposition(
+        bank_id: str, request: UpdateDispositionRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Update bank disposition traits."""
         try:
             # Update disposition
-            await app.state.memory.update_bank_disposition(bank_id, request.disposition.model_dump())
+            await app.state.memory.update_bank_disposition(
+                bank_id, request.disposition.model_dump(), request_context=request_context
+            )
 
             # Get updated profile
-            profile = await app.state.memory.get_bank_profile(bank_id)
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             disposition_dict = (
                 profile["disposition"].model_dump()
                 if hasattr(profile["disposition"], "model_dump")
@@ -1603,11 +1629,13 @@ def _register_routes(app: FastAPI):
         operation_id="add_bank_background",
         tags=["Banks"],
     )
-    async def api_add_bank_background(bank_id: str, request: AddBackgroundRequest):
+    async def api_add_bank_background(
+        bank_id: str, request: AddBackgroundRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Add or merge bank background information. Optionally infer disposition traits."""
         try:
             result = await app.state.memory.merge_bank_background(
-                bank_id, request.content, update_disposition=request.update_disposition
+                bank_id, request.content, update_disposition=request.update_disposition, request_context=request_context
             )
 
             response = BackgroundResponse(background=result["background"])
@@ -1630,51 +1658,31 @@ def _register_routes(app: FastAPI):
         operation_id="create_or_update_bank",
         tags=["Banks"],
     )
-    async def api_create_or_update_bank(bank_id: str, request: CreateBankRequest):
+    async def api_create_or_update_bank(
+        bank_id: str, request: CreateBankRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Create or update an agent with disposition and background."""
         try:
-            # Get existing profile or create with defaults
-            profile = await app.state.memory.get_bank_profile(bank_id)
+            # Ensure bank exists by getting profile (auto-creates with defaults)
+            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
 
-            # Update name if provided
-            if request.name is not None:
-                pool = await app.state.memory._get_pool()
-                async with acquire_with_retry(pool) as conn:
-                    await conn.execute(
-                        """
-                        UPDATE banks
-                        SET name = $2,
-                            updated_at = NOW()
-                        WHERE bank_id = $1
-                        """,
-                        bank_id,
-                        request.name,
-                    )
-                profile["name"] = request.name
+            # Update name and/or background if provided
+            if request.name is not None or request.background is not None:
+                await app.state.memory.update_bank(
+                    bank_id,
+                    name=request.name,
+                    background=request.background,
+                    request_context=request_context,
+                )
 
             # Update disposition if provided
             if request.disposition is not None:
-                await app.state.memory.update_bank_disposition(bank_id, request.disposition.model_dump())
-                profile["disposition"] = request.disposition.model_dump()
-
-            # Update background if provided (replace, not merge)
-            if request.background is not None:
-                pool = await app.state.memory._get_pool()
-                async with acquire_with_retry(pool) as conn:
-                    await conn.execute(
-                        """
-                        UPDATE banks
-                        SET background = $2,
-                            updated_at = NOW()
-                        WHERE bank_id = $1
-                        """,
-                        bank_id,
-                        request.background,
-                    )
-                profile["background"] = request.background
+                await app.state.memory.update_bank_disposition(
+                    bank_id, request.disposition.model_dump(), request_context=request_context
+                )
 
             # Get final profile
-            final_profile = await app.state.memory.get_bank_profile(bank_id)
+            final_profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             disposition_dict = (
                 final_profile["disposition"].model_dump()
                 if hasattr(final_profile["disposition"], "model_dump")
@@ -1702,10 +1710,10 @@ def _register_routes(app: FastAPI):
         operation_id="delete_bank",
         tags=["Banks"],
     )
-    async def api_delete_bank(bank_id: str):
+    async def api_delete_bank(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Delete an entire memory bank and all its data."""
         try:
-            result = await app.state.memory.delete_bank(bank_id)
+            result = await app.state.memory.delete_bank(bank_id, request_context=request_context)
             return DeleteResponse(
                 success=True,
                 message=f"Bank '{bank_id}' and all associated data deleted successfully",
@@ -1745,7 +1753,9 @@ def _register_routes(app: FastAPI):
         operation_id="retain_memories",
         tags=["Memory"],
     )
-    async def api_retain(bank_id: str, request: RetainRequest):
+    async def api_retain(
+        bank_id: str, request: RetainRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
         """Retain memories with optional async processing."""
         metrics = get_metrics_collector()
 
@@ -1766,43 +1776,25 @@ def _register_routes(app: FastAPI):
 
             if request.async_:
                 # Async processing: queue task and return immediately
-                operation_id = uuid.uuid4()
-
-                # Insert operation record into database
-                pool = await app.state.memory._get_pool()
-                async with acquire_with_retry(pool) as conn:
-                    await conn.execute(
-                        """
-                        INSERT INTO async_operations (operation_id, bank_id, operation_type, result_metadata)
-                        VALUES ($1, $2, $3, $4)
-                        """,
-                        operation_id,
-                        bank_id,
-                        "retain",
-                        json.dumps({"items_count": len(contents)}),
-                    )
-
-                # Submit task to background queue
-                await app.state.memory._task_backend.submit_task(
+                result = await app.state.memory.submit_async_retain(bank_id, contents, request_context=request_context)
+                return RetainResponse.model_validate(
                     {
-                        "type": "batch_retain",
-                        "operation_id": str(operation_id),
+                        "success": True,
                         "bank_id": bank_id,
-                        "contents": contents,
+                        "items_count": result["items_count"],
+                        "async": True,
                     }
                 )
-
-                logging.info(
-                    f"Retain task queued for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}"
-                )
-
-                return RetainResponse(success=True, bank_id=bank_id, items_count=len(contents), async_=True)
             else:
                 # Synchronous processing: wait for completion (record metrics)
                 with metrics.record_operation("retain", bank_id=bank_id):
-                    result = await app.state.memory.retain_batch_async(bank_id=bank_id, contents=contents)
+                    result = await app.state.memory.retain_batch_async(
+                        bank_id=bank_id, contents=contents, request_context=request_context
+                    )
 
-                return RetainResponse(success=True, bank_id=bank_id, items_count=len(contents), async_=False)
+                return RetainResponse.model_validate(
+                    {"success": True, "bank_id": bank_id, "items_count": len(contents), "async": False}
+                )
         except Exception as e:
             import traceback
 
@@ -1832,10 +1824,11 @@ def _register_routes(app: FastAPI):
     async def api_clear_bank_memories(
         bank_id: str,
         type: str | None = Query(None, description="Optional fact type filter (world, experience, opinion)"),
+        request_context: RequestContext = Depends(get_request_context),
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(bank_id, fact_type=type)
+            await app.state.memory.delete_bank(bank_id, fact_type=type, request_context=request_context)
 
             return DeleteResponse(success=True)
         except Exception as e:

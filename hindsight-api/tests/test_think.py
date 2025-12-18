@@ -4,10 +4,11 @@ Test think function for opinion generation and consistency.
 import pytest
 from datetime import datetime, timezone
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api import RequestContext
 
 
 @pytest.mark.asyncio
-async def test_think_opinion_consistency(memory):
+async def test_think_opinion_consistency(memory, request_context):
     """
     Test that think function:
     1. Generates an opinion
@@ -23,14 +24,16 @@ async def test_think_opinion_consistency(memory):
             bank_id=bank_id,
             content="Alice is a software engineer who has worked on 5 major projects. She always delivers on time and writes clean, well-documented code.",
             context="performance review",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         await memory.retain_async(
             bank_id=bank_id,
             content="Bob recently joined the team. He missed his first deadline and his code had many bugs.",
             context="performance review",
-            event_date=datetime(2024, 2, 1, tzinfo=timezone.utc)
+            event_date=datetime(2024, 2, 1, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         # First think call - should generate opinions
@@ -39,6 +42,7 @@ async def test_think_opinion_consistency(memory):
             bank_id=bank_id,
             query=query,
             budget=Budget.LOW,
+            request_context=request_context,
         )
 
         print(f"\n=== First Think Call ===")
@@ -82,6 +86,7 @@ async def test_think_opinion_consistency(memory):
             bank_id=bank_id,
             query=query,
             budget=Budget.LOW,
+            request_context=request_context,
         )
 
         print(f"\n=== Second Think Call ===")
@@ -122,13 +127,13 @@ async def test_think_opinion_consistency(memory):
     finally:
         # Clean up agent data
         try:
-            await memory.delete_bank(bank_id)
+            await memory.delete_bank(bank_id, request_context=request_context)
         except Exception as e:
             print(f"Warning: Error during cleanup: {e}")
 
 
 @pytest.mark.asyncio
-async def test_think_without_prior_context(memory):
+async def test_think_without_prior_context(memory, request_context):
     """
     Test that think function handles queries when there's no relevant context.
     """
@@ -139,6 +144,7 @@ async def test_think_without_prior_context(memory):
         bank_id=bank_id,
         query="What is the capital of France?",
         budget=Budget.LOW,
+        request_context=request_context,
     )
 
     print(f"\n=== Think Without Context ===")

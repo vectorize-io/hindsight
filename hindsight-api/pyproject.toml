@@ -92,6 +92,7 @@ dev = [
     "python-dotenv>=1.2.1",
     "filelock>=3.0.0",
     "ruff>=0.8.0",
+    "ty>=0.0.1",
 ]
 
 [tool.ruff]
@@ -121,3 +122,28 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.ty]
+# Type checking configuration
+# ty is an extremely fast Python type checker from Astral (same team as ruff/uv)
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+exclude = [
+    "tests/",
+    "hindsight_api/alembic/",
+]
+
+[tool.ty.rules]
+# Disable noisy rules while keeping important ones
+invalid-argument-type = "ignore"    # False positives with **kwargs patterns
+invalid-return-type = "ignore"      # Often intentional in async code
+invalid-parameter-default = "ignore" # Optional params with None default
+possibly-missing-attribute = "ignore" # Common with Optional types
+invalid-raise = "ignore"            # False positives with exception tracking
+call-non-callable = "ignore"        # False positives with Optional types
+invalid-key = "ignore"              # Pydantic ConfigDict not understood
+invalid-method-override = "ignore"  # Intentional signature differences
+unresolved-reference = "ignore"     # Forward references not always resolved

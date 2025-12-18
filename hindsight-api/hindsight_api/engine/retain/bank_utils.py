@@ -10,6 +10,7 @@ from typing import TypedDict
 from pydantic import BaseModel, Field
 
 from ..db_utils import acquire_with_retry
+from ..memory_engine import fq_table
 from ..response_models import DispositionTraits
 
 logger = logging.getLogger(__name__)
@@ -51,9 +52,9 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
     async with acquire_with_retry(pool) as conn:
         # Try to get existing bank
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT name, disposition, background
-            FROM banks WHERE bank_id = $1
+            FROM {fq_table("banks")} WHERE bank_id = $1
             """,
             bank_id,
         )
@@ -70,8 +71,8 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
 
         # Bank doesn't exist, create with defaults
         await conn.execute(
-            """
-            INSERT INTO banks (bank_id, name, disposition, background)
+            f"""
+            INSERT INTO {fq_table("banks")} (bank_id, name, disposition, background)
             VALUES ($1, $2, $3::jsonb, $4)
             ON CONFLICT (bank_id) DO NOTHING
             """,
@@ -98,8 +99,8 @@ async def update_bank_disposition(pool, bank_id: str, disposition: dict[str, int
 
     async with acquire_with_retry(pool) as conn:
         await conn.execute(
-            """
-            UPDATE banks
+            f"""
+            UPDATE {fq_table("banks")}
             SET disposition = $2::jsonb,
                 updated_at = NOW()
             WHERE bank_id = $1
@@ -140,8 +141,8 @@ async def merge_bank_background(pool, llm_config, bank_id: str, new_info: str, u
         if inferred_disposition:
             # Update both background and disposition
             await conn.execute(
-                """
-                UPDATE banks
+                f"""
+                UPDATE {fq_table("banks")}
                 SET background = $2,
                     disposition = $3::jsonb,
                     updated_at = NOW()
@@ -154,8 +155,8 @@ async def merge_bank_background(pool, llm_config, bank_id: str, new_info: str, u
         else:
             # Update only background
             await conn.execute(
-                """
-                UPDATE banks
+                f"""
+                UPDATE {fq_table("banks")}
                 SET background = $2,
                     updated_at = NOW()
                 WHERE bank_id = $1
@@ -361,9 +362,9 @@ async def list_banks(pool) -> list:
     """
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT bank_id, name, disposition, background, created_at, updated_at
-            FROM banks
+            FROM {fq_table("banks")}
             ORDER BY updated_at DESC
             """
         )

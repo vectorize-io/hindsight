@@ -212,9 +212,7 @@ This recipe is available as an interactive Jupyter notebook.
         # Insert callout after first heading
         first_heading_match = re.search(r"^(#\s+.+\n)", md_content, re.MULTILINE)
         if first_heading_match:
-            idx = md_content.index(first_heading_match.group(0)) + len(
-                first_heading_match.group(0)
-            )
+            idx = md_content.index(first_heading_match.group(0)) + len(first_heading_match.group(0))
             final_content = md_content[:idx] + "\n" + callout + "\n" + md_content[idx:]
         else:
             final_content = callout + "\n" + md_content
@@ -247,9 +245,7 @@ def process_applications(cookbook_dir: Path, apps_dir: Path) -> list[dict]:
             continue
 
         slug = entry.name
-        title = extract_title_from_readme(readme_path) or " ".join(
-            word.capitalize() for word in slug.split("-")
-        )
+        title = extract_title_from_readme(readme_path) or " ".join(word.capitalize() for word in slug.split("-"))
 
         print(f"  Processing app: {entry.name} → {slug}.md")
 
@@ -275,12 +271,8 @@ This is a complete, runnable application demonstrating Hindsight integration.
         # Insert callout after first heading
         first_heading_match = re.search(r"^(#\s+.+\n)", readme_content, re.MULTILINE)
         if first_heading_match:
-            idx = readme_content.index(first_heading_match.group(0)) + len(
-                first_heading_match.group(0)
-            )
-            final_content = (
-                readme_content[:idx] + "\n" + callout + "\n" + readme_content[idx:]
-            )
+            idx = readme_content.index(first_heading_match.group(0)) + len(first_heading_match.group(0))
+            final_content = readme_content[:idx] + "\n" + callout + "\n" + readme_content[idx:]
         else:
             final_content = callout + "\n" + readme_content
 
@@ -407,26 +399,20 @@ def clean_description(desc: str) -> str:
     return desc
 
 
-def update_cookbook_index(
-    recipes: list[dict], apps: list[dict], docs_dir: Path
-):
+def update_cookbook_index(recipes: list[dict], apps: list[dict], docs_dir: Path):
     """Update cookbook/index.mdx with recipe and app carousels."""
     # Build recipe items for the carousel
     recipe_items = []
     for r in recipes:
         title = r["title"].replace('"', '\\"')
-        recipe_items.append(
-            f'    {{ title: "{title}", href: "/cookbook/recipes/{r["slug"]}" }}'
-        )
+        recipe_items.append(f'    {{ title: "{title}", href: "/cookbook/recipes/{r["slug"]}" }}')
     recipes_json = ",\n".join(recipe_items)
 
     # Build app items for the carousel
     app_items = []
     for a in apps:
         title = a["title"].replace('"', '\\"')
-        app_items.append(
-            f'    {{ title: "{title}", href: "/cookbook/applications/{a["slug"]}" }}'
-        )
+        app_items.append(f'    {{ title: "{title}", href: "/cookbook/applications/{a["slug"]}" }}')
     apps_json = ",\n".join(app_items)
 
     content = f"""---

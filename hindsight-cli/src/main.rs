@@ -94,12 +94,15 @@ enum Commands {
     /// Launch the web-based control plane UI
     Ui,
 
-    /// Configure the CLI (API URL, etc.)
-    #[command(after_help = "Configuration priority:\n  1. Environment variable (HINDSIGHT_API_URL) - highest priority\n  2. Config file (~/.hindsight/config)\n  3. Default (http://localhost:8888)")]
+    /// Configure the CLI (API URL, API key, etc.)
+    #[command(after_help = "Configuration priority:\n  1. Environment variables (HINDSIGHT_API_URL, HINDSIGHT_API_KEY) - highest priority\n  2. Config file (~/.hindsight/config)\n  3. Default (http://localhost:8888)")]
     Configure {
         /// API URL to connect to (interactive prompt if not provided)
         #[arg(long)]
         api_url: Option<String>,
+        /// API key for authentication (sent as Bearer token)
+        #[arg(long)]
+        api_key: Option<String>,
     },
 }
 
@@ -372,8 +375,8 @@ fn run() -> Result<()> {
     let verbose = cli.verbose;
 
     // Handle configure command before loading full config (it doesn't need API client)
-    if let Commands::Configure { api_url } = cli.command {
-        return handle_configure(api_url, output_format);
+    if let Commands::Configure { api_url, api_key } = cli.command {
+        return handle_configure(api_url, api_key, output_format);
     }
 
     // Handle ui command - needs config but not API client
@@ -389,9 +392,10 @@ fn run() -> Result<()> {
     });
 
     let api_url = config.api_url().to_string();
+    let api_key = config.api_key.clone();
 
     // Create API client
-    let client = ApiClient::new(api_url.clone()).unwrap_or_else(|e| {
+    let client = ApiClient::new(api_url.clone(), api_key).unwrap_or_else(|e| {
         errors::handle_api_error(e, &api_url);
     });
 
@@ -476,7 +480,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn handle_configure(api_url: Option<String>, output_format: OutputFormat) -> Result<()> {
+fn handle_configure(api_url: Option<String>, api_key: Option<String>, output_format: OutputFormat) -> Result<()> {
     // Load current config to show current state
     let current_config = Config::load().ok();
 
@@ -487,6 +491,15 @@ fn handle_configure(api_url: Option<String>, output_format: OutputFormat) -> Res
         // Show current configuration
         if let Some(ref config) = current_config {
             println!("  Current API URL: {}", config.api_url);
+            if let Some(ref key) = config.api_key {
+                // Mask the API key for display
+                let masked = if key.len() > 8 {
+                    format!("{}...{}", &key[..4], &key[key.len()-4..])
+                } else {
+                    "****".to_string()
+                };
+                println!("  Current API Key: {}", masked);
+            }
             println!("  Source: {}", config.source);
             println!();
         }
@@ -511,18 +524,30 @@ fn handle_configure(api_url: Option<String>, output_format: OutputFormat) -> Res
         return Ok(());
     }
 
+    // Use provided api_key, or keep existing one if not provided
+    let new_api_key = api_key.or_else(|| current_config.as_ref().and_then(|c| c.api_key.clone()));
+
     // Save to config file
-    let config_path = Config::save_api_url(&new_api_url)?;
+    let config_path = Config::save_config(&new_api_url, new_api_key.as_deref())?;
 
     if output_format == OutputFormat::Pretty {
         ui::print_success(&format!("Configuration saved to {}", config_path.display()));
         println!();
         println!("  API URL: {}", new_api_url);
+        if let Some(ref key) = new_api_key {
+            let masked = if key.len() > 8 {
+                format!("{}...{}", &key[..4], &key[key.len()-4..])
+            } else {
+                "****".to_string()
+            };
+            println!("  API Key: {}", masked);
+        }
         println!();
-        println!("Note: Environment variable HINDSIGHT_API_URL will override this setting.");
+        println!("Note: Environment variables HINDSIGHT_API_URL and HINDSIGHT_API_KEY will override these settings.");
     } else {
         let result = serde_json::json!({
             "api_url": new_api_url,
+            "api_key_set": new_api_key.is_some(),
             "config_path": config_path.display().to_string(),
         });
         output::print_output(&result, output_format)?;

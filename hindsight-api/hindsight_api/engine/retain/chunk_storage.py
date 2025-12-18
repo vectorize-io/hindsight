@@ -6,6 +6,7 @@ Handles storage of document chunks in the database.
 
 import logging
 
+from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,8 @@ async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[
 
     # Batch insert all chunks
     await conn.execute(
-        """
-        INSERT INTO chunks (chunk_id, document_id, bank_id, chunk_text, chunk_index)
+        f"""
+        INSERT INTO {fq_table("chunks")} (chunk_id, document_id, bank_id, chunk_text, chunk_index)
         SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::integer[])
         """,
         chunk_ids,

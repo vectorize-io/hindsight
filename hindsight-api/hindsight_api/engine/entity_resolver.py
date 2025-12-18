@@ -11,6 +11,7 @@ from difflib import SequenceMatcher
 import asyncpg
 
 from .db_utils import acquire_with_retry
+from .memory_engine import fq_table
 
 # Load spaCy model (singleton)
 _nlp = None
@@ -68,9 +69,9 @@ class EntityResolver:
     ) -> list[str]:
         # Query ALL candidates for this bank
         all_entities = await conn.fetch(
-            """
+            f"""
             SELECT canonical_name, id, metadata, last_seen, mention_count
-            FROM entities
+            FROM {fq_table("entities")}
             WHERE bank_id = $1
             """,
             bank_id,
@@ -82,11 +83,11 @@ class EntityResolver:
         # Query ALL co-occurrences for this bank's entities in one query
         # This builds a map of entity_id -> set of co-occurring entity names
         all_cooccurrences = await conn.fetch(
-            """
+            f"""
             SELECT ec.entity_id_1, ec.entity_id_2, ec.cooccurrence_count
-            FROM entity_cooccurrences ec
-            WHERE ec.entity_id_1 IN (SELECT id FROM entities WHERE bank_id = $1)
-               OR ec.entity_id_2 IN (SELECT id FROM entities WHERE bank_id = $1)
+            FROM {fq_table("entity_cooccurrences")} ec
+            WHERE ec.entity_id_1 IN (SELECT id FROM {fq_table("entities")} WHERE bank_id = $1)
+               OR ec.entity_id_2 IN (SELECT id FROM {fq_table("entities")} WHERE bank_id = $1)
             """,
             bank_id,
         )
@@ -195,8 +196,8 @@ class EntityResolver:
         # Batch update existing entities
         if entities_to_update:
             await conn.executemany(
-                """
-                UPDATE entities SET
+                f"""
+                UPDATE {fq_table("entities")} SET
                     mention_count = mention_count + 1,
                     last_seen = $2
                 WHERE id = $1::uuid
@@ -232,13 +233,13 @@ class EntityResolver:
             # Batch INSERT ... ON CONFLICT with RETURNING
             # This is much faster than individual inserts
             rows = await conn.fetch(
-                """
-                INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count)
+                f"""
+                INSERT INTO {fq_table("entities")} (bank_id, canonical_name, first_seen, last_seen, mention_count)
                 SELECT $1, name, event_date, event_date, 1
                 FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
                 ON CONFLICT (bank_id, LOWER(canonical_name))
                 DO UPDATE SET
-                    mention_count = entities.mention_count + 1,
+                    mention_count = {fq_table("entities")}.mention_count + 1,
                     last_seen = EXCLUDED.last_seen
                 RETURNING id
                 """,
@@ -279,9 +280,9 @@ class EntityResolver:
         async with acquire_with_retry(self.pool) as conn:
             # Find candidate entities with similar name
             candidates = await conn.fetch(
-                """
+                f"""
                 SELECT id, canonical_name, metadata, last_seen
-                FROM entities
+                FROM {fq_table("entities")}
                 WHERE bank_id = $1
                   AND (
                     canonical_name ILIKE $2
@@ -326,10 +327,10 @@ class EntityResolver:
                 # Get entities that co-occurred with this candidate before
                 # Use the materialized co-occurrence cache for fast lookup
                 co_entity_rows = await conn.fetch(
-                    """
+                    f"""
                     SELECT e.canonical_name, ec.cooccurrence_count
-                    FROM entity_cooccurrences ec
-                    JOIN entities e ON (
+                    FROM {fq_table("entity_cooccurrences")} ec
+                    JOIN {fq_table("entities")} e ON (
                         CASE
                             WHEN ec.entity_id_1 = $1 THEN ec.entity_id_2
                             WHEN ec.entity_id_2 = $1 THEN ec.entity_id_1
@@ -365,8 +366,8 @@ class EntityResolver:
             if best_score > threshold:
                 # Update entity
                 await conn.execute(
-                    """
-                    UPDATE entities
+                    f"""
+                    UPDATE {fq_table("entities")}
                     SET mention_count = mention_count + 1,
                         last_seen = $1
                     WHERE id = $2
@@ -402,12 +403,12 @@ class EntityResolver:
             Entity ID
         """
         entity_id = await conn.fetchval(
-            """
-            INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count)
+            f"""
+            INSERT INTO {fq_table("entities")} (bank_id, canonical_name, first_seen, last_seen, mention_count)
             VALUES ($1, $2, $3, $4, 1)
             ON CONFLICT (bank_id, LOWER(canonical_name))
             DO UPDATE SET
-                mention_count = entities.mention_count + 1,
+                mention_count = {fq_table("entities")}.mention_count + 1,
                 last_seen = EXCLUDED.last_seen
             RETURNING id
             """,
@@ -430,8 +431,8 @@ class EntityResolver:
         async with acquire_with_retry(self.pool) as conn:
             # Insert unit-entity link
             await conn.execute(
-                """
-                INSERT INTO unit_entities (unit_id, entity_id)
+                f"""
+                INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
                 VALUES ($1, $2)
                 ON CONFLICT DO NOTHING
                 """,
@@ -441,9 +442,9 @@ class EntityResolver:
 
             # Update co-occurrence cache: find other entities in this unit
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT entity_id
-                FROM unit_entities
+                FROM {fq_table("unit_entities")}
                 WHERE unit_id = $1 AND entity_id != $2
                 """,
                 unit_id,
@@ -472,12 +473,12 @@ class EntityResolver:
             entity_id_1, entity_id_2 = entity_id_2, entity_id_1
 
         await conn.execute(
-            """
-            INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+            f"""
+            INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
             VALUES ($1, $2, 1, NOW())
             ON CONFLICT (entity_id_1, entity_id_2)
             DO UPDATE SET
-                cooccurrence_count = entity_cooccurrences.cooccurrence_count + 1,
+                cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + 1,
                 last_cooccurred = NOW()
             """,
             entity_id_1,
@@ -506,8 +507,8 @@ class EntityResolver:
     async def _link_units_to_entities_batch_impl(self, conn, unit_entity_pairs: list[tuple[str, str]]):
         # Batch insert all unit-entity links
         await conn.executemany(
-            """
-            INSERT INTO unit_entities (unit_id, entity_id)
+            f"""
+            INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
             VALUES ($1, $2)
             ON CONFLICT DO NOTHING
             """,
@@ -541,12 +542,12 @@ class EntityResolver:
         if cooccurrence_pairs:
             now = datetime.now(UTC)
             await conn.executemany(
-                """
-                INSERT INTO entity_cooccurrences (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+                f"""
+                INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT (entity_id_1, entity_id_2)
                 DO UPDATE SET
-                    cooccurrence_count = entity_cooccurrences.cooccurrence_count + 1,
+                    cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + 1,
                     last_cooccurred = EXCLUDED.last_cooccurred
                 """,
                 [(e1, e2, 1, now) for e1, e2 in cooccurrence_pairs],
@@ -565,9 +566,9 @@ class EntityResolver:
         """
         async with acquire_with_retry(self.pool) as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT unit_id
-                FROM unit_entities
+                FROM {fq_table("unit_entities")}
                 WHERE entity_id = $1
                 ORDER BY unit_id
                 LIMIT $2
@@ -594,8 +595,8 @@ class EntityResolver:
         """
         async with acquire_with_retry(self.pool) as conn:
             row = await conn.fetchrow(
-                """
-                SELECT id FROM entities
+                f"""
+                SELECT id FROM {fq_table("entities")}
                 WHERE bank_id = $1
                   AND canonical_name ILIKE $2
                 ORDER BY mention_count DESC

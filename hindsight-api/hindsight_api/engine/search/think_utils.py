@@ -101,7 +101,7 @@ def build_think_prompt(
     name: str,
     disposition: DispositionTraits,
     background: str,
-    context: str = None,
+    context: str | None = None,
 ) -> str:
     """Build the think prompt for the LLM."""
     disposition_desc = build_disposition_description(disposition)

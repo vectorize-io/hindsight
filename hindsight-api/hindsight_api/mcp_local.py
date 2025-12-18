@@ -87,6 +87,7 @@ def create_local_mcp_server(bank_id: str, memory=None) -> FastMCP:
     from hindsight_api import MemoryEngine
     from hindsight_api.engine.memory_engine import Budget
     from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
+    from hindsight_api.models import RequestContext
 
     # Create memory engine with pg0 embedded database if not provided
     if memory is None:
@@ -115,7 +116,11 @@ def create_local_mcp_server(bank_id: str, memory=None) -> FastMCP:
 
         async def _retain():
             try:
-                await memory.retain_batch_async(bank_id=bank_id, contents=[{"content": content, "context": context}])
+                await memory.retain_batch_async(
+                    bank_id=bank_id,
+                    contents=[{"content": content, "context": context}],
+                    request_context=RequestContext(),
+                )
             except Exception as e:
                 logger.error(f"Error storing memory: {e}", exc_info=True)
 
@@ -142,6 +147,7 @@ def create_local_mcp_server(bank_id: str, memory=None) -> FastMCP:
                 fact_type=list(VALID_RECALL_FACT_TYPES),
                 budget=budget_enum,
                 max_tokens=max_tokens,
+                request_context=RequestContext(),
             )
 
             return search_result.model_dump()

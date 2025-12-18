@@ -7,24 +7,24 @@ distinguish between things said earlier vs later.
 """
 import pytest
 from datetime import datetime, timezone
-from hindsight_api import MemoryEngine
+from hindsight_api import MemoryEngine, RequestContext
 from hindsight_api.engine.memory_engine import Budget
 import os
 
 
 @pytest.mark.asyncio
-async def test_fact_ordering_within_conversation(memory):
+async def test_fact_ordering_within_conversation(memory, request_context):
     bank_id = "test_ordering_agent"
 
     # Get/create agent (auto-creates with defaults)
-    await memory.get_bank_profile(bank_id)
+    await memory.get_bank_profile(bank_id, request_context=request_context)
 
     # Update disposition to match Marcus
     await memory.update_bank_disposition(bank_id, {
         "skepticism": 3,
         "literalism": 3,
         "empathy": 3
-    })
+    }, request_context=request_context)
 
     # A conversation where Marcus changes his position
     conversation = """
@@ -43,7 +43,8 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
         content=conversation,
         context="podcast discussion about NFL game",
         event_date=base_event_date,
-        document_id="test_conv_1"
+        document_id="test_conv_1",
+        request_context=request_context,
     )
 
     # Search for all facts about Marcus's predictions
@@ -52,7 +53,8 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
         query="Marcus prediction Rams",
         fact_type=['opinion', 'experience', 'world'],
         budget=Budget.LOW,
-        max_tokens=8192
+        max_tokens=8192,
+        request_context=request_context,
     )
 
     print(f"\n=== Retrieved {len(results.results)} facts ===")
@@ -113,17 +115,17 @@ Marcus: Yeah, I realized I was being too optimistic about their defense.
         print(f"\n✅ Temporal ordering preserved: First prediction came before changed prediction")
 
     # Cleanup
-    await memory.delete_bank(bank_id)
+    await memory.delete_bank(bank_id, request_context=request_context)
 
     print(f"\n✅ Test passed: Fact ordering within conversation is preserved")
 
 
 @pytest.mark.asyncio
-async def test_multiple_documents_ordering(memory):
+async def test_multiple_documents_ordering(memory, request_context):
 
     bank_id = "test_multi_doc_agent"
 
-    await memory.get_bank_profile(bank_id)  # Auto-creates with defaults
+    await memory.get_bank_profile(bank_id, request_context=request_context)  # Auto-creates with defaults
 
     # Two separate conversations with same base time
     base_time = datetime(2024, 11, 14, 10, 0, 0, tzinfo=timezone.utc)
@@ -146,7 +148,8 @@ Alice: I reconsidered the team's experience level.
         contents=[
             {"content": conv1, "context": "project discussion 1", "event_date": base_time},
             {"content": conv2, "context": "project discussion 2", "event_date": base_time}
-        ]
+        ],
+        request_context=request_context,
     )
 
     # Search for Alice's preferences
@@ -155,7 +158,8 @@ Alice: I reconsidered the team's experience level.
         query="Alice preference React Vue",
         fact_type=['opinion', 'experience'],
         budget=Budget.LOW,
-        max_tokens=8192
+        max_tokens=8192,
+        request_context=request_context,
     )
 
     print(f"\n=== Retrieved {len(results.results)} agent facts ===")
@@ -175,6 +179,6 @@ Alice: I reconsidered the team's experience level.
         print(f"\n✅ Facts from {len(agent_facts)} statements have {len(unique_timestamps)} unique timestamps")
 
     # Cleanup
-    await memory.delete_bank(bank_id)
+    await memory.delete_bank(bank_id, request_context=request_context)
 
     print(f"\n✅ Test passed: Multiple documents maintain separate ordering")

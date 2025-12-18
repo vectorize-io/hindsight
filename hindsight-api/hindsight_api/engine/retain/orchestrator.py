@@ -8,7 +8,6 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from ..db_utils import acquire_with_retry
 from . import bank_utils
@@ -29,7 +28,7 @@ from . import (
     link_creation,
     observation_regeneration,
 )
-from .types import ExtractedFact, ProcessedFact, RetainContent
+from .types import ExtractedFact, ProcessedFact, RetainContent, RetainContentDict
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ async def retain_batch(
     format_date_fn,
     duplicate_checker_fn,
     bank_id: str,
-    contents_dicts: list[dict[str, Any]],
+    contents_dicts: list[RetainContentDict],
     document_id: str | None = None,
     is_first_batch: bool = True,
     fact_type_override: str | None = None,

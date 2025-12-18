@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from ..memory_engine import fq_table
 from .types import EntityLink
 
 logger = logging.getLogger(__name__)
@@ -290,9 +291,9 @@ async def extract_entities_batch_optimized(
 
             entity_id_list = [uuid.UUID(eid) if isinstance(eid, str) else eid for eid in all_entity_ids]
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT entity_id, unit_id
-                FROM unit_entities
+                FROM {fq_table("unit_entities")}
                 WHERE entity_id = ANY($1::uuid[])
                 """,
                 entity_id_list,
@@ -413,9 +414,9 @@ async def create_temporal_links_batch_per_fact(
         # Get the event_date for each new unit
         fetch_dates_start = time_mod.time()
         rows = await conn.fetch(
-            """
+            f"""
             SELECT id, event_date
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE id::text = ANY($1)
             """,
             unit_ids,
@@ -432,9 +433,9 @@ async def create_temporal_links_batch_per_fact(
 
         fetch_neighbors_start = time_mod.time()
         all_candidates = await conn.fetch(
-            """
+            f"""
             SELECT id, event_date
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE bank_id = $1
               AND event_date BETWEEN $2 AND $3
               AND id::text != ALL($4)
@@ -479,8 +480,8 @@ async def create_temporal_links_batch_per_fact(
         if links:
             insert_start = time_mod.time()
             await conn.executemany(
-                """
-                INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, entity_id)
+                f"""
+                INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                 """,
@@ -535,9 +536,9 @@ async def create_semantic_links_batch(
         # Fetch ALL existing units with embeddings in ONE query
         fetch_start = time_mod.time()
         all_existing = await conn.fetch(
-            """
+            f"""
             SELECT id, embedding
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE bank_id = $1
               AND embedding IS NOT NULL
               AND id::text != ALL($2)
@@ -644,8 +645,8 @@ async def create_semantic_links_batch(
         if all_links:
             insert_start = time_mod.time()
             await conn.executemany(
-                """
-                INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, entity_id)
+                f"""
+                INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                 """,
@@ -721,8 +722,8 @@ async def insert_entity_links_batch(conn, links: list[EntityLink], chunk_size: i
 
     # Insert from temp table with ON CONFLICT (single query for all rows)
     insert_start = time_mod.time()
-    await conn.execute("""
-        INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, entity_id)
+    await conn.execute(f"""
+        INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
         SELECT from_unit_id, to_unit_id, link_type, weight, entity_id
         FROM _temp_entity_links
         ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
@@ -808,8 +809,8 @@ async def create_causal_links_batch(
             insert_start = time_mod.time()
             try:
                 await conn.executemany(
-                    """
-                    INSERT INTO memory_links (from_unit_id, to_unit_id, link_type, weight, entity_id)
+                    f"""
+                    INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
                     VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                     """,

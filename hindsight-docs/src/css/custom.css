@@ -890,3 +890,309 @@ div[class*="announcementBar"] a:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* ===== Local Search Plugin Styling ===== */
+
+/* Search bar in navbar */
+.navbar__search {
+  margin-left: auto;
+}
+
+
+/* Hide keyboard shortcut hints */
+[class*="searchHint"],
+[class*="searchHintContainer"] {
+  display: none !important;
+}
+
+/* Minimal search button */
+[class*="searchBarContainer"] button,
+[class*="searchBar_"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid transparent !important;
+  border-image: linear-gradient(90deg, #0074d9, #009296) 1 !important;
+  border-radius: 0 !important;
+  padding: 0.25rem 0 !important;
+  color: var(--ifm-color-emphasis-600) !important;
+  transition: all 0.2s ease !important;
+  height: auto !important;
+  min-height: unset !important;
+}
+
+[class*="searchBarContainer"] button:hover,
+[class*="searchBar_"]:hover {
+  color: var(--ifm-font-color-base) !important;
+}
+
+[data-theme='dark'] [class*="searchBarContainer"] button,
+[data-theme='dark'] [class*="searchBar_"] {
+  color: var(--ifm-color-emphasis-500) !important;
+}
+
+[data-theme='dark'] [class*="searchBarContainer"] button:hover,
+[data-theme='dark'] [class*="searchBar_"]:hover {
+  color: #e2e8f0 !important;
+}
+
+/* Search input field - remove ALL borders */
+[class*="searchInput"],
+[class*="searchQueryInput"],
+[class*="searchInput"] *,
+[class*="searchQueryInput"] *,
+[class*="searchBarContainer"] input,
+[class*="searchBarContainer"] input * {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-top: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 0 !important;
+  border-left: 0 !important;
+  border-radius: 0 !important;
+  color: var(--ifm-font-color-base) !important;
+  padding: 0.5rem 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Add single underline via pseudo or direct */
+[class*="searchQueryInput"],
+[class*="searchBarContainer"] input[type="search"] {
+  border-bottom: 1px solid var(--ifm-toc-border-color) !important;
+}
+
+[data-theme='dark'] [class*="searchQueryInput"],
+[data-theme='dark'] [class*="searchBarContainer"] input[type="search"] {
+  border-bottom: 1px solid #27272a !important;
+}
+
+[class*="searchQueryInput"]:focus,
+[class*="searchBarContainer"] input[type="search"]:focus {
+  border-bottom: 1px solid #0074d9 !important;
+}
+
+[class*="searchInput"]::placeholder,
+[class*="searchQueryInput"]::placeholder,
+[class*="searchBarContainer"] input::placeholder {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 500 !important;
+  color: var(--ifm-color-emphasis-400) !important;
+}
+
+/* Minimal dropdown */
+[class*="dropdownMenu"],
+[class*="suggestionsContainer"],
+[class*="searchResultsContainer"],
+[class*="suggestions"],
+ul[class*="suggestion"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  border: none !important;
+  border-radius: 0.25rem !important;
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.15) !important;
+  padding: 0.25rem !important;
+}
+
+[data-theme='dark'] [class*="dropdownMenu"],
+[data-theme='dark'] [class*="suggestionsContainer"],
+[data-theme='dark'] [class*="searchResultsContainer"],
+[data-theme='dark'] [class*="suggestions"],
+[data-theme='dark'] ul[class*="suggestion"] {
+  background: #0f0f11 !important;
+  background-color: #0f0f11 !important;
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Minimal result items */
+[class*="searchResultItem"],
+[class*="suggestion"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  background: transparent !important;
+  border-radius: 0.25rem !important;
+  padding: 0.5rem 0.75rem !important;
+  margin: 0 !important;
+  transition: background-color 0.1s ease !important;
+  cursor: pointer !important;
+  border-left: 2px solid transparent !important;
+}
+
+/* No background hover - keep transparent */
+[class*="searchResultItem"]:hover,
+[class*="searchResultItem"][class*="cursor"],
+[class*="suggestion"]:hover,
+[class*="suggestion"][class*="cursor"] {
+  background: transparent !important;
+  border-left-color: transparent !important;
+}
+
+/* Icons - default color */
+[class*="hitIcon"],
+[class*="hitTree"] {
+  color: #71717a !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="hitIcon"] svg path,
+[class*="hitIcon"] svg,
+[class*="hitTree"] svg path,
+[class*="hitTree"] svg {
+  stroke: #71717a !important;
+  color: #71717a !important;
+  transition: all 0.15s ease !important;
+}
+
+/* Icons - hover gradient effect */
+[class*="suggestion"]:hover [class*="hitIcon"] svg path,
+[class*="suggestion"]:hover [class*="hitIcon"] svg,
+[class*="suggestion"]:hover [class*="hitTree"] svg path,
+[class*="suggestion"]:hover [class*="hitTree"] svg {
+  stroke: #0074d9 !important;
+  color: #0074d9 !important;
+}
+
+[data-theme='dark'] [class*="hitIcon"] svg path,
+[data-theme='dark'] [class*="hitIcon"] svg,
+[data-theme='dark'] [class*="hitTree"] svg path,
+[data-theme='dark'] [class*="hitTree"] svg {
+  stroke: #71717a !important;
+  color: #71717a !important;
+}
+
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitIcon"] svg path,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitIcon"] svg,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitTree"] svg path,
+[data-theme='dark'] [class*="suggestion"]:hover [class*="hitTree"] svg {
+  stroke: #3396e8 !important;
+  color: #3396e8 !important;
+}
+
+/* === PAGE-LEVEL RESULTS (doc icon, no tree) === */
+/* Title is the page name - GRADIENT */
+[class*="suggestion"]:not(:has([class*="hitTree"])) [class*="hitTitle"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  margin: 0 !important;
+}
+
+/* === SECTION-LEVEL RESULTS (hashtag icon, has tree) === */
+/* Title is the section name - regular gray text */
+[class*="suggestion"]:has([class*="hitTree"]) [class*="hitTitle"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 500 !important;
+  font-size: 0.8125rem !important;
+  background: none !important;
+  -webkit-background-clip: unset !important;
+  background-clip: unset !important;
+  color: #3f3f46 !important;
+  -webkit-text-fill-color: #3f3f46 !important;
+  margin: 0 !important;
+}
+
+[data-theme='dark'] [class*="suggestion"]:has([class*="hitTree"]) [class*="hitTitle"] {
+  color: #d4d4d8 !important;
+  -webkit-text-fill-color: #d4d4d8 !important;
+}
+
+/* Path is the page name - GRADIENT */
+[class*="suggestion"]:has([class*="hitTree"]) [class*="hitPath"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.75rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  margin-top: 0.125rem !important;
+  display: block !important;
+}
+
+/* === FALLBACK for browsers without :has() === */
+[class*="hitPath"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.625rem !important;
+  font-weight: 400 !important;
+  color: #71717a !important;
+  -webkit-text-fill-color: #71717a !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+[class*="hitTitle"] {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+  background: linear-gradient(90deg, #0074d9, #009296) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  margin: 0 !important;
+}
+
+/* Highlight matched text - must override color rules */
+[class*="searchResultItem"] mark,
+[class*="suggestion"] mark,
+.search-result-match mark,
+[class*="searchResultItem"]:hover mark,
+[class*="suggestion"]:hover mark,
+[class*="searchResultItem"][class*="cursor"] mark,
+[class*="suggestion"][class*="cursor"] mark {
+  background: transparent !important;
+  color: #0074d9 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+}
+
+[data-theme='dark'] [class*="searchResultItem"] mark,
+[data-theme='dark'] [class*="suggestion"] mark,
+[data-theme='dark'] .search-result-match mark,
+[data-theme='dark'] [class*="searchResultItem"]:hover mark,
+[data-theme='dark'] [class*="suggestion"]:hover mark,
+[data-theme='dark'] [class*="searchResultItem"][class*="cursor"] mark,
+[data-theme='dark'] [class*="suggestion"][class*="cursor"] mark {
+  color: #66b3f0 !important;
+}
+
+/* No results */
+[class*="noResults"],
+[class*="searchNoResult"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  color: var(--ifm-color-emphasis-500) !important;
+  padding: 1rem !important;
+  text-align: center !important;
+}
+
+/* Loading */
+[class*="searchIndexLoading"],
+[class*="loadingRing"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 0.75rem !important;
+  color: var(--ifm-color-emphasis-400) !important;
+}
+
+/* Hide footer */
+[class*="hitFooter"],
+[class*="searchFooter"] {
+  display: none !important;
+}
+
+/* Hide action icons */
+[class*="hitAction"] {
+  display: none !important;
+}
+

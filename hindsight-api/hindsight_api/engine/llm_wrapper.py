@@ -96,7 +96,7 @@ class LLMProvider:
             client_kwargs = {"api_key": self.api_key, "max_retries": 0}
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
-            self._client = AsyncOpenAI(**client_kwargs)
+            self._client = AsyncOpenAI(**client_kwargs)  # type: ignore[invalid-argument-type] - dict kwargs
             self._gemini_client = None
 
     async def verify_connection(self) -> None:
@@ -467,6 +467,8 @@ class LLMProvider:
         """Create provider for memory operations from environment variables."""
         provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq")
         api_key = os.getenv("HINDSIGHT_API_LLM_API_KEY")
+        if not api_key:
+            raise ValueError("HINDSIGHT_API_LLM_API_KEY environment variable is required")
         base_url = os.getenv("HINDSIGHT_API_LLM_BASE_URL", "")
         model = os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b")
 
@@ -477,6 +479,10 @@ class LLMProvider:
         """Create provider for answer generation. Falls back to memory config if not set."""
         provider = os.getenv("HINDSIGHT_API_ANSWER_LLM_PROVIDER", os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"))
         api_key = os.getenv("HINDSIGHT_API_ANSWER_LLM_API_KEY", os.getenv("HINDSIGHT_API_LLM_API_KEY"))
+        if not api_key:
+            raise ValueError(
+                "HINDSIGHT_API_LLM_API_KEY or HINDSIGHT_API_ANSWER_LLM_API_KEY environment variable is required"
+            )
         base_url = os.getenv("HINDSIGHT_API_ANSWER_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_ANSWER_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
 
@@ -487,6 +493,10 @@ class LLMProvider:
         """Create provider for judge/evaluator operations. Falls back to memory config if not set."""
         provider = os.getenv("HINDSIGHT_API_JUDGE_LLM_PROVIDER", os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"))
         api_key = os.getenv("HINDSIGHT_API_JUDGE_LLM_API_KEY", os.getenv("HINDSIGHT_API_LLM_API_KEY"))
+        if not api_key:
+            raise ValueError(
+                "HINDSIGHT_API_LLM_API_KEY or HINDSIGHT_API_JUDGE_LLM_API_KEY environment variable is required"
+            )
         base_url = os.getenv("HINDSIGHT_API_JUDGE_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
 

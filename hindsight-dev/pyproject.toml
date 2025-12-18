@@ -27,3 +27,58 @@ generate-openapi = "hindsight_dev.generate_openapi:generate_openapi_spec"
 generate-changelog = "hindsight_dev.generate_changelog:main"
 sync-cookbook = "hindsight_dev.sync_cookbook:main"
 generate-llms-full = "hindsight_dev.generate_llms_full:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "ty>=0.0.1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module import not at top of file
+    "E712",   # avoid equality comparisons to False (intentional for optional bools)
+    "F401",   # unused import (too noisy during development)
+    "F403",   # star imports (fasthtml uses this pattern)
+    "F405",   # may be undefined from star imports (fasthtml uses this pattern)
+    "F841",   # unused variable (too noisy during development)
+    "F811",   # redefined while unused
+    "F821",   # undefined name (forward references in type hints)
+    "W291",   # trailing whitespace (in multiline strings)
+    "W293",   # blank line contains whitespace (in multiline strings)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty]
+# Type checking configuration
+# ty is an extremely fast Python type checker from Astral (same team as ruff/uv)
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+# Disable noisy rules
+invalid-argument-type = "ignore"    # Too many false positives
+invalid-return-type = "ignore"      # Often intentional
+# missing-argument and unknown-argument are enabled (default)
+invalid-parameter-default = "ignore" # Optional params with None default
+possibly-missing-attribute = "ignore" # Common with Optional types
+unsupported-operator = "ignore"     # Pandas DataFrame operations
+unresolved-reference = "ignore"     # Forward references
+unresolved-import = "ignore"        # Dynamic imports
+invalid-assignment = "ignore"       # Intentional monkey-patching
+no-matching-overload = "ignore"     # Complex generic issues

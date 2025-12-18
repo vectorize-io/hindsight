@@ -115,7 +115,7 @@ class SearchTracer:
         node_id: str,
         text: str,
         context: str,
-        event_date: datetime,
+        event_date: datetime | None,
         access_count: int,
         is_entry_point: bool,
         parent_node_id: str | None,

@@ -3,12 +3,12 @@ Test search tracing functionality.
 """
 import pytest
 from hindsight_api.engine.memory_engine import Budget
-from hindsight_api import SearchTrace
+from hindsight_api import SearchTrace, RequestContext
 from datetime import datetime, timezone
 
 
 @pytest.mark.asyncio
-async def test_search_with_trace(memory):
+async def test_search_with_trace(memory, request_context):
     """Test that search with enable_trace=True returns a valid SearchTrace."""
     # Generate a unique agent ID for this test
     bank_id = f"test_trace_{datetime.now(timezone.utc).timestamp()}"
@@ -20,16 +20,19 @@ async def test_search_with_trace(memory):
             bank_id=bank_id,
             content="Alice works at Google in Mountain View",
             context="test context",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="Bob also works at Google but in New York",
             context="test context",
+            request_context=request_context,
         )
         await memory.retain_async(
             bank_id=bank_id,
             content="Charlie founded a startup called TechCorp",
             context="test context",
+            request_context=request_context,
         )
 
         # Search with tracing enabled
@@ -40,6 +43,7 @@ async def test_search_with_trace(memory):
             budget=Budget.LOW, # 20,
             max_tokens=512,
             enable_trace=True,
+            request_context=request_context,
         )
 
         # Verify results
@@ -102,11 +106,11 @@ async def test_search_with_trace(memory):
 
     finally:
         # Cleanup
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_search_without_trace(memory):
+async def test_search_without_trace(memory, request_context):
     """Test that search with enable_trace=False returns None for trace."""
     bank_id = f"test_no_trace_{datetime.now(timezone.utc).timestamp()}"
 
@@ -117,6 +121,7 @@ async def test_search_without_trace(memory):
             bank_id=bank_id,
             content="Test memory without trace",
             context="test",
+            request_context=request_context,
         )
 
         # Search without tracing
@@ -127,6 +132,7 @@ async def test_search_without_trace(memory):
             budget=Budget.LOW, # 10,
             max_tokens=512,
             enable_trace=False,
+            request_context=request_context,
         )
 
         # Verify trace is None
@@ -137,4 +143,4 @@ async def test_search_without_trace(memory):
 
     finally:
         # Cleanup
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)

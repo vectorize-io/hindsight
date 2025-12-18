@@ -5,12 +5,13 @@ import pytest
 import logging
 from datetime import datetime, timezone, timedelta
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api import RequestContext
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_retain_with_chunks(memory):
+async def test_retain_with_chunks(memory, request_context):
     """
     Test that retain function:
     1. Stores facts with associated chunks
@@ -41,7 +42,8 @@ async def test_retain_with_chunks(memory):
             content=long_content,
             context="team overview",
             event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         print(f"\n=== Retained {len(unit_ids)} facts ===")
@@ -56,7 +58,8 @@ async def test_retain_with_chunks(memory):
             fact_type=["world"],  # Search for world facts
             include_entities=False,  # Disable entities for simpler test
             include_chunks=True,  # Enable chunks
-            max_chunk_tokens=8192
+            max_chunk_tokens=8192,
+            request_context=request_context,
         )
 
         print(f"\n=== Recall Results (with chunks) ===")
@@ -88,12 +91,12 @@ async def test_retain_with_chunks(memory):
 
     finally:
         # Cleanup - delete the test bank
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
         print(f"\n=== Cleaned up bank: {bank_id} ===")
 
 
 @pytest.mark.asyncio
-async def test_chunks_and_entities_follow_fact_order(memory):
+async def test_chunks_and_entities_follow_fact_order(memory, request_context):
     """
     Test that chunks and entities in recall results follow the same order as facts.
     This is critical because token limits may truncate later items.
@@ -130,7 +133,8 @@ async def test_chunks_and_entities_follow_fact_order(memory):
                 content=item["content"],
                 context=item["context"],
                 event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-                document_id=item["document_id"]
+                document_id=item["document_id"],
+                request_context=request_context,
             )
 
         print("\n=== Stored 3 separate documents ===")
@@ -144,7 +148,8 @@ async def test_chunks_and_entities_follow_fact_order(memory):
             fact_type=["world"],
             include_entities=True,
             include_chunks=True,
-            max_chunk_tokens=8192
+            max_chunk_tokens=8192,
+            request_context=request_context,
         )
 
         print(f"\n=== Recall Results ===")
@@ -214,12 +219,12 @@ async def test_chunks_and_entities_follow_fact_order(memory):
 
     finally:
         # Cleanup
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
         print(f"\n=== Cleaned up bank: {bank_id} ===")
 
 
 @pytest.mark.asyncio
-async def test_event_date_storage(memory):
+async def test_event_date_storage(memory, request_context):
     """
     Test that event_date is correctly stored as occurred_start.
     Verifies that we can track when events actually happened vs when they were stored.
@@ -235,7 +240,8 @@ async def test_event_date_storage(memory):
             bank_id=bank_id,
             content="Alice completed the Q2 product launch on June 15th, 2023.",
             context="project history",
-            event_date=past_event_date
+            event_date=past_event_date,
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should have created at least one memory unit"
@@ -246,7 +252,8 @@ async def test_event_date_storage(memory):
             query="When did Alice complete the product launch?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall the stored fact"
@@ -268,11 +275,11 @@ async def test_event_date_storage(memory):
         print(f"\n✓ Event date correctly stored: {occurred_dt}")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_temporal_ordering(memory):
+async def test_temporal_ordering(memory, request_context):
     """
     Test that facts can be stored and retrieved with correct temporal ordering.
     Stores facts with different event_dates and verifies temporal relationships.
@@ -305,7 +312,8 @@ async def test_temporal_ordering(memory):
                 bank_id=bank_id,
                 content=event["content"],
                 context=event["context"],
-                event_date=event["event_date"]
+                event_date=event["event_date"],
+                request_context=request_context,
             )
 
         print("\n=== Stored 3 events with different temporal dates ===")
@@ -316,7 +324,8 @@ async def test_temporal_ordering(memory):
             query="Tell me about Alice's career progression",
             budget=Budget.MID,
             max_tokens=1000,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) >= 3, f"Should recall all 3 events, got {len(result.results)}"
@@ -345,11 +354,11 @@ async def test_temporal_ordering(memory):
         print(f"\n✓ Temporal ordering preserved: {min_date.date()} to {max_date.date()}")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_mentioned_at_vs_occurred(memory):
+async def test_mentioned_at_vs_occurred(memory, request_context):
     """
     Test distinction between when fact occurred vs when it was mentioned.
 
@@ -369,7 +378,8 @@ async def test_mentioned_at_vs_occurred(memory):
             bank_id=bank_id,
             content="Alice graduated from MIT in March 2020.",
             context="education history",
-            event_date=conversation_date  # When this conversation happened
+            event_date=conversation_date,  # When this conversation happened
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create memory unit"
@@ -380,7 +390,8 @@ async def test_mentioned_at_vs_occurred(memory):
             query="Where did Alice go to school?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall the fact"
@@ -415,11 +426,11 @@ async def test_mentioned_at_vs_occurred(memory):
         print(f"✓ Test passed: Historical conversation correctly ingested with event_date=2020")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_occurred_dates_not_defaulted(memory):
+async def test_occurred_dates_not_defaulted(memory, request_context):
     """
     Test that occurred_start and occurred_end are NOT defaulted to mentioned_at.
 
@@ -441,7 +452,8 @@ async def test_occurred_dates_not_defaulted(memory):
             bank_id=bank_id,
             content="Alice likes coffee. The weather is sunny today.",
             context="current observations",
-            event_date=event_date
+            event_date=event_date,
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create memory unit"
@@ -452,7 +464,8 @@ async def test_occurred_dates_not_defaulted(memory):
             query="What does Alice like?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world", "opinion"]
+            fact_type=["world", "opinion"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall the fact"
@@ -504,11 +517,11 @@ async def test_occurred_dates_not_defaulted(memory):
         print(f"✓ Test passed: occurred dates are not incorrectly defaulted to mentioned_at")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_mentioned_at_from_context_string(memory):
+async def test_mentioned_at_from_context_string(memory, request_context):
     """
     Test that mentioned_at is extracted from context string by LLM.
 
@@ -527,7 +540,8 @@ async def test_mentioned_at_from_context_string(memory):
             bank_id=bank_id,
             content="Alice mentioned she loves hiking in the mountains.",
             context=f"Session ABC123 - you are the assistant in this conversation - happened on {session_date.strftime('%Y-%m-%d %H:%M:%S')} UTC.",
-            event_date=None  # Not providing event_date - should default to now() if LLM doesn't extract
+            event_date=None,  # Not providing event_date - should default to now() if LLM doesn't extract
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create memory unit"
@@ -538,7 +552,8 @@ async def test_mentioned_at_from_context_string(memory):
             query="What does Alice like?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall the fact"
@@ -574,7 +589,7 @@ async def test_mentioned_at_from_context_string(memory):
         print(f"✓ mentioned_at is always set (never None)")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -582,7 +597,7 @@ async def test_mentioned_at_from_context_string(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_context_preservation(memory):
+async def test_context_preservation(memory, request_context):
     """
     Test that context is preserved and retrievable.
     Context helps understand why/how memory was formed.
@@ -597,7 +612,8 @@ async def test_context_preservation(memory):
             bank_id=bank_id,
             content="The team decided to prioritize mobile development for next quarter.",
             context=specific_context,
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create at least one memory unit"
@@ -608,7 +624,8 @@ async def test_context_preservation(memory):
             query="What did the team decide?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall the stored fact"
@@ -620,11 +637,11 @@ async def test_context_preservation(memory):
         print(f"  Retrieved {len(result.results)} facts")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_context_with_batch(memory):
+async def test_context_with_batch(memory, request_context):
     """
     Test that each item in a batch can have different contexts.
     """
@@ -650,7 +667,8 @@ async def test_context_with_batch(memory):
                     "context": "incident response",
                     "event_date": datetime(2024, 1, 12, tzinfo=timezone.utc)
                 }
-            ]
+            ],
+            request_context=request_context,
         )
 
         # Should have created facts from all items
@@ -661,7 +679,7 @@ async def test_context_with_batch(memory):
         print(f"  Created {total_units} total memory units")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -669,7 +687,7 @@ async def test_context_with_batch(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_metadata_storage_and_retrieval(memory):
+async def test_metadata_storage_and_retrieval(memory, request_context):
     """
     Test that user-defined metadata is preserved.
     Metadata allows arbitrary key-value data to be stored with facts.
@@ -692,7 +710,8 @@ async def test_metadata_storage_and_retrieval(memory):
             bank_id=bank_id,
             content="The product launch is scheduled for March 1st.",
             context="planning meeting",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create memory units"
@@ -703,7 +722,8 @@ async def test_metadata_storage_and_retrieval(memory):
             query="When is the product launch?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall stored facts"
@@ -712,7 +732,7 @@ async def test_metadata_storage_and_retrieval(memory):
         print(f"  (Note: Metadata support depends on API implementation)")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -720,7 +740,7 @@ async def test_metadata_storage_and_retrieval(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_empty_batch(memory):
+async def test_empty_batch(memory, request_context):
     """
     Test that empty batch is handled gracefully without errors.
     """
@@ -730,7 +750,8 @@ async def test_empty_batch(memory):
         # Attempt to store empty batch
         unit_ids = await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=[]
+            contents=[],
+            request_context=request_context,
         )
 
         # Should return empty list or handle gracefully
@@ -741,11 +762,11 @@ async def test_empty_batch(memory):
 
     finally:
         # Clean up (though nothing should be stored)
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_single_item_batch(memory):
+async def test_single_item_batch(memory, request_context):
     """
     Test that batch with one item works correctly.
     """
@@ -761,7 +782,8 @@ async def test_single_item_batch(memory):
                     "context": "deployment log",
                     "event_date": datetime(2024, 1, 15, tzinfo=timezone.utc)
                 }
-            ]
+            ],
+            request_context=request_context,
         )
 
         assert len(unit_ids) == 1, "Should return one list of unit IDs"
@@ -770,11 +792,11 @@ async def test_single_item_batch(memory):
         print(f"✓ Single-item batch created {len(unit_ids[0])} units")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_mixed_content_batch(memory):
+async def test_mixed_content_batch(memory, request_context):
     """
     Test batch with varying content sizes (short and long).
     """
@@ -798,7 +820,8 @@ async def test_mixed_content_batch(memory):
                 {"content": short_content, "context": "onboarding"},
                 {"content": long_content, "context": "performance review"},
                 {"content": "Charlie is on vacation this week.", "context": "team status"}
-            ]
+            ],
+            request_context=request_context,
         )
 
         # All items should be processed
@@ -813,11 +836,11 @@ async def test_mixed_content_batch(memory):
         print(f"  Long content: {long_units} units")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_batch_with_missing_optional_fields(memory):
+async def test_batch_with_missing_optional_fields(memory, request_context):
     """
     Test that batch handles items with missing optional fields.
     """
@@ -842,7 +865,8 @@ async def test_batch_with_missing_optional_fields(memory):
                     "context": "code review",
                     # No event_date
                 }
-            ]
+            ],
+            request_context=request_context,
         )
 
         # All items should be processed successfully
@@ -852,7 +876,7 @@ async def test_batch_with_missing_optional_fields(memory):
         print(f"✓ Batch with mixed optional fields created {total_units} total units")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -860,7 +884,7 @@ async def test_batch_with_missing_optional_fields(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_single_batch_multiple_documents(memory):
+async def test_single_batch_multiple_documents(memory, request_context):
     """
     Test storing multiple distinct documents in a single batch call.
     Each should be tracked separately.
@@ -876,21 +900,24 @@ async def test_single_batch_multiple_documents(memory):
             bank_id=bank_id,
             content="Alice's resume: 10 years Python experience, worked at Google.",
             context="resume review",
-            document_id="resume_alice"
+            document_id="resume_alice",
+            request_context=request_context,
         )
 
         doc2_units = await memory.retain_async(
             bank_id=bank_id,
             content="Bob's resume: 5 years JavaScript experience, worked at Meta.",
             context="resume review",
-            document_id="resume_bob"
+            document_id="resume_bob",
+            request_context=request_context,
         )
 
         doc3_units = await memory.retain_async(
             bank_id=bank_id,
             content="Charlie's resume: 8 years Go experience, worked at Amazon.",
             context="resume review",
-            document_id="resume_charlie"
+            document_id="resume_charlie",
+            request_context=request_context,
         )
 
         # All documents should be stored
@@ -907,17 +934,18 @@ async def test_single_batch_multiple_documents(memory):
             query="Who worked at Google?",
             budget=Budget.MID,
             max_tokens=1000,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should find facts about Alice"
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_document_upsert_behavior(memory):
+async def test_document_upsert_behavior(memory, request_context):
     """
     Test that upserting a document replaces the old content.
     """
@@ -930,7 +958,8 @@ async def test_document_upsert_behavior(memory):
             bank_id=bank_id,
             content="Project is in planning phase. Alice is the lead.",
             context="status update v1",
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         assert len(v1_units) > 0, "Should create units for v1"
@@ -940,7 +969,8 @@ async def test_document_upsert_behavior(memory):
             bank_id=bank_id,
             content="Project is in development phase. Bob has joined as co-lead.",
             context="status update v2",
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         assert len(v2_units) > 0, "Should create units for v2"
@@ -951,7 +981,8 @@ async def test_document_upsert_behavior(memory):
             query="What is the project status?",
             budget=Budget.MID,
             max_tokens=1000,
-            fact_type=["world"]
+            fact_type=["world"],
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall facts"
@@ -959,7 +990,7 @@ async def test_document_upsert_behavior(memory):
         print(f"✓ Document upsert created v1: {len(v1_units)} units, v2: {len(v2_units)} units")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -967,7 +998,7 @@ async def test_document_upsert_behavior(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_chunk_fact_mapping(memory):
+async def test_chunk_fact_mapping(memory, request_context):
     """
     Test that facts correctly reference their source chunks via chunk_id.
     """
@@ -990,7 +1021,8 @@ async def test_chunk_fact_mapping(memory):
             bank_id=bank_id,
             content=content,
             context="technical documentation",
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create memory units"
@@ -1003,7 +1035,8 @@ async def test_chunk_fact_mapping(memory):
             max_tokens=1000,
             fact_type=["world"],
             include_chunks=True,
-            max_chunk_tokens=8192
+            max_chunk_tokens=8192,
+            request_context=request_context,
         )
 
         assert len(result.results) > 0, "Should recall facts"
@@ -1026,11 +1059,11 @@ async def test_chunk_fact_mapping(memory):
             print(f"  Returned {len(result.chunks)} chunks matching fact references")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_chunk_ordering_preservation(memory):
+async def test_chunk_ordering_preservation(memory, request_context):
     """
     Test that chunk_index reflects the correct order within a document.
     """
@@ -1070,7 +1103,8 @@ async def test_chunk_ordering_preservation(memory):
             bank_id=bank_id,
             content=content,
             context="multi-section document",
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create units"
@@ -1083,7 +1117,8 @@ async def test_chunk_ordering_preservation(memory):
             max_tokens=2000,
             fact_type=["world"],
             include_chunks=True,
-            max_chunk_tokens=8192
+            max_chunk_tokens=8192,
+            request_context=request_context,
         )
 
         if result.chunks:
@@ -1103,11 +1138,11 @@ async def test_chunk_ordering_preservation(memory):
             print("✓ Content stored (may have created single chunk or no chunks returned)")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_chunks_truncation_behavior(memory):
+async def test_chunks_truncation_behavior(memory, request_context):
     """
     Test that when chunks exceed max_chunk_tokens, truncation is indicated.
     """
@@ -1165,7 +1200,8 @@ async def test_chunks_truncation_behavior(memory):
             bank_id=bank_id,
             content=large_content,
             context="large document test",
-            document_id=document_id
+            document_id=document_id,
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should create units"
@@ -1178,7 +1214,8 @@ async def test_chunks_truncation_behavior(memory):
             max_tokens=1000,
             fact_type=["world"],
             include_chunks=True,
-            max_chunk_tokens=500  # Small limit to test truncation
+            max_chunk_tokens=500,  # Small limit to test truncation
+            request_context=request_context,
         )
 
         if result.chunks:
@@ -1198,7 +1235,7 @@ async def test_chunks_truncation_behavior(memory):
             print("✓ No chunks returned (may be under token limit)")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 # ============================================================
@@ -1206,7 +1243,7 @@ async def test_chunks_truncation_behavior(memory):
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_temporal_links_creation(memory):
+async def test_temporal_links_creation(memory, request_context):
     """
     Test that temporal links are created between facts with nearby event dates.
 
@@ -1223,7 +1260,8 @@ async def test_temporal_links_creation(memory):
             bank_id=bank_id,
             content="Alice started working on the authentication module.",
             context="daily standup",
-            event_date=base_date
+            event_date=base_date,
+            request_context=request_context,
         )
 
         # Fact 2 at 2:00 PM same day (4 hours later)
@@ -1231,7 +1269,8 @@ async def test_temporal_links_creation(memory):
             bank_id=bank_id,
             content="Bob reviewed the API design document.",
             context="daily standup",
-            event_date=base_date.replace(hour=14)
+            event_date=base_date.replace(hour=14),
+            request_context=request_context,
         )
 
         # Fact 3 at 9:00 AM next day (23 hours later)
@@ -1239,7 +1278,8 @@ async def test_temporal_links_creation(memory):
             bank_id=bank_id,
             content="Charlie deployed the new database schema.",
             context="daily standup",
-            event_date=base_date.replace(day=16, hour=9)
+            event_date=base_date.replace(day=16, hour=9),
+            request_context=request_context,
         )
 
         assert len(unit_ids_1) > 0 and len(unit_ids_2) > 0 and len(unit_ids_3) > 0
@@ -1278,11 +1318,11 @@ async def test_temporal_links_creation(memory):
             logger.info("Temporal links created successfully with proper weights")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_semantic_links_creation(memory):
+async def test_semantic_links_creation(memory, request_context):
     """
     Test that semantic links are created between facts with similar content.
 
@@ -1295,21 +1335,24 @@ async def test_semantic_links_creation(memory):
         unit_ids_1 = await memory.retain_async(
             bank_id=bank_id,
             content="Alice is an expert in Python programming and has built many web applications.",
-            context="team skills"
+            context="team skills",
+            request_context=request_context,
         )
 
         # Similar content - should create semantic link
         unit_ids_2 = await memory.retain_async(
             bank_id=bank_id,
             content="Bob is proficient in Python development and specializes in building APIs.",
-            context="team skills"
+            context="team skills",
+            request_context=request_context,
         )
 
         # Different content - less likely to create strong semantic link
         unit_ids_3 = await memory.retain_async(
             bank_id=bank_id,
             content="The quarterly sales meeting is scheduled for next Tuesday at 3 PM.",
-            context="calendar events"
+            context="calendar events",
+            request_context=request_context,
         )
 
         assert len(unit_ids_1) > 0 and len(unit_ids_2) > 0 and len(unit_ids_3) > 0
@@ -1349,11 +1392,11 @@ async def test_semantic_links_creation(memory):
             logger.info("Semantic links created successfully between similar content")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_entity_links_creation(memory):
+async def test_entity_links_creation(memory, request_context):
     """
     Test that entity links are created between facts that mention the same entities.
 
@@ -1367,28 +1410,32 @@ async def test_entity_links_creation(memory):
         unit_ids_1 = await memory.retain_async(
             bank_id=bank_id,
             content="Alice joined Google as a software engineer in 2020.",
-            context="career history"
+            context="career history",
+            request_context=request_context,
         )
 
         # Mentions same entity (Alice) - should create entity link
         unit_ids_2 = await memory.retain_async(
             bank_id=bank_id,
             content="Alice led the development of the new authentication system.",
-            context="project updates"
+            context="project updates",
+            request_context=request_context,
         )
 
         # Mentions same entity (Google) - should create entity link
         unit_ids_3 = await memory.retain_async(
             bank_id=bank_id,
             content="Google announced new cloud services at their annual conference.",
-            context="tech news"
+            context="tech news",
+            request_context=request_context,
         )
 
         # Different entities - no entity link expected
         unit_ids_4 = await memory.retain_async(
             bank_id=bank_id,
             content="Bob works at Meta on machine learning infrastructure.",
-            context="career history"
+            context="career history",
+            request_context=request_context,
         )
 
         assert len(unit_ids_1) > 0 and len(unit_ids_2) > 0 and len(unit_ids_3) > 0 and len(unit_ids_4) > 0
@@ -1445,11 +1492,11 @@ async def test_entity_links_creation(memory):
             logger.info("Entity links are properly bidirectional")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_causal_links_creation(memory):
+async def test_causal_links_creation(memory, request_context):
     """
     Test that causal links are created between facts with causal relationships.
 
@@ -1471,7 +1518,8 @@ async def test_causal_links_creation(memory):
         unit_ids = await memory.retain_async(
             bank_id=bank_id,
             content=content,
-            context="project timeline"
+            context="project timeline",
+            request_context=request_context,
         )
 
         assert len(unit_ids) > 0, "Should have created facts"
@@ -1517,11 +1565,11 @@ async def test_causal_links_creation(memory):
         logger.info("Test completed (causal link extraction is LLM-dependent)")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_all_link_types_together(memory):
+async def test_all_link_types_together(memory, request_context):
     """
     Integration test: Verify all link types can be created in a single retain operation.
 
@@ -1539,7 +1587,8 @@ async def test_all_link_types_together(memory):
             bank_id=bank_id,
             content="Alice completed the Python backend service for the authentication system.",
             context="sprint review",
-            event_date=base_date
+            event_date=base_date,
+            request_context=request_context,
         )
 
         # Fact 2: Related to Alice, similar topic (Python), close in time
@@ -1547,7 +1596,8 @@ async def test_all_link_types_together(memory):
             bank_id=bank_id,
             content="Alice optimized the Python code and improved the authentication performance by 40%.",
             context="sprint review",
-            event_date=base_date.replace(hour=14)  # Same day, 4 hours later
+            event_date=base_date.replace(hour=14),  # Same day, 4 hours later
+            request_context=request_context,
         )
 
         # Fact 3: Related to Alice, different topic but same entity
@@ -1555,7 +1605,8 @@ async def test_all_link_types_together(memory):
             bank_id=bank_id,
             content="Alice presented the security architecture at the team meeting.",
             context="team meeting",
-            event_date=base_date.replace(day=16)  # Next day
+            event_date=base_date.replace(day=16),  # Next day
+            request_context=request_context,
         )
 
         assert len(unit_ids_1) > 0 and len(unit_ids_2) > 0 and len(unit_ids_3) > 0
@@ -1594,11 +1645,11 @@ async def test_all_link_types_together(memory):
             logger.info("All major link types (temporal, semantic, entity) are working correctly")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_semantic_links_within_same_batch(memory):
+async def test_semantic_links_within_same_batch(memory, request_context):
     """
     Test that semantic links are created between facts retained in the SAME batch.
 
@@ -1617,7 +1668,8 @@ async def test_semantic_links_within_same_batch(memory):
 
         result = await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=contents
+            contents=contents,
+            request_context=request_context,
         )
 
         # Flatten the list of lists
@@ -1652,11 +1704,11 @@ async def test_semantic_links_within_same_batch(memory):
                 logger.info(f"  Semantic link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
 
 
 @pytest.mark.asyncio
-async def test_temporal_links_within_same_batch(memory):
+async def test_temporal_links_within_same_batch(memory, request_context):
     """
     Test that temporal links are created between facts retained in the SAME batch.
 
@@ -1689,7 +1741,8 @@ async def test_temporal_links_within_same_batch(memory):
 
         result = await memory.retain_batch_async(
             bank_id=bank_id,
-            contents=contents
+            contents=contents,
+            request_context=request_context,
         )
 
         # Flatten the list of lists
@@ -1724,4 +1777,4 @@ async def test_temporal_links_within_same_batch(memory):
                 logger.info(f"  Temporal link: {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})")
 
     finally:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)

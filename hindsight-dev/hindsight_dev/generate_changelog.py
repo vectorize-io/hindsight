@@ -5,6 +5,7 @@ Generate changelog entry for a new release.
 This script fetches the commit diff between releases, uses an LLM to summarize,
 and prepends the entry to the changelog page.
 """
+
 import argparse
 import json
 import os
@@ -29,6 +30,7 @@ CHANGELOG_PATH = REPO_PATH / "hindsight-docs" / "docs" / "changelog" / "index.md
 
 class ChangelogEntry(BaseModel):
     """A single changelog entry."""
+
     category: str  # "feature", "improvement", "bugfix", "breaking", "other"
     summary: str  # Brief description of the change
     commit_id: str  # Short commit hash
@@ -36,12 +38,14 @@ class ChangelogEntry(BaseModel):
 
 class ChangelogResponse(BaseModel):
     """Structured response from LLM."""
+
     entries: list[ChangelogEntry]
 
 
 @dataclass
 class Commit:
     """Parsed commit from git log."""
+
     hash: str
     message: str
 
@@ -151,10 +155,7 @@ def analyze_commits_with_llm(
     file_diff: str,
 ) -> list[ChangelogEntry]:
     """Use LLM to analyze commits and return structured changelog entries."""
-    commits_json = json.dumps(
-        [{"commit_id": c.hash, "message": c.message} for c in commits],
-        indent=2
-    )
+    commits_json = json.dumps([{"commit_id": c.hash, "message": c.message} for c in commits], indent=2)
 
     prompt = f"""Analyze the following git commits for release {version} of Hindsight (an AI memory system).
 
@@ -252,8 +253,8 @@ For full release details, see [GitHub Releases](https://github.com/vectorize-io/
 
     match = re.search(r"^## ", content, re.MULTILINE)
     if match:
-        header = content[:match.start()].rstrip() + "\n\n"
-        releases = content[match.start():]
+        header = content[: match.start()].rstrip() + "\n\n"
+        releases = content[match.start() :]
     else:
         header = content.rstrip() + "\n\n"
         releases = ""
@@ -283,7 +284,7 @@ def generate_changelog_entry(
     tag = version if version.startswith("v") else f"v{version}"
     display_version = version.lstrip("v")
 
-    console.print(f"[blue]Fetching tags from repository...[/blue]")
+    console.print("[blue]Fetching tags from repository...[/blue]")
     existing_tags = get_git_tags()
 
     if tag not in existing_tags and display_version not in existing_tags:
@@ -300,7 +301,7 @@ def generate_changelog_entry(
     else:
         console.print("[yellow]No previous version found, will include all commits[/yellow]")
 
-    console.print(f"[blue]Getting commits...[/blue]")
+    console.print("[blue]Getting commits...[/blue]")
     commits = get_commits(previous_tag, actual_tag)
     file_diff = get_detailed_diff(previous_tag, actual_tag)
 

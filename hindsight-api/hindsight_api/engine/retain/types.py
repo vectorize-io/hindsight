@@ -7,7 +7,31 @@ from content input to fact storage.
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import TypedDict
 from uuid import UUID
+
+
+class RetainContentDict(TypedDict, total=False):
+    """Type definition for content items in retain_batch_async.
+
+    Fields:
+        content: Text content to store (required)
+        context: Context about the content (optional)
+        event_date: When the content occurred (optional, defaults to now)
+        metadata: Custom key-value metadata (optional)
+        document_id: Document ID for this content item (optional)
+    """
+
+    content: str  # Required
+    context: str
+    event_date: datetime
+    metadata: dict[str, str]
+    document_id: str
+
+
+def _now_utc() -> datetime:
+    """Factory function for default event_date."""
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -20,15 +44,8 @@ class RetainContent:
 
     content: str
     context: str = ""
-    event_date: datetime | None = None
+    event_date: datetime = field(default_factory=_now_utc)
     metadata: dict[str, str] = field(default_factory=dict)
-
-    def __post_init__(self):
-        """Ensure event_date is set."""
-        if self.event_date is None:
-            from datetime import datetime
-
-            self.event_date = datetime.now(UTC)
 
 
 @dataclass

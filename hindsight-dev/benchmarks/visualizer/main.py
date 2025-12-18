@@ -16,6 +16,7 @@ from fasthtml.common import *
 # Get the benchmarks directory
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 
+
 # Tailwind + shadcn/ui theme
 def get_head():
     return (
@@ -72,8 +73,9 @@ def get_head():
                     color: hsl(222.2 84% 4.9%);
                 }
             }
-        """)
+        """),
     )
+
 
 # Create FastHTML app
 app, rt = fast_app()
@@ -113,12 +115,7 @@ def get_category_name(category: int | str) -> str:
     if isinstance(category, str):
         return category
 
-    categories = {
-        1: "Multi-hop",
-        2: "Single-hop",
-        3: "Temporal",
-        4: "Open-domain"
-    }
+    categories = {1: "Multi-hop", 2: "Single-hop", 3: "Temporal", 4: "Open-domain"}
     return categories.get(category, "Unknown")
 
 
@@ -132,7 +129,7 @@ def get():
             Div(
                 H1("📊 Benchmark Visualizer", cls="text-4xl font-bold text-foreground"),
                 P("Analyze and visualize benchmark results", cls="text-muted-foreground mt-2"),
-                cls="text-center py-12"
+                cls="text-center py-12",
             ),
             Div(
                 Label("Select a benchmark to view:", cls="block text-sm font-medium text-foreground mb-2"),
@@ -142,12 +139,12 @@ def get():
                     Option("LoComo (think mode)", value="/locomo/think"),
                     Option("LongMemEval", value="/longmemeval"),
                     onchange="if(this.value) window.location.href = this.value;",
-                    cls="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    cls="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring",
                 ),
-                cls="max-w-md mx-auto bg-white border border-border rounded-lg p-6 shadow-sm"
+                cls="max-w-md mx-auto bg-white border border-border rounded-lg p-6 shadow-sm",
             ),
-            cls="container mx-auto max-w-7xl px-4 py-8"
-        )
+            cls="container mx-auto max-w-7xl px-4 py-8",
+        ),
     )
 
 
@@ -166,10 +163,17 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
                 H1("⚠️ Benchmark Results Not Found", cls="text-3xl font-bold text-foreground mb-4"),
                 P(f"The {mode_label} mode results are not available.", cls="text-muted-foreground mb-6"),
                 H4("To generate results:", cls="text-lg font-semibold text-foreground mb-2"),
-                Pre(f"./scripts/benchmarks/run-locomo.sh --env local{extra_args}", cls="bg-slate-900 text-slate-100 p-4 rounded-md overflow-x-auto text-sm"),
-                A("← Back", href="/", cls="inline-flex items-center mt-6 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium"),
-                cls="container mx-auto max-w-7xl px-4 py-8"
-            )
+                Pre(
+                    f"./scripts/benchmarks/run-locomo.sh --env local{extra_args}",
+                    cls="bg-slate-900 text-slate-100 p-4 rounded-md overflow-x-auto text-sm",
+                ),
+                A(
+                    "← Back",
+                    href="/",
+                    cls="inline-flex items-center mt-6 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium",
+                ),
+                cls="container mx-auto max-w-7xl px-4 py-8",
+            ),
         )
 
     all_results = data.get("item_results", data.get("conversation_results", []))
@@ -185,10 +189,14 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
             passes_correctness_filter = True
         elif filter_type == "correct":
             # Show items where all questions are correct (and not invalid)
-            passes_correctness_filter = detailed_results and all(r.get("is_correct") and not r.get("is_invalid") for r in detailed_results)
+            passes_correctness_filter = detailed_results and all(
+                r.get("is_correct") and not r.get("is_invalid") for r in detailed_results
+            )
         elif filter_type == "incorrect":
             # Show items that have at least one incorrect question
-            passes_correctness_filter = any(not r.get("is_correct") and not r.get("is_invalid") for r in detailed_results)
+            passes_correctness_filter = any(
+                not r.get("is_correct") and not r.get("is_invalid") for r in detailed_results
+            )
         elif filter_type == "invalid":
             # Show items that have at least one invalid question
             passes_correctness_filter = any(r.get("is_invalid") for r in detailed_results)
@@ -210,7 +218,7 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
         1: {"name": "Multi-hop", "correct": 0, "total": 0, "invalid": 0},
         2: {"name": "Single-hop", "correct": 0, "total": 0, "invalid": 0},
         3: {"name": "Temporal", "correct": 0, "total": 0, "invalid": 0},
-        4: {"name": "Open-domain", "correct": 0, "total": 0, "invalid": 0}
+        4: {"name": "Open-domain", "correct": 0, "total": 0, "invalid": 0},
     }
 
     total_invalid = 0
@@ -235,38 +243,43 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
             Div(
                 P("Overall Accuracy", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{data['overall_accuracy']:.2f}%", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Correct Answers", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{data['total_correct']} / {data['total_questions']}", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Invalid Questions", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(total_invalid), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
-            ) if total_invalid > 0 else None,
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
+            )
+            if total_invalid > 0
+            else None,
             Div(
                 P("Items", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(len(all_results)), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8",
         ),
         H4("Accuracy by Category", cls="text-xl font-semibold text-foreground mb-4"),
         Div(
             *[
                 Div(
                     P(cat["name"], cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
-                    P(f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%", cls="text-2xl font-bold text-foreground"),
+                    P(
+                        f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%",
+                        cls="text-2xl font-bold text-foreground",
+                    ),
                     P(f"{cat['correct']} / {cat['total']}", cls="text-sm text-muted-foreground mt-1"),
-                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
                 )
                 for cat in category_stats.values()
             ],
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        )
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+        ),
     )
 
     # Filter controls
@@ -275,37 +288,111 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
         Div(
             P("Filter by correctness:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All", href=f"/locomo/{mode}?filter_type=all&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("✅ All Correct", href=f"/locomo/{mode}?filter_type=correct&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'correct' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("❌ Has Incorrect", href=f"/locomo/{mode}?filter_type=incorrect&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'incorrect' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("⚠️ Has Invalid", href=f"/locomo/{mode}?filter_type=invalid&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'invalid' else "bg-white text-foreground border border-border hover:bg-accent")) if total_invalid > 0 else None,
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All",
+                    href=f"/locomo/{mode}?filter_type=all&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "✅ All Correct",
+                    href=f"/locomo/{mode}?filter_type=correct&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "correct"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "❌ Has Incorrect",
+                    href=f"/locomo/{mode}?filter_type=incorrect&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "incorrect"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "⚠️ Has Invalid",
+                    href=f"/locomo/{mode}?filter_type=invalid&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "invalid"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if total_invalid > 0
+                else None,
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
         # Category filter
         Div(
             P("Filter by question category:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All Categories", href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=all",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Multi-hop", href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=1",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '1' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Single-hop", href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=2",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '2' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Temporal", href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=3",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '3' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Open-domain", href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=4",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '4' else "bg-white text-foreground border border-border hover:bg-accent")),
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All Categories",
+                    href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=all",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Multi-hop",
+                    href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=1",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "1"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Single-hop",
+                    href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=2",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "2"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Temporal",
+                    href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=3",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "3"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Open-domain",
+                    href=f"/locomo/{mode}?filter_type={filter_type}&category_filter=4",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "4"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
-        cls="mb-6"
+        cls="mb-6",
     )
 
     # Render items
@@ -320,8 +407,14 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
         if category_filter != "all":
             detailed_results = metrics.get("detailed_results", [])
             category_id = int(category_filter)
-            filtered_correct = sum(1 for r in detailed_results if r.get("category") == category_id and r.get("is_correct") and not r.get("is_invalid"))
-            filtered_total = sum(1 for r in detailed_results if r.get("category") == category_id and not r.get("is_invalid"))
+            filtered_correct = sum(
+                1
+                for r in detailed_results
+                if r.get("category") == category_id and r.get("is_correct") and not r.get("is_invalid")
+            )
+            filtered_total = sum(
+                1 for r in detailed_results if r.get("category") == category_id and not r.get("is_invalid")
+            )
             accuracy = (filtered_correct / filtered_total * 100) if filtered_total > 0 else 0
             correct = filtered_correct
             total = filtered_total
@@ -353,21 +446,21 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
                             Div(
                                 P("Accuracy", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide"),
                                 P(f"{accuracy:.1f}%", cls="text-2xl font-bold text-foreground"),
-                                cls="text-center"
+                                cls="text-center",
                             ),
                             Div(
                                 P("Correct", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide"),
                                 P(f"{correct}/{total}", cls="text-xl font-semibold text-foreground"),
-                                cls="text-center"
+                                cls="text-center",
                             ),
-                            cls="flex gap-6 items-center"
+                            cls="flex gap-6 items-center",
                         ),
-                        cls="p-6"
+                        cls="p-6",
                     ),
-                    cls=f"bg-white border border-border rounded-lg shadow-sm transition-all {border_class} {bg_class}"
+                    cls=f"bg-white border border-border rounded-lg shadow-sm transition-all {border_class} {bg_class}",
                 ),
                 href=f"/locomo/{mode}/item/{original_idx}?filter_type={filter_type}&category_filter={category_filter}",
-                cls="block no-underline"
+                cls="block no-underline",
             )
         )
 
@@ -376,18 +469,19 @@ def get_locomo(mode: str, filter_type: str = "all", category_filter: str = "all"
         get_head(),
         Main(
             Div(
-                A("← Back to benchmarks", href="/", cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6"),
+                A(
+                    "← Back to benchmarks",
+                    href="/",
+                    cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6",
+                ),
                 stats_html,
                 Hr(cls="my-6 border-border"),
                 filters,
                 P(f"Showing {len(results)} of {len(all_results)} items", cls="text-sm text-muted-foreground mb-6"),
-                Div(
-                    *items_html,
-                    cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                ),
-                cls="container mx-auto max-w-7xl px-4 py-8"
+                Div(*items_html, cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"),
+                cls="container mx-auto max-w-7xl px-4 py-8",
             )
-        )
+        ),
     )
 
 
@@ -445,7 +539,7 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
         1: {"name": "Multi-hop", "correct": 0, "total": 0, "invalid": 0},
         2: {"name": "Single-hop", "correct": 0, "total": 0, "invalid": 0},
         3: {"name": "Temporal", "correct": 0, "total": 0, "invalid": 0},
-        4: {"name": "Open-domain", "correct": 0, "total": 0, "invalid": 0}
+        4: {"name": "Open-domain", "correct": 0, "total": 0, "invalid": 0},
     }
 
     for cat_id_str, stats in category_stats_raw.items():
@@ -463,51 +557,61 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
             Div(
                 P("Overall Accuracy", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{accuracy:.2f}%", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Correct Answers", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{correct} / {total}", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Invalid Questions", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(invalid), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
-            ) if invalid > 0 else None,
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
+            )
+            if invalid > 0
+            else None,
             Div(
                 P("Total Questions", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(total), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8",
         ),
         H4("Accuracy by Category", cls="text-xl font-semibold text-foreground mb-4"),
         Div(
             *[
                 Div(
                     P(cat["name"], cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
-                    P(f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%", cls="text-2xl font-bold text-foreground"),
+                    P(
+                        f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%",
+                        cls="text-2xl font-bold text-foreground",
+                    ),
                     P(f"{cat['correct']} / {cat['total']}", cls="text-sm text-muted-foreground mt-1"),
-                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
                 )
-                for cat in category_stats.values() if cat['total'] > 0
+                for cat in category_stats.values()
+                if cat["total"] > 0
             ],
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        ) if any(cat['total'] > 0 for cat in category_stats.values()) else None,
-        cls="mb-6"
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+        )
+        if any(cat["total"] > 0 for cat in category_stats.values())
+        else None,
+        cls="mb-6",
     )
 
     # Generate markdown table for copying
     markdown_rows = [f"| {item_id} | {accuracy:.1f}% |"]
     for cat in category_stats.values():
-        if cat['total'] > 0:
-            cat_accuracy = (cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0
+        if cat["total"] > 0:
+            cat_accuracy = (
+                (cat["correct"] / (cat["total"] - cat["invalid"]) * 100) if (cat["total"] - cat["invalid"]) > 0 else 0
+            )
             markdown_rows.append(f" {cat_accuracy:.1f}% |")
 
-    markdown_table = f"""| Conversation | Overall |{' | '.join([cat['name'] for cat in category_stats.values() if cat['total'] > 0])} |
-|---|---|{' | '.join(['---' for cat in category_stats.values() if cat['total'] > 0])} |
-{''.join(markdown_rows)}"""
+    markdown_table = f"""| Conversation | Overall |{" | ".join([cat["name"] for cat in category_stats.values() if cat["total"] > 0])} |
+|---|---|{" | ".join(["---" for cat in category_stats.values() if cat["total"] > 0])} |
+{"".join(markdown_rows)}"""
 
     # Copy button
     copy_button = Div(
@@ -519,9 +623,9 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
                     setTimeout(() => {{ this.textContent = '📋 Copy Stats Table'; }}, 2000);
                 }});
             """,
-            cls="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium cursor-pointer"
+            cls="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium cursor-pointer",
         ),
-        cls="mb-6"
+        cls="mb-6",
     )
 
     # Filters for questions
@@ -531,37 +635,119 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
         Div(
             P("Filter by correctness:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All", href=f"/locomo/{mode}/item/{item_idx}?filter_type=all&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("✅ Correct", href=f"/locomo/{mode}/item/{item_idx}?filter_type=correct&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'correct' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("❌ Incorrect", href=f"/locomo/{mode}/item/{item_idx}?filter_type=incorrect&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'incorrect' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("⚠️ Invalid", href=f"/locomo/{mode}/item/{item_idx}?filter_type=invalid&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'invalid' else "bg-white text-foreground border border-border hover:bg-accent")) if has_invalid else None,
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type=all&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "✅ Correct",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type=correct&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "correct"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "❌ Incorrect",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type=incorrect&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "incorrect"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "⚠️ Invalid",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type=invalid&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "invalid"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if has_invalid
+                else None,
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
         # Category filter
         Div(
             P("Filter by category:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All Categories", href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=all",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Multi-hop", href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=1",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '1' else "bg-white text-foreground border border-border hover:bg-accent")) if any(cat_id == 1 for cat_id in category_stats.keys() if category_stats[cat_id]['total'] > 0) else None,
-                A("Single-hop", href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=2",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '2' else "bg-white text-foreground border border-border hover:bg-accent")) if any(cat_id == 2 for cat_id in category_stats.keys() if category_stats[cat_id]['total'] > 0) else None,
-                A("Temporal", href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=3",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '3' else "bg-white text-foreground border border-border hover:bg-accent")) if any(cat_id == 3 for cat_id in category_stats.keys() if category_stats[cat_id]['total'] > 0) else None,
-                A("Open-domain", href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=4",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == '4' else "bg-white text-foreground border border-border hover:bg-accent")) if any(cat_id == 4 for cat_id in category_stats.keys() if category_stats[cat_id]['total'] > 0) else None,
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All Categories",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=all",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Multi-hop",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=1",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "1"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if any(cat_id == 1 for cat_id in category_stats.keys() if category_stats[cat_id]["total"] > 0)
+                else None,
+                A(
+                    "Single-hop",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=2",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "2"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if any(cat_id == 2 for cat_id in category_stats.keys() if category_stats[cat_id]["total"] > 0)
+                else None,
+                A(
+                    "Temporal",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=3",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "3"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if any(cat_id == 3 for cat_id in category_stats.keys() if category_stats[cat_id]["total"] > 0)
+                else None,
+                A(
+                    "Open-domain",
+                    href=f"/locomo/{mode}/item/{item_idx}?filter_type={filter_type}&category_filter=4",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "4"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if any(cat_id == 4 for cat_id in category_stats.keys() if category_stats[cat_id]["total"] > 0)
+                else None,
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
-        cls="mb-6"
+        cls="mb-6",
     )
 
     # Render questions
@@ -575,7 +761,11 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
         category = get_category_name(result.get("category", "Unknown"))
 
         icon = "⚠️" if is_invalid else ("✅" if is_correct else "❌")
-        border_class = "border-l-4 border-yellow-500" if is_invalid else ("border-l-4 border-green-600" if is_correct else "border-l-4 border-red-600")
+        border_class = (
+            "border-l-4 border-yellow-500"
+            if is_invalid
+            else ("border-l-4 border-green-600" if is_correct else "border-l-4 border-red-600")
+        )
 
         questions_html.append(
             Div(
@@ -583,75 +773,106 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
                 Div(
                     P(f"{icon} Question {q_idx + 1}", cls="text-lg font-semibold text-foreground"),
                     P(f"Category: {category}", cls="text-sm text-muted-foreground"),
-                    cls="mb-4"
+                    cls="mb-4",
                 ),
-
                 # Question
                 Div(
                     P("Question:", cls="text-sm font-medium text-foreground mb-1"),
                     P(question, cls="text-foreground"),
-                    cls="mb-4"
+                    cls="mb-4",
                 ),
-
                 # Answers side by side
                 Div(
                     Div(
                         P("✓ Correct Answer", cls="text-sm font-medium text-foreground mb-2"),
                         Div(correct_answer, cls="bg-green-50 border border-green-200 rounded-md p-3 text-foreground"),
-                        cls="flex-1"
+                        cls="flex-1",
                     ),
                     Div(
-                        P(f"{'✓' if is_correct else '✗'} Predicted Answer", cls="text-sm font-medium text-foreground mb-2"),
-                        Div(predicted_answer, cls=f"border rounded-md p-3 text-foreground " + ("bg-green-50 border-green-200" if is_correct else "bg-red-50 border-red-200")),
-                        cls="flex-1"
+                        P(
+                            f"{'✓' if is_correct else '✗'} Predicted Answer",
+                            cls="text-sm font-medium text-foreground mb-2",
+                        ),
+                        Div(
+                            predicted_answer,
+                            cls="border rounded-md p-3 text-foreground "
+                            + ("bg-green-50 border-green-200" if is_correct else "bg-red-50 border-red-200"),
+                        ),
+                        cls="flex-1",
                     ),
-                    cls="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
+                    cls="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4",
                 ),
-
                 # Details
                 Details(
-                    Summary("📝 Show Reasoning & Retrieved Memories", cls="cursor-pointer font-medium text-foreground hover:text-primary py-2"),
+                    Summary(
+                        "📝 Show Reasoning & Retrieved Memories",
+                        cls="cursor-pointer font-medium text-foreground hover:text-primary py-2",
+                    ),
                     Div(
                         # System Reasoning
                         Div(
                             P("System Reasoning:", cls="text-sm font-medium text-foreground mb-2"),
-                            Pre(result.get("reasoning", "N/A"), cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm"),
-                            cls="mb-4"
+                            Pre(
+                                result.get("reasoning", "N/A"),
+                                cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm",
+                            ),
+                            cls="mb-4",
                         ),
                         # Judge Reasoning
                         Div(
                             P("Judge Reasoning:", cls="text-sm font-medium text-foreground mb-2"),
-                            Pre(result.get("correctness_reasoning", "N/A"), cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm"),
-                            cls="mb-4"
+                            Pre(
+                                result.get("correctness_reasoning", "N/A"),
+                                cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm",
+                            ),
+                            cls="mb-4",
                         ),
                         # Retrieved Memories
                         Div(
-                            P(f"Retrieved Memories ({len(result.get('retrieved_memories', []))}):", cls="text-sm font-medium text-foreground mb-2"),
+                            P(
+                                f"Retrieved Memories ({len(result.get('retrieved_memories', []))}):",
+                                cls="text-sm font-medium text-foreground mb-2",
+                            ),
                             *[
                                 Div(
                                     P(
-                                        f"#{i+1} • " +
-                                        " • ".join(filter(None, [
-                                            f"Occurred: {mem.get('occurred_start', '')[:10]}" +
-                                            (f" to {mem.get('occurred_end', '')[:10]}" if mem.get('occurred_end') and mem.get('occurred_start', '')[:10] != mem.get('occurred_end', '')[:10] else "")
-                                            if mem.get('occurred_start') else None,
-                                            f"Mentioned: {mem.get('mentioned_at', '')[:10]}" if mem.get('mentioned_at') else None,
-                                            f"Type: {mem.get('fact_type', 'unknown').upper()}"
-                                        ])),
-                                        cls="text-xs text-muted-foreground mb-1"
+                                        f"#{i + 1} • "
+                                        + " • ".join(
+                                            filter(
+                                                None,
+                                                [
+                                                    f"Occurred: {mem.get('occurred_start', '')[:10]}"
+                                                    + (
+                                                        f" to {mem.get('occurred_end', '')[:10]}"
+                                                        if mem.get("occurred_end")
+                                                        and mem.get("occurred_start", "")[:10]
+                                                        != mem.get("occurred_end", "")[:10]
+                                                        else ""
+                                                    )
+                                                    if mem.get("occurred_start")
+                                                    else None,
+                                                    f"Mentioned: {mem.get('mentioned_at', '')[:10]}"
+                                                    if mem.get("mentioned_at")
+                                                    else None,
+                                                    f"Type: {mem.get('fact_type', 'unknown').upper()}",
+                                                ],
+                                            )
+                                        ),
+                                        cls="text-xs text-muted-foreground mb-1",
                                     ),
-                                    P(mem.get('text', ''), cls="text-sm text-foreground"),
-                                    cls="bg-muted/50 border border-border rounded-md p-3 mb-2"
+                                    P(mem.get("text", ""), cls="text-sm text-foreground"),
+                                    cls="bg-muted/50 border border-border rounded-md p-3 mb-2",
                                 )
                                 for i, mem in enumerate(result.get("retrieved_memories", []))
-                            ] if result.get("retrieved_memories") else [P("No memories retrieved", cls="text-sm text-muted-foreground")],
+                            ]
+                            if result.get("retrieved_memories")
+                            else [P("No memories retrieved", cls="text-sm text-muted-foreground")],
                         ),
-                        cls="mt-3 space-y-2"
+                        cls="mt-3 space-y-2",
                     ),
-                    cls="border border-border rounded-md p-4 bg-muted/30"
+                    cls="border border-border rounded-md p-4 bg-muted/30",
                 ),
-
-                cls=f"bg-white border border-border rounded-lg p-6 mb-4 shadow-sm {border_class}"
+                cls=f"bg-white border border-border rounded-lg p-6 mb-4 shadow-sm {border_class}",
             )
         )
 
@@ -660,19 +881,20 @@ def get_locomo_item(mode: str, item_idx: int, filter_type: str = "all", category
         get_head(),
         Main(
             Div(
-                A(f"← Back to LoComo ({mode})", href=f"/locomo/{mode}", cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6"),
+                A(
+                    f"← Back to LoComo ({mode})",
+                    href=f"/locomo/{mode}",
+                    cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6",
+                ),
                 stats_html,
                 copy_button,
                 Hr(cls="my-6 border-border"),
                 q_filters,
                 P(f"Showing {len(filtered_questions)} questions", cls="text-sm text-muted-foreground mb-6"),
-                Div(
-                    *questions_html,
-                    cls="space-y-4"
-                ),
-                cls="container mx-auto max-w-7xl px-4 py-8"
+                Div(*questions_html, cls="space-y-4"),
+                cls="container mx-auto max-w-7xl px-4 py-8",
             )
-        )
+        ),
     )
 
 
@@ -691,8 +913,8 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
                 H4("To generate results:"),
                 Pre("./scripts/benchmarks/run-longmemeval.sh --env local"),
                 A("← Back", href="/", cls="btn mt-3"),
-                cls="container"
-            )
+                cls="container",
+            ),
         )
 
     all_results = data.get("item_results", [])
@@ -708,10 +930,14 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
             passes_correctness_filter = True
         elif filter_type == "correct":
             # Show items where all questions are correct (and not invalid)
-            passes_correctness_filter = detailed_results and all(r.get("is_correct") and not r.get("is_invalid") for r in detailed_results)
+            passes_correctness_filter = detailed_results and all(
+                r.get("is_correct") and not r.get("is_invalid") for r in detailed_results
+            )
         elif filter_type == "incorrect":
             # Show items that have at least one incorrect question
-            passes_correctness_filter = any(not r.get("is_correct") and not r.get("is_invalid") for r in detailed_results)
+            passes_correctness_filter = any(
+                not r.get("is_correct") and not r.get("is_invalid") for r in detailed_results
+            )
         elif filter_type == "invalid":
             # Show items that have at least one invalid question
             passes_correctness_filter = any(r.get("is_invalid") for r in detailed_results)
@@ -752,38 +978,45 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
             Div(
                 P("Overall Accuracy", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{data['overall_accuracy']:.2f}%", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Correct Answers", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(f"{data['total_correct']} / {data['total_questions']}", cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
             Div(
                 P("Invalid Questions", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(total_invalid), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
-            ) if total_invalid > 0 else None,
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
+            )
+            if total_invalid > 0
+            else None,
             Div(
                 P("Items", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
                 P(str(len(all_results)), cls="text-3xl font-bold text-foreground"),
-                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8",
         ),
         H4("Accuracy by Category", cls="text-xl font-semibold text-foreground mb-4"),
         Div(
             *[
                 Div(
                     P(cat["name"], cls="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2"),
-                    P(f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%", cls="text-2xl font-bold text-foreground"),
+                    P(
+                        f"{(cat['correct'] / (cat['total'] - cat['invalid']) * 100) if (cat['total'] - cat['invalid']) > 0 else 0:.1f}%",
+                        cls="text-2xl font-bold text-foreground",
+                    ),
                     P(f"{cat['correct']} / {cat['total']}", cls="text-sm text-muted-foreground mt-1"),
-                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm"
+                    cls="bg-white border border-border rounded-lg p-6 text-center shadow-sm",
                 )
                 for cat in category_stats.values()
             ],
-            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-        ) if category_stats else None
+            cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+        )
+        if category_stats
+        else None,
     )
 
     # Filter controls
@@ -792,41 +1025,131 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
         Div(
             P("Filter by correctness:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All", href=f"/longmemeval?filter_type=all&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("✅ All Correct", href=f"/longmemeval?filter_type=correct&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'correct' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("❌ Has Incorrect", href=f"/longmemeval?filter_type=incorrect&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'incorrect' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("⚠️ Has Invalid", href=f"/longmemeval?filter_type=invalid&category_filter={category_filter}",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'invalid' else "bg-white text-foreground border border-border hover:bg-accent")) if total_invalid > 0 else None,
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All",
+                    href=f"/longmemeval?filter_type=all&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "✅ All Correct",
+                    href=f"/longmemeval?filter_type=correct&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "correct"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "❌ Has Incorrect",
+                    href=f"/longmemeval?filter_type=incorrect&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "incorrect"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "⚠️ Has Invalid",
+                    href=f"/longmemeval?filter_type=invalid&category_filter={category_filter}",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if filter_type == "invalid"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                )
+                if total_invalid > 0
+                else None,
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
         # Category filter
         Div(
             P("Filter by question category:", cls="text-sm font-medium text-foreground mb-2"),
             Div(
-                A("All Categories", href=f"/longmemeval?filter_type={filter_type}&category_filter=all",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Multi-session", href=f"/longmemeval?filter_type={filter_type}&category_filter=multi-session",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'multi-session' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Single-session User", href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-user",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'single-session-user' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Single-session Assistant", href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-assistant",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'single-session-assistant' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Single-session Preference", href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-preference",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'single-session-preference' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Temporal Reasoning", href=f"/longmemeval?filter_type={filter_type}&category_filter=temporal-reasoning",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'temporal-reasoning' else "bg-white text-foreground border border-border hover:bg-accent")),
-                A("Knowledge Update", href=f"/longmemeval?filter_type={filter_type}&category_filter=knowledge-update",
-                  cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if category_filter == 'knowledge-update' else "bg-white text-foreground border border-border hover:bg-accent")),
-                cls="flex flex-wrap gap-2"
+                A(
+                    "All Categories",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=all",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "all"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Multi-session",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=multi-session",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "multi-session"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Single-session User",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-user",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "single-session-user"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Single-session Assistant",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-assistant",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "single-session-assistant"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Single-session Preference",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=single-session-preference",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "single-session-preference"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Temporal Reasoning",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=temporal-reasoning",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "temporal-reasoning"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                A(
+                    "Knowledge Update",
+                    href=f"/longmemeval?filter_type={filter_type}&category_filter=knowledge-update",
+                    cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                    + (
+                        "bg-primary text-primary-foreground"
+                        if category_filter == "knowledge-update"
+                        else "bg-white text-foreground border border-border hover:bg-accent"
+                    ),
+                ),
+                cls="flex flex-wrap gap-2",
             ),
-            cls="mb-4"
+            cls="mb-4",
         ),
-        cls="mb-6"
+        cls="mb-6",
     )
 
     # Render items
@@ -862,21 +1185,21 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
                             Div(
                                 P("Accuracy", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide"),
                                 P(f"{accuracy:.1f}%", cls="text-2xl font-bold text-foreground"),
-                                cls="text-center"
+                                cls="text-center",
                             ),
                             Div(
                                 P("Correct", cls="text-xs font-medium text-muted-foreground uppercase tracking-wide"),
                                 P(f"{correct}/{total}", cls="text-xl font-semibold text-foreground"),
-                                cls="text-center"
+                                cls="text-center",
                             ),
-                            cls="flex gap-6 items-center"
+                            cls="flex gap-6 items-center",
                         ),
-                        cls="p-6"
+                        cls="p-6",
                     ),
-                    cls=f"bg-white border border-border rounded-lg shadow-sm transition-all {border_class} {bg_class}"
+                    cls=f"bg-white border border-border rounded-lg shadow-sm transition-all {border_class} {bg_class}",
                 ),
                 href=f"/longmemeval/item/{original_idx}?filter_type={filter_type}&category_filter={category_filter}",
-                cls="block no-underline"
+                cls="block no-underline",
             )
         )
 
@@ -885,18 +1208,19 @@ def get_longmemeval(filter_type: str = "all", category_filter: str = "all"):
         get_head(),
         Main(
             Div(
-                A("← Back to benchmarks", href="/", cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6"),
+                A(
+                    "← Back to benchmarks",
+                    href="/",
+                    cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6",
+                ),
                 stats_html,
                 Hr(cls="my-6 border-border"),
                 filters,
                 P(f"Showing {len(results)} of {len(all_results)} items", cls="text-sm text-muted-foreground mb-6"),
-                Div(
-                    *items_html,
-                    cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                ),
-                cls="container mx-auto max-w-7xl px-4 py-8"
+                Div(*items_html, cls="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"),
+                cls="container mx-auto max-w-7xl px-4 py-8",
             )
-        )
+        ),
     )
 
 
@@ -937,17 +1261,51 @@ def get_longmemeval_item(item_idx: int, filter_type: str = "all"):
     q_filters = Div(
         P("Filter:", cls="text-sm font-medium text-foreground mb-2"),
         Div(
-            A("All", href=f"/longmemeval/item/{item_idx}?filter_type=all",
-              cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'all' else "bg-white text-foreground border border-border hover:bg-accent")),
-            A("✅ Correct", href=f"/longmemeval/item/{item_idx}?filter_type=correct",
-              cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'correct' else "bg-white text-foreground border border-border hover:bg-accent")),
-            A("❌ Incorrect", href=f"/longmemeval/item/{item_idx}?filter_type=incorrect",
-              cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'incorrect' else "bg-white text-foreground border border-border hover:bg-accent")),
-            A("⚠️ Invalid", href=f"/longmemeval/item/{item_idx}?filter_type=invalid",
-              cls="px-3 py-1.5 rounded-md text-sm font-medium " + ("bg-primary text-primary-foreground" if filter_type == 'invalid' else "bg-white text-foreground border border-border hover:bg-accent")) if has_invalid else None,
-            cls="flex flex-wrap gap-2"
+            A(
+                "All",
+                href=f"/longmemeval/item/{item_idx}?filter_type=all",
+                cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                + (
+                    "bg-primary text-primary-foreground"
+                    if filter_type == "all"
+                    else "bg-white text-foreground border border-border hover:bg-accent"
+                ),
+            ),
+            A(
+                "✅ Correct",
+                href=f"/longmemeval/item/{item_idx}?filter_type=correct",
+                cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                + (
+                    "bg-primary text-primary-foreground"
+                    if filter_type == "correct"
+                    else "bg-white text-foreground border border-border hover:bg-accent"
+                ),
+            ),
+            A(
+                "❌ Incorrect",
+                href=f"/longmemeval/item/{item_idx}?filter_type=incorrect",
+                cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                + (
+                    "bg-primary text-primary-foreground"
+                    if filter_type == "incorrect"
+                    else "bg-white text-foreground border border-border hover:bg-accent"
+                ),
+            ),
+            A(
+                "⚠️ Invalid",
+                href=f"/longmemeval/item/{item_idx}?filter_type=invalid",
+                cls="px-3 py-1.5 rounded-md text-sm font-medium "
+                + (
+                    "bg-primary text-primary-foreground"
+                    if filter_type == "invalid"
+                    else "bg-white text-foreground border border-border hover:bg-accent"
+                ),
+            )
+            if has_invalid
+            else None,
+            cls="flex flex-wrap gap-2",
         ),
-        cls="mb-6"
+        cls="mb-6",
     )
 
     # Render questions
@@ -961,7 +1319,11 @@ def get_longmemeval_item(item_idx: int, filter_type: str = "all"):
         category = result.get("category", "Unknown")
 
         icon = "⚠️" if is_invalid else ("✅" if is_correct else "❌")
-        border_class = "border-l-4 border-yellow-500" if is_invalid else ("border-l-4 border-green-600" if is_correct else "border-l-4 border-red-600")
+        border_class = (
+            "border-l-4 border-yellow-500"
+            if is_invalid
+            else ("border-l-4 border-green-600" if is_correct else "border-l-4 border-red-600")
+        )
 
         questions_html.append(
             Div(
@@ -969,75 +1331,106 @@ def get_longmemeval_item(item_idx: int, filter_type: str = "all"):
                 Div(
                     P(f"{icon} Question {q_idx + 1}", cls="text-lg font-semibold text-foreground"),
                     P(f"Category: {category}", cls="text-sm text-muted-foreground"),
-                    cls="mb-4"
+                    cls="mb-4",
                 ),
-
                 # Question
                 Div(
                     P("Question:", cls="text-sm font-medium text-foreground mb-1"),
                     P(question, cls="text-foreground"),
-                    cls="mb-4"
+                    cls="mb-4",
                 ),
-
                 # Answers side by side
                 Div(
                     Div(
                         P("✓ Correct Answer", cls="text-sm font-medium text-foreground mb-2"),
                         Div(correct_answer, cls="bg-green-50 border border-green-200 rounded-md p-3 text-foreground"),
-                        cls="flex-1"
+                        cls="flex-1",
                     ),
                     Div(
-                        P(f"{'✓' if is_correct else '✗'} Predicted Answer", cls="text-sm font-medium text-foreground mb-2"),
-                        Div(predicted_answer, cls=f"border rounded-md p-3 text-foreground " + ("bg-green-50 border-green-200" if is_correct else "bg-red-50 border-red-200")),
-                        cls="flex-1"
+                        P(
+                            f"{'✓' if is_correct else '✗'} Predicted Answer",
+                            cls="text-sm font-medium text-foreground mb-2",
+                        ),
+                        Div(
+                            predicted_answer,
+                            cls="border rounded-md p-3 text-foreground "
+                            + ("bg-green-50 border-green-200" if is_correct else "bg-red-50 border-red-200"),
+                        ),
+                        cls="flex-1",
                     ),
-                    cls="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
+                    cls="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4",
                 ),
-
                 # Details
                 Details(
-                    Summary("📝 Show Reasoning & Retrieved Memories", cls="cursor-pointer font-medium text-foreground hover:text-primary py-2"),
+                    Summary(
+                        "📝 Show Reasoning & Retrieved Memories",
+                        cls="cursor-pointer font-medium text-foreground hover:text-primary py-2",
+                    ),
                     Div(
                         # System Reasoning
                         Div(
                             P("System Reasoning:", cls="text-sm font-medium text-foreground mb-2"),
-                            Pre(result.get("reasoning", "N/A"), cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm"),
-                            cls="mb-4"
+                            Pre(
+                                result.get("reasoning", "N/A"),
+                                cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm",
+                            ),
+                            cls="mb-4",
                         ),
                         # Judge Reasoning
                         Div(
                             P("Judge Reasoning:", cls="text-sm font-medium text-foreground mb-2"),
-                            Pre(result.get("correctness_reasoning", "N/A"), cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm"),
-                            cls="mb-4"
+                            Pre(
+                                result.get("correctness_reasoning", "N/A"),
+                                cls="bg-slate-900 text-slate-100 p-3 rounded-md overflow-x-auto text-sm",
+                            ),
+                            cls="mb-4",
                         ),
                         # Retrieved Memories
                         Div(
-                            P(f"Retrieved Memories ({len(result.get('retrieved_memories', []))}):", cls="text-sm font-medium text-foreground mb-2"),
+                            P(
+                                f"Retrieved Memories ({len(result.get('retrieved_memories', []))}):",
+                                cls="text-sm font-medium text-foreground mb-2",
+                            ),
                             *[
                                 Div(
                                     P(
-                                        f"#{i+1} • " +
-                                        " • ".join(filter(None, [
-                                            f"Occurred: {mem.get('occurred_start', '')[:10]}" +
-                                            (f" to {mem.get('occurred_end', '')[:10]}" if mem.get('occurred_end') and mem.get('occurred_start', '')[:10] != mem.get('occurred_end', '')[:10] else "")
-                                            if mem.get('occurred_start') else None,
-                                            f"Mentioned: {mem.get('mentioned_at', '')[:10]}" if mem.get('mentioned_at') else None,
-                                            f"Type: {mem.get('fact_type', 'unknown').upper()}"
-                                        ])),
-                                        cls="text-xs text-muted-foreground mb-1"
+                                        f"#{i + 1} • "
+                                        + " • ".join(
+                                            filter(
+                                                None,
+                                                [
+                                                    f"Occurred: {mem.get('occurred_start', '')[:10]}"
+                                                    + (
+                                                        f" to {mem.get('occurred_end', '')[:10]}"
+                                                        if mem.get("occurred_end")
+                                                        and mem.get("occurred_start", "")[:10]
+                                                        != mem.get("occurred_end", "")[:10]
+                                                        else ""
+                                                    )
+                                                    if mem.get("occurred_start")
+                                                    else None,
+                                                    f"Mentioned: {mem.get('mentioned_at', '')[:10]}"
+                                                    if mem.get("mentioned_at")
+                                                    else None,
+                                                    f"Type: {mem.get('fact_type', 'unknown').upper()}",
+                                                ],
+                                            )
+                                        ),
+                                        cls="text-xs text-muted-foreground mb-1",
                                     ),
-                                    P(mem.get('text', ''), cls="text-sm text-foreground"),
-                                    cls="bg-muted/50 border border-border rounded-md p-3 mb-2"
+                                    P(mem.get("text", ""), cls="text-sm text-foreground"),
+                                    cls="bg-muted/50 border border-border rounded-md p-3 mb-2",
                                 )
                                 for i, mem in enumerate(result.get("retrieved_memories", []))
-                            ] if result.get("retrieved_memories") else [P("No memories retrieved", cls="text-sm text-muted-foreground")],
+                            ]
+                            if result.get("retrieved_memories")
+                            else [P("No memories retrieved", cls="text-sm text-muted-foreground")],
                         ),
-                        cls="mt-3 space-y-2"
+                        cls="mt-3 space-y-2",
                     ),
-                    cls="border border-border rounded-md p-4 bg-muted/30"
+                    cls="border border-border rounded-md p-4 bg-muted/30",
                 ),
-
-                cls=f"bg-white border border-border rounded-lg p-6 mb-4 shadow-sm {border_class}"
+                cls=f"bg-white border border-border rounded-lg p-6 mb-4 shadow-sm {border_class}",
             )
         )
 
@@ -1046,23 +1439,25 @@ def get_longmemeval_item(item_idx: int, filter_type: str = "all"):
         get_head(),
         Main(
             Div(
-                A("← Back to LongMemEval", href="/longmemeval", cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6"),
+                A(
+                    "← Back to LongMemEval",
+                    href="/longmemeval",
+                    cls="inline-flex items-center px-4 py-2 bg-white border border-border rounded-md text-sm font-medium text-foreground hover:bg-accent mb-6",
+                ),
                 H3(f"📊 {item_id} - {accuracy:.2f}%", cls="text-2xl font-bold text-foreground mb-4"),
                 Hr(cls="my-6 border-border"),
                 q_filters,
                 P(f"Showing {len(filtered_questions)} questions", cls="text-sm text-muted-foreground mb-6"),
-                Div(
-                    *questions_html,
-                    cls="space-y-4"
-                ),
-                cls="container mx-auto max-w-7xl px-4 py-8"
+                Div(*questions_html, cls="space-y-4"),
+                cls="container mx-auto max-w-7xl px-4 py-8",
             )
-        )
+        ),
     )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     print("🚀 Starting Benchmark Visualizer...")
     print("📊 Server running at: http://localhost:8001")
     uvicorn.run("main:app", host="127.0.0.1", port=8001, reload=True)

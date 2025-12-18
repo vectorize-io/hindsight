@@ -109,6 +109,9 @@ def run_migrations_online() -> None:
 
     get_database_url()  # Process and set the database URL in config
 
+    # Check if we're targeting a specific schema (for multi-tenant isolation)
+    target_schema = config.get_main_option("target_schema")
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -121,14 +124,34 @@ def run_migrations_online() -> None:
     def set_read_write_mode(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+        # If targeting a specific schema, set search_path
+        # Include public in search_path for access to shared extensions (pgvector)
+        if target_schema:
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{target_schema}"')
+            cursor.execute(f'SET search_path TO "{target_schema}", public')
         cursor.close()
 
     with connectable.connect() as connection:
         # Also explicitly set read-write mode on this connection
         connection.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE"))
+
+        # If targeting a specific schema, set search_path
+        # Include public in search_path for access to shared extensions (pgvector)
+        if target_schema:
+            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{target_schema}"'))
+            connection.execute(text(f'SET search_path TO "{target_schema}", public'))
+
         connection.commit()  # Commit the SET command
 
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # Configure context with version_table_schema if using a specific schema
+        context_opts = {
+            "connection": connection,
+            "target_metadata": target_metadata,
+        }
+        if target_schema:
+            context_opts["version_table_schema"] = target_schema
+
+        context.configure(**context_opts)
 
         with context.begin_transaction():
             context.run_migrations()

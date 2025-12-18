@@ -10,6 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from ..db_utils import acquire_with_retry
+from ..memory_engine import fq_table
 from .types import RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -139,11 +140,11 @@ class BFSGraphRetriever(GraphRetriever):
 
         # Step 1: Find entry points
         entry_points = await conn.fetch(
-            """
+            f"""
             SELECT id, text, context, event_date, occurred_start, occurred_end,
                    mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
                    1 - (embedding <=> $1::vector) AS similarity
-            FROM memory_units
+            FROM {fq_table("memory_units")}
             WHERE bank_id = $2
               AND embedding IS NOT NULL
               AND fact_type = $3
@@ -188,13 +189,13 @@ class BFSGraphRetriever(GraphRetriever):
             if batch_nodes and budget_remaining > 0:
                 max_neighbors = len(batch_nodes) * 20
                 neighbors = await conn.fetch(
-                    """
+                    f"""
                     SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.occurred_end,
                            mu.mentioned_at, mu.access_count, mu.embedding, mu.fact_type,
                            mu.document_id, mu.chunk_id,
                            ml.weight, ml.link_type, ml.from_unit_id
-                    FROM memory_links ml
-                    JOIN memory_units mu ON ml.to_unit_id = mu.id
+                    FROM {fq_table("memory_links")} ml
+                    JOIN {fq_table("memory_units")} mu ON ml.to_unit_id = mu.id
                     WHERE ml.from_unit_id = ANY($1::uuid[])
                       AND ml.weight >= $2
                       AND mu.fact_type = $3

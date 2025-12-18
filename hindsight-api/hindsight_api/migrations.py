@@ -6,12 +6,16 @@ on application startup. It is designed to be safe for concurrent
 execution using PostgreSQL advisory locks to coordinate between
 distributed workers.
 
+Supports multi-tenant schema isolation: migrations can target a specific
+PostgreSQL schema, allowing each tenant to have isolated tables.
+
 Important: All migrations must be backward-compatible to allow
 safe rolling deployments.
 
 No alembic.ini required - all configuration is done programmatically.
 """
 
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -26,11 +30,29 @@ logger = logging.getLogger(__name__)
 MIGRATION_LOCK_ID = 123456789
 
 
-def _run_migrations_internal(database_url: str, script_location: str) -> None:
+def _get_schema_lock_id(schema: str) -> int:
+    """
+    Generate a unique advisory lock ID for a schema.
+
+    Uses hash of schema name to create a deterministic lock ID.
+    """
+    # Use hash to create a unique lock ID per schema
+    # Keep within PostgreSQL's bigint range
+    hash_bytes = hashlib.sha256(schema.encode()).digest()[:8]
+    return int.from_bytes(hash_bytes, byteorder="big") % (2**31)
+
+
+def _run_migrations_internal(database_url: str, script_location: str, schema: str | None = None) -> None:
     """
     Internal function to run migrations without locking.
+
+    Args:
+        database_url: SQLAlchemy database URL
+        script_location: Path to alembic scripts
+        schema: Target schema (None for default/public)
     """
-    logger.info("Running database migrations to head...")
+    schema_name = schema or "public"
+    logger.info(f"Running database migrations to head for schema '{schema_name}'...")
     logger.info(f"Database URL: {database_url}")
     logger.info(f"Script location: {script_location}")
 
@@ -50,13 +72,22 @@ def _run_migrations_internal(database_url: str, script_location: str) -> None:
     # Set path_separator to avoid deprecation warning
     alembic_cfg.set_main_option("path_separator", "os")
 
-    # Run migrations to head (latest version)
+    # If targeting a specific schema, pass it to env.py via config
+    # env.py will handle setting search_path and version_table_schema
+    if schema:
+        alembic_cfg.set_main_option("target_schema", schema)
+
+    # Run migrations
     command.upgrade(alembic_cfg, "head")
 
-    logger.info("Database migrations completed successfully")
+    logger.info(f"Database migrations completed successfully for schema '{schema_name}'")
 
 
-def run_migrations(database_url: str, script_location: str | None = None) -> None:
+def run_migrations(
+    database_url: str,
+    script_location: str | None = None,
+    schema: str | None = None,
+) -> None:
     """
     Run database migrations to the latest version using programmatic Alembic configuration.
 
@@ -65,18 +96,27 @@ def run_migrations(database_url: str, script_location: str | None = None) -> Non
     - Other workers wait for the lock, then verify migrations are complete
     - If schema is already up-to-date, this is a fast no-op
 
+    Supports multi-tenant schema isolation: when a schema is specified, migrations
+    run in that schema instead of public. This allows tenant extensions to provision
+    new tenant schemas with their own isolated tables.
+
     Args:
         database_url: SQLAlchemy database URL (e.g., "postgresql://user:pass@host/db")
         script_location: Path to alembic migrations directory (e.g., "/path/to/alembic").
                         If None, defaults to hindsight-api/alembic directory.
+        schema: Target PostgreSQL schema name. If None, uses default (public).
+                When specified, creates the schema if needed and runs migrations there.
 
     Raises:
         RuntimeError: If migrations fail to complete
         FileNotFoundError: If script_location doesn't exist
 
     Example:
-        # Using default location (hindsight_api package)
+        # Using default location and public schema
         run_migrations("postgresql://user:pass@host/db")
+
+        # Run migrations for a specific tenant schema
+        run_migrations("postgresql://user:pass@host/db", schema="tenant_acme")
 
         # Using custom location (when importing from another project)
         run_migrations(
@@ -99,21 +139,25 @@ def run_migrations(database_url: str, script_location: str | None = None) -> Non
                 f"Alembic script location not found at {script_location}. Database migrations cannot be run."
             )
 
+        # Use schema-specific lock ID for multi-tenant isolation
+        lock_id = _get_schema_lock_id(schema) if schema else MIGRATION_LOCK_ID
+        schema_name = schema or "public"
+
         # Use PostgreSQL advisory lock to coordinate between distributed workers
         engine = create_engine(database_url)
         with engine.connect() as conn:
             # pg_advisory_lock blocks until the lock is acquired
             # The lock is automatically released when the connection closes
-            logger.debug(f"Acquiring migration advisory lock (id={MIGRATION_LOCK_ID})...")
-            conn.execute(text(f"SELECT pg_advisory_lock({MIGRATION_LOCK_ID})"))
+            logger.debug(f"Acquiring migration advisory lock for schema '{schema_name}' (id={lock_id})...")
+            conn.execute(text(f"SELECT pg_advisory_lock({lock_id})"))
             logger.debug("Migration advisory lock acquired")
 
             try:
                 # Run migrations while holding the lock
-                _run_migrations_internal(database_url, script_location)
+                _run_migrations_internal(database_url, script_location, schema=schema)
             finally:
                 # Explicitly release the lock (also released on connection close)
-                conn.execute(text(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_ID})"))
+                conn.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
                 logger.debug("Migration advisory lock released")
 
     except FileNotFoundError:

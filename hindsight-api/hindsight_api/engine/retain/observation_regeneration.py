@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+from ..memory_engine import fq_table
 from ..search import observation_utils
 from . import embedding_utils
 from .types import EntityLink
@@ -75,8 +76,8 @@ async def regenerate_observations_batch(
 
     # Batch query for entity names
     entity_rows = await conn.fetch(
-        """
-        SELECT id, canonical_name FROM entities
+        f"""
+        SELECT id, canonical_name FROM {fq_table("entities")}
         WHERE id = ANY($1) AND bank_id = $2
         """,
         entity_uuids,
@@ -86,10 +87,10 @@ async def regenerate_observations_batch(
 
     # Batch query for fact counts
     fact_counts = await conn.fetch(
-        """
+        f"""
         SELECT ue.entity_id, COUNT(*) as cnt
-        FROM unit_entities ue
-        JOIN memory_units mu ON ue.unit_id = mu.id
+        FROM {fq_table("unit_entities")} ue
+        JOIN {fq_table("memory_units")} mu ON ue.unit_id = mu.id
         WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
         GROUP BY ue.entity_id
         """,
@@ -154,10 +155,10 @@ async def _regenerate_entity_observations(
 
     # Get all facts mentioning this entity (exclude observations themselves)
     rows = await conn.fetch(
-        """
+        f"""
         SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
-        FROM memory_units mu
-        JOIN unit_entities ue ON mu.id = ue.unit_id
+        FROM {fq_table("memory_units")} mu
+        JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
         WHERE mu.bank_id = $1
           AND ue.entity_id = $2
           AND mu.fact_type IN ('world', 'experience')
@@ -193,12 +194,12 @@ async def _regenerate_entity_observations(
 
     # Delete old observations for this entity
     await conn.execute(
-        """
-        DELETE FROM memory_units
+        f"""
+        DELETE FROM {fq_table("memory_units")}
         WHERE id IN (
             SELECT mu.id
-            FROM memory_units mu
-            JOIN unit_entities ue ON mu.id = ue.unit_id
+            FROM {fq_table("memory_units")} mu
+            JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
             WHERE mu.bank_id = $1
               AND mu.fact_type = 'observation'
               AND ue.entity_id = $2
@@ -217,8 +218,8 @@ async def _regenerate_entity_observations(
 
     for obs_text, embedding in zip(observations, embeddings):
         result = await conn.fetchrow(
-            """
-            INSERT INTO memory_units (
+            f"""
+            INSERT INTO {fq_table("memory_units")} (
                 bank_id, text, embedding, context, event_date,
                 occurred_start, occurred_end, mentioned_at,
                 fact_type, access_count
@@ -240,8 +241,8 @@ async def _regenerate_entity_observations(
 
         # Link observation to entity
         await conn.execute(
-            """
-            INSERT INTO unit_entities (unit_id, entity_id)
+            f"""
+            INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
             VALUES ($1, $2)
             """,
             uuid.UUID(obs_id),

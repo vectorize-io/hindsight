@@ -3,11 +3,12 @@ Test observation generation and entity state functionality.
 """
 import pytest
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api import RequestContext
 from datetime import datetime, timezone
 
 
 @pytest.mark.asyncio
-async def test_observation_generation_on_put(memory):
+async def test_observation_generation_on_put(memory, request_context):
     """
     Test that observations are generated SYNCHRONOUSLY when new facts are added.
 
@@ -36,7 +37,8 @@ async def test_observation_generation_on_put(memory):
                 bank_id=bank_id,
                 content=content,
                 context="work info",
-                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc)
+                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc),
+                request_context=request_context,
             )
 
         # Observations are generated SYNCHRONOUSLY during retain,
@@ -75,7 +77,7 @@ async def test_observation_generation_on_put(memory):
         print(f"Entity: {entity_name} (id: {entity_id})")
 
         # Get observations for the entity - should be available immediately
-        observations = await memory.get_entity_observations(bank_id, entity_id, limit=10)
+        observations = await memory.get_entity_observations(bank_id, entity_id, limit=10, request_context=request_context)
 
         print(f"\n=== Observations for {entity_name} ===")
         print(f"Total observations: {len(observations)}")
@@ -102,7 +104,7 @@ async def test_observation_generation_on_put(memory):
 
 
 @pytest.mark.asyncio
-async def test_regenerate_entity_observations(memory):
+async def test_regenerate_entity_observations(memory, request_context):
     """
     Test explicit regeneration of observations for an entity.
     """
@@ -114,7 +116,8 @@ async def test_regenerate_entity_observations(memory):
             bank_id=bank_id,
             content="Sarah is a product manager who loves user research and data analysis.",
             context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         await memory.wait_for_background_tasks()
@@ -140,14 +143,15 @@ async def test_regenerate_entity_observations(memory):
             created_ids = await memory.regenerate_entity_observations(
                 bank_id=bank_id,
                 entity_id=entity_id,
-                entity_name=entity_name
+                entity_name=entity_name,
+                request_context=request_context,
             )
 
             print(f"\n=== Regenerated Observations ===")
             print(f"Created {len(created_ids)} observations for {entity_name}")
 
             # Get the observations
-            observations = await memory.get_entity_observations(bank_id, entity_id, limit=10)
+            observations = await memory.get_entity_observations(bank_id, entity_id, limit=10, request_context=request_context)
             for obs in observations:
                 print(f"  - {obs.text}")
 
@@ -170,7 +174,7 @@ async def test_regenerate_entity_observations(memory):
 
 
 @pytest.mark.asyncio
-async def test_search_with_include_entities(memory):
+async def test_search_with_include_entities(memory, request_context):
     """
     Test that search with include_entities=True returns entity observations.
 
@@ -196,7 +200,8 @@ async def test_search_with_include_entities(memory):
                 bank_id=bank_id,
                 content=content,
                 context="work info",
-                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc)
+                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc),
+                request_context=request_context,
             )
 
         # Observations are generated synchronously during retain, no need to wait
@@ -209,7 +214,8 @@ async def test_search_with_include_entities(memory):
             budget=Budget.LOW,
             max_tokens=2000,
             include_entities=True,
-            max_entity_tokens=500
+            max_entity_tokens=500,
+            request_context=request_context,
         )
 
         print(f"\n=== Search Results ===")
@@ -263,7 +269,7 @@ async def test_search_with_include_entities(memory):
 
 
 @pytest.mark.asyncio
-async def test_get_entity_state(memory):
+async def test_get_entity_state(memory, request_context):
     """
     Test getting the full state of an entity.
     """
@@ -275,7 +281,8 @@ async def test_get_entity_state(memory):
             bank_id=bank_id,
             content="Bob is a frontend developer who specializes in React and TypeScript.",
             context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         await memory.wait_for_background_tasks()
@@ -302,7 +309,8 @@ async def test_get_entity_state(memory):
                 bank_id=bank_id,
                 entity_id=entity_id,
                 entity_name=entity_name,
-                limit=10
+                limit=10,
+                request_context=request_context,
             )
 
             print(f"\n=== Entity State for {entity_name} ===")
@@ -324,7 +332,7 @@ async def test_get_entity_state(memory):
 
 
 @pytest.mark.asyncio
-async def test_observation_fact_type_in_database(memory):
+async def test_observation_fact_type_in_database(memory, request_context):
     """
     Test that observations are stored with correct fact_type in database.
     """
@@ -336,7 +344,8 @@ async def test_observation_fact_type_in_database(memory):
             bank_id=bank_id,
             content="Charlie is a DevOps engineer who manages the Kubernetes infrastructure.",
             context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc)
+            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            request_context=request_context,
         )
 
         await memory.wait_for_background_tasks()
@@ -374,7 +383,7 @@ async def test_observation_fact_type_in_database(memory):
 
 
 @pytest.mark.asyncio
-async def test_user_entity_prioritized_for_observations(memory):
+async def test_user_entity_prioritized_for_observations(memory, request_context):
     """
     Test that the 'user' entity gets observations even when many other entities exist.
 
@@ -410,7 +419,8 @@ async def test_user_entity_prioritized_for_observations(memory):
                 bank_id=bank_id,
                 content=content,
                 context="personal info",
-                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc)
+                event_date=datetime(2024, 1, 15 + i, tzinfo=timezone.utc),
+                request_context=request_context,
             )
 
         # Observations are generated synchronously during retain
@@ -466,7 +476,7 @@ async def test_user_entity_prioritized_for_observations(memory):
             f"User entity should have at least 5 facts, but has {user_fact_count}"
 
         # Get observations for user entity
-        observations = await memory.get_entity_observations(bank_id, user_entity_id, limit=10)
+        observations = await memory.get_entity_observations(bank_id, user_entity_id, limit=10, request_context=request_context)
 
         print(f"\n=== User Entity Observations ===")
         print(f"Total observations: {len(observations)}")

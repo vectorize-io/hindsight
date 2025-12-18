@@ -2,8 +2,23 @@
 SQLAlchemy models for the memory system.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID as PyUUID
+
+
+@dataclass
+class RequestContext:
+    """
+    Context for request authentication and authorization.
+
+    This dataclass carries authentication data from HTTP requests to the
+    memory engine operations. It can be extended to include additional
+    context like headers, tokens, user info, etc.
+    """
+
+    api_key: str | None = None
+
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (

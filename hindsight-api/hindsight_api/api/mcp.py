@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
+from hindsight_api.models import RequestContext
 
 # Configure logging from HINDSIGHT_API_LOG_LEVEL environment variable
 _log_level_str = os.environ.get("HINDSIGHT_API_LOG_LEVEL", "info").lower()
@@ -67,7 +68,11 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         """
         try:
             bank_id = get_current_bank_id()
-            await memory.retain_batch_async(bank_id=bank_id, contents=[{"content": content, "context": context}])
+            if bank_id is None:
+                return "Error: No bank_id configured"
+            await memory.retain_batch_async(
+                bank_id=bank_id, contents=[{"content": content, "context": context}], request_context=RequestContext()
+            )
             return "Memory stored successfully"
         except Exception as e:
             logger.error(f"Error storing memory: {e}", exc_info=True)
@@ -90,10 +95,16 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         """
         try:
             bank_id = get_current_bank_id()
+            if bank_id is None:
+                return "Error: No bank_id configured"
             from hindsight_api.engine.memory_engine import Budget
 
             search_result = await memory.recall_async(
-                bank_id=bank_id, query=query, fact_type=list(VALID_RECALL_FACT_TYPES), budget=Budget.LOW
+                bank_id=bank_id,
+                query=query,
+                fact_type=list(VALID_RECALL_FACT_TYPES),
+                budget=Budget.LOW,
+                request_context=RequestContext(),
             )
 
             results = [
@@ -102,7 +113,7 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
                     "text": fact.text,
                     "type": fact.fact_type,
                     "context": fact.context,
-                    "event_date": fact.event_date,
+                    "occurred_start": fact.occurred_start,
                 }
                 for fact in search_result.results[:max_results]
             ]

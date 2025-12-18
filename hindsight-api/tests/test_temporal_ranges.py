@@ -3,16 +3,17 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import pytest
 from hindsight_api.engine.memory_engine import Budget
+from hindsight_api import RequestContext
 
 
 @pytest.mark.asyncio
-async def test_temporal_ranges_are_written(memory):
+async def test_temporal_ranges_are_written(memory, request_context):
     """Test that occurred_start, occurred_end, and mentioned_at are actually written to database."""
     bank_id = "test_temporal_ranges"
 
     # Clean up any existing data
     try:
-        await memory.delete_bank(bank_id)
+        await memory.delete_bank(bank_id, request_context=request_context)
     except Exception:
         pass
 
@@ -23,7 +24,8 @@ async def test_temporal_ranges_are_written(memory):
     await memory.retain_async(
         bank_id=bank_id,
         content=text1,
-        event_date=conversation_date
+        event_date=conversation_date,
+        request_context=request_context,
     )
 
     # Test 2: Period event (month range)
@@ -32,7 +34,8 @@ async def test_temporal_ranges_are_written(memory):
     await memory.retain_async(
         bank_id=bank_id,
         content=text2,
-        event_date=conversation_date
+        event_date=conversation_date,
+        request_context=request_context,
     )
 
     # Give it a moment for async processing
@@ -114,7 +117,8 @@ async def test_temporal_ranges_are_written(memory):
         query="pottery workshop",
         fact_type=["world", "experience"],
         budget=Budget.LOW,
-        max_tokens=4096
+        max_tokens=4096,
+        request_context=request_context,
     )
 
     print(f"Found {len(search_result.results)} search results")
@@ -132,4 +136,4 @@ async def test_temporal_ranges_are_written(memory):
             print("⚠ Temporal fields not yet populated in search results (known issue)")
 
     # Clean up
-    await memory.delete_bank(bank_id)
+    await memory.delete_bank(bank_id, request_context=request_context)

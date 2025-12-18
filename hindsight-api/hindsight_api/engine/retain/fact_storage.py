@@ -7,6 +7,7 @@ Handles insertion of facts into the database.
 import json
 import logging
 
+from ..memory_engine import fq_table
 from .types import ProcessedFact
 
 logger = logging.getLogger(__name__)
@@ -67,8 +68,8 @@ async def insert_facts_batch(
 
     # Batch insert all facts
     results = await conn.fetch(
-        """
-        INSERT INTO memory_units (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+        f"""
+        INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
                                  context, fact_type, confidence_score, access_count, metadata, chunk_id, document_id)
         SELECT $1, * FROM unnest(
             $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
@@ -107,8 +108,8 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
         bank_id: Bank identifier
     """
     await conn.execute(
-        """
-        INSERT INTO banks (bank_id, disposition, background)
+        f"""
+        INSERT INTO {fq_table("banks")} (bank_id, disposition, background)
         VALUES ($1, $2::jsonb, $3)
         ON CONFLICT (bank_id) DO UPDATE
         SET updated_at = NOW()
@@ -141,12 +142,14 @@ async def handle_document_tracking(
     # Always delete old document first if it exists (cascades to units and links)
     # Only delete on the first batch to avoid deleting data we just inserted
     if is_first_batch:
-        await conn.fetchval("DELETE FROM documents WHERE id = $1 AND bank_id = $2 RETURNING id", document_id, bank_id)
+        await conn.fetchval(
+            f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id", document_id, bank_id
+        )
 
     # Insert document (or update if exists from concurrent operations)
     await conn.execute(
-        """
-        INSERT INTO documents (id, bank_id, original_text, content_hash, metadata, retain_params)
+        f"""
+        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id, bank_id) DO UPDATE
         SET original_text = EXCLUDED.original_text,

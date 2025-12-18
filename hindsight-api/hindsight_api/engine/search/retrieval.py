@@ -16,6 +16,7 @@ from typing import Optional
 
 from ...config import get_config
 from ..db_utils import acquire_with_retry
+from ..memory_engine import fq_table
 from .graph_retrieval import BFSGraphRetriever, GraphRetriever
 from .mpfp_retrieval import MPFPGraphRetriever
 from .types import RetrievalResult
@@ -80,10 +81,10 @@ async def retrieve_semantic(
         List of RetrievalResult objects
     """
     results = await conn.fetch(
-        """
+        f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
                1 - (embedding <=> $1::vector) AS similarity
-        FROM memory_units
+        FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND embedding IS NOT NULL
           AND fact_type = $3
@@ -131,10 +132,10 @@ async def retrieve_bm25(conn, query_text: str, bank_id: str, fact_type: str, lim
     query_tsquery = " | ".join(tokens)
 
     results = await conn.fetch(
-        """
+        f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
                ts_rank_cd(search_vector, to_tsquery('english', $1)) AS bm25_score
-        FROM memory_units
+        FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND fact_type = $3
           AND search_vector @@ to_tsquery('english', $1)
@@ -188,10 +189,10 @@ async def retrieve_temporal(
         end_date = end_date.replace(tzinfo=UTC)
 
     entry_points = await conn.fetch(
-        """
+        f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
                1 - (embedding <=> $1::vector) AS similarity
-        FROM memory_units
+        FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND fact_type = $3
           AND embedding IS NOT NULL
@@ -272,12 +273,12 @@ async def retrieve_temporal(
         # Get neighbors via temporal and causal links
         if budget_remaining > 0:
             neighbors = await conn.fetch(
-                """
+                f"""
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start, mu.occurred_end, mu.mentioned_at, mu.access_count, mu.embedding, mu.fact_type, mu.document_id, mu.chunk_id,
                        ml.weight, ml.link_type,
                        1 - (mu.embedding <=> $1::vector) AS similarity
-                FROM memory_links ml
-                JOIN memory_units mu ON ml.to_unit_id = mu.id
+                FROM {fq_table("memory_links")} ml
+                JOIN {fq_table("memory_units")} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = $2
                   AND ml.link_type IN ('temporal', 'causes', 'caused_by', 'enables', 'prevents')
                   AND ml.weight >= 0.1
@@ -546,11 +547,11 @@ async def _get_temporal_entry_points(
         end_date = end_date.replace(tzinfo=UTC)
 
     rows = await conn.fetch(
-        """
+        f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at,
                access_count, embedding, fact_type, document_id, chunk_id,
                1 - (embedding <=> $1::vector) AS similarity
-        FROM memory_units
+        FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND fact_type = $3
           AND embedding IS NOT NULL

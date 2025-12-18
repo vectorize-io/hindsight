@@ -5,7 +5,7 @@ use crate::output::OutputFormat;
 
 /// Get API client from config
 pub fn get_client(config: &Config) -> Result<ApiClient> {
-    ApiClient::new(config.api_url.clone())
+    ApiClient::new(config.api_url.clone(), config.api_key.clone())
         .context("Failed to create API client")
 }
 

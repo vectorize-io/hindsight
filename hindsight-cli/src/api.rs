@@ -64,13 +64,24 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    pub fn new(base_url: String) -> Result<Self> {
+    pub fn new(base_url: String, api_key: Option<String>) -> Result<Self> {
         let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new()?);
 
-        // Create HTTP client with 2-minute timeout
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()?;
+        // Create HTTP client with 2-minute timeout and optional auth header
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120));
+
+        if let Some(key) = api_key {
+            let mut headers = reqwest::header::HeaderMap::new();
+            let auth_value = format!("Bearer {}", key);
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&auth_value)?,
+            );
+            client_builder = client_builder.default_headers(headers);
+        }
+
+        let http_client = client_builder.build()?;
 
         let client = AsyncClient::new_with_client(&base_url, http_client);
         Ok(ApiClient { client, runtime })
