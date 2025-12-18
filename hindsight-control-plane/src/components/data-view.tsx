@@ -715,20 +715,28 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
   const [currentIndex, setCurrentIndex] = useState(0);
   const timelineRef = useRef<HTMLDivElement>(null);
 
-  // Filter and sort items that have occurred_start dates (using filtered data)
+  // Filter and sort items that have dates (occurred_start for facts, mentioned_at as fallback because occurred_start is not present on experiences and opinions)
   const { sortedItems, itemsWithoutDates } = useMemo(() => {
     if (!filteredRows || filteredRows.length === 0)
       return { sortedItems: [], itemsWithoutDates: [] };
 
-    const withDates = filteredRows
-      .filter((row: any) => row.occurred_start)
-      .sort((a: any, b: any) => {
-        const dateA = new Date(a.occurred_start).getTime();
-        const dateB = new Date(b.occurred_start).getTime();
-        return dateA - dateB;
-      });
+    const getEffectiveDate = (row: any): string | null => {
+      return row.occurred_start || row.mentioned_at || null;
+    };
 
-    const withoutDates = filteredRows.filter((row: any) => !row.occurred_start);
+    const withDates = filteredRows
+      .filter((row: any) => getEffectiveDate(row))
+      .sort((a: any, b: any) => {
+        const dateA = new Date(getEffectiveDate(a)!).getTime();
+        const dateB = new Date(getEffectiveDate(b)!).getTime();
+        return dateB - dateA; // Descending: newest first
+      })
+      .map((row: any) => ({
+        ...row,
+        effective_date: getEffectiveDate(row),
+      }));
+
+    const withoutDates = filteredRows.filter((row: any) => !getEffectiveDate(row));
 
     return { sortedItems: withDates, itemsWithoutDates: withoutDates };
   }, [filteredRows]);
@@ -778,7 +786,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
 
     const groups: { [key: string]: { items: any[]; date: Date } } = {};
     sortedItems.forEach((row: any) => {
-      const date = new Date(row.occurred_start);
+      const date = new Date(row.effective_date);
       const key = getGroupKey(date);
       if (!groups[key]) {
         // For week, parse the start date from key
@@ -793,7 +801,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
     });
 
     return Object.entries(groups)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => b.localeCompare(a))
       .map(([key, { items, date }]) => ({
         key,
         label: getGroupLabel(key, date),
@@ -805,8 +813,8 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
   // Get date range info
   const dateRange = useMemo(() => {
     if (sortedItems.length === 0) return null;
-    const first = new Date(sortedItems[0].occurred_start);
-    const last = new Date(sortedItems[sortedItems.length - 1].occurred_start);
+    const first = new Date(sortedItems[sortedItems.length - 1].effective_date);
+    const last = new Date(sortedItems[0].effective_date);
     return { first, last };
   }, [sortedItems]);
 
@@ -840,7 +848,7 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
         <Calendar className="w-12 h-12 text-muted-foreground mb-3" />
         <div className="text-base font-medium text-foreground mb-1">No Timeline Data</div>
         <div className="text-xs text-muted-foreground text-center max-w-md">
-          No memories have occurred_at dates.
+          No memories have date information.
           {itemsWithoutDates.length > 0 && (
             <span className="block mt-1">
               {itemsWithoutDates.length} memories without dates in Table View.
@@ -996,10 +1004,10 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
                     {/* Date & Time */}
                     <div className="w-[60px] text-right pr-3 pt-1 flex-shrink-0">
                       <div className="text-[10px] text-muted-foreground">
-                        {formatDateTime(item.occurred_start).date}
+                        {formatDateTime(item.effective_date).date}
                       </div>
                       <div className="text-[9px] text-muted-foreground/70">
-                        {formatDateTime(item.occurred_start).time}
+                        {formatDateTime(item.effective_date).time}
                       </div>
                     </div>
 
