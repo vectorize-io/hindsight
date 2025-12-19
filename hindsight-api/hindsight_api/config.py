@@ -16,6 +16,8 @@ ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
 ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
 ENV_LLM_MODEL = "HINDSIGHT_API_LLM_MODEL"
 ENV_LLM_BASE_URL = "HINDSIGHT_API_LLM_BASE_URL"
+ENV_LLM_MAX_CONCURRENT = "HINDSIGHT_API_LLM_MAX_CONCURRENT"
+ENV_LLM_TIMEOUT = "HINDSIGHT_API_LLM_TIMEOUT"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
@@ -36,6 +38,8 @@ ENV_MCP_LOCAL_BANK_ID = "HINDSIGHT_API_MCP_LOCAL_BANK_ID"
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODEL = "gpt-5-mini"
+DEFAULT_LLM_MAX_CONCURRENT = 32
+DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 
 DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
@@ -66,6 +70,8 @@ class HindsightConfig:
     llm_api_key: str | None
     llm_model: str
     llm_base_url: str | None
+    llm_max_concurrent: int
+    llm_timeout: float
 
     # Embeddings
     embeddings_provider: str
@@ -97,6 +103,8 @@ class HindsightConfig:
             llm_api_key=os.getenv(ENV_LLM_API_KEY),
             llm_model=os.getenv(ENV_LLM_MODEL, DEFAULT_LLM_MODEL),
             llm_base_url=os.getenv(ENV_LLM_BASE_URL) or None,
+            llm_max_concurrent=int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT))),
+            llm_timeout=float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT))),
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
