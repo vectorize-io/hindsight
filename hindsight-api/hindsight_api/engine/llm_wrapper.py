@@ -15,6 +15,13 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
+from ..config import (
+    DEFAULT_LLM_MAX_CONCURRENT,
+    DEFAULT_LLM_TIMEOUT,
+    ENV_LLM_MAX_CONCURRENT,
+    ENV_LLM_TIMEOUT,
+)
+
 # Seed applied to every Groq request for deterministic behavior.
 DEFAULT_LLM_SEED = 4242
 
@@ -24,8 +31,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Global semaphore to limit concurrent LLM requests across all instances
-# Set HINDSIGHT_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama)
-_llm_max_concurrent = int(os.getenv("HINDSIGHT_LLM_MAX_CONCURRENT", "32"))
+# Set HINDSIGHT_API_LLM_MAX_CONCURRENT=1 for local LLMs (LM Studio, Ollama)
+_llm_max_concurrent = int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT)))
 _global_llm_semaphore = asyncio.Semaphore(_llm_max_concurrent)
 
 
@@ -90,20 +97,8 @@ class LLMProvider:
         if self.provider not in ("ollama", "lmstudio") and not self.api_key:
             raise ValueError(f"API key not found for {self.provider}")
 
-        # Get timeout config
-        timeout_env = os.getenv("HINDSIGHT_API_LLM_TIMEOUT")
-        if timeout_env:
-            self.timeout = float(timeout_env)
-        elif self.provider in ("lmstudio", "ollama"):
-            # Dynamic heuristic for local models
-            model_lower = self.model.lower()
-            # Match common large model sizes: 30b+, 70b+, MoE patterns
-            if any(x in model_lower for x in ("30b", "33b", "34b", "65b", "70b", "72b", "8x7b", "8x22b", "giant")):
-                self.timeout = 1200.0  # 20 mins for large models
-            else:
-                self.timeout = 300.0   # 5 mins for standard/small models
-        else:
-            self.timeout = None
+        # Get timeout config (set HINDSIGHT_API_LLM_TIMEOUT for local LLMs that need longer timeouts)
+        self.timeout = float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
 
         # Create client based on provider
         self._client = None
@@ -290,9 +285,9 @@ class LLMProvider:
                         if self.provider not in ("lmstudio", "ollama"):
                             call_params["response_format"] = {"type": "json_object"}
                         
-                        logger.info(f"[LLM DEBUG] Sending request to {self.provider}/{self.model} (timeout={getattr(self, 'timeout', 'None')})")
+                        logger.debug(f"Sending request to {self.provider}/{self.model} (timeout={self.timeout})")
                         response = await self._client.chat.completions.create(**call_params)
-                        logger.info(f"[LLM DEBUG] Received response from {self.provider}/{self.model}")
+                        logger.debug(f"Received response from {self.provider}/{self.model}")
 
                         content = response.choices[0].message.content
 
@@ -467,13 +462,12 @@ class LLMProvider:
                         content += block.text
 
                 if response_format is not None:
-                    # Find JSON in content (simple heuristic or just parse all)
-                    # Often models wrap JSON in ```json ... ```
+                    # Models may wrap JSON in markdown code blocks
                     clean_content = content
                     if "```json" in content:
                         clean_content = content.split("```json")[1].split("```")[0].strip()
                     elif "```" in content:
-                        clean_content = content.split("```")[1].strip()
+                        clean_content = content.split("```")[1].split("```")[0].strip()
 
                     try:
                         json_data = json.loads(clean_content)
