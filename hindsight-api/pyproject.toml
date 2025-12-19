@@ -37,6 +37,7 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.41b0",
     "dateparser>=1.2.2",
     "google-genai>=1.0.0",
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]

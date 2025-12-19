@@ -70,7 +70,7 @@ class Server:
 
         Args:
             db_url: Database URL. Use "pg0" for embedded PostgreSQL.
-            llm_provider: LLM provider ("groq", "openai", "ollama")
+            llm_provider: LLM provider ("groq", "openai", "ollama", "gemini", "anthropic", "lmstudio")
             llm_api_key: API key for the LLM provider
             llm_model: Model name to use
             llm_base_url: Optional custom base URL for LLM API
@@ -236,7 +236,7 @@ def start_server(
 
     Args:
         db_url: Database URL. Use "pg0" for embedded PostgreSQL.
-        llm_provider: LLM provider ("groq", "openai", "ollama")
+        llm_provider: LLM provider ("groq", "openai", "ollama", "gemini", "anthropic", "lmstudio")
         llm_api_key: API key for the LLM provider
         llm_model: Model name to use
         llm_base_url: Optional custom base URL for LLM API
