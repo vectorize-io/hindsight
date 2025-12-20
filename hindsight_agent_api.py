@@ -15,11 +15,16 @@ import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.status import HTTP_403_FORBIDDEN
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Avoid sys.path manipulation if possible, but keeping for now as requested to fix
+# Ideally this should be handled by package installation
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import ManagedIdentityCredential, AzureCliCredential, ChainedTokenCredential
@@ -37,7 +42,25 @@ _settings = None
 AGENT_NAME = "Hindsight-v3"
 AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
+AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
+# Security
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    """Validate API Key."""
+    expected_key = os.environ.get("HINDSIGHT_API_KEY")
+    if not expected_key:
+        logger.warning("HINDSIGHT_API_KEY not set in environment - insecure mode!")
+        return None
+        
+    if api_key_header == expected_key:
+        return api_key_header
+        
+    raise HTTPException(
+        status_code=HTTP_403_FORBIDDEN, detail="Could not validate credentials"
+    )
 def get_credential():
     """Get the appropriate credential based on environment."""
     is_azure = any([
@@ -100,11 +123,14 @@ app = FastAPI(
 )
 
 # CORS for web clients
+# Restrict to specific origins in production
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -155,8 +181,8 @@ def handle_tool_call(tool_name: str, arguments: dict) -> str:
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
     except Exception as e:
-        logger.error(f"Tool execution error: {e}")
-        result = {"error": str(e)}
+        logger.error(f"Tool execution error: {e}", exc_info=True)
+        result = {"error": "An internal error occurred during tool execution."}
     
     return json.dumps(result, indent=2)
 
@@ -256,7 +282,7 @@ async def health_check():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, api_key: str = Depends(get_api_key)):
     """
     Send a message to the Hindsight agent.
     
@@ -277,8 +303,9 @@ async def chat(request: ChatRequest):
             tool_calls=tool_calls
         )
     except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Chat error: {e}", exc_info=True)
+        # return generic error to client
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
 
 @app.get("/")

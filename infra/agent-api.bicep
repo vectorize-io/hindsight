@@ -20,8 +20,12 @@ var acrName = 'hindsightacr${uniqueString(resourceGroup().id)}'
 var logAnalyticsName = 'hindsight-logs'
 
 // Configuration
-var hindsightApiUrl = 'https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io'
-var projectEndpoint = 'https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216'
+// Configuration
+param hindsightApiUrl string = 'https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io'
+param projectEndpoint string = 'https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216'
+param aiResourceId string = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${aiProjectResourceGroup}/providers/Microsoft.CognitiveServices/accounts/${aiResourceName}'
+param allowedOrigins array = []
+
 var defaultBankId = 'hindsight_agent_bank'
 
 // Log Analytics Workspace
@@ -32,7 +36,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: 90
   }
 }
 
@@ -44,7 +48,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: true
+    adminUserEnabled: false
   }
 }
 
@@ -78,22 +82,16 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         targetPort: 8080
         transport: 'http'
         corsPolicy: {
-          allowedOrigins: ['*']
+          allowedOrigins: empty(allowedOrigins) ? ['*'] : allowedOrigins
           allowedMethods: ['GET', 'POST', 'OPTIONS']
           allowedHeaders: ['*']
+          allowCredentials: true
         }
       }
       registries: [
         {
           server: acr.properties.loginServer
-          username: acr.listCredentials().username
-          passwordSecretRef: 'acr-password'
-        }
-      ]
-      secrets: [
-        {
-          name: 'acr-password'
-          value: acr.listCredentials().passwords[0].value
+          identity: containerApp.identity.principalId
         }
       ]
     }
@@ -147,7 +145,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 3
         rules: [
           {
@@ -168,9 +166,20 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
 // This requires the AI resource to be in the same subscription
 resource cognitiveServicesRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(containerApp.id, 'CognitiveServicesUser', aiResourceName)
-  scope: resourceGroup()
+  scope: resource(aiResourceId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908') // Cognitive Services User
+    principalId: containerApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment - AcrPull for Container App
+resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerApp.id, 'AcrPull', acr.id)
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d') // AcrPull
     principalId: containerApp.identity.principalId
     principalType: 'ServicePrincipal'
   }

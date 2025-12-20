@@ -13,12 +13,14 @@ import sys
 import json
 import logging
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Avoid sys.path manipulation if possible
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential, ManagedIdentityCredential, ChainedTokenCredential
 from config import get_config
-from hindsight_client import HindsightClient, MemoryBanks
+from hindsight_client import HindsightClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -190,7 +192,7 @@ def chat(user_input: str, conversation_id: str = None):
         return getattr(item, 'type', None)
     
     # Handle tool calls in a loop
-    max_iterations = 10
+    max_iterations = 15
     iteration = 0
     
     while iteration < max_iterations:
@@ -209,12 +211,13 @@ def chat(user_input: str, conversation_id: str = None):
                 tool_name = item.get('name')
                 arguments = json.loads(item.get('arguments', '{}'))
                 call_id = item.get('call_id')
-                status = item.get('status')
+                # status = item.get('status')
             else:
                 tool_name = item.name
                 arguments = json.loads(item.arguments) if item.arguments else {}
                 call_id = item.call_id
-                status = getattr(item, 'status', None)
+                # status variable unused
+                # status = getattr(item, 'status', None)
             
             print(f"   🔧 Tool: {tool_name}({json.dumps(arguments)[:80]})")
             

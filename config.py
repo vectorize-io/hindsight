@@ -10,7 +10,7 @@ from typing import Optional
 # Try to import Azure App Configuration provider
 try:
     from azure.appconfiguration.provider import load
-    from azure.identity import DefaultAzureCredential
+    # DefaultAzureCredential unused but keeping if needed for future AAD auth
     HAS_APP_CONFIG = True
 except ImportError:
     HAS_APP_CONFIG = False
@@ -54,6 +54,9 @@ def _get_from_app_config() -> Optional[dict]:
         from azure.appconfiguration.provider import SettingSelector
         
         # Load using connection string (access key auth)
+        if not APP_CONFIG_CONNECTION_STRING:
+            print("WARNING: AZURE_APP_CONFIG_CONNECTION_STRING is empty. App Config will fail.")
+            
         config = load(
             connection_string=APP_CONFIG_CONNECTION_STRING,
             selects=[SettingSelector(key_filter=f"{CONFIG_PREFIX}*")],
@@ -81,7 +84,7 @@ def _get_from_env() -> dict:
         # Set HINDSIGHT_MODEL_DEPLOYMENT_NAME to override
         "ModelDeploymentName": os.environ.get(
             "HINDSIGHT_MODEL_DEPLOYMENT_NAME",
-            "gpt-4o"
+            "gpt-5.2-chat"
         ),
         "McpBaseUrl": os.environ.get(
             "HINDSIGHT_MCP_BASE_URL",
@@ -123,7 +126,7 @@ def get_config() -> HindsightConfig:
     
     return HindsightConfig(
         project_endpoint=config_dict.get("ProjectEndpoint", ""),
-        model_deployment_name=config_dict.get("ModelDeploymentName", "gpt-4o"),
+        model_deployment_name=config_dict.get("ModelDeploymentName", "gpt-5.2-chat"),
         mcp_base_url=config_dict.get("McpBaseUrl", ""),
         default_bank_id=config_dict.get("DefaultBankId", "hindsight_agent_bank"),
         agent_name=config_dict.get("AgentName", "Hindsight"),

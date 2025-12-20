@@ -9,7 +9,6 @@ Features:
 - Multi-bank support
 """
 
-import json
 import logging
 import time
 from functools import lru_cache
@@ -84,7 +83,7 @@ class HindsightClient:
         
         # Default timeouts
         self.default_timeout = 30
-        self.reflect_timeout = 60  # Reflect operations take longer
+        self.reflect_timeout = 120  # Reflect operations take longer
         
         self._initialized = True
         logger.info(f"HindsightClient initialized: {self.base_url}")
@@ -155,9 +154,9 @@ class HindsightClient:
             return {"error": error_msg, "response_text": response.text[:200]}
             
         except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
-            logger.exception(error_msg)
-            return {"error": error_msg}
+            # Don't leak internal details
+            logger.exception(f"Unexpected error calling {endpoint}")
+            return {"error": "An unexpected error occurred."}
     
     def recall(
         self, 
@@ -295,11 +294,21 @@ class HindsightClient:
             True if API is healthy, False otherwise
         """
         try:
+            # 1. Simple reachability check
             response = self.session.get(
                 f"{self.base_url}/health",
                 timeout=5
             )
-            return response.status_code == 200
+            if response.status_code != 200:
+                logger.warning(f"Health check failed with status {response.status_code}")
+                return False
+
+            # 2. Verify basic auth/connectivity if possible (optional, depending on API)
+            # For Hindsight, listing banks is a good lightweight check
+            # response = self.session.get(f"{self.base_url}/v1/default/banks", timeout=5)
+            # return response.status_code == 200
+            
+            return True
         except Exception:
             return False
     

@@ -21,7 +21,9 @@
 param(
     [string]$ResourceGroup = "hindsight-rg",
     [string]$Location = "centralus",
-    [string]$ImageTag = "latest"
+    [string]$ImageTag = "latest",
+    [string]$AiResourceGroup = "jacob-1216-resource",
+    [string]$AiResourceName = "jacob-1216-resource"
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,7 +50,7 @@ az group create --name $ResourceGroup --location $Location --output none 2>$null
 
 # Deploy Bicep template
 Write-Host "`nDeploying infrastructure with Bicep..." -ForegroundColor Yellow
-$deploymentJson = az deployment group create --resource-group $ResourceGroup --template-file "$ScriptDir/infra/agent-api.bicep" --parameters location=$Location imageTag=$ImageTag --query "properties.outputs" --output json
+$deploymentJson = az deployment group create --resource-group $ResourceGroup --template-file "$ScriptDir/infra/agent-api.bicep" --parameters location=$Location imageTag=$ImageTag aiProjectResourceGroup=$AiResourceGroup aiResourceName=$AiResourceName --query "properties.outputs" --output json
 
 if (-not $deploymentJson) {
     Write-Host "Bicep deployment failed" -ForegroundColor Red
@@ -79,7 +81,7 @@ az containerapp update --name $containerAppName --resource-group $ResourceGroup 
 # Assign RBAC to AI Project (cross-resource-group)
 Write-Host "`nAssigning RBAC to AI Project..." -ForegroundColor Yellow
 $subscriptionId = $account.id
-$aiResourceId = "/subscriptions/$subscriptionId/resourceGroups/jacob-1216-resource/providers/Microsoft.CognitiveServices/accounts/jacob-1216-resource"
+$aiResourceId = "/subscriptions/$subscriptionId/resourceGroups/$AiResourceGroup/providers/Microsoft.CognitiveServices/accounts/$AiResourceName"
 
 az role assignment create --assignee $principalId --role "Cognitive Services User" --scope $aiResourceId --output none 2>$null
 

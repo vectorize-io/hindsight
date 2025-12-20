@@ -18,7 +18,11 @@ print(f"Loaded spec with {len(openapi_spec['paths'])} endpoints")
 
 # Connect
 credential = AzureCliCredential()
-project_endpoint = 'https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216'
+import os
+project_endpoint = os.environ.get(
+    'HINDSIGHT_PROJECT_ENDPOINT', 
+    'https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216'
+)
 client = AIProjectClient(credential=credential, endpoint=project_endpoint)
 
 # Create OpenAPI function definition
