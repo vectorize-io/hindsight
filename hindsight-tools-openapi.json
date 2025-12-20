@@ -1,0 +1,214 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hindsight Memory Tools",
+    "description": "Memory tools for the Hindsight agent - retain, recall, and reflect operations",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io",
+      "description": "Hindsight Memory API"
+    }
+  ],
+  "paths": {
+    "/v1/default/banks/{bank_id}/memories": {
+      "post": {
+        "operationId": "retain",
+        "summary": "Store new information to long-term memory",
+        "description": "Use PROACTIVELY when user shares preferences, facts, events worth remembering. Stores memories with automatic fact extraction.",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "hindsight_agent_bank"
+            },
+            "description": "Memory bank ID (use hindsight_agent_bank for general, user_preferences for user info, project_context for work)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["content"],
+                      "properties": {
+                        "content": {
+                          "type": "string",
+                          "description": "The fact/memory to store (be specific with relevant details)"
+                        },
+                        "context": {
+                          "type": "string",
+                          "description": "Category for the memory (preferences, work, hobbies, family, general)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Memory stored successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {"type": "boolean"},
+                    "bank_id": {"type": "string"},
+                    "items_count": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories/recall": {
+      "post": {
+        "operationId": "recall",
+        "summary": "Search and retrieve memories from long-term storage",
+        "description": "Use whenever you need past context, preferences, or stored facts. Searches using semantic similarity.",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "hindsight_agent_bank"
+            },
+            "description": "Memory bank ID to search"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "Natural language search query (e.g., 'user preferences', 'what happened last week')"
+                  },
+                  "budget": {
+                    "type": "string",
+                    "enum": ["low", "mid", "high"],
+                    "default": "mid",
+                    "description": "Search depth - low for quick, high for thorough"
+                  },
+                  "max_tokens": {
+                    "type": "integer",
+                    "default": 4096,
+                    "description": "Maximum tokens to return"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recall results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {"type": "string"},
+                          "text": {"type": "string"},
+                          "type": {"type": "string"},
+                          "context": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/reflect": {
+      "post": {
+        "operationId": "reflect",
+        "summary": "Synthesize memories to form opinions or answer complex questions",
+        "description": "Use when asked for your opinion or a complex synthesis question requiring reasoning over past context.",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "hindsight_agent_bank"
+            },
+            "description": "Memory bank ID to reflect on"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "The question or topic to reflect on"
+                  },
+                  "budget": {
+                    "type": "string",
+                    "enum": ["low", "mid", "high"],
+                    "default": "low"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reflection result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "description": "The synthesized answer/reflection"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
