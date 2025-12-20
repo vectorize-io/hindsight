@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 settings = get_config()
 
 # Use an agent with function tools (not MCP) for client-side handling
-AGENT_NAME = "Hindsight-v2"
+AGENT_NAME = "Hindsight-v3"
 AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
 # Agent system instructions

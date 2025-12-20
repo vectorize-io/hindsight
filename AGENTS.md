@@ -47,7 +47,7 @@ This document serves as the **Operational Manual** for the Hindsight Agent deplo
 | Deployment Name | Model | Status | Notes |
 |-----------------|-------|--------|-------|
 | `gpt-4.1` | GPT-4.1 | ✅ Active | Available for use |
-| `gpt-5.2-chat` | GPT-5.2 | ✅ Active | **Used by Hindsight-v2 agent** |
+| `gpt-5.2-chat` | GPT-5.2 | ✅ Active | **Used by Hindsight-v3 agent** |
 | `text-embedding-3-small` | text-embedding-3-small | ✅ Active | Embedding model |
 | `text-embedding-3-large` | text-embedding-3-large | ✅ Active | Embedding model |
 | `claude-opus-4-5` | Claude Opus 4.5 | ✅ Active | Anthropic model |
@@ -71,8 +71,8 @@ This document serves as the **Operational Manual** for the Hindsight Agent deplo
 │  │  Project: jacob-1216                                         │    │
 │  │  ┌─────────────────┐    ┌─────────────────────────────────┐ │    │
 │  │  │  Agent:         │    │  Model Deployment:              │ │    │
-│  │  │  Hindsight-v2   │───▶│  gpt-5.2-chat                   │ │    │
-│  │  │  (agent_ref)    │    │                                 │ │    │
+│  │  │  Hindsight-v3   │───▶│  gpt-5.2-chat                   │ │    │
+│  │  │  (agent_ref)    │    │  (24 OpenAPI endpoints)         │ │    │
 │  │  └─────────────────┘    └─────────────────────────────────┘ │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -146,7 +146,7 @@ The `hindsight-agent-api` provides remote HTTP access to the Hindsight agent.
 ```json
 {
   "status": "healthy",
-  "agent": "Hindsight-v2",
+  "agent": "Hindsight-v3",
   "project_endpoint": "https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216"
 }
 ```
@@ -447,7 +447,7 @@ openai_client = client.get_openai_client()
 
 # Create response using agent reference (name only, no version needed)
 response = openai_client.responses.create(
-    extra_body={"agent": {"name": "Hindsight-v2", "type": "agent_reference"}},
+    extra_body={"agent": {"name": "Hindsight-v3", "type": "agent_reference"}},
     input=user_input,
 )
 
@@ -463,7 +463,7 @@ for tool_call in response.output:
 
 # Continue with tool outputs
 response = openai_client.responses.create(
-    extra_body={"agent": {"name": "Hindsight-v2", "type": "agent_reference"}},
+    extra_body={"agent": {"name": "Hindsight-v3", "type": "agent_reference"}},
     input=tool_outputs,
     previous_response_id=response.id,
 )
@@ -563,24 +563,28 @@ Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.central
 
 ```
 hindsight/
-├── AGENTS.md                    # This file - operations manual
-├── hindsight_agent.py           # Main agent script (local/interactive)
-├── hindsight_agent_api.py       # FastAPI wrapper for remote access
-├── hindsight_client.py          # Memory API client (retain/recall/reflect)
-├── hindsight-tools-openapi.json # OpenAPI spec for agent tools
-├── update_agent_openapi.py      # Script to update agent with OpenAPI tools
-├── config.py                    # Configuration management
-├── Dockerfile.agent-api         # Container definition
-├── requirements-agent-api.txt   # Python dependencies
-├── deploy-bicep.ps1             # Deployment script
+├── AGENTS.md                        # This file - operations manual
+├── hindsight_agent.py               # Main agent script (local/interactive)
+├── hindsight_agent_api.py           # FastAPI wrapper for remote access
+├── hindsight_client.py              # Memory API client (retain/recall/reflect)
+├── hindsight-tools-openapi-full.json # Complete OpenAPI spec (24 endpoints)
+├── create_agent_full_spec.py        # Script to create/update agent with full spec
+├── openapi.json                     # Source OpenAPI spec from hindsight-api
+├── config.py                        # Configuration management
+├── Dockerfile.agent-api             # Container definition
+├── requirements-agent-api.txt       # Python dependencies
+├── deploy-bicep.ps1                 # Deployment script
 └── infra/
-    └── agent-api.bicep          # Infrastructure as Code
+    └── agent-api.bicep              # Infrastructure as Code
 ```
 
 ---
 
 ## 📝 Changelog
 
+- **2025-12-20**: Upgraded to full OpenAPI spec (24 endpoints) with all admin functions
+- **2025-12-20**: Consolidated agent scripts to single `create_agent_full_spec.py`
+- **2025-12-20**: Agent Hindsight-v3:4 now has complete API access
 - **2025-12-19**: Added OpenAPI tools - agent now works from Foundry portal and code
 - **2025-12-19**: Fixed Responses API usage - removed version from agent_reference, removed temperature/top_p
 - **2025-12-19**: Updated model deployments documentation (gpt-5.2-chat is primary)

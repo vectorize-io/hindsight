@@ -34,7 +34,7 @@ _ai_client: Optional[AIProjectClient] = None
 _hindsight_client: Optional[HindsightClient] = None
 _settings = None
 
-AGENT_NAME = "Hindsight-v2"
+AGENT_NAME = "Hindsight-v3"
 AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
 
