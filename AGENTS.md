@@ -38,7 +38,7 @@ This document serves as the **Operational Manual** for the Hindsight Agent deplo
 |-----------|--------------|-----|---------|
 | **Memory API** | `hindsight-api` | `https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io` | Core memory storage/retrieval (retain, recall, reflect) |
 | **Agent API** | `hindsight-agent-api` | `https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io` | Remote HTTP access to Hindsight agent |
-| **Container Registry** | `hindsightacr9631` | `hindsightacr9631.azurecr.io` | Docker image storage |
+| **Container Registry** | `hindsightacrrxuumag3f5ln6` | `hindsightacrrxuumag3f5ln6.azurecr.io` | Docker image storage |
 | **Container Environment** | `hindsight-env` | - | Container Apps managed environment |
 | **Log Analytics** | `hindsight-logs` | - | Centralized logging |
 
@@ -239,7 +239,7 @@ python hindsight_agent.py --message "What do you remember about me?"
 
 2. **Builds Container Image**:
    - Uses ACR Tasks (`az acr build`)
-   - Pushes to `hindsightacr9631.azurecr.io/hindsight-agent-api:latest`
+   - Pushes to `hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest`
 
 3. **Configures RBAC**:
    - Assigns `Cognitive Services User` role to Container App's managed identity
@@ -252,15 +252,15 @@ python hindsight_agent.py --message "What do you remember about me?"
 docker build -t hindsight-agent-api:latest -f Dockerfile.agent-api .
 
 # Tag for ACR
-docker tag hindsight-agent-api:latest hindsightacr9631.azurecr.io/hindsight-agent-api:latest
+docker tag hindsight-agent-api:latest hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
 
 # Push to ACR
-az acr login --name hindsightacr9631
-docker push hindsightacr9631.azurecr.io/hindsight-agent-api:latest
+az acr login --name hindsightacrrxuumag3f5ln6
+docker push hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
 
 # Update Container App
 az containerapp update --name hindsight-agent-api --resource-group hindsight-rg `
-  --image hindsightacr9631.azurecr.io/hindsight-agent-api:latest
+  --image hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
 ```
 
 ### Verify Deployment
