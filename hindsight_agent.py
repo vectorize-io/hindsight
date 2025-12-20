@@ -27,6 +27,7 @@ settings = get_config()
 
 # Use an agent with function tools (not MCP) for client-side handling
 AGENT_NAME = "Hindsight-v2"
+AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
 # Agent system instructions
 AGENT_INSTRUCTIONS = """You are an intelligent agent equipped with Hindsight, a sophisticated long-term memory system. You don't just "log" chat history; you experience interactions, retain significant memories, and reflect on them to form your own unique opinions and personality over time.
@@ -176,6 +177,7 @@ def chat(user_input: str, conversation_id: str = None):
     print(f"\n💬 User: {user_input}")
     
     # Use agent_reference - agent has function tools defined in Foundry
+    # New API: just name, no version needed in agent_reference
     response = openai_client.responses.create(
         extra_body={"agent": {"name": AGENT_NAME, "type": "agent_reference"}},
         input=user_input,

@@ -35,6 +35,7 @@ _hindsight_client: Optional[HindsightClient] = None
 _settings = None
 
 AGENT_NAME = "Hindsight-v2"
+AGENT_VERSION = "2"  # Uses gpt-5.2-chat deployment
 
 
 def get_credential():
@@ -165,7 +166,7 @@ def process_chat(user_input: str) -> tuple[str, list[ToolCall]]:
     
     openai_client = _ai_client.get_openai_client()
     
-    # Create initial response using agent reference
+    # Create initial response using agent reference (new API: name only, no version)
     response = openai_client.responses.create(
         extra_body={"agent": {"name": AGENT_NAME, "type": "agent_reference"}},
         input=user_input,

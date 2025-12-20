@@ -46,8 +46,13 @@ This document serves as the **Operational Manual** for the Hindsight Agent deplo
 
 | Deployment Name | Model | Status | Notes |
 |-----------------|-------|--------|-------|
-| `gpt-4o` | GPT-4o | ✅ Active | Primary model for Hindsight agent |
-| `gpt-5.2-chat` | GPT-5.2 | ⚠️ Available | Post-cutoff model, available for use |
+| `gpt-4.1` | GPT-4.1 | ✅ Active | Available for use |
+| `gpt-5.2-chat` | GPT-5.2 | ✅ Active | **Used by Hindsight-v2 agent** |
+| `text-embedding-3-small` | text-embedding-3-small | ✅ Active | Embedding model |
+| `text-embedding-3-large` | text-embedding-3-large | ✅ Active | Embedding model |
+| `claude-opus-4-5` | Claude Opus 4.5 | ✅ Active | Anthropic model |
+
+> **Note**: `gpt-4o` deployment does NOT exist. The agent uses `gpt-5.2-chat`.
 
 ### Configuration Store
 
@@ -66,7 +71,7 @@ This document serves as the **Operational Manual** for the Hindsight Agent deplo
 │  │  Project: jacob-1216                                         │    │
 │  │  ┌─────────────────┐    ┌─────────────────────────────────┐ │    │
 │  │  │  Agent:         │    │  Model Deployment:              │ │    │
-│  │  │  Hindsight-v2   │───▶│  gpt-4o                         │ │    │
+│  │  │  Hindsight-v2   │───▶│  gpt-5.2-chat                   │ │    │
 │  │  │  (agent_ref)    │    │                                 │ │    │
 │  │  └─────────────────┘    └─────────────────────────────────┘ │    │
 │  └─────────────────────────────────────────────────────────────┘    │
@@ -398,7 +403,7 @@ az containerapp update --name hindsight-agent-api --resource-group hindsight-rg 
 
 ### Foundry Responses API (Correct Pattern)
 
-The agent uses the **Responses API** with `agent_reference` pattern:
+The agent uses the **Responses API** with `agent_reference` pattern. Note that temperature/top_p are not supported in the Responses API.
 
 ```python
 from azure.ai.projects import AIProjectClient
@@ -406,7 +411,7 @@ from azure.ai.projects import AIProjectClient
 client = AIProjectClient(credential=credential, endpoint=project_endpoint)
 openai_client = client.get_openai_client()
 
-# Create response using agent reference
+# Create response using agent reference (name only, no version needed)
 response = openai_client.responses.create(
     extra_body={"agent": {"name": "Hindsight-v2", "type": "agent_reference"}},
     input=user_input,
@@ -435,7 +440,9 @@ response = openai_client.responses.create(
 | Pattern | Status | Notes |
 |---------|--------|-------|
 | `responses.create()` with `agent_reference` | ✅ Working | Correct pattern for Foundry agents |
-| `chat.completions.create()` with `model=` | ❌ Fails | Returns 404 for deployment names |
+| `agent_reference` with name only | ✅ Required | Do NOT include version in agent_reference |
+| `chat.completions.create()` | ❌ Deprecated | Use Responses API instead |
+| `temperature`, `top_p` in responses | ❌ Not supported | These parameters don't exist in Responses API |
 | Tools in `extra_body` with `agent_reference` | ❌ Fails | "tools not allowed when agent is specified" |
 | Client-side tool execution | ✅ Required | Server may return `completed` but still needs output |
 
@@ -538,6 +545,8 @@ hindsight/
 
 ## 📝 Changelog
 
+- **2025-12-19**: Fixed Responses API usage - removed version from agent_reference, removed temperature/top_p
+- **2025-12-19**: Updated model deployments documentation (gpt-5.2-chat is primary)
 - **2024-12-19**: Initial comprehensive documentation
 - **2024-12-19**: Deployed Agent API to Azure Container Apps
 - **2024-12-19**: Optimized agent to use Responses API with client-side tool execution
