@@ -372,11 +372,30 @@ az containerapp update --name hindsight-agent-api --resource-group hindsight-rg 
 
 ## 🔧 Agent Modification Workflow
 
+### Agent Tool Types
+
+The Hindsight agent uses **OpenAPI tools** which allow it to work from:
+1. **Azure AI Foundry portal/playground** - tools execute server-side
+2. **Python code (hindsight_agent.py)** - tools execute server-side via Foundry
+3. **Container App (hindsight-agent-api)** - tools execute server-side via Foundry
+
+### Updating Agent Tools
+
+To update the agent's OpenAPI tools:
+
+```powershell
+# Edit hindsight-tools-openapi.json with new endpoints
+# Then run:
+python update_agent_openapi.py
+```
+
+This creates a new agent version with the updated tools.
+
 ### Updating System Prompt
 
-1. **Edit Instructions**: Modify `AGENT_INSTRUCTIONS` in `hindsight_agent.py`
-2. **Redeploy**: Run `deploy-bicep.ps1` or manually update container
-3. **Test**: Verify via `/chat` endpoint
+1. **Edit Instructions**: Modify `AGENT_INSTRUCTIONS` in `update_agent_openapi.py`
+2. **Run Update Script**: `python update_agent_openapi.py`
+3. **Test**: Verify in Foundry portal or via `/chat` endpoint
 
 ### Switching Models
 
@@ -392,14 +411,29 @@ az containerapp update --name hindsight-agent-api --resource-group hindsight-rg 
 
 ### Adding New Tools
 
-1. **Define Tool Schema** in `HINDSIGHT_TOOLS` array
-2. **Implement Handler** in `handle_tool_call()` function
-3. **Add Client Method** in `HindsightClient` if calling external API
-4. **Redeploy**
+1. **Add endpoint to OpenAPI spec** (`hindsight-tools-openapi.json`)
+2. **Update agent**: Run `python update_agent_openapi.py`
+3. **Test in Foundry portal** or via code
 
 ---
 
 ## 🔌 API Patterns & SDK Usage
+
+### OpenAPI Tools Architecture
+
+The agent uses **OpenAPI tools** that call the `hindsight-api` directly:
+
+```
+┌──────────────────┐     ┌─────────────────────┐     ┌────────────────────┐
+│  Foundry Portal  │     │  Azure AI Foundry   │     │  hindsight-api     │
+│  or Python Code  │────▶│  (executes tools)   │────▶│  (memory storage)  │
+└──────────────────┘     └─────────────────────┘     └────────────────────┘
+```
+
+**Why OpenAPI tools?**
+- Tools execute server-side by Foundry
+- Works from portal/playground without client code
+- Same behavior whether accessed from portal or code
 
 ### Foundry Responses API (Correct Pattern)
 
@@ -533,6 +567,8 @@ hindsight/
 ├── hindsight_agent.py           # Main agent script (local/interactive)
 ├── hindsight_agent_api.py       # FastAPI wrapper for remote access
 ├── hindsight_client.py          # Memory API client (retain/recall/reflect)
+├── hindsight-tools-openapi.json # OpenAPI spec for agent tools
+├── update_agent_openapi.py      # Script to update agent with OpenAPI tools
 ├── config.py                    # Configuration management
 ├── Dockerfile.agent-api         # Container definition
 ├── requirements-agent-api.txt   # Python dependencies
@@ -545,6 +581,7 @@ hindsight/
 
 ## 📝 Changelog
 
+- **2025-12-19**: Added OpenAPI tools - agent now works from Foundry portal and code
 - **2025-12-19**: Fixed Responses API usage - removed version from agent_reference, removed temperature/top_p
 - **2025-12-19**: Updated model deployments documentation (gpt-5.2-chat is primary)
 - **2024-12-19**: Initial comprehensive documentation
