@@ -227,7 +227,31 @@ class LLMProvider:
                         response = await self._client.chat.completions.create(**call_params)
 
                         content = response.choices[0].message.content
-                        json_data = json.loads(content)
+                        
+                        # Log raw LLM response for debugging JSON parse issues
+                        try:
+                            json_data = json.loads(content)
+                        except json.JSONDecodeError as json_err:
+                            # Truncate content for logging (first 500 and last 200 chars)
+                            content_preview = content[:500] if content else "<empty>"
+                            if content and len(content) > 700:
+                                content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
+                            logger.warning(
+                                f"JSON parse error from LLM response (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
+                                f"  Model: {self.provider}/{self.model}\n"
+                                f"  Content length: {len(content) if content else 0} chars\n"
+                                f"  Content preview: {content_preview!r}\n"
+                                f"  Finish reason: {response.choices[0].finish_reason if response.choices else 'unknown'}"
+                            )
+                            # Retry on JSON parse errors - LLM may return valid JSON on next attempt
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                await asyncio.sleep(backoff)
+                                last_exception = json_err
+                                continue
+                            else:
+                                logger.error(f"JSON parse error after {max_retries + 1} attempts, giving up")
+                                raise
 
                         if skip_validation:
                             result = json_data

@@ -1806,7 +1806,18 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             import traceback
 
-            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            # Create a summary of the input for debugging
+            input_summary = []
+            for i, item in enumerate(request.items):
+                content_preview = item.content[:100] + "..." if len(item.content) > 100 else item.content
+                input_summary.append(f"  [{i}] content={content_preview!r}, context={item.context}, timestamp={item.timestamp}")
+            input_debug = "\n".join(input_summary)
+            
+            error_detail = (
+                f"{str(e)}\n\n"
+                f"Input ({len(request.items)} items):\n{input_debug}\n\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories (retain): {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
