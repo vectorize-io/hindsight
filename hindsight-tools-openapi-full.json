@@ -1,0 +1,2533 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hindsight Memory API",
+    "description": "Complete Hindsight Memory API for AI agents",
+    "contact": {
+      "name": "Memory System"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Health check endpoint",
+        "description": "Checks the health of the API and database connection",
+        "operationId": "health_endpoint_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Prometheus metrics endpoint",
+        "description": "Exports metrics in Prometheus format for scraping",
+        "operationId": "metrics_endpoint_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/graph": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Get memory graph data",
+        "description": "Retrieve graph data for visualization, optionally filtered by type (world/experience/opinion). Limited to 1000 most recent items.",
+        "operationId": "get_graph",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true,
+              "title": "Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphDataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories/list": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "List memory units",
+        "description": "List memory units with pagination and optional full-text search. Supports filtering by type. Results are sorted by most recent first (mentioned_at DESC, then created_at DESC).",
+        "operationId": "list_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true,
+              "title": "Type"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true,
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMemoryUnitsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories/recall": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Recall memory",
+        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe type parameter is optional and must be one of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n- `opinion`: The bank's formed beliefs, perspectives, and viewpoints\n\nSet `include_entities=true` to get entity observations alongside recall results.",
+        "operationId": "recall_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/reflect": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Reflect and generate answer",
+        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Extracts and stores any new opinions formed\n6. Returns plain text answer, the facts used, and new opinions",
+        "operationId": "reflect",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "List all memory banks",
+        "description": "Get a list of all agents with their profiles",
+        "operationId": "list_banks",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/stats": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Get statistics for memory bank",
+        "description": "Get statistics about nodes and links for a specific agent",
+        "operationId": "get_agent_stats",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities": {
+      "get": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "List entities",
+        "description": "List all entities (people, organizations, etc.) known by the bank, ordered by mention count.",
+        "operationId": "list_entities",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of entities to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of entities to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities/{entity_id}": {
+      "get": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "Get entity details",
+        "description": "Get detailed information about an entity including observations (mental model).",
+        "operationId": "get_entity",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate": {
+      "post": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "Regenerate entity observations",
+        "description": "Regenerate observations for an entity based on all facts mentioning it.",
+        "operationId": "regenerate_entity_observations",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/documents": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "List documents",
+        "description": "List documents with pagination and optional search. Documents are the source content from which memory units are extracted.",
+        "operationId": "list_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true,
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDocumentsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get document details",
+        "description": "Get a specific document including its original text",
+        "operationId": "get_document",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Delete a document",
+        "description": "Delete a document and all its associated memory units and links.\n\nThis will cascade delete:\n- The document itself\n- All memory units extracted from this document\n- All links (temporal, semantic, entity) associated with those memory units\n\nThis operation cannot be undone.",
+        "operationId": "delete_document",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/chunks/{chunk_id}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Get chunk details",
+        "description": "Get a specific chunk by its ID",
+        "operationId": "get_chunk",
+        "parameters": [
+          {
+            "name": "chunk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Chunk Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "List async operations",
+        "description": "Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
+        "operationId": "list_operations",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/operations/{operation_id}": {
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Cancel a pending async operation",
+        "description": "Cancel a pending async operation by removing it from the queue",
+        "operationId": "cancel_operation",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/profile": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Get memory bank profile",
+        "description": "Get disposition traits and background for a memory bank. Auto-creates agent with defaults if not exists.",
+        "operationId": "get_bank_profile",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Update memory bank disposition",
+        "description": "Update bank's disposition traits (skepticism, literalism, empathy)",
+        "operationId": "update_bank_disposition",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDispositionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/background": {
+      "post": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Add/merge memory bank background",
+        "description": "Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers disposition traits.",
+        "operationId": "add_bank_background",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddBackgroundRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}": {
+      "put": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Create or update memory bank",
+        "description": "Create a new agent or update existing agent with disposition and background. Auto-fills missing fields with defaults.",
+        "operationId": "create_or_update_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBankRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Delete memory bank",
+        "description": "Delete an entire memory bank including all memories, entities, documents, and the bank profile itself. This is a destructive operation that cannot be undone.",
+        "operationId": "delete_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/memories": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Retain memories",
+        "description": "Retain memory items with automatic fact extraction.\n\nThis is the main endpoint for storing memories. It supports both synchronous and asynchronous processing via the `async` parameter.\n\n**Features:**\n- Efficient batch processing\n- Automatic fact extraction from natural language\n- Entity recognition and linking\n- Document tracking with automatic upsert (when document_id is provided)\n- Temporal and semantic linking\n- Optional asynchronous processing\n\n**The system automatically:**\n1. Extracts semantic facts from the content\n2. Generates embeddings\n3. Deduplicates similar facts\n4. Creates temporal, semantic, and entity links\n5. Tracks document metadata\n\n**When `async=true`:** Returns immediately after queuing. Use the operations endpoint to monitor progress.\n\n**When `async=false` (default):** Waits for processing to complete.\n\n**Note:** If a memory item has a `document_id` that already exists, the old document and its memory units will be deleted before creating new ones (upsert behavior).",
+        "operationId": "retain_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetainResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Clear memory bank memories",
+        "description": "Delete memory units for a memory bank. Optionally filter by type (world, experience, opinion) to delete only specific types. This is a destructive operation that cannot be undone. The bank profile (disposition and background) will be preserved.",
+        "operationId": "clear_bank_memories",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true,
+              "title": "Type",
+              "description": "Optional fact type filter (world, experience, opinion)"
+            },
+            "description": "Optional fact type filter (world, experience, opinion)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddBackgroundRequest": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "New background information to add or merge"
+          },
+          "update_disposition": {
+            "type": "boolean",
+            "title": "Update Disposition",
+            "description": "If true, infer disposition traits from the merged background (default: true)",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "AddBackgroundRequest",
+        "description": "Request model for adding/merging background information.",
+        "example": {
+          "content": "I was born in Texas",
+          "update_disposition": true
+        }
+      },
+      "BackgroundResponse": {
+        "properties": {
+          "background": {
+            "type": "string",
+            "title": "Background"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "background"
+        ],
+        "title": "BackgroundResponse",
+        "description": "Response model for background update.",
+        "example": {
+          "background": "I was born in Texas. I am a software engineer with 10 years of experience.",
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          }
+        }
+      },
+      "BankListItem": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "title": "Name"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
+          },
+          "background": {
+            "type": "string",
+            "nullable": true,
+            "title": "Background"
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true,
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true,
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "disposition"
+        ],
+        "title": "BankListItem",
+        "description": "Bank list item with profile summary."
+      },
+      "BankListResponse": {
+        "properties": {
+          "banks": {
+            "items": {
+              "$ref": "#/components/schemas/BankListItem"
+            },
+            "type": "array",
+            "title": "Banks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "banks"
+        ],
+        "title": "BankListResponse",
+        "description": "Response model for listing all banks.",
+        "example": {
+          "banks": [
+            {
+              "background": "I am a software engineer",
+              "bank_id": "user123",
+              "created_at": "2024-01-15T10:30:00Z",
+              "disposition": {
+                "empathy": 3,
+                "literalism": 3,
+                "skepticism": 3
+              },
+              "name": "Alice",
+              "updated_at": "2024-01-16T14:20:00Z"
+            }
+          ]
+        }
+      },
+      "BankProfileResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
+          },
+          "background": {
+            "type": "string",
+            "title": "Background"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "name",
+          "disposition",
+          "background"
+        ],
+        "title": "BankProfileResponse",
+        "description": "Response model for bank profile.",
+        "example": {
+          "background": "I am a software engineer with 10 years of experience in startups",
+          "bank_id": "user123",
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          },
+          "name": "Alice"
+        }
+      },
+      "Budget": {
+        "type": "string",
+        "enum": [
+          "low",
+          "mid",
+          "high"
+        ],
+        "title": "Budget",
+        "description": "Budget levels for recall/reflect operations."
+      },
+      "ChunkData": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "chunk_index": {
+            "type": "integer",
+            "title": "Chunk Index"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "Whether the chunk text was truncated due to token limits",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "chunk_index"
+        ],
+        "title": "ChunkData",
+        "description": "Chunk data for a single chunk."
+      },
+      "ChunkIncludeOptions": {
+        "properties": {
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "description": "Maximum tokens for chunks (chunks may be truncated)",
+            "default": 8192
+          }
+        },
+        "type": "object",
+        "title": "ChunkIncludeOptions",
+        "description": "Options for including chunks in recall results."
+      },
+      "ChunkResponse": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "title": "Chunk Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "chunk_index": {
+            "type": "integer",
+            "title": "Chunk Index"
+          },
+          "chunk_text": {
+            "type": "string",
+            "title": "Chunk Text"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "document_id",
+          "bank_id",
+          "chunk_index",
+          "chunk_text",
+          "created_at"
+        ],
+        "title": "ChunkResponse",
+        "description": "Response model for get chunk endpoint.",
+        "example": {
+          "bank_id": "user123",
+          "chunk_id": "user123_session_1_0",
+          "chunk_index": 0,
+          "chunk_text": "This is the first chunk of the document...",
+          "created_at": "2024-01-15T10:30:00Z",
+          "document_id": "session_1"
+        }
+      },
+      "CreateBankRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "title": "Name"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits",
+            "nullable": true
+          },
+          "background": {
+            "type": "string",
+            "nullable": true,
+            "title": "Background"
+          }
+        },
+        "type": "object",
+        "title": "CreateBankRequest",
+        "description": "Request model for creating/updating a bank.",
+        "example": {
+          "background": "I am a creative software engineer with 10 years of experience",
+          "disposition": {
+            "empathy": 3,
+            "literalism": 3,
+            "skepticism": 3
+          },
+          "name": "Alice"
+        }
+      },
+      "DeleteResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true,
+            "title": "Message"
+          },
+          "deleted_count": {
+            "type": "integer",
+            "nullable": true,
+            "title": "Deleted Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "DeleteResponse",
+        "description": "Response model for delete operations.",
+        "example": {
+          "deleted_count": 10,
+          "message": "Deleted successfully",
+          "success": true
+        }
+      },
+      "DispositionTraits": {
+        "properties": {
+          "skepticism": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Skepticism",
+            "description": "How skeptical vs trusting (1=trusting, 5=skeptical)"
+          },
+          "literalism": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Literalism",
+            "description": "How literally to interpret information (1=flexible, 5=literal)"
+          },
+          "empathy": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Empathy",
+            "description": "How much to consider emotional context (1=detached, 5=empathetic)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skepticism",
+          "literalism",
+          "empathy"
+        ],
+        "title": "DispositionTraits",
+        "description": "Disposition traits that influence how memories are formed and interpreted.",
+        "example": {
+          "empathy": 3,
+          "literalism": 3,
+          "skepticism": 3
+        }
+      },
+      "DocumentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "original_text": {
+            "type": "string",
+            "title": "Original Text"
+          },
+          "content_hash": {
+            "type": "string",
+            "nullable": true,
+            "title": "Content Hash"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "memory_unit_count": {
+            "type": "integer",
+            "title": "Memory Unit Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "bank_id",
+          "original_text",
+          "content_hash",
+          "created_at",
+          "updated_at",
+          "memory_unit_count"
+        ],
+        "title": "DocumentResponse",
+        "description": "Response model for get document endpoint.",
+        "example": {
+          "bank_id": "user123",
+          "content_hash": "abc123",
+          "created_at": "2024-01-15T10:30:00Z",
+          "id": "session_1",
+          "memory_unit_count": 15,
+          "original_text": "Full document text here...",
+          "updated_at": "2024-01-15T10:30:00Z"
+        }
+      },
+      "EntityDetailResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "mention_count": {
+            "type": "integer",
+            "title": "Mention Count"
+          },
+          "first_seen": {
+            "type": "string",
+            "nullable": true,
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "nullable": true,
+            "title": "Last Seen"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "nullable": true,
+            "title": "Metadata"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/EntityObservationResponse"
+            },
+            "type": "array",
+            "title": "Observations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "canonical_name",
+          "mention_count",
+          "observations"
+        ],
+        "title": "EntityDetailResponse",
+        "description": "Response model for entity detail endpoint.",
+        "example": {
+          "canonical_name": "John",
+          "first_seen": "2024-01-15T10:30:00Z",
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "last_seen": "2024-02-01T14:00:00Z",
+          "mention_count": 15,
+          "observations": [
+            {
+              "mentioned_at": "2024-01-15T10:30:00Z",
+              "text": "John works at Google"
+            }
+          ]
+        }
+      },
+      "EntityIncludeOptions": {
+        "properties": {
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "description": "Maximum tokens for entity observations",
+            "default": 500
+          }
+        },
+        "type": "object",
+        "title": "EntityIncludeOptions",
+        "description": "Options for including entity observations in recall results."
+      },
+      "EntityListItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "mention_count": {
+            "type": "integer",
+            "title": "Mention Count"
+          },
+          "first_seen": {
+            "type": "string",
+            "nullable": true,
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "nullable": true,
+            "title": "Last Seen"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "nullable": true,
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "canonical_name",
+          "mention_count"
+        ],
+        "title": "EntityListItem",
+        "description": "Entity list item with summary.",
+        "example": {
+          "canonical_name": "John",
+          "first_seen": "2024-01-15T10:30:00Z",
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "last_seen": "2024-02-01T14:00:00Z",
+          "mention_count": 15
+        }
+      },
+      "EntityListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntityListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EntityListResponse",
+        "description": "Response model for entity list endpoint.",
+        "example": {
+          "items": [
+            {
+              "canonical_name": "John",
+              "first_seen": "2024-01-15T10:30:00Z",
+              "id": "123e4567-e89b-12d3-a456-426614174000",
+              "last_seen": "2024-02-01T14:00:00Z",
+              "mention_count": 15
+            }
+          ]
+        }
+      },
+      "EntityObservationResponse": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "mentioned_at": {
+            "type": "string",
+            "nullable": true,
+            "title": "Mentioned At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "EntityObservationResponse",
+        "description": "An observation about an entity."
+      },
+      "EntityStateResponse": {
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/EntityObservationResponse"
+            },
+            "type": "array",
+            "title": "Observations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entity_id",
+          "canonical_name",
+          "observations"
+        ],
+        "title": "EntityStateResponse",
+        "description": "Current mental model of an entity."
+      },
+      "FactsIncludeOptions": {
+        "properties": {},
+        "type": "object",
+        "title": "FactsIncludeOptions",
+        "description": "Options for including facts (based_on) in reflect results."
+      },
+      "GraphDataResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "table_rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Table Rows"
+          },
+          "total_units": {
+            "type": "integer",
+            "title": "Total Units"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges",
+          "table_rows",
+          "total_units"
+        ],
+        "title": "GraphDataResponse",
+        "description": "Response model for graph data endpoint.",
+        "example": {
+          "edges": [
+            {
+              "from": "1",
+              "to": "2",
+              "type": "semantic",
+              "weight": 0.8
+            }
+          ],
+          "nodes": [
+            {
+              "id": "1",
+              "label": "Alice works at Google",
+              "type": "world"
+            },
+            {
+              "id": "2",
+              "label": "Bob went hiking",
+              "type": "world"
+            }
+          ],
+          "table_rows": [
+            {
+              "context": "Work info",
+              "date": "2024-01-15 10:30",
+              "entities": "Alice (PERSON), Google (ORGANIZATION)",
+              "id": "abc12345...",
+              "text": "Alice works at Google"
+            }
+          ],
+          "total_units": 2
+        }
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IncludeOptions": {
+        "properties": {
+          "entities": {
+            "$ref": "#/components/schemas/EntityIncludeOptions",
+            "nullable": true,
+            "description": "Include entity observations. Set to null to disable entity inclusion.",
+            "default": {
+              "max_tokens": 500
+            }
+          },
+          "chunks": {
+            "$ref": "#/components/schemas/ChunkIncludeOptions",
+            "nullable": true,
+            "description": "Include raw chunks. Set to {} to enable, null to disable (default: disabled)."
+          }
+        },
+        "type": "object",
+        "title": "IncludeOptions",
+        "description": "Options for including additional data in recall results."
+      },
+      "ListDocumentsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ListDocumentsResponse",
+        "description": "Response model for list documents endpoint.",
+        "example": {
+          "items": [
+            {
+              "bank_id": "user123",
+              "content_hash": "abc123",
+              "created_at": "2024-01-15T10:30:00Z",
+              "id": "session_1",
+              "memory_unit_count": 15,
+              "text_length": 5420,
+              "updated_at": "2024-01-15T10:30:00Z"
+            }
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 50
+        }
+      },
+      "ListMemoryUnitsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ListMemoryUnitsResponse",
+        "description": "Response model for list memory units endpoint.",
+        "example": {
+          "items": [
+            {
+              "context": "Work conversation",
+              "date": "2024-01-15T10:30:00Z",
+              "entities": "Alice (PERSON), Google (ORGANIZATION)",
+              "id": "550e8400-e29b-41d4-a716-446655440000",
+              "text": "Alice works at Google on the AI team",
+              "type": "world"
+            }
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 150
+        }
+      },
+      "MemoryItem": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "title": "Timestamp"
+          },
+          "context": {
+            "type": "string",
+            "nullable": true,
+            "title": "Context"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "nullable": true,
+            "title": "Metadata"
+          },
+          "document_id": {
+            "type": "string",
+            "nullable": true,
+            "title": "Document Id",
+            "description": "Optional document ID for this memory item."
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryItem",
+        "description": "Single memory item for retain.",
+        "example": {
+          "content": "Alice mentioned she's working on a new ML model",
+          "context": "team meeting",
+          "document_id": "meeting_notes_2024_01_15",
+          "metadata": {
+            "channel": "engineering",
+            "source": "slack"
+          },
+          "timestamp": "2024-01-15T10:30:00Z"
+        }
+      },
+      "RecallRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "nullable": true,
+            "title": "Types",
+            "description": "List of fact types to recall (defaults to all if not specified)"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/Budget",
+            "default": "mid"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "default": 4096
+          },
+          "trace": {
+            "type": "boolean",
+            "title": "Trace",
+            "default": false
+          },
+          "query_timestamp": {
+            "type": "string",
+            "nullable": true,
+            "title": "Query Timestamp",
+            "description": "ISO format date string (e.g., '2023-05-30T23:40:00')"
+          },
+          "include": {
+            "$ref": "#/components/schemas/IncludeOptions",
+            "description": "Options for including additional data (entities are included by default)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "RecallRequest",
+        "description": "Request model for recall endpoint.",
+        "example": {
+          "budget": "mid",
+          "include": {
+            "entities": {
+              "max_tokens": 500
+            }
+          },
+          "max_tokens": 4096,
+          "query": "What did Alice say about machine learning?",
+          "query_timestamp": "2023-05-30T23:40:00",
+          "trace": true,
+          "types": [
+            "world",
+            "experience"
+          ]
+        }
+      },
+      "RecallResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/RecallResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "trace": {
+            "additionalProperties": true,
+            "type": "object",
+            "nullable": true,
+            "title": "Trace"
+          },
+          "entities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EntityStateResponse"
+            },
+            "type": "object",
+            "nullable": true,
+            "title": "Entities",
+            "description": "Entity states for entities mentioned in results"
+          },
+          "chunks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ChunkData"
+            },
+            "type": "object",
+            "nullable": true,
+            "title": "Chunks",
+            "description": "Chunks for facts, keyed by chunk_id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "RecallResponse",
+        "description": "Response model for recall endpoints.",
+        "example": {
+          "chunks": {
+            "456e7890-e12b-34d5-a678-901234567890": {
+              "chunk_index": 0,
+              "id": "456e7890-e12b-34d5-a678-901234567890",
+              "text": "Alice works at Google on the AI team. She's been there for 3 years..."
+            }
+          },
+          "entities": {
+            "Alice": {
+              "canonical_name": "Alice",
+              "entity_id": "123e4567-e89b-12d3-a456-426614174001",
+              "observations": [
+                {
+                  "mentioned_at": "2024-01-15T10:30:00Z",
+                  "text": "Alice works at Google on the AI team"
+                }
+              ]
+            }
+          },
+          "results": [
+            {
+              "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
+              "context": "work info",
+              "entities": [
+                "Alice",
+                "Google"
+              ],
+              "id": "123e4567-e89b-12d3-a456-426614174000",
+              "occurred_end": "2024-01-15T10:30:00Z",
+              "occurred_start": "2024-01-15T10:30:00Z",
+              "text": "Alice works at Google on the AI team",
+              "type": "world"
+            }
+          ],
+          "trace": {
+            "num_results": 1,
+            "query": "What did Alice say about machine learning?",
+            "time_seconds": 0.123
+          }
+        }
+      },
+      "RecallResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "type": {
+            "type": "string",
+            "nullable": true,
+            "title": "Type"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "nullable": true,
+            "title": "Entities"
+          },
+          "context": {
+            "type": "string",
+            "nullable": true,
+            "title": "Context"
+          },
+          "occurred_start": {
+            "type": "string",
+            "nullable": true,
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "type": "string",
+            "nullable": true,
+            "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "type": "string",
+            "nullable": true,
+            "title": "Mentioned At"
+          },
+          "document_id": {
+            "type": "string",
+            "nullable": true,
+            "title": "Document Id"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "nullable": true,
+            "title": "Metadata"
+          },
+          "chunk_id": {
+            "type": "string",
+            "nullable": true,
+            "title": "Chunk Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "RecallResult",
+        "description": "Single recall result item.",
+        "example": {
+          "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
+          "context": "work info",
+          "document_id": "session_abc123",
+          "entities": [
+            "Alice",
+            "Google"
+          ],
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "mentioned_at": "2024-01-15T10:30:00Z",
+          "metadata": {
+            "source": "slack"
+          },
+          "occurred_end": "2024-01-15T10:30:00Z",
+          "occurred_start": "2024-01-15T10:30:00Z",
+          "text": "Alice works at Google on the AI team",
+          "type": "world"
+        }
+      },
+      "ReflectFact": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "nullable": true,
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "type": {
+            "type": "string",
+            "nullable": true,
+            "title": "Type"
+          },
+          "context": {
+            "type": "string",
+            "nullable": true,
+            "title": "Context"
+          },
+          "occurred_start": {
+            "type": "string",
+            "nullable": true,
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "type": "string",
+            "nullable": true,
+            "title": "Occurred End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ReflectFact",
+        "description": "A fact used in think response.",
+        "example": {
+          "context": "healthcare discussion",
+          "id": "123e4567-e89b-12d3-a456-426614174000",
+          "occurred_end": "2024-01-15T10:30:00Z",
+          "occurred_start": "2024-01-15T10:30:00Z",
+          "text": "AI is used in healthcare",
+          "type": "world"
+        }
+      },
+      "ReflectIncludeOptions": {
+        "properties": {
+          "facts": {
+            "$ref": "#/components/schemas/FactsIncludeOptions",
+            "nullable": true,
+            "description": "Include facts that the answer is based on. Set to {} to enable, null to disable (default: disabled)."
+          }
+        },
+        "type": "object",
+        "title": "ReflectIncludeOptions",
+        "description": "Options for including additional data in reflect results."
+      },
+      "ReflectRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/Budget",
+            "default": "low"
+          },
+          "context": {
+            "type": "string",
+            "nullable": true,
+            "title": "Context"
+          },
+          "include": {
+            "$ref": "#/components/schemas/ReflectIncludeOptions",
+            "description": "Options for including additional data (disabled by default)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "ReflectRequest",
+        "description": "Request model for reflect endpoint.",
+        "example": {
+          "budget": "low",
+          "context": "This is for a research paper on AI ethics",
+          "include": {
+            "facts": {}
+          },
+          "query": "What do you think about artificial intelligence?"
+        }
+      },
+      "ReflectResponse": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "based_on": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectFact"
+            },
+            "type": "array",
+            "title": "Based On",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ReflectResponse",
+        "description": "Response model for think endpoint.",
+        "example": {
+          "based_on": [
+            {
+              "id": "123",
+              "text": "AI is used in healthcare",
+              "type": "world"
+            },
+            {
+              "id": "456",
+              "text": "I discussed AI applications last week",
+              "type": "experience"
+            }
+          ],
+          "text": "Based on my understanding, AI is a transformative technology..."
+        }
+      },
+      "RetainRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "async": {
+            "type": "boolean",
+            "title": "Async",
+            "description": "If true, process asynchronously in background. If false, wait for completion (default: false)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "RetainRequest",
+        "description": "Request model for retain endpoint.",
+        "example": {
+          "async": false,
+          "items": [
+            {
+              "content": "Alice works at Google",
+              "context": "work",
+              "document_id": "conversation_123"
+            },
+            {
+              "content": "Bob went hiking yesterday",
+              "document_id": "conversation_123",
+              "timestamp": "2024-01-15T10:00:00Z"
+            }
+          ]
+        }
+      },
+      "RetainResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "items_count": {
+            "type": "integer",
+            "title": "Items Count"
+          },
+          "async": {
+            "type": "boolean",
+            "title": "Async",
+            "description": "Whether the operation was processed asynchronously"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "bank_id",
+          "items_count",
+          "async"
+        ],
+        "title": "RetainResponse",
+        "description": "Response model for retain endpoint.",
+        "example": {
+          "async": false,
+          "bank_id": "user123",
+          "items_count": 2,
+          "success": true
+        }
+      },
+      "UpdateDispositionRequest": {
+        "properties": {
+          "disposition": {
+            "$ref": "#/components/schemas/DispositionTraits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "disposition"
+        ],
+        "title": "UpdateDispositionRequest",
+        "description": "Request model for updating disposition traits."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://hindsight-apim.azure-api.net/memory",
+      "description": "Azure API Management Gateway"
+    }
+  ]
+}

@@ -112,7 +112,30 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
             logger.error(f"Error searching: {e}", exc_info=True)
             return json.dumps({"error": str(e), "results": []})
 
+    @mcp.tool()
+    async def reflect(query: str) -> str:
+        """
+        Perform a cognitive step to synthesize memories and form an opinion or complex answer.
+
+        Use this tool whenever the user asks for:
+        - Your opinion or perspective
+        - Synthesis of their past experiences/changes
+        - Strategic advice or "thinking" before answering
+
+        Args:
+            query: The question or topic to reflect on (e.g., "how has my coding style changed?", "what is your opinion on this project strategy?")
+        """
+        try:
+            bank_id = get_current_bank_id()
+            # Assuming memory.reflect_async exists, based on earlier research
+            reflection_result = await memory.reflect_async(bank_id=bank_id, query=query)
+            return reflection_result
+        except Exception as e:
+            logger.error(f"Error reflecting: {e}", exc_info=True)
+            return f"Error: {str(e)}"
+
     return mcp
+
 
 
 class MCPMiddleware:

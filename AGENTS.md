@@ -1,151 +1,593 @@
-# AGENTS.md
+# Hindsight Agent: Azure AI Foundry Operations Manual
 
-This document captures architectural decisions and coding conventions for the Hindsight project.
+This document serves as the **Operational Manual** for the Hindsight Agent deployed on Azure AI Foundry. It covers cloud resources, identity management, deployment workflows, API patterns, and troubleshooting.
 
-## Documentation
+---
 
-- **Main documentation**: [hindsight-docs/docs/developer/](./hindsight-docs/docs/developer/)
-- **Use case patterns**: [hindsight-docs/docs/cookbook/](./hindsight-docs/docs/cookbook/)
-- **API reference**: Auto-generated from OpenAPI spec
+## 📋 Table of Contents
 
-## Project Structure
+1. [Resource Inventory](#-resource-inventory)
+2. [Architecture Overview](#-architecture-overview)
+3. [Remote Agent API](#-remote-agent-api)
+4. [Local Development](#-local-development)
+5. [Deployment Guide](#-deployment-guide)
+6. [Authentication & Identity](#-authentication--identity)
+7. [Configuration Management](#-configuration-management)
+8. [Agent Modification Workflow](#-agent-modification-workflow)
+9. [API Patterns & SDK Usage](#-api-patterns--sdk-usage)
+10. [Memory Banks](#-memory-banks)
+11. [Troubleshooting](#-troubleshooting)
+
+---
+
+## ☁️ Resource Inventory
+
+### Core Azure Resources
+
+| Component | Azure Resource Name / ID | Purpose |
+|-----------|-------------------------|---------|
+| **AI Project** | `jacob-1216` | Container for the Agent Service in Azure AI Foundry |
+| **Project Endpoint** | `https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216` | Data Plane URL for SDK connectivity |
+| **AI Resource** | `jacob-1216-resource` | Cognitive Services resource hosting models |
+| **Managed Identity** | `267bc722-69a7-4bca-9196-9e8133094d37` | System identity for agent services |
+| **Location** | `centralus` | Primary Azure region |
+
+### Compute & Container Resources
+
+| Component | Resource Name | URL | Purpose |
+|-----------|--------------|-----|---------|
+| **Memory API** | `hindsight-api` | `https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io` | Core memory storage/retrieval (retain, recall, reflect) |
+| **Agent API** | `hindsight-agent-api` | `https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io` | Remote HTTP access to Hindsight agent |
+| **Container Registry** | `hindsightacrrxuumag3f5ln6` | `hindsightacrrxuumag3f5ln6.azurecr.io` | Docker image storage |
+| **Container Environment** | `hindsight-env` | - | Container Apps managed environment |
+| **Log Analytics** | `hindsight-logs` | - | Centralized logging |
+
+### Model Deployments
+
+| Deployment Name | Model | Status | Notes |
+|-----------------|-------|--------|-------|
+| `gpt-4.1` | GPT-4.1 | ✅ Active | Available for use |
+| `gpt-5.2-chat` | GPT-5.2 | ✅ Active | **Used by Hindsight-v3 agent** |
+| `text-embedding-3-small` | text-embedding-3-small | ✅ Active | Embedding model |
+| `text-embedding-3-large` | text-embedding-3-large | ✅ Active | Embedding model |
+| `claude-opus-4-5` | Claude Opus 4.5 | ✅ Active | Anthropic model |
+
+> **Note**: `gpt-4o` deployment does NOT exist. The agent uses `gpt-5.2-chat`.
+
+### Configuration Store
+
+| Component | Endpoint | Auth Method |
+|-----------|----------|-------------|
+| **App Configuration** | `https://hindsightapp.azconfig.io` | Entra ID (AAD) or Connection String |
+
+---
+
+## 🏗️ Architecture Overview
 
 ```
-hindsight/              # Python package for embedded usage
-hindsight-api/          # FastAPI server (core memory engine)
-hindsight-cli/          # Rust CLI client
-hindsight-control-plane/ # Next.js admin UI
-hindsight-docs/         # Docusaurus documentation site
-hindsight-dev/          # Development tools and benchmarks
-hindsight-integrations/ # Framework integrations (LangChain, etc.)
-hindsight-clients/      # Generated API clients (Python, TypeScript, Rust)
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Azure AI Foundry                              │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Project: jacob-1216                                         │    │
+│  │  ┌─────────────────┐    ┌─────────────────────────────────┐ │    │
+│  │  │  Agent:         │    │  Model Deployment:              │ │    │
+│  │  │  Hindsight-v3   │───▶│  gpt-5.2-chat                   │ │    │
+│  │  │  (agent_ref)    │    │  (24 OpenAPI endpoints)         │ │    │
+│  │  └─────────────────┘    └─────────────────────────────────┘ │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Responses API
+                              │ (agent_reference pattern)
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Azure Container Apps                              │
+│                                                                      │
+│  ┌────────────────────────┐      ┌────────────────────────────┐    │
+│  │ hindsight-agent-api    │      │ hindsight-api              │    │
+│  │ (FastAPI)              │─────▶│ (Memory System)            │    │
+│  │                        │      │                            │    │
+│  │ POST /chat             │      │ POST /memories             │    │
+│  │ GET  /health           │      │ POST /memories/recall      │    │
+│  └────────────────────────┘      │ POST /memories/reflect     │    │
+│                                  └────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Core Concepts
+### Data Flow
 
-### Memory Banks
-- Each bank is an isolated memory store (like a "brain" for one user/agent)
-- Banks contain: memory units (facts), entities, documents, entity links
-- Banks have a **disposition** (personality traits) and **background** (context)
-- Bank isolation is strict - no cross-bank data leakage
+1. **Client** → `POST /chat` → **hindsight-agent-api**
+2. **Agent API** → `responses.create(agent_reference)` → **Azure AI Foundry**
+3. **Foundry** returns tool calls (retain/recall/reflect)
+4. **Agent API** → executes tools via **HindsightClient** → **hindsight-api**
+5. **Agent API** → submits tool outputs → **Foundry** → generates response
+6. **Client** ← receives response with tool call details
 
-### Memory Types
-- **World facts**: General knowledge ("The sky is blue")
-- **Experience facts**: Personal experiences ("I visited Paris in 2023")
-- **Opinion facts**: Beliefs with confidence scores ("Paris is beautiful" - 0.9 confidence)
+---
 
-### Operations
-- **Retain**: Store new memories (extracts facts, entities, relationships)
-- **Recall**: Retrieve memories (semantic, BM25, graph, temporal search)
-- **Reflect**: Deep analysis to form new insights/opinions
+## 🤖 Remote Agent API
 
-## API Design Decisions
+The `hindsight-agent-api` provides remote HTTP access to the Hindsight agent.
 
-### Single Bank Per Request
-- All API endpoints (`recall`, `reflect`, `retain`) operate on a single bank
-- Multi-bank queries are the **client/agent's responsibility** to orchestrate
-- This keeps the API simple and the isolation model clear
+### Endpoints
 
-### Disposition Traits (3-trait system)
-- **Skepticism** (1-5): How skeptical vs trusting when forming opinions
-- **Literalism** (1-5): How literally to interpret information
-- **Empathy** (1-5): How much to consider emotional context
-- These influence the `reflect` operation, not `recall`
-- Background info also only affects `reflect` (opinion formation)
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/chat` | Send a message, get agent response with tool calls |
+| `GET` | `/health` | Health check with status and configuration |
+| `GET` | `/docs` | Interactive OpenAPI documentation |
+| `GET` | `/` | API info and available endpoints |
 
-## Multi-Bank Architecture Patterns
+### Request/Response Format
 
-See [hindsight-docs/docs/cookbook/](./hindsight-docs/docs/cookbook/) for detailed guides:
+**POST /chat**
+```json
+// Request
+{
+  "message": "What do you know about me?",
+  "conversation_id": null
+}
 
-- **Per-User Memory**: One bank per user, simplest pattern
-- **Support Agent + Shared Knowledge**: User bank + shared docs bank, client orchestrates
-
-## Developer Guide
-
-### Running the API Server
-
-```bash
-# From project root
-./scripts/dev/start-api.sh
-
-# With options
-./scripts/dev/start-api.sh --reload --port 8888 --log-level debug
+// Response
+{
+  "response": "Based on my memories, your name is Jacob. You live in Seattle and work at Microsoft...",
+  "conversation_id": null,
+  "tool_calls": [
+    {
+      "name": "recall",
+      "arguments": {"query": "user profile preferences", "bank_id": "user_preferences"},
+      "result_preview": "{\"results\": [{\"id\": \"...\", \"text\": \"User's name is Jacob...\"}]}"
+    }
+  ]
+}
 ```
 
-### Running Tests
-
-```bash
-# API tests
-cd hindsight-api
-uv run pytest tests/
-
-# Specific test
-uv run pytest tests/test_http_api_integration.py -v
+**GET /health**
+```json
+{
+  "status": "healthy",
+  "agent": "Hindsight-v3",
+  "project_endpoint": "https://jacob-1216-resource.services.ai.azure.com/api/projects/jacob-1216"
+}
 ```
 
-### Generating OpenAPI Spec
+### Quick Test (PowerShell)
 
-After changing API endpoints, regenerate the OpenAPI spec and docs:
+```powershell
+# Health check
+Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io/health"
 
-```bash
-./scripts/generate-openapi.sh
+# Chat
+$body = @{message = "What do you know about me?"} | ConvertTo-Json
+Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io/chat" `
+  -Method POST -Body $body -ContentType "application/json"
 ```
 
-This will:
-1. Generate `openapi.json` at project root
-2. Copy to `hindsight-docs/openapi.json`
-3. Regenerate API reference documentation
+---
 
-### Generating API Clients
+## 💻 Local Development
 
-After updating the OpenAPI spec, regenerate all clients:
+### Prerequisites
 
-```bash
-./scripts/generate-clients.sh
+- Python 3.12+
+- Azure CLI (`az login` required)
+- Access to `jacob-1216` AI Project
+
+### Setup
+
+```powershell
+# Clone and setup
+cd hindsight
+pip install -r requirements-agent-api.txt
+
+# Login to Azure (required for local credential)
+az login
+az account set --subscription "<your-subscription-id>"
+
+# Run locally
+python hindsight_agent_api.py
 ```
 
-This generates:
-- **Rust client**: `hindsight-clients/rust/` (via progenitor in build.rs)
-- **Python client**: `hindsight-clients/python/` (via openapi-generator Docker)
-- **TypeScript client**: `hindsight-clients/typescript/` (via @hey-api/openapi-ts)
+### Local Testing
 
-Note: The maintained wrapper `hindsight_client.py` and `README.md` are preserved during regeneration.
+```powershell
+# Test local health
+Invoke-RestMethod -Uri "http://localhost:8080/health"
 
-### Running the Documentation Site
-
-```bash
-./scripts/dev/start-docs.sh
+# Test local chat
+$body = @{message = "Hello!"} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/chat" -Method POST -Body $body -ContentType "application/json"
 ```
 
-### Running the Control Plane
+### Interactive CLI Mode
 
-```bash
-./scripts/dev/start-control-plane.sh
+```powershell
+# Run interactive agent locally
+python hindsight_agent.py --interactive
+
+# Single message
+python hindsight_agent.py --message "What do you remember about me?"
 ```
 
-## Code Style
+---
 
-### Python (hindsight-api)
-- Use `uv` for package management
-- Async throughout (asyncpg, async FastAPI endpoints)
-- Pydantic models for request/response validation
-- No py files at project root - maintain clean directory structure
+## 🚀 Deployment Guide
 
-### TypeScript (control-plane, clients)
-- Next.js with App Router for control plane
-- Tailwind CSS with shadcn/ui components
+### Prerequisites
 
-### Rust (CLI)
-- Async with tokio
-- reqwest for HTTP client
-- progenitor for API client generation
+- Azure CLI authenticated (`az login`)
+- Contributor role on `hindsight-rg` resource group
+- Docker (optional, for local builds)
 
-## Database
+### Deploy with Bicep (Recommended)
 
-- PostgreSQL with pgvector extension
-- Schema managed via Alembic migrations in `hindsight-api/alembic/`, db migrations happen during api startup, no manual commands
-- Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
+```powershell
+# Full deployment (creates/updates all resources)
+.\deploy-bicep.ps1 -ResourceGroup hindsight-rg -Location centralus
 
-# Branding
-## Colors
-- Primary: gradient from #0074d9 to #009296  
+# Deploy with specific image tag
+.\deploy-bicep.ps1 -ResourceGroup hindsight-rg -ImageTag v1.0.0
+```
+
+### What the Deployment Does
+
+1. **Creates/Updates Infrastructure** (via Bicep):
+   - Log Analytics Workspace
+   - Container Registry (ACR)
+   - Container Apps Environment
+   - Container App with managed identity
+
+2. **Builds Container Image**:
+   - Uses ACR Tasks (`az acr build`)
+   - Pushes to `hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest`
+
+3. **Configures RBAC**:
+   - Assigns `Cognitive Services User` role to Container App's managed identity
+   - Scoped to `jacob-1216-resource` AI resource
+
+### Manual Container Build (Alternative)
+
+```powershell
+# Build locally
+docker build -t hindsight-agent-api:latest -f Dockerfile.agent-api .
+
+# Tag for ACR
+docker tag hindsight-agent-api:latest hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
+
+# Push to ACR
+az acr login --name hindsightacrrxuumag3f5ln6
+docker push hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
+
+# Update Container App
+az containerapp update --name hindsight-agent-api --resource-group hindsight-rg `
+  --image hindsightacrrxuumag3f5ln6.azurecr.io/hindsight-agent-api:latest
+```
+
+### Verify Deployment
+
+```powershell
+# Check container status
+az containerapp show --name hindsight-agent-api --resource-group hindsight-rg `
+  --query "{fqdn:properties.configuration.ingress.fqdn, status:properties.provisioningState, revision:properties.latestRevisionName}"
+
+# View logs
+az containerapp logs show --name hindsight-agent-api --resource-group hindsight-rg --type console --tail 50
+
+# Test deployed API
+Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io/health"
+```
+
+---
+
+## 🔐 Authentication & Identity
+
+### Authentication Model by Environment
+
+| Environment | Credential Type | How to Setup |
+|-------------|----------------|--------------|
+| **Local Development** | `AzureCliCredential` | Run `az login` and select correct subscription |
+| **Azure Container Apps** | `ManagedIdentityCredential` | Automatic via system-assigned identity |
+| **CI/CD Pipelines** | `DefaultAzureCredential` | Use federated credentials or service principal |
+
+### Required RBAC Roles
+
+| Identity | Role | Scope | Purpose |
+|----------|------|-------|---------|
+| Your User | `Azure AI Developer` | `jacob-1216` project | Local development, agent creation |
+| Container App MI | `Cognitive Services User` | `jacob-1216-resource` | Production API calls |
+
+### Credential Selection Logic
+
+```python
+def get_credential():
+    """Get the appropriate credential based on environment."""
+    is_azure = any([
+        os.environ.get("AZURE_FUNCTIONS_ENVIRONMENT"),
+        os.environ.get("CONTAINER_APP_NAME"),
+        os.environ.get("MSI_ENDPOINT"),
+        os.environ.get("IDENTITY_ENDPOINT")
+    ])
+    
+    if is_azure:
+        return ManagedIdentityCredential()
+    
+    # Local: prefer CLI credential (has your user permissions)
+    return AzureCliCredential()
+```
+
+### Verify Permissions
+
+```powershell
+# Check your role assignments on AI Project
+az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
+  --scope "/subscriptions/<sub-id>/resourceGroups/jacob-1216-resource/providers/Microsoft.CognitiveServices/accounts/jacob-1216-resource"
+
+# Check Container App managed identity
+az containerapp identity show --name hindsight-agent-api --resource-group hindsight-rg
+```
+
+---
+
+## ⚙️ Configuration Management
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HINDSIGHT_PROJECT_ENDPOINT` | `https://jacob-1216-resource...` | Foundry project data plane URL |
+| `HINDSIGHT_MODEL_DEPLOYMENT_NAME` | `gpt-4o` | Model deployment to use |
+| `HINDSIGHT_MCP_BASE_URL` | `https://hindsight-api...` | Memory API base URL |
+| `HINDSIGHT_DEFAULT_BANK_ID` | `hindsight_agent_bank` | Default memory bank |
+| `HINDSIGHT_AGENT_NAME` | `Hindsight` | Agent display name |
+
+### Azure App Configuration
+
+Keys stored in App Configuration (prefix: `Hindsight:`):
+
+- `Hindsight:ProjectEndpoint`
+- `Hindsight:ModelDeploymentName`
+- `Hindsight:McpBaseUrl`
+- `Hindsight:DefaultBankId`
+- `Hindsight:AgentName`
+
+### Configuration Priority
+
+1. Environment variables (highest priority)
+2. Azure App Configuration
+3. Hardcoded defaults
+
+### Override Model at Runtime
+
+```powershell
+# Local override
+$env:HINDSIGHT_MODEL_DEPLOYMENT_NAME = "gpt-5.2-chat"
+python hindsight_agent.py --interactive
+
+# Container App override
+az containerapp update --name hindsight-agent-api --resource-group hindsight-rg `
+  --set-env-vars "HINDSIGHT_MODEL_DEPLOYMENT_NAME=gpt-5.2-chat"
+```
+
+---
+
+## 🔧 Agent Modification Workflow
+
+### Agent Tool Types
+
+The Hindsight agent uses **OpenAPI tools** which allow it to work from:
+1. **Azure AI Foundry portal/playground** - tools execute server-side
+2. **Python code (hindsight_agent.py)** - tools execute server-side via Foundry
+3. **Container App (hindsight-agent-api)** - tools execute server-side via Foundry
+
+### Updating Agent Tools
+
+To update the agent's OpenAPI tools:
+
+```powershell
+# Edit hindsight-tools-openapi.json with new endpoints
+# Then run:
+python update_agent_openapi.py
+```
+
+This creates a new agent version with the updated tools.
+
+### Updating System Prompt
+
+1. **Edit Instructions**: Modify `AGENT_INSTRUCTIONS` in `update_agent_openapi.py`
+2. **Run Update Script**: `python update_agent_openapi.py`
+3. **Test**: Verify in Foundry portal or via `/chat` endpoint
+
+### Switching Models
+
+1. **Verify Deployment Exists**: Check Azure AI Studio for available model deployments
+2. **Update Configuration**:
+   - App Configuration: `Hindsight:ModelDeploymentName`
+   - Or environment variable: `HINDSIGHT_MODEL_DEPLOYMENT_NAME`
+3. **Restart Container App** (if needed):
+   ```powershell
+   az containerapp revision restart --name hindsight-agent-api --resource-group hindsight-rg `
+     --revision $(az containerapp show --name hindsight-agent-api --resource-group hindsight-rg --query properties.latestRevisionName -o tsv)
+   ```
+
+### Adding New Tools
+
+1. **Add endpoint to OpenAPI spec** (`hindsight-tools-openapi.json`)
+2. **Update agent**: Run `python update_agent_openapi.py`
+3. **Test in Foundry portal** or via code
+
+---
+
+## 🔌 API Patterns & SDK Usage
+
+### OpenAPI Tools Architecture
+
+The agent uses **OpenAPI tools** that call the `hindsight-api` directly:
+
+```
+┌──────────────────┐     ┌─────────────────────┐     ┌────────────────────┐
+│  Foundry Portal  │     │  Azure AI Foundry   │     │  hindsight-api     │
+│  or Python Code  │────▶│  (executes tools)   │────▶│  (memory storage)  │
+└──────────────────┘     └─────────────────────┘     └────────────────────┘
+```
+
+**Why OpenAPI tools?**
+- Tools execute server-side by Foundry
+- Works from portal/playground without client code
+- Same behavior whether accessed from portal or code
+
+### Foundry Responses API (Correct Pattern)
+
+The agent uses the **Responses API** with `agent_reference` pattern. Note that temperature/top_p are not supported in the Responses API.
+
+```python
+from azure.ai.projects import AIProjectClient
+
+client = AIProjectClient(credential=credential, endpoint=project_endpoint)
+openai_client = client.get_openai_client()
+
+# Create response using agent reference (name only, no version needed)
+response = openai_client.responses.create(
+    extra_body={"agent": {"name": "Hindsight-v3", "type": "agent_reference"}},
+    input=user_input,
+)
+
+# Handle tool calls (always execute client-side)
+for tool_call in response.output:
+    if tool_call.type == 'function_call':
+        result = execute_tool(tool_call.name, tool_call.arguments)
+        tool_outputs.append({
+            "type": "function_call_output",
+            "call_id": tool_call.call_id,
+            "output": result
+        })
+
+# Continue with tool outputs
+response = openai_client.responses.create(
+    extra_body={"agent": {"name": "Hindsight-v3", "type": "agent_reference"}},
+    input=tool_outputs,
+    previous_response_id=response.id,
+)
+```
+
+### Key API Insights
+
+| Pattern | Status | Notes |
+|---------|--------|-------|
+| `responses.create()` with `agent_reference` | ✅ Working | Correct pattern for Foundry agents |
+| `agent_reference` with name only | ✅ Required | Do NOT include version in agent_reference |
+| `chat.completions.create()` | ❌ Deprecated | Use Responses API instead |
+| `temperature`, `top_p` in responses | ❌ Not supported | These parameters don't exist in Responses API |
+| Tools in `extra_body` with `agent_reference` | ❌ Fails | "tools not allowed when agent is specified" |
+| Client-side tool execution | ✅ Required | Server may return `completed` but still needs output |
+
+---
+
+## 🧠 Memory Banks
+
+### Available Banks
+
+| Bank ID | Purpose | Usage |
+|---------|---------|-------|
+| `hindsight_agent_bank` | Default bank for agent memories | General storage |
+| `user_preferences` | User preferences and profile | Name, location, settings |
+| `project_context` | Project-related information | Work, tasks, milestones |
+| `knowledge_base` | Facts and knowledge | Technical info, references |
+
+### HindsightClient Operations
+
+```python
+from hindsight_client import HindsightClient
+
+client = HindsightClient(base_url, default_bank_id)
+
+# Store a memory
+client.retain(content="User prefers Python", context="preferences")
+
+# Search memories
+results = client.recall(query="user preferences", max_tokens=4096, budget="mid")
+
+# Synthesize/reflect
+reflection = client.reflect(query="What do I know about this user?")
+
+# Query specific bank
+client.recall(query="projects", bank_id="project_context")
+```
+
+---
+
+## 🐞 Troubleshooting
+
+### Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `401 Unauthorized` | Missing/invalid credentials | Local: `az login`. Cloud: Check MI role assignment |
+| `404 DeploymentNotFound` | Using `model=` instead of `agent_reference` | Use `extra_body={"agent": {...}}` pattern |
+| `tools not allowed when agent is specified` | Providing tools with agent_reference | Remove tools from API call; agent has tools defined in Foundry |
+| Tool call completes but no response | Not providing tool outputs to API | Always submit `function_call_output` even if status="completed" |
+| Container timeout | hindsight-api scaled to zero | Wake the API first with health check |
+
+### Debug Commands
+
+```powershell
+# Check container logs
+az containerapp logs show --name hindsight-agent-api --resource-group hindsight-rg --type console --tail 100
+
+# Check container status
+az containerapp show --name hindsight-agent-api --resource-group hindsight-rg --query properties.runningStatus
+
+# List revisions
+az containerapp revision list --name hindsight-agent-api --resource-group hindsight-rg --query "[].{name:name, active:properties.active, created:properties.createdTime}"
+
+# Check role assignments
+az role assignment list --scope "/subscriptions/<sub-id>/resourceGroups/jacob-1216-resource/providers/Microsoft.CognitiveServices/accounts/jacob-1216-resource" --output table
+```
+
+### Health Checks
+
+```powershell
+# Memory API health
+Invoke-RestMethod -Uri "https://hindsight-api.politebay-1635b4f9.centralus.azurecontainerapps.io/health"
+
+# Agent API health
+Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io/health"
+
+# Full chat test
+$body = @{message = "Test: What do you know about me?"} | ConvertTo-Json
+Invoke-RestMethod -Uri "https://hindsight-agent-api.jollyforest-7224b47b.centralus.azurecontainerapps.io/chat" -Method POST -Body $body -ContentType "application/json"
+```
+
+---
+
+## 📁 File Structure
+
+```
+hindsight/
+├── AGENTS.md                        # This file - operations manual
+├── hindsight_agent.py               # Main agent script (local/interactive)
+├── hindsight_agent_api.py           # FastAPI wrapper for remote access
+├── hindsight_client.py              # Memory API client (retain/recall/reflect)
+├── hindsight-tools-openapi-full.json # Complete OpenAPI spec (24 endpoints)
+├── create_agent_full_spec.py        # Script to create/update agent with full spec
+├── openapi.json                     # Source OpenAPI spec from hindsight-api
+├── config.py                        # Configuration management
+├── Dockerfile.agent-api             # Container definition
+├── requirements-agent-api.txt       # Python dependencies
+├── deploy-bicep.ps1                 # Deployment script
+└── infra/
+    └── agent-api.bicep              # Infrastructure as Code
+```
+
+---
+
+## 📝 Changelog
+
+- **2025-12-20**: Upgraded to full OpenAPI spec (24 endpoints) with all admin functions
+- **2025-12-20**: Consolidated agent scripts to single `create_agent_full_spec.py`
+- **2025-12-20**: Agent Hindsight-v3:4 now has complete API access
+- **2025-12-19**: Added OpenAPI tools - agent now works from Foundry portal and code
+- **2025-12-19**: Fixed Responses API usage - removed version from agent_reference, removed temperature/top_p
+- **2025-12-19**: Updated model deployments documentation (gpt-5.2-chat is primary)
+- **2024-12-19**: Initial comprehensive documentation
+- **2024-12-19**: Deployed Agent API to Azure Container Apps
+- **2024-12-19**: Optimized agent to use Responses API with client-side tool execution
