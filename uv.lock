@@ -1494,14 +1494,12 @@ name = "hindsight-embed"
 version = "0.1.0"
 source = { editable = "hindsight-embed" }
 dependencies = [
-    { name = "hindsight-client" },
     { name = "httpx" },
     { name = "questionary" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hindsight-client", editable = "hindsight-clients/python" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "questionary", specifier = ">=2.0.0" },
 ]

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 8889
-DEFAULT_IDLE_TIMEOUT = 300  # 5 minutes
+DEFAULT_IDLE_TIMEOUT = 0  # 0 = no auto-exit (hindsight-embed passes its own timeout)
 LOCKFILE_PATH = Path.home() / ".hindsight" / "daemon.lock"
 DAEMON_LOG_PATH = Path.home() / ".hindsight" / "daemon.log"
 
@@ -41,6 +41,10 @@ class IdleTimeoutMiddleware:
 
     async def _check_idle(self):
         """Background task that exits the process after idle timeout."""
+        # If idle_timeout is 0, don't auto-exit
+        if self.idle_timeout <= 0:
+            return
+
         while True:
             await asyncio.sleep(30)  # Check every 30 seconds
             idle_time = time.time() - self.last_activity

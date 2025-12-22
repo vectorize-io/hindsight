@@ -11,35 +11,39 @@ API_DIR="$(cd "$SCRIPT_DIR/../hindsight-api" && pwd)"
 
 echo "=== Hindsight Embed Smoke Test (Daemon Mode) ==="
 
-# Check required environment
-if [ -z "$HINDSIGHT_EMBED_LLM_API_KEY" ]; then
-    echo "Error: HINDSIGHT_EMBED_LLM_API_KEY is required"
+# Check required environment (load from config if not set)
+if [ -f ~/.hindsight/config.env ]; then
+    source ~/.hindsight/config.env
+fi
+
+if [ -z "$HINDSIGHT_EMBED_LLM_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
+    echo "Error: HINDSIGHT_EMBED_LLM_API_KEY or OPENAI_API_KEY is required"
     exit 1
 fi
 
 # Use a unique bank ID for this test run
-export HINDSIGHT_EMBED_BANK_ID="test-$$-$(date +%s)"
-echo "Using bank ID: $HINDSIGHT_EMBED_BANK_ID"
+BANK_ID="test-$$-$(date +%s)"
+echo "Using bank ID: $BANK_ID"
 echo "Script dir: $SCRIPT_DIR"
 echo "API dir: $API_DIR"
 
 # Stop any existing daemon
 echo ""
 echo "Stopping any existing daemon..."
-uv run --project "$SCRIPT_DIR" python -c "from hindsight_embed.daemon_client import stop_daemon; stop_daemon()" 2>/dev/null || true
+uv run --project "$SCRIPT_DIR" hindsight-embed daemon stop 2>/dev/null || true
 sleep 1
 
 # Test 1: Retain (this should start the daemon)
 echo ""
 echo "Test 1: Retaining a memory (first call - daemon will start)..."
 START_TIME=$(python3 -c "import time; print(time.time())")
-OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed retain "The user's favorite color is blue" 2>&1)
+OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed memory retain "$BANK_ID" "The user's favorite color is blue" 2>&1)
 END_TIME=$(python3 -c "import time; print(time.time())")
 DURATION=$(python3 -c "print(f'{$END_TIME - $START_TIME:.2f}')")
 echo "$OUTPUT"
 echo "Duration: ${DURATION}s"
-if ! echo "$OUTPUT" | grep -q "Stored memory"; then
-    echo "FAIL: Expected 'Stored memory' in output"
+if ! echo "$OUTPUT" | grep -qi "retained"; then
+    echo "FAIL: Expected 'retained' in output"
     exit 1
 fi
 echo "PASS: Memory retained successfully"
@@ -48,41 +52,37 @@ echo "PASS: Memory retained successfully"
 echo ""
 echo "Test 2: Recalling memories (daemon already running)..."
 START_TIME=$(python3 -c "import time; print(time.time())")
-JSON_OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed recall "What is the user's favorite color?" 2>/dev/null)
+OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed memory recall "$BANK_ID" "What is the user's favorite color?" 2>&1)
 END_TIME=$(python3 -c "import time; print(time.time())")
 DURATION=$(python3 -c "print(f'{$END_TIME - $START_TIME:.2f}')")
-echo "$JSON_OUTPUT"
+echo "$OUTPUT"
 echo "Duration: ${DURATION}s"
-if ! echo "$JSON_OUTPUT" | grep -qi "blue"; then
+if ! echo "$OUTPUT" | grep -qi "blue"; then
     echo "FAIL: Expected 'blue' in recall output"
     exit 1
 fi
-if ! echo "$JSON_OUTPUT" | python3 -c "import sys, json; json.load(sys.stdin)" 2>/dev/null; then
-    echo "FAIL: Expected valid JSON output"
-    exit 1
-fi
-echo "PASS: Memory recalled successfully (JSON format)"
+echo "PASS: Memory recalled successfully"
 
 # Test 3: Retain with context (daemon should still be running)
 echo ""
 echo "Test 3: Retaining memory with context..."
 START_TIME=$(python3 -c "import time; print(time.time())")
-OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed retain "User prefers Python over JavaScript" --context work 2>&1)
+OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed memory retain "$BANK_ID" "User prefers Python over JavaScript" --context work 2>&1)
 END_TIME=$(python3 -c "import time; print(time.time())")
 DURATION=$(python3 -c "print(f'{$END_TIME - $START_TIME:.2f}')")
 echo "$OUTPUT"
 echo "Duration: ${DURATION}s"
-if ! echo "$OUTPUT" | grep -q "Stored memory"; then
-    echo "FAIL: Expected 'Stored memory' in output"
+if ! echo "$OUTPUT" | grep -qi "retained"; then
+    echo "FAIL: Expected 'retained' in output"
     exit 1
 fi
 echo "PASS: Memory with context retained successfully"
 
-# Test 4: Recall with budget
+# Test 4: Recall with JSON output
 echo ""
-echo "Test 4: Recalling with budget..."
+echo "Test 4: Recalling with JSON output..."
 START_TIME=$(python3 -c "import time; print(time.time())")
-JSON_OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed recall "programming preferences" --budget mid 2>/dev/null)
+JSON_OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed memory recall "$BANK_ID" "programming preferences" -o json 2>&1)
 END_TIME=$(python3 -c "import time; print(time.time())")
 DURATION=$(python3 -c "print(f'{$END_TIME - $START_TIME:.2f}')")
 echo "$JSON_OUTPUT"
@@ -95,7 +95,7 @@ if ! echo "$JSON_OUTPUT" | python3 -c "import sys, json; json.load(sys.stdin)" 2
     echo "FAIL: Expected valid JSON output"
     exit 1
 fi
-echo "PASS: Memory recalled with budget successfully (JSON format)"
+echo "PASS: Memory recalled with JSON format successfully"
 
 # Test 5: Check daemon is running
 echo ""
@@ -107,10 +107,21 @@ else
     exit 1
 fi
 
+# Test 6: Daemon status command
+echo ""
+echo "Test 6: Testing daemon status command..."
+STATUS_OUTPUT=$(uv run --project "$SCRIPT_DIR" hindsight-embed daemon status 2>&1)
+echo "$STATUS_OUTPUT"
+if ! echo "$STATUS_OUTPUT" | grep -qi "running"; then
+    echo "FAIL: Expected 'running' in daemon status output"
+    exit 1
+fi
+echo "PASS: Daemon status command works"
+
 # Cleanup: Stop daemon
 echo ""
 echo "Stopping daemon..."
-uv run --project "$SCRIPT_DIR" python -c "from hindsight_embed.daemon_client import stop_daemon; stop_daemon()" 2>/dev/null || true
+uv run --project "$SCRIPT_DIR" hindsight-embed daemon stop 2>/dev/null || true
 
 echo ""
 echo "=== All tests passed! ==="

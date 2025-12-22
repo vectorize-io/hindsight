@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 DAEMON_PORT = 8889
 DAEMON_URL = f"http://127.0.0.1:{DAEMON_PORT}"
 DAEMON_STARTUP_TIMEOUT = 30  # seconds
+DAEMON_IDLE_TIMEOUT = 300  # 5 minutes - auto-exit after idle
+
+# CLI paths - check multiple locations
+CLI_INSTALL_DIRS = [
+    Path.home() / ".local" / "bin",  # Standard location from get-cli installer
+    Path.home() / ".hindsight" / "bin",  # Alternative location
+]
+CLI_INSTALLER_URL = "https://hindsight.vectorize.io/get-cli"
 
 
 def _find_hindsight_api_command() -> list[str]:
@@ -67,7 +75,7 @@ def _start_daemon(config: dict) -> bool:
     env["HINDSIGHT_API_SKIP_LLM_VERIFICATION"] = "true"
     env["HINDSIGHT_API_LOG_LEVEL"] = "warning"
 
-    cmd = _find_hindsight_api_command() + ["--daemon"]
+    cmd = _find_hindsight_api_command() + ["--daemon", "--idle-timeout", str(DAEMON_IDLE_TIMEOUT)]
 
     try:
         # Start daemon in background
@@ -133,81 +141,113 @@ def stop_daemon() -> bool:
     return not _is_daemon_running()
 
 
-def get_client():
+def find_cli_binary() -> Path | None:
+    """Find the hindsight CLI binary in known locations or PATH."""
+    import shutil
+
+    # Check standard install locations
+    for install_dir in CLI_INSTALL_DIRS:
+        binary = install_dir / "hindsight"
+        if binary.exists() and os.access(binary, os.X_OK):
+            return binary
+
+    # Check PATH
+    path_binary = shutil.which("hindsight")
+    if path_binary:
+        return Path(path_binary)
+
+    return None
+
+
+def is_cli_installed() -> bool:
+    """Check if the hindsight CLI is installed."""
+    return find_cli_binary() is not None
+
+
+def install_cli() -> bool:
     """
-    Get a Hindsight client connected to the daemon.
+    Install the hindsight CLI using the official installer.
 
-    Returns:
-        Hindsight client instance
+    Returns True if installation succeeded.
     """
-    from hindsight_client import Hindsight
+    import subprocess
+    import sys
 
-    return Hindsight(base_url=DAEMON_URL)
+    print("Installing hindsight CLI...")
+
+    try:
+        # Download and run installer
+        result = subprocess.run(
+            ["bash", "-c", f"curl -fsSL {CLI_INSTALLER_URL} | bash"],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            print(f"CLI installation failed: {result.stderr}", file=sys.stderr)
+            return False
+
+        cli_binary = find_cli_binary()
+        if cli_binary:
+            print(f"CLI installed to {cli_binary}")
+            return True
+        else:
+            print("CLI installation completed but binary not found", file=sys.stderr)
+            return False
+
+    except Exception as e:
+        print(f"CLI installation failed: {e}", file=sys.stderr)
+        return False
 
 
-async def retain(bank_id: str, content: str, context: str = "general") -> dict:
+def ensure_cli_installed() -> bool:
+    """Ensure CLI is installed, installing if needed."""
+    if is_cli_installed():
+        return True
+    return install_cli()
+
+
+def run_cli(args: list[str], config: dict) -> int:
     """
-    Store a memory via the daemon API.
+    Run the hindsight CLI with the given arguments.
+
+    Ensures daemon is running and passes the API URL.
 
     Args:
-        bank_id: Memory bank ID
-        content: Memory content to store
-        context: Category for the memory
+        args: CLI arguments (e.g., ["memory", "retain", "bank", "content"])
+        config: Configuration dict with llm settings
 
     Returns:
-        API response dict
+        Exit code from CLI
     """
-    client = get_client()
+    import subprocess
+    import sys
+
+    # Ensure CLI is installed
+    if not ensure_cli_installed():
+        return 1
+
+    cli_binary = find_cli_binary()
+    if not cli_binary:
+        print("Error: hindsight CLI not found", file=sys.stderr)
+        return 1
+
+    # Ensure daemon is running
+    if not ensure_daemon_running(config):
+        print("Error: Failed to start daemon", file=sys.stderr)
+        return 1
+
+    # Build environment with API URL pointing to daemon
+    env = os.environ.copy()
+    env["HINDSIGHT_API_URL"] = DAEMON_URL
+
+    # Run CLI
     try:
-        response = await client.aretain(
-            bank_id=bank_id,
-            content=content,
-            context=context,
+        result = subprocess.run(
+            [str(cli_binary)] + args,
+            env=env,
         )
-        return {"success": response.success if hasattr(response, 'success') else True}
-    finally:
-        await client.aclose()
-
-
-async def recall(
-    bank_id: str,
-    query: str,
-    budget: str = "low",
-    max_tokens: int = 4096,
-) -> dict:
-    """
-    Search memories via the daemon API.
-
-    Args:
-        bank_id: Memory bank ID
-        query: Search query
-        budget: Budget level (low, mid, high)
-        max_tokens: Maximum tokens in results
-
-    Returns:
-        API response dict with results
-    """
-    client = get_client()
-    try:
-        results = await client.arecall(
-            bank_id=bank_id,
-            query=query,
-            budget=budget,
-            max_tokens=max_tokens,
-        )
-        # Convert results to dict format
-        return {
-            "results": [
-                {
-                    "text": r.text if hasattr(r, 'text') else str(r),
-                    "type": r.type if hasattr(r, 'type') else None,
-                    "occurred_start": r.occurred_start.isoformat() if hasattr(r, 'occurred_start') and r.occurred_start else None,
-                    "occurred_end": r.occurred_end.isoformat() if hasattr(r, 'occurred_end') and r.occurred_end else None,
-                    "entities": r.entities if hasattr(r, 'entities') else [],
-                    "context": r.context if hasattr(r, 'context') else None,
-                }
-                for r in results
-            ]
-        }
-    finally:
-        await client.aclose()
+        return result.returncode
+    except Exception as e:
+        print(f"Error running CLI: {e}", file=sys.stderr)
+        return 1

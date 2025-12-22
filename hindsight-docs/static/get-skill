@@ -76,24 +76,45 @@ You have access to persistent memory via the `hindsight-embed` CLI. Use it to re
 
 Run: `uvx hindsight-embed configure`
 
+This will configure your LLM provider and start a local daemon that manages your memory bank.
+
 ## Commands
+
+The CLI uses a bank ID to organize memories. Use `default` for general memories or create project-specific banks.
 
 ### Store a memory
 
-Use `retain` to store important facts, preferences, decisions, or context:
+Use `memory retain` to store important facts, preferences, decisions, or context:
 
 ```bash
-uvx hindsight-embed retain "User prefers dark mode for all UIs"
-uvx hindsight-embed retain "Project uses Python 3.11 with FastAPI" --context work
+uvx hindsight-embed memory retain default "User prefers dark mode for all UIs"
+uvx hindsight-embed memory retain default "Project uses Python 3.11 with FastAPI" --context work
+uvx hindsight-embed memory retain myproject "API uses JWT authentication"
 ```
 
 ### Recall memories
 
-Use `recall` to search for relevant memories before starting tasks:
+Use `memory recall` to search for relevant memories before starting tasks:
 
 ```bash
-uvx hindsight-embed recall "What are the user'"'"'s UI preferences?"
-uvx hindsight-embed recall "What tech stack does this project use?"
+uvx hindsight-embed memory recall default "What are the user'"'"'s UI preferences?"
+uvx hindsight-embed memory recall default "What tech stack does this project use?"
+```
+
+### Reflect on memories
+
+Use `memory reflect` for contextual answers that synthesize multiple memories:
+
+```bash
+uvx hindsight-embed memory reflect default "How should I set up the dev environment?"
+```
+
+### Other commands
+
+```bash
+uvx hindsight-embed bank list              # List all memory banks
+uvx hindsight-embed daemon status          # Check daemon status
+uvx hindsight-embed --help                 # Full CLI help
 ```
 
 ## When to Use
@@ -114,6 +135,7 @@ uvx hindsight-embed recall "What tech stack does this project use?"
 1. **Be specific**: Store "User prefers 2-space indentation" not "User has preferences"
 2. **Recall first**: Before starting tasks, recall relevant context
 3. **Use context tags**: Organize with `--context` (work, personal, preferences)
+4. **Use project banks**: Create separate banks for different projects
 '
 
 # Get skills directory for app (bash 3.x compatible)
@@ -235,8 +257,8 @@ echo ""
 echo -e "  The Hindsight skill is now available in ${BOLD}$APP_NAME${NC}."
 echo ""
 echo -e "  ${DIM}Test the CLI:${NC}"
-echo -e "    ${CYAN}uvx hindsight-embed retain \"Test memory\"${NC}"
-echo -e "    ${CYAN}uvx hindsight-embed recall \"test\"${NC}"
+echo -e "    ${CYAN}uvx hindsight-embed memory retain default \"Test memory\"${NC}"
+echo -e "    ${CYAN}uvx hindsight-embed memory recall default \"test\"${NC}"
 echo ""
 echo -e "  ${DIM}$APP_NAME will automatically use the skill when relevant.${NC}"
 echo ""
