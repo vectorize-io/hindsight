@@ -47,6 +47,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "cytoscape": "^3.33.1",
+    "cytoscape-fcose": "^2.2.0",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1",
     "lucide-react": "^0.553.0",
