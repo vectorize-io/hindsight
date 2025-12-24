@@ -54,7 +54,7 @@ export function DataView({ factType }: DataViewProps) {
 
   // Graph controls state
   const [showLabels, setShowLabels] = useState(true);
-  const [maxNodes, setMaxNodes] = useState<number | undefined>(50);
+  const [maxNodes, setMaxNodes] = useState<number | undefined>(undefined);
   const [showControlPanel, setShowControlPanel] = useState(true);
   const [visibleLinkTypes, setVisibleLinkTypes] = useState<Set<string>>(
     new Set(["semantic", "temporal", "entity", "causal"])
@@ -227,6 +227,13 @@ export function DataView({ factType }: DataViewProps) {
       loadData();
     }
   }, [factType, currentBank]);
+
+  // Set default maxNodes to 25 if there are more than 25 nodes
+  useEffect(() => {
+    if (data && graph2DData.nodes.length > 25 && maxNodes === undefined) {
+      setMaxNodes(25);
+    }
+  }, [data, graph2DData.nodes.length, maxNodes]);
 
   return (
     <div>
