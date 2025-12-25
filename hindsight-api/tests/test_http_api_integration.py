@@ -608,3 +608,167 @@ async def test_async_retain_parallel(api_client):
         assert response.status_code == 200
         results = response.json()["results"]
         assert len(results) > 0, f"Should find memories for document {i}"
+
+
+@pytest.mark.asyncio
+async def test_reflect_structured_output(api_client):
+    """Test reflect endpoint with structured output via response_schema.
+
+    When response_schema is provided, the reflect endpoint should return
+    both the natural language text response and a structured_output field
+    containing the response parsed according to the provided JSON schema.
+    """
+    test_bank_id = f"reflect_structured_test_{datetime.now().timestamp()}"
+
+    # Store some memories to reflect on
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Alice is a senior machine learning engineer with 8 years of experience.",
+                    "context": "team member info"
+                },
+                {
+                    "content": "Bob is a junior data scientist who joined last month.",
+                    "context": "team member info"
+                },
+                {
+                    "content": "The team uses Python and TensorFlow for most projects.",
+                    "context": "tech stack"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # Define a JSON schema for structured output
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "team_members": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "role": {"type": "string"},
+                        "experience_level": {"type": "string"}
+                    }
+                }
+            },
+            "technologies": {
+                "type": "array",
+                "items": {"type": "string"}
+            },
+            "summary": {"type": "string"}
+        },
+        "required": ["team_members", "summary"]
+    }
+
+    # Call reflect with response_schema
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "Give me an overview of the team and their tech stack",
+            "response_schema": response_schema
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify text field exists (empty when using structured output)
+    assert "text" in result
+    assert result["text"] == ""
+
+    # Verify structured output exists and has expected structure
+    assert "structured_output" in result
+    assert result["structured_output"] is not None
+
+    structured = result["structured_output"]
+    assert "team_members" in structured
+    assert "summary" in structured
+    assert isinstance(structured["team_members"], list)
+    assert isinstance(structured["summary"], str)
+
+    # Verify team members have the expected fields
+    if len(structured["team_members"]) > 0:
+        member = structured["team_members"][0]
+        assert "name" in member or "role" in member  # At least some fields should be present
+
+
+@pytest.mark.asyncio
+async def test_reflect_without_structured_output(api_client):
+    """Test that reflect works normally without response_schema.
+
+    When response_schema is not provided, the structured_output field
+    should be null/None in the response.
+    """
+    test_bank_id = f"reflect_no_structured_test_{datetime.now().timestamp()}"
+
+    # Store a memory
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The project deadline is next Friday.",
+                    "context": "project timeline"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # Call reflect without response_schema
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "When is the project deadline?"
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify response has text but structured_output is null
+    assert "text" in result
+    assert len(result["text"]) > 0
+    assert result.get("structured_output") is None
+
+
+@pytest.mark.asyncio
+async def test_reflect_with_max_tokens(api_client):
+    """Test reflect endpoint with custom max_tokens parameter.
+
+    The max_tokens parameter controls the maximum tokens for the LLM response.
+    """
+    test_bank_id = f"reflect_max_tokens_test_{datetime.now().timestamp()}"
+
+    # Store a memory
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Python is a popular programming language for data science and machine learning.",
+                    "context": "tech"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # Call reflect with custom max_tokens
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "What is Python used for?",
+            "max_tokens": 500
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify response has text
+    assert "text" in result
+    assert len(result["text"]) > 0

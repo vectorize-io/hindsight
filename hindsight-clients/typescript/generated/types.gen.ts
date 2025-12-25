@@ -899,9 +899,23 @@ export type ReflectRequest = {
    */
   context?: string | null;
   /**
+   * Max Tokens
+   *
+   * Maximum tokens for the response
+   */
+  max_tokens?: number;
+  /**
    * Options for including additional data (disabled by default)
    */
   include?: ReflectIncludeOptions;
+  /**
+   * Response Schema
+   *
+   * Optional JSON Schema for structured output. When provided, the response will include a 'structured_output' field with the LLM response parsed according to this schema.
+   */
+  response_schema?: {
+    [key: string]: unknown;
+  } | null;
 };
 
 /**
@@ -918,6 +932,14 @@ export type ReflectResponse = {
    * Based On
    */
   based_on?: Array<ReflectFact>;
+  /**
+   * Structured Output
+   *
+   * Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request.
+   */
+  structured_output?: {
+    [key: string]: unknown;
+  } | null;
 };
 
 /**

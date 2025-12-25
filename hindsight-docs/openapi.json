@@ -3269,9 +3269,28 @@
             ],
             "title": "Context"
           },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens",
+            "description": "Maximum tokens for the response",
+            "default": 4096
+          },
           "include": {
             "$ref": "#/components/schemas/ReflectIncludeOptions",
             "description": "Options for including additional data (disabled by default)"
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema",
+            "description": "Optional JSON Schema for structured output. When provided, the response will include a 'structured_output' field with the LLM response parsed according to this schema."
           }
         },
         "type": "object",
@@ -3286,7 +3305,26 @@
           "include": {
             "facts": {}
           },
-          "query": "What do you think about artificial intelligence?"
+          "max_tokens": 4096,
+          "query": "What do you think about artificial intelligence?",
+          "response_schema": {
+            "properties": {
+              "summary": {
+                "type": "string"
+              },
+              "key_points": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "summary",
+              "key_points"
+            ],
+            "type": "object"
+          }
         }
       },
       "ReflectResponse": {
@@ -3302,6 +3340,19 @@
             "type": "array",
             "title": "Based On",
             "default": []
+          },
+          "structured_output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured Output",
+            "description": "Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request."
           }
         },
         "type": "object",
@@ -3323,6 +3374,13 @@
               "type": "experience"
             }
           ],
+          "structured_output": {
+            "key_points": [
+              "Used in healthcare",
+              "Discussed recently"
+            ],
+            "summary": "AI is transformative"
+          },
           "text": "Based on my understanding, AI is a transformative technology..."
         }
       },

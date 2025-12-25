@@ -173,6 +173,51 @@ class TestReflect:
         assert response.text is not None
         assert len(response.text) > 0
 
+    def test_reflect_with_max_tokens(self, client, bank_id):
+        """Test reflect with custom max_tokens parameter."""
+        response = client.reflect(
+            bank_id=bank_id,
+            query="What do you think about Python?",
+            max_tokens=500,
+        )
+
+        assert response is not None
+        assert response.text is not None
+        assert len(response.text) > 0
+
+    def test_reflect_with_structured_output(self, client, bank_id):
+        """Test reflect with structured output via response_schema.
+
+        When response_schema is provided, the response returns structured_output
+        field parsed according to the provided JSON schema. The text field is empty
+        since only a single LLM call is made for structured output.
+        """
+        from typing import Optional
+        from pydantic import BaseModel
+
+        # Define schema using Pydantic model
+        class RecommendationResponse(BaseModel):
+            recommendation: str
+            reasons: list[str]
+            confidence: Optional[str] = None  # Optional for LLM flexibility
+
+        response = client.reflect(
+            bank_id=bank_id,
+            query="What programming language should I learn for data science?",
+            response_schema=RecommendationResponse.model_json_schema(),
+            max_tokens=10000,
+        )
+
+        assert response is not None
+        # Text is empty when using structured output (single LLM call)
+        assert response.text == ""
+
+        # Verify structured output is present and can be parsed into model
+        assert response.structured_output is not None
+        result = RecommendationResponse.model_validate(response.structured_output)
+        assert result.recommendation
+        assert isinstance(result.reasons, list)
+
 
 class TestListMemories:
     """Tests for listing memories."""

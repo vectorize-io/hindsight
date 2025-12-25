@@ -175,6 +175,16 @@ pub fn print_think_response(response: &ReflectResponse) {
     if !response.based_on.is_empty() {
         println!("{}", dim(&format!("Based on {} memory units", response.based_on.len())));
     }
+
+    // Display structured output if present
+    if let Some(structured) = &response.structured_output {
+        println!();
+        println!("{}", gradient_text("─── Structured Output ───"));
+        println!();
+        if let Ok(json) = serde_json::to_string_pretty(structured) {
+            println!("{}", json);
+        }
+    }
 }
 
 pub fn print_trace_info(trace: &serde_json::Map<String, serde_json::Value>) {

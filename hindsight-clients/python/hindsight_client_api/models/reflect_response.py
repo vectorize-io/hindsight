@@ -29,7 +29,8 @@ class ReflectResponse(BaseModel):
     """ # noqa: E501
     text: StrictStr
     based_on: Optional[List[ReflectFact]] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on"]
+    structured_output: Optional[Dict[str, Any]] = None
+    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -77,6 +78,11 @@ class ReflectResponse(BaseModel):
                 if _item_based_on:
                     _items.append(_item_based_on.to_dict())
             _dict['based_on'] = _items
+        # set to None if structured_output (nullable) is None
+        # and model_fields_set contains the field
+        if self.structured_output is None and "structured_output" in self.model_fields_set:
+            _dict['structured_output'] = None
+
         return _dict
 
     @classmethod
@@ -90,7 +96,8 @@ class ReflectResponse(BaseModel):
 
         _obj = cls.model_validate({
             "text": obj.get("text"),
-            "based_on": [ReflectFact.from_dict(_item) for _item in obj["based_on"]] if obj.get("based_on") is not None else None
+            "based_on": [ReflectFact.from_dict(_item) for _item in obj["based_on"]] if obj.get("based_on") is not None else None,
+            "structured_output": obj.get("structured_output")
         })
         return _obj
 

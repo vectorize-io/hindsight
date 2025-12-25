@@ -10,6 +10,7 @@ use crate::ui;
 
 // Import types from generated client
 use hindsight_client::types::{Budget, ChunkIncludeOptions, IncludeOptions};
+use serde_json;
 
 // Helper function to parse budget string to Budget enum
 fn parse_budget(budget: &str) -> Budget {
@@ -86,6 +87,8 @@ pub fn reflect(
     query: String,
     budget: String,
     context: Option<String>,
+    max_tokens: Option<i64>,
+    schema_path: Option<PathBuf>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -95,11 +98,24 @@ pub fn reflect(
         None
     };
 
+    // Load and parse schema if provided
+    let response_schema = if let Some(path) = schema_path {
+        let schema_content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read schema file: {}", path.display()))?;
+        let schema: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&schema_content)
+            .with_context(|| format!("Failed to parse JSON schema from: {}", path.display()))?;
+        Some(schema)
+    } else {
+        None
+    };
+
     let request = ReflectRequest {
         query,
         budget: Some(parse_budget(&budget)),
         context,
+        max_tokens: max_tokens.unwrap_or(4096),
         include: None,
+        response_schema,
     };
 
     let response = client.reflect(agent_id, &request, verbose);

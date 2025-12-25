@@ -229,6 +229,8 @@ class Hindsight:
         query: str,
         budget: str = "low",
         context: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        response_schema: Optional[Dict[str, Any]] = None,
     ) -> ReflectResponse:
         """
         Generate a contextual answer based on bank identity and memories.
@@ -238,14 +240,21 @@ class Hindsight:
             query: The question or prompt
             budget: Budget level for reflection - "low", "mid", or "high" (default: "low")
             context: Optional additional context
+            max_tokens: Maximum tokens for the response (server default: 4096)
+            response_schema: Optional JSON Schema for structured output. When provided,
+                the response will include a 'structured_output' field with the LLM
+                response parsed according to this schema.
 
         Returns:
-            ReflectResponse with answer text and optionally facts used
+            ReflectResponse with answer text, optionally facts used, and optionally
+            structured_output if response_schema was provided
         """
         request_obj = reflect_request.ReflectRequest(
             query=query,
             budget=budget,
             context=context,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
         )
 
         return _run_async(self._memory_api.reflect(bank_id, request_obj))

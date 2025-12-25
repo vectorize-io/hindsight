@@ -101,7 +101,9 @@ mod tests {
             query: "What do you know about Alice?".to_string(),
             budget: None,
             context: None,
+            max_tokens: 4096,
             include: None,
+            response_schema: None,
         };
         let reflect_response = client
             .reflect(&bank_id, None, &reflect_request)

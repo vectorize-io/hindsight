@@ -52,6 +52,8 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | `query` | string | required | Question or prompt |
 | `budget` | string | "low" | Budget level: "low", "mid", "high" |
 | `context` | string | None | Additional context for the query |
+| `max_tokens` | int | 4096 | Maximum tokens for the response |
+| `response_schema` | object | None | JSON Schema for [structured output](#structured-output) |
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -127,3 +129,107 @@ This enables:
 - **Transparency** — users see why the bank said something
 - **Verification** — check if the response is grounded in facts
 - **Debugging** — understand retrieval quality
+
+## Structured Output
+
+For applications that need to process responses programmatically, you can request structured output by providing a JSON Schema via `response_schema`. When provided, the response includes a `structured_output` field with the LLM response parsed according to the schema. The `text` field will be empty since only a single LLM call is made for efficiency.
+
+The easiest way to define a schema is using **Pydantic models**:
+
+<Tabs>
+<TabItem value="python" label="Python">
+
+```python
+from pydantic import BaseModel
+from hindsight_client import Hindsight
+
+# Define your response structure with Pydantic
+class HiringRecommendation(BaseModel):
+    recommendation: str
+    confidence: str  # "low", "medium", "high"
+    key_factors: list[str]
+    risks: list[str] = []
+
+with Hindsight() as client:
+    response = client.reflect(
+        bank_id="hiring-team",
+        query="Should we hire Alice for the ML team lead position?",
+        response_schema=HiringRecommendation.model_json_schema(),
+    )
+
+    # Parse structured output into Pydantic model
+    result = HiringRecommendation.model_validate(response.structured_output)
+    print(f"Recommendation: {result.recommendation}")
+    print(f"Confidence: {result.confidence}")
+    print(f"Key factors: {result.key_factors}")
+```
+
+</TabItem>
+<TabItem value="node" label="Node.js">
+
+```javascript
+import { Hindsight } from "@anthropic-ai/hindsight";
+
+const client = new Hindsight();
+
+// Define JSON schema directly
+const responseSchema = {
+  type: "object",
+  properties: {
+    recommendation: { type: "string" },
+    confidence: { type: "string", enum: ["low", "medium", "high"] },
+    key_factors: { type: "array", items: { type: "string" } },
+    risks: { type: "array", items: { type: "string" } },
+  },
+  required: ["recommendation", "confidence", "key_factors"],
+};
+
+const response = await client.reflect({
+  bankId: "hiring-team",
+  query: "Should we hire Alice for the ML team lead position?",
+  responseSchema: responseSchema,
+});
+
+// Structured output
+console.log(response.structuredOutput.recommendation);
+console.log(response.structuredOutput.keyFactors);
+```
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+First, create a JSON schema file `schema.json`:
+```json
+{
+  "type": "object",
+  "properties": {
+    "recommendation": {"type": "string"},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "key_factors": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["recommendation", "confidence", "key_factors"]
+}
+```
+
+Then use the `--schema` flag:
+```bash
+hindsight memory reflect hiring-team \
+  "Should we hire Alice for the ML team lead position?" \
+  --schema schema.json
+```
+
+</TabItem>
+</Tabs>
+
+| Use Case | Why Structured Output Helps |
+|----------|----------------------------|
+| **Decision pipelines** | Parse recommendations into workflow systems |
+| **Dashboards** | Extract confidence scores, risk factors for visualization |
+| **Multi-agent systems** | Pass structured data between agents |
+| **Auditing** | Log structured decisions with clear reasoning |
+
+**Tips:**
+- Use Pydantic's `model_json_schema()` for type-safe schema generation
+- Use `model_validate()` to parse the response back into your Pydantic model
+- Keep schemas focused — extract only what you need
+- Use `Optional` fields for data that may not always be available

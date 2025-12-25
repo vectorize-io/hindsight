@@ -123,7 +123,8 @@ class ReflectResult(BaseModel):
     Result from a reflect operation.
 
     Contains the formulated answer, the facts it was based on (organized by type),
-    and any new opinions that were formed during the reflection process.
+    any new opinions that were formed during the reflection process, and optionally
+    structured output if a response schema was provided.
     """
 
     model_config = ConfigDict(
@@ -145,6 +146,7 @@ class ReflectResult(BaseModel):
                     "opinion": [],
                 },
                 "new_opinions": ["Machine learning has great potential in healthcare"],
+                "structured_output": {"summary": "ML in healthcare", "confidence": 0.9},
             }
         }
     )
@@ -154,6 +156,10 @@ class ReflectResult(BaseModel):
         description="Facts used to formulate the answer, organized by type (world, experience, opinion)"
     )
     new_opinions: list[str] = Field(default_factory=list, description="List of newly formed opinions during reflection")
+    structured_output: dict[str, Any] | None = Field(
+        default=None,
+        description="Structured output parsed according to the provided response schema. Only present when response_schema was provided.",
+    )
 
 
 class Opinion(BaseModel):

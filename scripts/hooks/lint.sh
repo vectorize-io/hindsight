@@ -31,6 +31,11 @@ run_task() {
     NAMES+=("$name")
 }
 
+echo "  Syncing Python dependencies..."
+# Run uv sync first to avoid race conditions when multiple uv run commands
+# try to reinstall local packages in parallel (e.g., after version bump)
+uv sync --quiet
+
 echo "  Running lints in parallel..."
 
 # Node/TypeScript tasks

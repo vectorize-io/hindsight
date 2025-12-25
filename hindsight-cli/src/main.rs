@@ -206,6 +206,14 @@ enum MemoryCommands {
         /// Additional context
         #[arg(short = 'c', long)]
         context: Option<String>,
+
+        /// Maximum tokens for the response (server default: 4096)
+        #[arg(short = 'm', long)]
+        max_tokens: Option<i64>,
+
+        /// Path to JSON schema file for structured output
+        #[arg(short = 's', long)]
+        schema: Option<PathBuf>,
     },
 
     /// Store (retain) a single memory
@@ -421,8 +429,8 @@ fn run() -> Result<()> {
             MemoryCommands::Recall { bank_id, query, fact_type, budget, max_tokens, trace, include_chunks, chunk_max_tokens } => {
                 commands::memory::recall(&client, &bank_id, query, fact_type, budget, max_tokens, trace, include_chunks, chunk_max_tokens, verbose, output_format)
             }
-            MemoryCommands::Reflect { bank_id, query, budget, context } => {
-                commands::memory::reflect(&client, &bank_id, query, budget, context, verbose, output_format)
+            MemoryCommands::Reflect { bank_id, query, budget, context, max_tokens, schema } => {
+                commands::memory::reflect(&client, &bank_id, query, budget, context, max_tokens, schema, verbose, output_format)
             }
             MemoryCommands::Retain { bank_id, content, doc_id, context, r#async } => {
                 commands::memory::retain(&client, &bank_id, content, doc_id, context, r#async, verbose, output_format)

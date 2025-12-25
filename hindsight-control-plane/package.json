@@ -11,7 +11,7 @@
     "public"
   ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack -p $(node -e \"const net=require('net');const s=net.createServer();s.listen(0,()=>{console.log(s.address().port);s.close()})\")",
     "build": "next build && npm run build:standalone",
     "build:standalone": "rm -rf standalone && STANDALONE_ROOT=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1 | xargs dirname) && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && cp -r public/* standalone/public/ 2>/dev/null || true",
     "start": "next start",

@@ -354,7 +354,9 @@ impl App {
                             query: query_text,
                             budget: Some(query_budget),
                             context: None,
+                            max_tokens: 4096,
                             include: None,
+                            response_schema: None,
                         };
 
                         let result = client.reflect(&bank_id, &request, false)

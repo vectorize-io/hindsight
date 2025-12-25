@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **text** | **str** |  | 
 **based_on** | [**List[ReflectFact]**](ReflectFact.md) |  | [optional] [default to []]
+**structured_output** | **Dict[str, object]** |  | [optional] 
 
 ## Example
 
