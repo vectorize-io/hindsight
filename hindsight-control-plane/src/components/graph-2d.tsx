@@ -235,6 +235,8 @@ export function Graph2D({
           userZoomingEnabled: true,
           userPanningEnabled: true,
           boxSelectionEnabled: false,
+          // Disable automatic layout on initialization
+          layout: { name: 'preset' },
           style: [
             {
               selector: "node",
@@ -331,33 +333,6 @@ export function Graph2D({
               },
             },
           ],
-          layout: {
-            name: "fcose",
-            quality: "default",
-            randomize: false,
-            animate: false,
-            // Separation settings - increase to spread nodes more
-            nodeSeparation: 200,
-            idealEdgeLength: () => 250,
-            edgeElasticity: () => 0.05,
-            nestingFactor: 0.05,
-            gravity: 0.05, // Reduced gravity spreads nodes more
-            numIter: 2500,
-            // Overlap prevention
-            nodeOverlap: 30,
-            avoidOverlap: true,
-            nodeDimensionsIncludeLabels: true,
-            // Layout bounds - reduce padding to use more space
-            padding: 20,
-            boundingBox: undefined,
-            // Tiling - increase spacing between disconnected components
-            tile: true,
-            tilingPaddingVertical: 30,
-            tilingPaddingHorizontal: 30,
-            // Force more spread
-            uniformNodeDimensions: false,
-            packComponents: false, // Don't pack components tightly
-          },
         });
 
         cyRef.current = cy;
