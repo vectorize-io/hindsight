@@ -31,7 +31,7 @@ from .daemon import (
     IdleTimeoutMiddleware,
     daemonize,
 )
-from .extensions import OperationValidatorExtension, load_extension
+from .extensions import DefaultExtensionContext, OperationValidatorExtension, TenantExtension, load_extension
 
 # Filter deprecation warnings from third-party libraries
 warnings.filterwarnings("ignore", message="websockets.legacy is deprecated")
@@ -196,10 +196,27 @@ def main():
     operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
     if operation_validator:
         import logging
+
         logging.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
 
+    # Load tenant extension if configured
+    tenant_extension = load_extension("TENANT", TenantExtension)
+    if tenant_extension:
+        import logging
+
+        logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
+
     # Create MemoryEngine (reads configuration from environment)
-    _memory = MemoryEngine(operation_validator=operation_validator)
+    _memory = MemoryEngine(operation_validator=operation_validator, tenant_extension=tenant_extension)
+
+    # Set extension context on tenant extension (needed for schema provisioning)
+    if tenant_extension:
+        extension_context = DefaultExtensionContext(
+            database_url=config.database_url,
+            memory_engine=_memory,
+        )
+        tenant_extension.set_context(extension_context)
+        logging.info("Extension context set on tenant extension")
 
     # Create FastAPI app
     app = create_app(

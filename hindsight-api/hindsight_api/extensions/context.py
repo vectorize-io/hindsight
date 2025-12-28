@@ -98,7 +98,14 @@ class DefaultExtensionContext(ExtensionContext):
         """Run migrations for a specific schema."""
         from hindsight_api.migrations import run_migrations
 
-        run_migrations(self._database_url, schema=schema)
+        # Prefer getting URL from memory engine (handles pg0 case where URL is set after init)
+        db_url = self._database_url
+        if self._memory_engine is not None:
+            engine_url = getattr(self._memory_engine, "db_url", None)
+            if engine_url:
+                db_url = engine_url
+
+        run_migrations(db_url, schema=schema)
 
     def get_memory_engine(self) -> "MemoryEngineInterface":
         """Get the memory engine interface."""
