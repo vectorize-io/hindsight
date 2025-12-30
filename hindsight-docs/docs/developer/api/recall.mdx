@@ -48,6 +48,9 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | `trace` | bool | false | Enable trace output for debugging |
 | `include_entities` | bool | false | Include entity observations |
 | `max_entity_tokens` | int | 500 | Token budget for entity observations |
+| `boost_by_usefulness` | bool | false | Boost results by [usefulness signals](./feedback-signals) |
+| `usefulness_weight` | float | 0.3 | Weight for usefulness boost (0.0-1.0) |
+| `min_usefulness` | float | 0.0 | Filter facts below this usefulness score |
 
 <Tabs>
 <TabItem value="python" label="Python">

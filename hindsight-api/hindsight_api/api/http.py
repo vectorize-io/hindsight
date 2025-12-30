@@ -29,6 +29,8 @@ def _parse_metadata(metadata: Any) -> dict[str, Any]:
     return {}
 
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from hindsight_api import MemoryEngine
@@ -40,6 +42,127 @@ from hindsight_api.metrics import create_metrics_collector, get_metrics_collecto
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================================
+# Feedback Signal Models
+# =========================================================================
+
+
+class SignalType(str, Enum):
+    """Types of usefulness signals."""
+
+    USED = "used"  # Fact was referenced in response
+    IGNORED = "ignored"  # Fact was recalled but not used
+    HELPFUL = "helpful"  # Explicit positive feedback
+    NOT_HELPFUL = "not_helpful"  # Explicit negative feedback
+
+
+class SignalItem(BaseModel):
+    """A single feedback signal for a fact."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "fact_id": "123e4567-e89b-12d3-a456-426614174000",
+                "signal_type": "used",
+                "confidence": 1.0,
+                "query": "What did Alice say about machine learning?",
+                "context": "User referenced this in response",
+            }
+        }
+    )
+
+    fact_id: str = Field(description="UUID of the fact to signal")
+    signal_type: SignalType = Field(description="Type of signal")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence in the signal (0.0-1.0)")
+    query: str | None = Field(default=None, description="The query associated with this signal (for pattern tracking)")
+    context: str | None = Field(default=None, description="Optional context about the signal")
+
+
+class SignalRequest(BaseModel):
+    """Request model for submitting feedback signals."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "signals": [
+                    {"fact_id": "123e4567-e89b-12d3-a456-426614174000", "signal_type": "used", "confidence": 1.0},
+                    {"fact_id": "456e7890-e12b-34d5-a678-901234567890", "signal_type": "ignored", "confidence": 0.8},
+                ]
+            }
+        }
+    )
+
+    signals: list[SignalItem] = Field(min_length=1, description="List of signals to submit")
+
+
+class SignalResponse(BaseModel):
+    """Response for signal submission."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "signals_processed": 2,
+                "updated_facts": ["123e4567-e89b-12d3-a456-426614174000"],
+            }
+        }
+    )
+
+    success: bool
+    signals_processed: int
+    updated_facts: list[str] = Field(default_factory=list, description="Fact IDs that were updated")
+
+
+class FactUsefulnessStats(BaseModel):
+    """Usefulness statistics for a single fact."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "fact_id": "123e4567-e89b-12d3-a456-426614174000",
+                "usefulness_score": 0.72,
+                "signal_count": 15,
+                "signal_breakdown": {"used": 10, "ignored": 2, "helpful": 3, "not_helpful": 0},
+                "last_signal_at": "2025-01-15T10:30:00Z",
+                "created_at": "2024-12-01T08:00:00Z",
+            }
+        }
+    )
+
+    fact_id: str
+    usefulness_score: float = Field(ge=0.0, le=1.0)
+    signal_count: int
+    signal_breakdown: dict[str, int] = Field(description="Count of signals by type")
+    last_signal_at: str | None = None
+    created_at: str
+
+
+class BankUsefulnessStats(BaseModel):
+    """Aggregate usefulness statistics for a bank."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "bank_id": "user123",
+                "total_facts_with_signals": 150,
+                "average_usefulness": 0.65,
+                "total_signals": 500,
+                "signal_distribution": {"used": 300, "ignored": 100, "helpful": 80, "not_helpful": 20},
+                "top_useful_facts": [{"fact_id": "abc...", "score": 0.95, "text": "Alice works at..."}],
+                "least_useful_facts": [{"fact_id": "xyz...", "score": 0.15, "text": "The weather was..."}],
+            }
+        }
+    )
+
+    bank_id: str
+    total_facts_with_signals: int
+    average_usefulness: float
+    total_signals: int
+    signal_distribution: dict[str, int]
+    top_useful_facts: list[dict] = Field(default_factory=list, description="Top 10 most useful facts")
+    least_useful_facts: list[dict] = Field(default_factory=list, description="Bottom 10 least useful facts")
 
 
 class EntityIncludeOptions(BaseModel):
@@ -96,6 +219,23 @@ class RecallRequest(BaseModel):
     include: IncludeOptions = Field(
         default_factory=IncludeOptions,
         description="Options for including additional data (entities are included by default)",
+    )
+    # Usefulness boosting parameters
+    boost_by_usefulness: bool = Field(
+        default=False,
+        description="Whether to boost results by their usefulness scores",
+    )
+    usefulness_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight of usefulness in final score (0.0-1.0, used only when boost_by_usefulness=True)",
+    )
+    min_usefulness: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum usefulness score to include (0.0-1.0, used only when boost_by_usefulness=True)",
     )
 
 
@@ -1125,6 +1265,9 @@ def _register_routes(app: FastAPI):
                     max_entity_tokens=max_entity_tokens,
                     include_chunks=include_chunks,
                     max_chunk_tokens=max_chunk_tokens,
+                    boost_by_usefulness=request.boost_by_usefulness,
+                    usefulness_weight=request.usefulness_weight,
+                    min_usefulness=request.min_usefulness,
                     request_context=request_context,
                 )
 
@@ -1383,6 +1526,113 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/stats: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # =========================================================================
+    # Feedback Signal Endpoints
+    # =========================================================================
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/signal",
+        response_model=SignalResponse,
+        summary="Submit feedback signals",
+        description="Submit usefulness feedback signals for recalled facts.\n\n"
+        "**Signal Types:**\n"
+        "- `used`: Fact was referenced in the response (weight: +1.0)\n"
+        "- `ignored`: Fact was recalled but not used (weight: -0.5)\n"
+        "- `helpful`: Explicit positive feedback (weight: +1.5)\n"
+        "- `not_helpful`: Explicit negative feedback (weight: -1.0)\n\n"
+        "**Scoring Algorithm:**\n"
+        "- Initial score: 0.5 (neutral)\n"
+        "- Delta: weight * confidence * 0.1\n"
+        "- Time decay: 5% per week (0.95^(days/7))\n"
+        "- Scores clamped to [0, 1]",
+        operation_id="submit_signals",
+        tags=["Feedback"],
+    )
+    async def api_submit_signals(
+        bank_id: str,
+        request: SignalRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit feedback signals for facts."""
+        try:
+            signals = [
+                {
+                    "fact_id": s.fact_id,
+                    "signal_type": s.signal_type.value,
+                    "confidence": s.confidence,
+                    "query": s.query,
+                    "context": s.context,
+                }
+                for s in request.signals
+            ]
+
+            result = await app.state.memory.submit_signals(bank_id, signals, request_context=request_context)
+
+            return SignalResponse(
+                success=result["success"],
+                signals_processed=result["signals_processed"],
+                updated_facts=result["updated_facts"],
+            )
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/signal: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/facts/{fact_id}/stats",
+        response_model=FactUsefulnessStats,
+        summary="Get fact usefulness statistics",
+        description="Get usefulness statistics for a specific fact including signal breakdown.",
+        operation_id="get_fact_stats",
+        tags=["Feedback"],
+    )
+    async def api_get_fact_stats(
+        bank_id: str,
+        fact_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get usefulness statistics for a specific fact."""
+        try:
+            stats = await app.state.memory.get_fact_usefulness_stats(bank_id, fact_id, request_context=request_context)
+
+            if stats is None:
+                raise HTTPException(status_code=404, detail=f"No usefulness data for fact {fact_id}")
+
+            return FactUsefulnessStats(**stats)
+        except HTTPException:
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/facts/{fact_id}/stats: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/stats/usefulness",
+        response_model=BankUsefulnessStats,
+        summary="Get bank usefulness statistics",
+        description="Get aggregate usefulness statistics for the entire bank including top/bottom facts.",
+        operation_id="get_bank_usefulness_stats",
+        tags=["Feedback"],
+    )
+    async def api_get_bank_usefulness_stats(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get aggregate usefulness statistics for a bank."""
+        try:
+            stats = await app.state.memory.get_bank_usefulness_stats(bank_id, request_context=request_context)
+            return BankUsefulnessStats(**stats)
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/stats/usefulness: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

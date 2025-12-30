@@ -590,3 +590,68 @@ class MemoryEngineInterface(ABC):
             Dict with operation_id and items_count.
         """
         ...
+
+    # =========================================================================
+    # Feedback Signal Methods
+    # =========================================================================
+
+    @abstractmethod
+    async def submit_signals(
+        self,
+        bank_id: str,
+        signals: list[dict[str, Any]],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Submit feedback signals for facts.
+
+        Args:
+            bank_id: The memory bank ID.
+            signals: List of signal dicts with fact_id, signal_type, confidence, query, context.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with success status and list of updated fact IDs.
+        """
+        ...
+
+    @abstractmethod
+    async def get_fact_usefulness_stats(
+        self,
+        bank_id: str,
+        fact_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """
+        Get usefulness statistics for a specific fact.
+
+        Args:
+            bank_id: The memory bank ID.
+            fact_id: The fact UUID.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with usefulness stats or None if no signals exist.
+        """
+        ...
+
+    @abstractmethod
+    async def get_bank_usefulness_stats(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Get aggregate usefulness statistics for a bank.
+
+        Args:
+            bank_id: The memory bank ID.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with bank-level usefulness stats.
+        """
+        ...

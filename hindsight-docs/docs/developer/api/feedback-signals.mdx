@@ -1,0 +1,284 @@
+---
+sidebar_position: 7
+---
+
+# Feedback Signals
+
+Track which recalled facts are useful to improve future retrieval quality.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import feedbackPy from '!!raw-loader!@site/examples/api/feedback-signals.py';
+import feedbackMjs from '!!raw-loader!@site/examples/api/feedback-signals.mjs';
+import feedbackSh from '!!raw-loader!@site/examples/api/feedback-signals.sh';
+
+:::info Why Feedback Signals?
+Not all recalled memories are equally useful. By tracking which facts your agent actually uses versus ignores, Hindsight learns to prioritize high-value memories in future recalls.
+:::
+
+## How It Works
+
+1. **Recall** returns memories relevant to a query
+2. **Agent uses** some facts in its response, ignores others
+3. **Submit signals** indicating which facts were useful
+4. **Future recalls** boost frequently-used facts
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Recall    │────▶│ Agent Uses  │────▶│   Signal    │
+│  Memories   │     │ Some Facts  │     │  Feedback   │
+└─────────────┘     └─────────────┘     └─────────────┘
+                                               │
+                    ┌─────────────┐             │
+                    │   Boosted   │◀────────────┘
+                    │   Recall    │
+                    └─────────────┘
+```
+
+## Signal Types
+
+| Signal | Weight | When to Use |
+|--------|--------|-------------|
+| `used` | +1.0 | Agent referenced this fact in its response |
+| `ignored` | -0.5 | Agent saw but didn't use this fact |
+| `helpful` | +1.5 | User explicitly marked as helpful |
+| `not_helpful` | -1.0 | User explicitly marked as not helpful |
+
+:::tip Implicit vs Explicit Signals
+- **Implicit signals** (`used`, `ignored`) come from observing agent behavior
+- **Explicit signals** (`helpful`, `not_helpful`) come from user feedback
+- Explicit signals have stronger weights since they're direct user input
+:::
+
+## Submitting Signals
+
+### Single Signal
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="submit-signal" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="submit-signal" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="submit-signal" language="bash" />
+</TabItem>
+</Tabs>
+
+### Batch Signals
+
+Submit multiple signals efficiently in a single request:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="submit-batch" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="submit-batch" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="submit-batch" language="bash" />
+</TabItem>
+</Tabs>
+
+### With Query Context
+
+Include the original query for pattern tracking:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="signal-with-context" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="signal-with-context" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Signal Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fact_id` | string | Yes | UUID of the fact |
+| `signal_type` | string | Yes | `used`, `ignored`, `helpful`, `not_helpful` |
+| `confidence` | float | No | 0.0-1.0, defaults to 1.0 |
+| `query` | string | No | Original query for pattern tracking |
+| `context` | string | No | Additional context about the signal |
+
+## Viewing Statistics
+
+### Fact Statistics
+
+Get usefulness stats for a specific fact:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="get-fact-stats" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="get-fact-stats" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="get-fact-stats" language="bash" />
+</TabItem>
+</Tabs>
+
+**Response fields:**
+
+| Field | Description |
+|-------|-------------|
+| `usefulness_score` | Current score (0.0-1.0), starts at 0.5 |
+| `signal_count` | Total signals received |
+| `signal_breakdown` | Count per signal type |
+| `last_signal_at` | Timestamp of most recent signal |
+
+### Bank Statistics
+
+Get aggregate stats for the entire memory bank:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="get-bank-stats" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="get-bank-stats" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="get-bank-stats" language="bash" />
+</TabItem>
+</Tabs>
+
+## Usefulness-Boosted Recall
+
+Enable usefulness boosting to prioritize frequently-used facts:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="recall-with-boost" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="recall-with-boost" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="recall-with-boost" language="bash" />
+</TabItem>
+</Tabs>
+
+### Recall Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `boost_by_usefulness` | bool | false | Enable usefulness boosting |
+| `usefulness_weight` | float | 0.3 | Weight for usefulness (0.0-1.0) |
+| `min_usefulness` | float | 0.0 | Filter threshold (0.0-1.0) |
+
+### How Boosting Works
+
+The final score combines semantic relevance with usefulness:
+
+```
+final_score = (1 - weight) × semantic_score + weight × usefulness_score
+```
+
+**Example with `usefulness_weight: 0.3`:**
+
+| Fact | Semantic | Usefulness | Final Score |
+|------|----------|------------|-------------|
+| A | 0.80 | 0.90 | 0.7×0.80 + 0.3×0.90 = **0.83** |
+| B | 0.90 | 0.30 | 0.7×0.90 + 0.3×0.30 = **0.72** |
+
+Fact A ranks higher despite lower semantic score because it's frequently used.
+
+### Filter by Usefulness
+
+Exclude low-usefulness facts entirely:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="recall-filter-useful" language="python" />
+</TabItem>
+<TabItem value="cli" label="cURL">
+<CodeSnippet code={feedbackSh} section="recall-filter-useful" language="bash" />
+</TabItem>
+</Tabs>
+
+## Score Algorithm
+
+### Initial Score
+All facts start with a neutral score of **0.5**.
+
+### Score Updates
+
+Each signal adjusts the score:
+
+```
+delta = signal_weight × confidence × 0.1
+new_score = clamp(old_score + delta, 0.0, 1.0)
+```
+
+| Signal | Weight | Effect on Score |
+|--------|--------|-----------------|
+| `used` | +1.0 | +0.10 per signal |
+| `ignored` | -0.5 | -0.05 per signal |
+| `helpful` | +1.5 | +0.15 per signal |
+| `not_helpful` | -1.0 | -0.10 per signal |
+
+### Time Decay
+
+Scores decay 5% per week toward the neutral 0.5:
+
+```
+decayed_score = 0.5 + (score - 0.5) × 0.95^(days_since_last_signal / 7)
+```
+
+This ensures recent signals matter more than old ones.
+
+## Complete Feedback Loop
+
+Here's a full example integrating signals with your agent:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={feedbackPy} section="feedback-loop" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={feedbackMjs} section="feedback-loop" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Best Practices
+
+### When to Submit Signals
+
+- **After each agent response** — Track used vs ignored facts
+- **After user feedback** — Submit explicit helpful/not_helpful
+- **Batch at session end** — Collect signals throughout, submit once
+
+### Confidence Values
+
+- **1.0** — Certain the fact was used/ignored
+- **0.7-0.9** — High confidence from detection heuristics
+- **0.5-0.7** — Moderate confidence
+- **< 0.5** — Consider not submitting
+
+### Usefulness Weight Tuning
+
+| Use Case | Recommended Weight |
+|----------|-------------------|
+| New bank (little feedback) | 0.0-0.1 |
+| Balanced exploration | 0.2-0.3 |
+| Established patterns | 0.4-0.5 |
+| Strong preference for proven facts | 0.6+ |
+
+:::warning Avoid Over-Boosting
+High usefulness weights can create filter bubbles where new facts never surface. Start low and increase gradually.
+:::
+
+## Next Steps
+
+- [**Recall**](./recall) — Learn about retrieval strategies
+- [**Operations**](./operations) — Background processing details
+- [**Memory Banks**](./memory-banks) — Bank configuration options
