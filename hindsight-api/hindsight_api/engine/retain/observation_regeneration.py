@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+from ...config import get_config
 from ..memory_engine import fq_table
 from ..search import observation_utils
 from . import embedding_utils
@@ -49,8 +50,9 @@ async def regenerate_observations_batch(
         entity_links: Entity links from this batch
         log_buffer: Optional log buffer for timing
     """
-    TOP_N_ENTITIES = 5
-    MIN_FACTS_THRESHOLD = 5
+    config = get_config()
+    TOP_N_ENTITIES = config.observation_top_entities
+    MIN_FACTS_THRESHOLD = config.observation_min_facts
 
     if not entity_links:
         return

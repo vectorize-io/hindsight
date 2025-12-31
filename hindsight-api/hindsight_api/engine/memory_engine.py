@@ -17,6 +17,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..config import get_config
+
 # Context variable for current schema (async-safe, per-task isolation)
 _current_schema: contextvars.ContextVar[str] = contextvars.ContextVar("current_schema", default="public")
 
@@ -3572,7 +3574,7 @@ Guidelines:
         self,
         bank_id: str,
         entity_ids: list[str],
-        min_facts: int = 5,
+        min_facts: int | None = None,
         conn=None,
         request_context: "RequestContext | None" = None,
     ) -> None:
@@ -3584,11 +3586,15 @@ Guidelines:
         Args:
             bank_id: Bank identifier
             entity_ids: List of entity IDs to process
-            min_facts: Minimum facts required to regenerate observations
+            min_facts: Minimum facts required to regenerate observations (uses config default if None)
             conn: Optional database connection (for transactional atomicity)
         """
         if not bank_id or not entity_ids:
             return
+
+        # Use config default if min_facts not specified
+        if min_facts is None:
+            min_facts = get_config().observation_min_facts
 
         # Convert to UUIDs
         entity_uuids = [uuid.UUID(eid) if isinstance(eid, str) else eid for eid in entity_ids]

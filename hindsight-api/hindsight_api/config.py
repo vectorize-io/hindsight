@@ -33,6 +33,10 @@ ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_MCP_LOCAL_BANK_ID = "HINDSIGHT_API_MCP_LOCAL_BANK_ID"
 ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
 
+# Observation thresholds
+ENV_OBSERVATION_MIN_FACTS = "HINDSIGHT_API_OBSERVATION_MIN_FACTS"
+ENV_OBSERVATION_TOP_ENTITIES = "HINDSIGHT_API_OBSERVATION_TOP_ENTITIES"
+
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
@@ -54,6 +58,10 @@ DEFAULT_LOG_LEVEL = "info"
 DEFAULT_MCP_ENABLED = True
 DEFAULT_GRAPH_RETRIEVER = "bfs"  # Options: "bfs", "mpfp"
 DEFAULT_MCP_LOCAL_BANK_ID = "mcp"
+
+# Observation thresholds
+DEFAULT_OBSERVATION_MIN_FACTS = 5  # Min facts required to generate entity observations
+DEFAULT_OBSERVATION_TOP_ENTITIES = 5  # Max entities to process per retain batch
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -111,6 +119,10 @@ class HindsightConfig:
     # Recall
     graph_retriever: str
 
+    # Observation thresholds
+    observation_min_facts: int
+    observation_top_entities: int
+
     # Optimization flags
     skip_llm_verification: bool
     lazy_reranker: bool
@@ -144,6 +156,9 @@ class HindsightConfig:
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
+            # Observation thresholds
+            observation_min_facts=int(os.getenv(ENV_OBSERVATION_MIN_FACTS, str(DEFAULT_OBSERVATION_MIN_FACTS))),
+            observation_top_entities=int(os.getenv(ENV_OBSERVATION_TOP_ENTITIES, str(DEFAULT_OBSERVATION_TOP_ENTITIES))),
         )
 
     def get_llm_base_url(self) -> str:
