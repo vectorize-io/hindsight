@@ -12,8 +12,10 @@ wheels/
 # Node
 node_modules/
 
-# Environment variables
+# Environment variables and local config
 .env
+docker-compose.yml
+docker-compose.override.yml
 
 # IDE
 .idea/
