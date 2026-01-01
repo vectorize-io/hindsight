@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState, useMemo } from "react";
 import cytoscape from "cytoscape";
+
 import fcose from "cytoscape-fcose";
 
 // Register the fcose extension
@@ -76,14 +77,10 @@ export interface Graph2DProps {
 
 // Brand colors
 const BRAND_PRIMARY = "#0074d9";
-const BRAND_TEAL = "#009296";
 const LINK_SEMANTIC = "#0074d9"; // Primary blue for semantic
-const LINK_TEMPORAL = "#009296"; // Teal for temporal
-const LINK_ENTITY = "#f59e0b"; // Amber for entity
 
 const DEFAULT_NODE_COLOR = BRAND_PRIMARY;
 const DEFAULT_LINK_COLOR = LINK_SEMANTIC;
-const DEFAULT_NODE_SIZE = 20;
 const DEFAULT_LINK_WIDTH = 1;
 
 // ============================================================================
@@ -105,7 +102,7 @@ export function Graph2D({
   const [containerDiv, setContainerDiv] = useState<HTMLDivElement | null>(null);
   const cyRef = useRef<any>(null);
   const isInitializingRef = useRef(false);
-  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
+  const [_hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [linkTooltipPos, setLinkTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -241,7 +238,6 @@ export function Graph2D({
       // Theme-aware colors
       const textColor = isDarkMode ? "#ffffff" : "#1f2937";
       const textBgColor = isDarkMode ? "rgba(0,0,0,0.8)" : "rgba(255,255,255,0.9)";
-      const borderColor = isDarkMode ? "#ffffff" : "#374151";
 
       try {
         console.log("Initializing cytoscape with container:", containerDiv);

@@ -293,6 +293,7 @@ export function EntitiesView() {
                       data={graph2DData}
                       nodeColorFn={nodeColorFn}
                       linkColorFn={linkColorFn}
+                      maxNodes={50}
                     />
                   </div>
                 ) : (

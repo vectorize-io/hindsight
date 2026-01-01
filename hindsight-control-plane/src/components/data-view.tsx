@@ -228,10 +228,16 @@ export function DataView({ factType }: DataViewProps) {
     }
   }, [factType, currentBank]);
 
-  // Set default maxNodes to 25 if there are more than 25 nodes
+  // Enforce 50 node limit to prevent UI instability, default to 20 or max whichever is smaller
   useEffect(() => {
-    if (data && graph2DData.nodes.length > 25 && maxNodes === undefined) {
-      setMaxNodes(25);
+    if (data && maxNodes === undefined) {
+      if (graph2DData.nodes.length > 50) {
+        // Always set maxNodes to 20 when we have >50 nodes (never leave as undefined)
+        setMaxNodes(20);
+      } else if (graph2DData.nodes.length > 20) {
+        setMaxNodes(20);
+      }
+      // If ≤20 nodes, leave maxNodes undefined to show all
     }
   }, [data, graph2DData.nodes.length, maxNodes]);
 
@@ -474,22 +480,41 @@ export function DataView({ factType }: DataViewProps) {
                             <div className="flex items-center justify-between mb-2">
                               <Label className="text-sm text-foreground">Max nodes</Label>
                               <span className="text-xs text-muted-foreground">
-                                {maxNodes ?? "All"} / {graph2DData.nodes.length}
+                                {graph2DData.nodes.length > 50
+                                  ? `${maxNodes ?? 50} / ${graph2DData.nodes.length}`
+                                  : `${maxNodes ?? "All"} / ${graph2DData.nodes.length}`}
                               </span>
                             </div>
                             <Slider
-                              value={[maxNodes ?? graph2DData.nodes.length]}
+                              value={[
+                                graph2DData.nodes.length > 50
+                                  ? maxNodes || 20
+                                  : maxNodes || Math.min(graph2DData.nodes.length, 20),
+                              ]}
                               min={10}
-                              max={Math.max(graph2DData.nodes.length, 10)}
+                              max={Math.min(Math.max(graph2DData.nodes.length, 10), 50)}
                               step={10}
-                              onValueChange={([v]) =>
-                                setMaxNodes(v >= graph2DData.nodes.length ? undefined : v)
-                              }
+                              onValueChange={([v]) => {
+                                const effectiveMax = Math.min(graph2DData.nodes.length, 50);
+                                // If we have >50 nodes, never allow "All" (undefined), cap at 50
+                                if (graph2DData.nodes.length > 50) {
+                                  setMaxNodes(v);
+                                } else {
+                                  // Original behavior for ≤50 nodes: allow "All" when slider reaches max
+                                  setMaxNodes(v >= effectiveMax ? undefined : v);
+                                }
+                              }}
                               className="w-full"
                             />
                           </div>
                           <p className="text-xs text-muted-foreground">
                             All links between visible nodes are shown.
+                            {graph2DData.nodes.length > 50 && (
+                              <span className="block text-amber-600 dark:text-amber-400 mt-1">
+                                ⚠️ Limited to 50 nodes for performance. Total:{" "}
+                                {graph2DData.nodes.length}
+                              </span>
+                            )}
                           </p>
                         </div>
                       </div>
