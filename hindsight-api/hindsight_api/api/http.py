@@ -1048,7 +1048,7 @@ def _register_routes(app: FastAPI):
         try:
             data = await app.state.memory.get_graph_data(bank_id, type, request_context=request_context)
             return data
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1096,7 +1096,7 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
             )
             return data
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1216,7 +1216,7 @@ def _register_routes(app: FastAPI):
             raise
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1282,7 +1282,7 @@ def _register_routes(app: FastAPI):
 
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1304,7 +1304,7 @@ def _register_routes(app: FastAPI):
         try:
             banks = await app.state.memory.list_banks(request_context=request_context)
             return BankListResponse(banks=banks)
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1429,7 +1429,7 @@ def _register_routes(app: FastAPI):
                     failed_operations=failed_operations,
                 )
 
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1455,7 +1455,7 @@ def _register_routes(app: FastAPI):
         try:
             entities = await app.state.memory.list_entities(bank_id, limit=limit, request_context=request_context)
             return EntityListResponse(items=[EntityListItem(**e) for e in entities])
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1494,7 +1494,7 @@ def _register_routes(app: FastAPI):
                     for obs in entity["observations"]
                 ],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1547,7 +1547,7 @@ def _register_routes(app: FastAPI):
                     for obs in entity["observations"]
                 ],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1585,7 +1585,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id, search_query=q, limit=limit, offset=offset, request_context=request_context
             )
             return data
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1617,7 +1617,7 @@ def _register_routes(app: FastAPI):
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
             return document
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1646,7 +1646,7 @@ def _register_routes(app: FastAPI):
             if not chunk:
                 raise HTTPException(status_code=404, detail="Chunk not found")
             return chunk
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1690,7 +1690,7 @@ def _register_routes(app: FastAPI):
                 document_id=document_id,
                 memory_units_deleted=result["memory_units_deleted"],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1715,7 +1715,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 operations=[OperationResponse(**op) for op in operations],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1747,7 +1747,7 @@ def _register_routes(app: FastAPI):
             return CancelOperationResponse(**result)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1780,7 +1780,7 @@ def _register_routes(app: FastAPI):
                 disposition=DispositionTraits(**disposition_dict),
                 background=profile["background"],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1820,7 +1820,7 @@ def _register_routes(app: FastAPI):
                 disposition=DispositionTraits(**disposition_dict),
                 background=profile["background"],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1851,7 +1851,7 @@ def _register_routes(app: FastAPI):
                 response.disposition = DispositionTraits(**result["disposition"])
 
             return response
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1904,7 +1904,7 @@ def _register_routes(app: FastAPI):
                 disposition=DispositionTraits(**disposition_dict),
                 background=final_profile["background"],
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -1933,7 +1933,7 @@ def _register_routes(app: FastAPI):
                 + result.get("entities_deleted", 0)
                 + result.get("documents_deleted", 0),
             )
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -2011,7 +2011,7 @@ def _register_routes(app: FastAPI):
                 )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
@@ -2051,7 +2051,7 @@ def _register_routes(app: FastAPI):
             await app.state.memory.delete_bank(bank_id, fact_type=type, request_context=request_context)
 
             return DeleteResponse(success=True)
-        except AuthenticationError:
+        except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
