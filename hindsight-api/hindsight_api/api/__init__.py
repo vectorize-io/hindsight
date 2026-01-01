@@ -52,6 +52,7 @@ def create_app(
     if mcp_api_enabled:
         try:
             from .mcp import create_mcp_app
+
             mcp_app = create_mcp_app(memory=memory)
         except ImportError as e:
             logger.error(f"MCP server requested but dependencies not available: {e}")

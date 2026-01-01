@@ -169,6 +169,8 @@ def main():
             llm_api_key=config.llm_api_key,
             llm_model=config.llm_model,
             llm_base_url=config.llm_base_url,
+            llm_max_concurrent=config.llm_max_concurrent,
+            llm_timeout=config.llm_timeout,
             embeddings_provider=config.embeddings_provider,
             embeddings_local_model=config.embeddings_local_model,
             embeddings_tei_url=config.embeddings_tei_url,
@@ -180,6 +182,8 @@ def main():
             log_level=args.log_level,
             mcp_enabled=config.mcp_enabled,
             graph_retriever=config.graph_retriever,
+            observation_min_facts=config.observation_min_facts,
+            observation_top_entities=config.observation_top_entities,
             skip_llm_verification=config.skip_llm_verification,
             lazy_reranker=config.lazy_reranker,
         )
@@ -196,6 +200,7 @@ def main():
     operation_validator = load_extension("OPERATION_VALIDATOR", OperationValidatorExtension)
     if operation_validator:
         import logging
+
         logging.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
 
     # Create MemoryEngine (reads configuration from environment)

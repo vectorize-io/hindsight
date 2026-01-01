@@ -4,6 +4,13 @@ import { sdk, lowLevelClient } from "@/lib/hindsight-client";
 export async function GET() {
   try {
     const response = await sdk.listBanks({ client: lowLevelClient });
+
+    // Check if the response has an error or no data
+    if (response.error || !response.data) {
+      console.error("API error:", response.error);
+      return NextResponse.json({ error: "Failed to fetch banks from API" }, { status: 500 });
+    }
+
     return NextResponse.json(response.data, { status: 200 });
   } catch (error) {
     console.error("Error fetching banks:", error);
@@ -26,7 +33,8 @@ export async function POST(request: Request) {
       body: {},
     });
 
-    return NextResponse.json(response.data, { status: 201 });
+    const serializedData = JSON.parse(JSON.stringify(response.data));
+    return NextResponse.json(serializedData, { status: 201 });
   } catch (error) {
     console.error("Error creating bank:", error);
     return NextResponse.json({ error: "Failed to create bank" }, { status: 500 });

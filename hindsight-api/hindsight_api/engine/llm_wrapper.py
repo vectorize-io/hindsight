@@ -120,11 +120,7 @@ class LLMProvider:
         elif self.provider in ("ollama", "lmstudio"):
             # Use dummy key if not provided for local
             api_key = self.api_key or "local"
-            client_kwargs = {
-                "api_key": api_key,
-                "base_url": self.base_url,
-                "max_retries": 0
-            }
+            client_kwargs = {"api_key": api_key, "base_url": self.base_url, "max_retries": 0}
             if self.timeout:
                 client_kwargs["timeout"] = self.timeout
             self._client = AsyncOpenAI(**client_kwargs)
@@ -207,7 +203,14 @@ class LLMProvider:
             # Handle Anthropic provider separately
             if self.provider == "anthropic":
                 return await self._call_anthropic(
-                    messages, response_format, max_completion_tokens, max_retries, initial_backoff, max_backoff, skip_validation, start_time
+                    messages,
+                    response_format,
+                    max_completion_tokens,
+                    max_retries,
+                    initial_backoff,
+                    max_backoff,
+                    skip_validation,
+                    start_time,
                 )
 
             # Handle Ollama with native API for structured output (better schema enforcement)
@@ -297,8 +300,8 @@ class LLMProvider:
                                         schema_msg + "\n\n" + call_params["messages"][0]["content"]
                                     )
                             if self.provider not in ("lmstudio", "ollama"):
-                               call_params["response_format"] = {"type": "json_object"}
-                        
+                                call_params["response_format"] = {"type": "json_object"}
+
                         logger.debug(f"Sending request to {self.provider}/{self.model} (timeout={self.timeout})")
                         response = await self._client.chat.completions.create(**call_params)
                         logger.debug(f"Received response from {self.provider}/{self.model}")

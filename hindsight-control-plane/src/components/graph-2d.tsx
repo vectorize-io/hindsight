@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo } from "react";
-import cytoscape, { Core, NodeSingular } from "cytoscape";
+import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 
 // Register the fcose extension
@@ -103,7 +103,8 @@ export function Graph2D({
   maxNodes,
 }: Graph2DProps) {
   const [containerDiv, setContainerDiv] = useState<HTMLDivElement | null>(null);
-  const cyRef = useRef<Core | null>(null);
+  const cyRef = useRef<any>(null);
+  const isInitializingRef = useRef(false);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [linkTooltipPos, setLinkTooltipPos] = useState<{ x: number; y: number } | null>(null);
@@ -198,7 +199,7 @@ export function Graph2D({
 
     // Small delay to ensure container is mounted
     const timeout = setTimeout(() => {
-      if (isCancelled || !isMounted || !containerDiv) return;
+      if (isCancelled || !isMounted || !containerDiv || isInitializingRef.current) return;
 
       // Additional validation - check if element has dimensions
       const rect = containerDiv.getBoundingClientRect();
@@ -214,7 +215,28 @@ export function Graph2D({
         return;
       }
 
+      // Check if we already have a graph with the same data
+      if (cyRef.current && !cyRef.current.destroyed()) {
+        const currentNodes = cyRef.current.nodes().length;
+        const currentEdges = cyRef.current.edges().length;
+        const newNodes = cyElements.filter((el) => !(el.data as any).source).length;
+        const newEdges = cyElements.filter((el) => (el.data as any).source).length;
+
+        // If the element counts are the same, just update styles and skip reinitialization
+        if (currentNodes === newNodes && currentEdges === newEdges) {
+          console.log("Graph already initialized with same data, skipping reinitialization");
+          setIsLoading(false);
+          return;
+        }
+
+        // Clean up existing graph before creating new one
+        console.log("Data changed, destroying existing graph");
+        cyRef.current.destroy();
+        cyRef.current = null;
+      }
+
       setIsLoading(true);
+      isInitializingRef.current = true;
 
       // Theme-aware colors
       const textColor = isDarkMode ? "#ffffff" : "#1f2937";
@@ -236,7 +258,7 @@ export function Graph2D({
           userPanningEnabled: true,
           boxSelectionEnabled: false,
           // Disable automatic layout on initialization
-          layout: { name: 'preset' },
+          layout: { name: "preset" },
           style: [
             {
               selector: "node",
@@ -373,20 +395,20 @@ export function Graph2D({
           }).run();
 
           // Fit to viewport
-          cy.fit(undefined, 50);
+          cy.fit();
         }
 
         // Add basic interactions
-        cy.on("tap", "node", (evt) => {
-          const node = evt.target as NodeSingular;
+        cy.on("tap", "node", (evt: any) => {
+          const node = evt.target as cytoscape.NodeSingular;
           const originalNode = node.data("originalNode") as GraphNode;
           if (onNodeClickRef.current && originalNode) {
             onNodeClickRef.current(originalNode);
           }
         });
 
-        cy.on("mouseover", "node", (evt) => {
-          const node = evt.target as NodeSingular;
+        cy.on("mouseover", "node", (evt: any) => {
+          const node = evt.target as cytoscape.NodeSingular;
           const originalNode = node.data("originalNode") as GraphNode;
           setHoveredNode(originalNode);
           if (onNodeHoverRef.current && originalNode) {
@@ -404,7 +426,7 @@ export function Graph2D({
         });
 
         // Edge hover handlers - only work in focus mode and on highlighted edges
-        cy.on("mouseover", "edge", (evt) => {
+        cy.on("mouseover", "edge", (evt: any) => {
           const edge = evt.target;
 
           // Only allow interaction if we're in focus mode and edge is highlighted
@@ -421,7 +443,7 @@ export function Graph2D({
           }
         });
 
-        cy.on("mouseout", "edge", (evt) => {
+        cy.on("mouseout", "edge", (evt: any) => {
           const edge = evt.target;
 
           // Only clear hover state if we were actually hovering a highlighted edge
@@ -434,13 +456,13 @@ export function Graph2D({
         });
 
         // Prevent edge selection to avoid gray border on click
-        cy.on("select", "edge", (evt) => {
+        cy.on("select", "edge", (evt: any) => {
           evt.target.unselect();
         });
 
         // Double-click to focus on node and its connections
-        cy.on("dblclick", "node", (evt) => {
-          const focusedNode = evt.target as NodeSingular;
+        cy.on("dblclick", "node", (evt: any) => {
+          const focusedNode = evt.target as cytoscape.NodeSingular;
           const focusedNodeId = focusedNode.id();
 
           console.log("Double-clicked node:", focusedNodeId);
@@ -484,7 +506,7 @@ export function Graph2D({
         });
 
         // Click on background to reset focus
-        cy.on("tap", (evt) => {
+        cy.on("tap", (evt: any) => {
           if (evt.target === cy) {
             console.log("Clicked background - resetting focus");
 
@@ -511,21 +533,24 @@ export function Graph2D({
         });
 
         setIsLoading(false);
+        isInitializingRef.current = false;
       } catch (error) {
         console.error("Error initializing cytoscape:", error);
         setIsLoading(false);
+        isInitializingRef.current = false;
       }
     }, 100); // 100ms delay
 
     return () => {
       isCancelled = true;
       clearTimeout(timeout);
+      isInitializingRef.current = false;
       if (cyRef.current) {
         cyRef.current.destroy();
         cyRef.current = null;
       }
     };
-  }, [cyElements, showLabels, isDarkMode, isMounted, containerDiv]);
+  }, [graphData, showLabels, isDarkMode, isMounted, containerDiv]);
 
   // Handle resize
   useEffect(() => {

@@ -166,7 +166,9 @@ class HindsightConfig:
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
             # Observation thresholds
             observation_min_facts=int(os.getenv(ENV_OBSERVATION_MIN_FACTS, str(DEFAULT_OBSERVATION_MIN_FACTS))),
-            observation_top_entities=int(os.getenv(ENV_OBSERVATION_TOP_ENTITIES, str(DEFAULT_OBSERVATION_TOP_ENTITIES))),
+            observation_top_entities=int(
+                os.getenv(ENV_OBSERVATION_TOP_ENTITIES, str(DEFAULT_OBSERVATION_TOP_ENTITIES))
+            ),
         )
 
     def get_llm_base_url(self) -> str:
