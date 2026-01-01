@@ -102,6 +102,7 @@ export function Graph2D({
   const [containerDiv, setContainerDiv] = useState<HTMLDivElement | null>(null);
   const cyRef = useRef<any>(null);
   const isInitializingRef = useRef(false);
+  const lastDataSignatureRef = useRef<string>("");
   const [_hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [linkTooltipPos, setLinkTooltipPos] = useState<{ x: number; y: number } | null>(null);
@@ -190,6 +191,21 @@ export function Graph2D({
     return [...nodes, ...edges];
   }, [graphData, nodeColorFn, nodeSizeFn, linkColorFn, linkWidthFn]);
 
+  // Create data signature to prevent double initialization
+  const dataSignature = useMemo(() => {
+    return JSON.stringify({
+      nodeCount: graphData.nodes.length,
+      linkCount: graphData.links.length,
+      nodeIds: graphData.nodes
+        .map((n) => n.id)
+        .sort()
+        .join(","),
+      showLabels,
+      isDarkMode,
+      maxNodes,
+    });
+  }, [graphData.nodes, graphData.links, showLabels, isDarkMode, maxNodes]);
+
   // Initialize Cytoscape
   useEffect(() => {
     let isCancelled = false;
@@ -197,6 +213,12 @@ export function Graph2D({
     // Small delay to ensure container is mounted
     const timeout = setTimeout(() => {
       if (isCancelled || !isMounted || !containerDiv || isInitializingRef.current) return;
+
+      // Check if data has actually changed to prevent double initialization
+      if (lastDataSignatureRef.current === dataSignature) {
+        console.log("Data signature unchanged, skipping graph initialization");
+        return;
+      }
 
       // Additional validation - check if element has dimensions
       const rect = containerDiv.getBoundingClientRect();
@@ -530,6 +552,7 @@ export function Graph2D({
 
         setIsLoading(false);
         isInitializingRef.current = false;
+        lastDataSignatureRef.current = dataSignature;
       } catch (error) {
         console.error("Error initializing cytoscape:", error);
         setIsLoading(false);
@@ -546,7 +569,7 @@ export function Graph2D({
         cyRef.current = null;
       }
     };
-  }, [graphData, showLabels, isDarkMode, isMounted, containerDiv]);
+  }, [dataSignature, isMounted, containerDiv]);
 
   // Handle resize
   useEffect(() => {
