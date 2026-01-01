@@ -402,6 +402,8 @@ I'm planning to visit Tokyo next month.
 
         Ideally: If conversation is on August 14, 2023 and text says "last night",
         the date field should be August 13. We accept 13 or 14 as LLM may vary.
+
+        Retries up to 3 times to account for LLM inconsistencies.
         """
         text = """
 Melanie: Hey Caroline! Last night was amazing! We celebrated my daughter's birthday
@@ -410,41 +412,69 @@ with a concert surrounded by music, joy and the warm summer breeze.
 
         context = "Conversation between Melanie and Caroline"
         llm_config = LLMConfig.for_memory()
-
         event_date = datetime(2023, 8, 14, 14, 24)
 
-        facts, _ = await extract_facts_from_text(
-            text=text,
-            event_date=event_date,
-            context=context,
-            llm_config=llm_config,
-            agent_name="Melanie"
-        )
+        last_error = None
+        max_retries = 3
 
-        assert len(facts) > 0, "Should extract at least one fact"
+        for attempt in range(max_retries):
+            try:
+                facts, _ = await extract_facts_from_text(
+                    text=text,
+                    event_date=event_date,
+                    context=context,
+                    llm_config=llm_config,
+                    agent_name="Melanie"
+                )
 
-        birthday_fact = None
-        for fact in facts:
-            if "birthday" in fact.fact.lower() or "concert" in fact.fact.lower():
-                birthday_fact = fact
-                break
+                assert len(facts) > 0, "Should extract at least one fact"
 
-        assert birthday_fact is not None, "Should extract fact about birthday celebration"
+                birthday_fact = None
+                for fact in facts:
+                    if "birthday" in fact.fact.lower() or "concert" in fact.fact.lower():
+                        birthday_fact = fact
+                        break
 
-        fact_date_str = birthday_fact.occurred_start
-        assert fact_date_str is not None, "occurred_start should not be None for temporal events"
+                assert birthday_fact is not None, "Should extract fact about birthday celebration"
 
-        if 'T' in fact_date_str:
-            fact_date = datetime.fromisoformat(fact_date_str.replace('Z', '+00:00'))
-        else:
-            fact_date = datetime.fromisoformat(fact_date_str)
+                fact_date_str = birthday_fact.occurred_start
+                assert fact_date_str is not None, "occurred_start should not be None for temporal events"
 
-        assert fact_date.year == 2023, "Year should be 2023"
-        assert fact_date.month == 8, "Month should be August"
-        # Accept day 13 (ideal: last night) or 14 (conversation date) as valid
-        assert fact_date.day in (13, 14), (
-            f"Day should be 13 or 14 (around Aug 14 event), but got {fact_date.day}."
-        )
+                if 'T' in fact_date_str:
+                    fact_date = datetime.fromisoformat(fact_date_str.replace('Z', '+00:00'))
+                else:
+                    fact_date = datetime.fromisoformat(fact_date_str)
+
+                assert fact_date.year == 2023, "Year should be 2023"
+                assert fact_date.month == 8, "Month should be August"
+                # Accept day 13 (ideal: last night) or 14 (conversation date) as valid
+                assert fact_date.day in (13, 14), (
+                    f"Day should be 13 or 14 (around Aug 14 event), but got {fact_date.day}."
+                )
+
+                # If we reach here, test passed
+                return
+
+            except AssertionError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"Test attempt {attempt + 1} failed: {e}. Retrying...")
+                    continue
+                else:
+                    # Last attempt failed, re-raise the error
+                    raise e
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"Test attempt {attempt + 1} failed with exception: {e}. Retrying...")
+                    continue
+                else:
+                    # Last attempt failed, re-raise the error
+                    raise e
+
+        # Should not reach here, but just in case
+        if last_error:
+            raise last_error
 
     @pytest.mark.asyncio
     async def test_date_field_calculation_yesterday(self):

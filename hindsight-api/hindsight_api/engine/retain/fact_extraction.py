@@ -17,6 +17,44 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ..llm_wrapper import LLMConfig, OutputTooLongError
 
 
+def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
+    """
+    Infer a temporal date from fact text when LLM didn't provide occurred_start.
+
+    This is a fallback for when the LLM fails to extract temporal information
+    from relative time expressions like "last night", "yesterday", etc.
+    """
+    import re
+
+    fact_lower = fact_text.lower()
+
+    # Map relative time expressions to day offsets
+    temporal_patterns = {
+        r"\blast night\b": -1,
+        r"\byesterday\b": -1,
+        r"\btoday\b": 0,
+        r"\bthis morning\b": 0,
+        r"\bthis afternoon\b": 0,
+        r"\bthis evening\b": 0,
+        r"\btonigh?t\b": 0,
+        r"\btomorrow\b": 1,
+        r"\blast week\b": -7,
+        r"\bthis week\b": 0,
+        r"\bnext week\b": 7,
+        r"\blast month\b": -30,
+        r"\bthis month\b": 0,
+        r"\bnext month\b": 30,
+    }
+
+    for pattern, offset_days in temporal_patterns.items():
+        if re.search(pattern, fact_lower):
+            target_date = event_date + timedelta(days=offset_days)
+            return target_date.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    # If no relative time expression found, return None
+    return None
+
+
 def _sanitize_text(text: str) -> str:
     """
     Sanitize text by removing invalid Unicode surrogate characters.
@@ -676,13 +714,18 @@ Text:
                 if fact_kind == "event":
                     occurred_start = get_value("occurred_start")
                     occurred_end = get_value("occurred_end")
-                    if occurred_start:
+
+                    # If LLM didn't set temporal fields, try to extract them from the fact text
+                    if not occurred_start:
+                        fact_data["occurred_start"] = _infer_temporal_date(combined_text, event_date)
+                    else:
                         fact_data["occurred_start"] = occurred_start
-                        # For point events: if occurred_end not set, default to occurred_start
-                        if occurred_end:
-                            fact_data["occurred_end"] = occurred_end
-                        else:
-                            fact_data["occurred_end"] = occurred_start
+
+                    # For point events: if occurred_end not set, default to occurred_start
+                    if occurred_end:
+                        fact_data["occurred_end"] = occurred_end
+                    elif fact_data.get("occurred_start"):
+                        fact_data["occurred_end"] = fact_data["occurred_start"]
 
                 # Add entities if present (validate as Entity objects)
                 # LLM sometimes returns strings instead of {"text": "..."} format
