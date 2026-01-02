@@ -85,6 +85,9 @@ export class ControlPlaneClient {
       content: string;
       timestamp?: string;
       context?: string;
+      metadata?: Record<string, string>;
+      document_id?: string;
+      entities?: Array<{ text: string; type?: string }>;
     }>;
     document_id?: string;
     async?: boolean;
