@@ -27,12 +27,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Context variable to hold the current bank_id from the URL path
+# Default bank_id from environment variable
+DEFAULT_BANK_ID = os.environ.get("HINDSIGHT_MCP_BANK_ID", "default")
+
+# Context variable to hold the current bank_id
 _current_bank_id: ContextVar[str | None] = ContextVar("current_bank_id", default=None)
 
 
 def get_current_bank_id() -> str | None:
-    """Get the current bank_id from context (set from URL path)."""
+    """Get the current bank_id from context."""
     return _current_bank_id.get()
 
 
@@ -44,12 +47,13 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         memory: MemoryEngine instance (required)
 
     Returns:
-        Configured FastMCP server instance
+        Configured FastMCP server instance with stateless_http enabled
     """
-    mcp = FastMCP("hindsight-mcp-server")
+    # Use stateless_http=True for Claude Code compatibility
+    mcp = FastMCP("hindsight-mcp-server", stateless_http=True)
 
     @mcp.tool()
-    async def retain(content: str, context: str = "general") -> str:
+    async def retain(content: str, context: str = "general", bank_id: str | None = None) -> str:
         """
         Store important information to long-term memory.
 
@@ -65,21 +69,22 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         Args:
             content: The fact/memory to store (be specific and include relevant details)
             context: Category for the memory (e.g., 'preferences', 'work', 'hobbies', 'family'). Default: 'general'
+            bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
         """
         try:
-            bank_id = get_current_bank_id()
-            if bank_id is None:
+            target_bank = bank_id or get_current_bank_id()
+            if target_bank is None:
                 return "Error: No bank_id configured"
             await memory.retain_batch_async(
-                bank_id=bank_id, contents=[{"content": content, "context": context}], request_context=RequestContext()
+                bank_id=target_bank, contents=[{"content": content, "context": context}], request_context=RequestContext()
             )
-            return "Memory stored successfully"
+            return f"Memory stored successfully in bank '{target_bank}'"
         except Exception as e:
             logger.error(f"Error storing memory: {e}", exc_info=True)
             return f"Error: {str(e)}"
 
     @mcp.tool()
-    async def recall(query: str, max_results: int = 10) -> str:
+    async def recall(query: str, max_results: int = 10, bank_id: str | None = None) -> str:
         """
         Search memories to provide personalized, context-aware responses.
 
@@ -92,15 +97,16 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         Args:
             query: Natural language search query (e.g., "user's food preferences", "what projects is user working on")
             max_results: Maximum number of results to return (default: 10)
+            bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
         """
         try:
-            bank_id = get_current_bank_id()
-            if bank_id is None:
+            target_bank = bank_id or get_current_bank_id()
+            if target_bank is None:
                 return "Error: No bank_id configured"
             from hindsight_api.engine.memory_engine import Budget
 
             search_result = await memory.recall_async(
-                bank_id=bank_id,
+                bank_id=target_bank,
                 query=query,
                 fact_type=list(VALID_RECALL_FACT_TYPES),
                 budget=Budget.LOW,
@@ -118,22 +124,175 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
                 for fact in search_result.results[:max_results]
             ]
 
-            return json.dumps({"results": results}, indent=2)
+            return json.dumps({"results": results, "bank_id": target_bank}, indent=2)
         except Exception as e:
             logger.error(f"Error searching: {e}", exc_info=True)
             return json.dumps({"error": str(e), "results": []})
+
+    @mcp.tool()
+    async def reflect(query: str, context: str | None = None, budget: str = "low", bank_id: str | None = None) -> str:
+        """
+        Formulate a thoughtful answer using the bank's personality and stored memories.
+
+        Use this tool when the user asks for:
+        - Opinions or perspectives on topics
+        - Thoughtful analysis based on stored knowledge
+        - Responses that should reflect the bank's disposition (personality)
+        - Questions that require reasoning across multiple memories
+
+        Unlike recall (which just retrieves facts), reflect:
+        - Uses the bank's disposition traits (skepticism, empathy, etc.)
+        - Synthesizes information from multiple memories
+        - Forms and stores new opinions when relevant
+        - Returns a natural language response, not just raw facts
+
+        Args:
+            query: The question or topic to reflect on
+            context: Optional context about why this reflection is needed
+            budget: Search budget - 'low', 'mid', or 'high' (default: 'low')
+            bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
+        """
+        try:
+            target_bank = bank_id or get_current_bank_id()
+            if target_bank is None:
+                return "Error: No bank_id configured"
+            from hindsight_api.engine.memory_engine import Budget
+
+            # Map string budget to enum
+            budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
+            budget_enum = budget_map.get(budget.lower(), Budget.LOW)
+
+            reflect_result = await memory.reflect_async(
+                bank_id=target_bank,
+                query=query,
+                budget=budget_enum,
+                context=context,
+                request_context=RequestContext(),
+            )
+
+            # Return the reflection text and optionally facts used
+            result = {
+                "text": reflect_result.text,
+                "bank_id": target_bank,
+                "based_on": {
+                    fact_type: [
+                        {"id": f.id, "text": f.text, "context": f.context}
+                        for f in facts
+                    ]
+                    for fact_type, facts in (reflect_result.based_on or {}).items()
+                    if facts
+                },
+            }
+
+            # Include new opinions if any were formed
+            if reflect_result.new_opinions:
+                result["new_opinions"] = [
+                    {"text": op.text, "confidence": op.confidence}
+                    for op in reflect_result.new_opinions
+                ]
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.error(f"Error reflecting: {e}", exc_info=True)
+            return json.dumps({"error": str(e), "text": ""})
+
+    @mcp.tool()
+    async def list_banks() -> str:
+        """
+        List all available memory banks.
+
+        Use this to discover banks for orchestration or to find
+        the correct bank_id for cross-bank operations.
+
+        Returns:
+            JSON list of banks with id, name, and creation date
+        """
+        try:
+            banks = await memory.list_banks(request_context=RequestContext())
+            return json.dumps({
+                "banks": [
+                    {
+                        "id": b["bank_id"],
+                        "name": b.get("name"),
+                        "created_at": str(b.get("created_at")) if b.get("created_at") else None
+                    }
+                    for b in banks
+                ]
+            }, indent=2)
+        except Exception as e:
+            logger.error(f"Error listing banks: {e}", exc_info=True)
+            return json.dumps({"error": str(e), "banks": []})
+
+    @mcp.tool()
+    async def create_bank(bank_id: str, name: str | None = None, background: str | None = None) -> str:
+        """
+        Create or update a memory bank.
+
+        Use this to create new banks for different agents, sessions, or purposes.
+        Banks are isolated memory stores - each bank has its own memories and personality.
+
+        Args:
+            bank_id: Unique identifier for the bank (e.g., 'orchestrator-memory', 'agent-1')
+            name: Human-readable name for the bank
+            background: Context about what this bank stores or its purpose
+        """
+        try:
+            # Get or create the bank profile (auto-creates with defaults)
+            await memory.get_bank_profile(bank_id, request_context=RequestContext())
+
+            # Update name and/or background if provided
+            if name is not None or background is not None:
+                await memory.update_bank_info(
+                    bank_id,
+                    name=name,
+                    background=background,
+                    request_context=RequestContext()
+                )
+
+            # Get final profile
+            profile = await memory.get_bank_profile(bank_id, request_context=RequestContext())
+            return json.dumps({
+                "success": True,
+                "bank_id": bank_id,
+                "name": profile.get("name"),
+                "background": profile.get("background"),
+                "disposition": profile.get("disposition").model_dump() if hasattr(profile.get("disposition"), "model_dump") else dict(profile.get("disposition", {}))
+            }, indent=2)
+        except Exception as e:
+            logger.error(f"Error creating bank: {e}", exc_info=True)
+            return json.dumps({"error": str(e), "success": False})
 
     return mcp
 
 
 class MCPMiddleware:
-    """ASGI middleware that extracts bank_id from path and sets context."""
+    """ASGI middleware that extracts bank_id from header or path and sets context.
+
+    Bank ID can be provided via:
+    1. X-Bank-Id header (recommended for Claude Code)
+    2. URL path: /mcp/{bank_id}/
+    3. Environment variable HINDSIGHT_MCP_BANK_ID (fallback default)
+
+    For Claude Code, configure with:
+        claude mcp add --transport http hindsight http://localhost:8888/mcp \\
+            --header "X-Bank-Id: my-bank"
+    """
 
     def __init__(self, app, memory: MemoryEngine):
         self.app = app
         self.memory = memory
         self.mcp_server = create_mcp_server(memory)
         self.mcp_app = self.mcp_server.http_app()
+        # Expose the lifespan for the parent app to chain
+        self.lifespan = self.mcp_app.lifespan_handler if hasattr(self.mcp_app, 'lifespan_handler') else None
+
+    def _get_header(self, scope: dict, name: str) -> str | None:
+        """Extract a header value from ASGI scope."""
+        name_lower = name.lower().encode()
+        for header_name, header_value in scope.get("headers", []):
+            if header_name.lower() == name_lower:
+                return header_value.decode()
+        return None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -145,37 +304,40 @@ class MCPMiddleware:
         # Strip any mount prefix (e.g., /mcp) that FastAPI might not have stripped
         root_path = scope.get("root_path", "")
         if root_path and path.startswith(root_path):
-            path = path[len(root_path) :] or "/"
+            path = path[len(root_path):] or "/"
 
         # Also handle case where mount path wasn't stripped (e.g., /mcp/...)
         if path.startswith("/mcp/"):
             path = path[4:]  # Remove /mcp prefix
+        elif path == "/mcp":
+            path = "/"
 
-        # Extract bank_id from path: /{bank_id}/ or /{bank_id}
-        # http_app expects requests at /
-        if not path.startswith("/") or len(path) <= 1:
-            # No bank_id in path - return error
-            await self._send_error(send, 400, "bank_id required in path: /mcp/{bank_id}/")
-            return
+        # Try to get bank_id from header first (for Claude Code compatibility)
+        bank_id = self._get_header(scope, "X-Bank-Id")
 
-        # Extract bank_id from first path segment
-        parts = path[1:].split("/", 1)
-        if not parts[0]:
-            await self._send_error(send, 400, "bank_id required in path: /mcp/{bank_id}/")
-            return
+        # If no header, try to extract from path: /{bank_id}/...
+        new_path = path
+        if not bank_id and path.startswith("/") and len(path) > 1:
+            parts = path[1:].split("/", 1)
+            if parts[0] and parts[0] != "mcp":
+                # First segment looks like a bank_id
+                bank_id = parts[0]
+                new_path = "/" + parts[1] if len(parts) > 1 else "/"
 
-        bank_id = parts[0]
-        new_path = "/" + parts[1] if len(parts) > 1 else "/"
+        # Fall back to default bank_id
+        if not bank_id:
+            bank_id = DEFAULT_BANK_ID
+            logger.debug(f"Using default bank_id: {bank_id}")
 
         # Set bank_id context
         token = _current_bank_id.set(bank_id)
         try:
             new_scope = scope.copy()
             new_scope["path"] = new_path
+            # Clear root_path since we're passing directly to the app
+            new_scope["root_path"] = ""
 
-            # Wrap send to rewrite the SSE endpoint URL to include bank_id
-            # The SSE app sends "event: endpoint\ndata: /messages\n" but we need
-            # the client to POST to /{bank_id}/messages instead
+            # Wrap send to rewrite the SSE endpoint URL to include bank_id if using path-based routing
             async def send_wrapper(message):
                 if message["type"] == "http.response.body":
                     body = message.get("body", b"")
@@ -211,9 +373,10 @@ def create_mcp_app(memory: MemoryEngine):
     """
     Create an ASGI app that handles MCP requests.
 
-    URL pattern: /mcp/{bank_id}/
-
-    The bank_id is extracted from the URL path and made available to tools.
+    Bank ID can be provided via:
+    1. X-Bank-Id header: claude mcp add --transport http hindsight http://localhost:8888/mcp --header "X-Bank-Id: my-bank"
+    2. URL path: /mcp/{bank_id}/
+    3. Environment variable HINDSIGHT_MCP_BANK_ID (fallback, default: "default")
 
     Args:
         memory: MemoryEngine instance
