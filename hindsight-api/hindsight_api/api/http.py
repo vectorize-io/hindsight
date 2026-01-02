@@ -281,6 +281,13 @@ class RecallResponse(BaseModel):
     chunks: dict[str, ChunkData] | None = Field(default=None, description="Chunks for facts, keyed by chunk_id")
 
 
+class EntityInput(BaseModel):
+    """Entity to associate with retained content."""
+
+    text: str = Field(description="The entity name/text")
+    type: str | None = Field(default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')")
+
+
 class MemoryItem(BaseModel):
     """Single memory item for retain."""
 
@@ -292,6 +299,7 @@ class MemoryItem(BaseModel):
                 "context": "team meeting",
                 "metadata": {"source": "slack", "channel": "engineering"},
                 "document_id": "meeting_notes_2024_01_15",
+                "entities": [{"text": "Alice"}, {"text": "ML model", "type": "CONCEPT"}],
             }
         },
     )
@@ -301,6 +309,10 @@ class MemoryItem(BaseModel):
     context: str | None = None
     metadata: dict[str, str] | None = None
     document_id: str | None = Field(default=None, description="Optional document ID for this memory item.")
+    entities: list[EntityInput] | None = Field(
+        default=None,
+        description="Optional entities to combine with auto-extracted entities.",
+    )
 
     @field_validator("timestamp", mode="before")
     @classmethod
@@ -1986,6 +1998,10 @@ def _register_routes(app: FastAPI):
                     content_dict["metadata"] = item.metadata
                 if item.document_id:
                     content_dict["document_id"] = item.document_id
+                if item.entities:
+                    content_dict["entities"] = [
+                        {"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities
+                    ]
                 contents.append(content_dict)
 
             if request.async_:

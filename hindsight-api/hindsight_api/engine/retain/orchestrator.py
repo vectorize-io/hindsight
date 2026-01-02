@@ -91,6 +91,7 @@ async def retain_batch(
             context=item.get("context", ""),
             event_date=item.get("event_date") or utcnow(),
             metadata=item.get("metadata", {}),
+            entities=item.get("entities", []),
         )
         contents.append(content)
 
@@ -352,8 +353,18 @@ async def retain_batch(
 
             # Process entities
             step_start = time.time()
+            # Build map of content_index -> user entities for merging
+            user_entities_per_content = {
+                idx: content.entities for idx, content in enumerate(contents) if content.entities
+            }
             entity_links = await entity_processing.process_entities_batch(
-                entity_resolver, conn, bank_id, unit_ids, non_duplicate_facts, log_buffer
+                entity_resolver,
+                conn,
+                bank_id,
+                unit_ids,
+                non_duplicate_facts,
+                log_buffer,
+                user_entities_per_content=user_entities_per_content,
             )
             log_buffer.append(f"[6] Process entities: {len(entity_links)} links in {time.time() - step_start:.3f}s")
 

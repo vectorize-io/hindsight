@@ -50,12 +50,18 @@ export interface HindsightClientOptions {
     apiKey?: string;
 }
 
+export interface EntityInput {
+    text: string;
+    type?: string;
+}
+
 export interface MemoryItemInput {
     content: string;
     timestamp?: string | Date;
     context?: string;
     metadata?: Record<string, string>;
     document_id?: string;
+    entities?: EntityInput[];
 }
 
 export class HindsightClient {
@@ -78,9 +84,23 @@ export class HindsightClient {
     async retain(
         bankId: string,
         content: string,
-        options?: { timestamp?: Date | string; context?: string; metadata?: Record<string, string>; documentId?: string; async?: boolean }
+        options?: {
+            timestamp?: Date | string;
+            context?: string;
+            metadata?: Record<string, string>;
+            documentId?: string;
+            async?: boolean;
+            entities?: EntityInput[];
+        }
     ): Promise<RetainResponse> {
-        const item: { content: string; timestamp?: string; context?: string; metadata?: Record<string, string>; document_id?: string } = { content };
+        const item: {
+            content: string;
+            timestamp?: string;
+            context?: string;
+            metadata?: Record<string, string>;
+            document_id?: string;
+            entities?: EntityInput[];
+        } = { content };
         if (options?.timestamp) {
             item.timestamp =
                 options.timestamp instanceof Date
@@ -95,6 +115,9 @@ export class HindsightClient {
         }
         if (options?.documentId) {
             item.document_id = options.documentId;
+        }
+        if (options?.entities) {
+            item.entities = options.entities;
         }
 
         const response = await sdk.retainMemories({
@@ -115,6 +138,7 @@ export class HindsightClient {
             context: item.context,
             metadata: item.metadata,
             document_id: item.document_id,
+            entities: item.entities,
             timestamp:
                 item.timestamp instanceof Date
                     ? item.timestamp.toISOString()

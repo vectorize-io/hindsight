@@ -31,6 +31,7 @@ from hindsight_client_api.models.disposition_traits import DispositionTraits
 from hindsight_client_api.models.document_response import DocumentResponse
 from hindsight_client_api.models.entity_detail_response import EntityDetailResponse
 from hindsight_client_api.models.entity_include_options import EntityIncludeOptions
+from hindsight_client_api.models.entity_input import EntityInput
 from hindsight_client_api.models.entity_list_item import EntityListItem
 from hindsight_client_api.models.entity_list_response import EntityListResponse
 from hindsight_client_api.models.entity_observation_response import EntityObservationResponse

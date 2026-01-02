@@ -18,10 +18,11 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
+from hindsight_client_api.models.entity_input import EntityInput
 
 class MemoryItem(BaseModel):
     """
@@ -32,7 +33,11 @@ class MemoryItem(BaseModel):
     context: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     document_id: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id"]
+    entities: Optional[List[EntityInput]] = Field(
+        default=None,
+        description="Optional entities to combine with auto-extracted entities."
+    )
+    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -93,6 +98,11 @@ class MemoryItem(BaseModel):
         if self.document_id is None and "document_id" in self.model_fields_set:
             _dict['document_id'] = None
 
+        # set to None if entities (nullable) is None
+        # and model_fields_set contains the field
+        if self.entities is None and "entities" in self.model_fields_set:
+            _dict['entities'] = None
+
         return _dict
 
     @classmethod
@@ -109,7 +119,8 @@ class MemoryItem(BaseModel):
             "timestamp": obj.get("timestamp"),
             "context": obj.get("context"),
             "metadata": obj.get("metadata"),
-            "document_id": obj.get("document_id")
+            "document_id": obj.get("document_id"),
+            "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None
         })
         return _obj
 

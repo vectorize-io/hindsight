@@ -20,6 +20,7 @@ class RetainContentDict(TypedDict, total=False):
         event_date: When the content occurred (optional, defaults to now)
         metadata: Custom key-value metadata (optional)
         document_id: Document ID for this content item (optional)
+        entities: User-provided entities to merge with extracted entities (optional)
     """
 
     content: str  # Required
@@ -27,6 +28,7 @@ class RetainContentDict(TypedDict, total=False):
     event_date: datetime
     metadata: dict[str, str]
     document_id: str
+    entities: list[dict[str, str]]  # [{"text": "...", "type": "..."}]
 
 
 def _now_utc() -> datetime:
@@ -46,6 +48,7 @@ class RetainContent:
     context: str = ""
     event_date: datetime = field(default_factory=_now_utc)
     metadata: dict[str, str] = field(default_factory=dict)
+    entities: list[dict[str, str]] = field(default_factory=list)  # User-provided entities
 
 
 @dataclass
@@ -152,6 +155,9 @@ class ProcessedFact:
     # DB fields (set after insertion)
     unit_id: UUID | None = None
 
+    # Track which content this fact came from (for user entity merging)
+    content_index: int = 0
+
     @property
     def is_duplicate(self) -> bool:
         """Check if this fact was marked as a duplicate."""
@@ -194,6 +200,7 @@ class ProcessedFact:
             entities=entities,
             causal_relations=extracted_fact.causal_relations,
             chunk_id=chunk_id,
+            content_index=extracted_fact.content_index,
         )
 
 
