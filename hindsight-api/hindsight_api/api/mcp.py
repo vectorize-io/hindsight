@@ -133,7 +133,8 @@ class MCPMiddleware:
         self.app = app
         self.memory = memory
         self.mcp_server = create_mcp_server(memory)
-        self.mcp_app = self.mcp_server.http_app()
+        # Use transport='sse' with path=None to get routes at /sse and /messages
+        self.mcp_app = self.mcp_server.http_app(path=None, transport="sse")
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -173,15 +174,15 @@ class MCPMiddleware:
             new_scope = scope.copy()
             new_scope["path"] = new_path
 
-            # Wrap send to rewrite the SSE endpoint URL to include bank_id
+            # Wrap send to rewrite the SSE endpoint URL to include full path
             # The SSE app sends "event: endpoint\ndata: /messages\n" but we need
-            # the client to POST to /{bank_id}/messages instead
+            # the client to POST to /mcp/{bank_id}/messages (full path including mount)
             async def send_wrapper(message):
                 if message["type"] == "http.response.body":
                     body = message.get("body", b"")
-                    if body and b"/messages" in body:
-                        # Rewrite /messages to /{bank_id}/messages in SSE endpoint event
-                        body = body.replace(b"data: /messages", f"data: /{bank_id}/messages".encode())
+                    if body and b"/mcp/messages/" in body:
+                        # Rewrite /mcp/messages/ to /mcp/{bank_id}/messages/
+                        body = body.replace(b"/mcp/messages/", f"/mcp/{bank_id}/messages/".encode())
                         message = {**message, "body": body}
                 await send(message)
 
