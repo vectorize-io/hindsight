@@ -71,18 +71,6 @@ if [ "${HINDSIGHT_WAIT_FOR_DEPS:-false}" = "true" ]; then
     done
 fi
 
-# Copy pre-cached PostgreSQL data if runtime directory is empty (first run with volume)
-if [ "$ENABLE_API" = "true" ]; then
-    PG0_CACHE="/home/hindsight/.pg0-cache"
-    PG0_HOME="/home/hindsight/.pg0"
-    if [ -d "$PG0_CACHE" ] && [ "$(ls -A $PG0_CACHE 2>/dev/null)" ]; then
-        if [ ! "$(ls -A $PG0_HOME 2>/dev/null)" ]; then
-            echo "📦 Copying pre-cached PostgreSQL data..."
-            cp -r "$PG0_CACHE"/* "$PG0_HOME"/ 2>/dev/null || true
-        fi
-    fi
-fi
-
 # Track PIDs for wait
 PIDS=()
 

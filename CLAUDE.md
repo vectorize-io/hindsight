@@ -84,6 +84,27 @@ PostgreSQL with pgvector. Schema managed via Alembic migrations in `hindsight-ap
 
 Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
 
+### Database Backups (IMPORTANT)
+**Before any operation that may affect the database, run a backup:**
+```bash
+docker exec hindsight /backups/backup.sh
+```
+
+Operations requiring backup:
+- Running database migrations
+- Modifying Alembic migration files
+- Rebuilding Docker images
+- Resetting or recreating containers
+- Any schema changes
+- Bulk data operations
+
+Backups are stored in `~/hindsight-backups/` on the host.
+
+To restore:
+```bash
+docker exec -it hindsight /backups/restore.sh <backup-file.sql.gz>
+```
+
 ## Key Conventions
 
 ### Memory Banks

@@ -157,9 +157,7 @@ USER hindsight
 # Set PATH for hindsight user
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
-# Pre-cache PostgreSQL binaries by starting/stopping pg0-embedded
-ENV PG0_HOME=/home/hindsight/.pg0-cache
-
+# pg0 will download PostgreSQL binaries on first run
 ENV PG0_HOME=/home/hindsight/.pg0
 
 # Pre-download ML models to avoid runtime download (conditional)
@@ -272,16 +270,17 @@ USER hindsight
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
 # Pre-cache PostgreSQL binaries by starting/stopping pg0-embedded
-ENV PG0_HOME=/home/hindsight/.pg0-cache
+# Note: We use a temp instance just to download binaries, then delete instance data
+# to avoid stale port config. Only installation binaries are kept.
+ENV PG0_HOME=/home/hindsight/.pg0
 RUN /app/api/.venv/bin/python -c "\
 from pg0 import Pg0; \
 print('Pre-caching PostgreSQL binaries...'); \
-pg = Pg0(name='hindsight', port=5555, username='hindsight', password='hindsight', database='hindsight'); \
+pg = Pg0(name='temp-cache', username='hindsight', password='hindsight', database='hindsight'); \
 pg.start(); \
 pg.stop(); \
-print('PostgreSQL pre-cached to PG0_HOME')" || echo "Pre-download skipped"
-
-ENV PG0_HOME=/home/hindsight/.pg0
+print('PostgreSQL binaries cached')" && \
+    rm -rf /home/hindsight/.pg0/instances || echo "Pre-download skipped"
 
 # Pre-download ML models to avoid runtime download (conditional)
 ARG PRELOAD_ML_MODELS
