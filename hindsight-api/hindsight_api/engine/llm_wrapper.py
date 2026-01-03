@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -19,6 +20,7 @@ from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
     DEFAULT_LLM_TIMEOUT,
     ENV_LLM_MAX_CONCURRENT,
+    ENV_LLM_STRIP_THINKING,
     ENV_LLM_TIMEOUT,
 )
 
@@ -307,6 +309,20 @@ class LLMProvider:
                         logger.debug(f"Received response from {self.provider}/{self.model}")
 
                         content = response.choices[0].message.content
+
+                        # Strip reasoning model thinking tags when enabled (opt-in for local LLMs)
+                        # Supports: <think>, <thinking>, <reasoning>, |startthink|/|endthink|
+                        # Enable with HINDSIGHT_API_LLM_STRIP_THINKING=true for reasoning models
+                        # that embed thinking in their output (e.g., Qwen3, DeepSeek on LM Studio)
+                        if content and os.getenv(ENV_LLM_STRIP_THINKING, "false").lower() == "true":
+                            original_len = len(content)
+                            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                            content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
+                            content = re.sub(r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL)
+                            content = re.sub(r"\|startthink\|.*?\|endthink\|", "", content, flags=re.DOTALL)
+                            content = content.strip()
+                            if len(content) < original_len:
+                                logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
                         # For local models, they may wrap JSON in markdown code blocks
                         if self.provider in ("lmstudio", "ollama"):
