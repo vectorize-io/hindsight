@@ -327,6 +327,23 @@ class LLMProvider:
                             if len(content) < original_len:
                                 logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
+                        # Handle empty response (None or empty string after stripping)
+                        if not content or not content.strip():
+                            finish_reason = response.choices[0].finish_reason if response.choices else "unknown"
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                logger.warning(
+                                    f"LLM returned empty response (finish_reason={finish_reason}), "
+                                    f"retrying in {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                                )
+                                await asyncio.sleep(backoff)
+                                continue
+                            else:
+                                raise RuntimeError(
+                                    f"LLM returned empty response after {max_retries + 1} attempts "
+                                    f"(finish_reason={finish_reason})"
+                                )
+
                         # For local models, they may wrap JSON in markdown code blocks
                         if self.provider in ("lmstudio", "ollama"):
                             clean_content = content
@@ -783,21 +800,37 @@ class LLMProvider:
 
                 content = response.text
 
-                # Handle empty response
-                if content is None:
+                # Handle empty response (None or empty string)
+                if not content or not content.strip():
                     block_reason = None
+                    finish_reason = None
                     if hasattr(response, "candidates") and response.candidates:
                         candidate = response.candidates[0]
                         if hasattr(candidate, "finish_reason"):
-                            block_reason = candidate.finish_reason
+                            finish_reason = candidate.finish_reason
+                        # Check for content filtering
+                        if hasattr(candidate, "safety_ratings"):
+                            for rating in candidate.safety_ratings or []:
+                                if hasattr(rating, "blocked") and rating.blocked:
+                                    block_reason = f"blocked by {rating.category}"
+                                    break
+
+                    reason_info = f"finish_reason={finish_reason}"
+                    if block_reason:
+                        reason_info += f", {block_reason}"
 
                     if attempt < max_retries:
-                        logger.warning(f"Gemini returned empty response (reason: {block_reason}), retrying...")
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
+                        logger.warning(
+                            f"Gemini returned empty response ({reason_info}), "
+                            f"retrying in {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                        )
                         await asyncio.sleep(backoff)
                         continue
                     else:
-                        raise RuntimeError(f"Gemini returned empty response after {max_retries + 1} attempts")
+                        raise RuntimeError(
+                            f"Gemini returned empty response after {max_retries + 1} attempts ({reason_info})"
+                        )
 
                 if response_format is not None:
                     json_data = json.loads(content)
