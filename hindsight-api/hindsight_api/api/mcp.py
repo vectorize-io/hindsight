@@ -54,7 +54,12 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
     mcp = FastMCP("hindsight-mcp-server", stateless_http=True)
 
     @mcp.tool()
-    async def retain(content: str, context: str = "general", bank_id: str | None = None) -> str:
+    async def retain(
+        content: str,
+        context: str = "general",
+        async_processing: bool = True,
+        bank_id: str | None = None,
+    ) -> str:
         """
         Store important information to long-term memory.
 
@@ -70,18 +75,28 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         Args:
             content: The fact/memory to store (be specific and include relevant details)
             context: Category for the memory (e.g., 'preferences', 'work', 'hobbies', 'family'). Default: 'general'
+            async_processing: If True, queue for background processing and return immediately. If False, wait for completion. Default: True
             bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
         """
         try:
             target_bank = bank_id or get_current_bank_id()
             if target_bank is None:
                 return "Error: No bank_id configured"
-            await memory.retain_batch_async(
-                bank_id=target_bank,
-                contents=[{"content": content, "context": context}],
-                request_context=RequestContext(),
-            )
-            return f"Memory stored successfully in bank '{target_bank}'"
+            contents = [{"content": content, "context": context}]
+            if async_processing:
+                # Queue for background processing and return immediately
+                result = await memory.submit_async_retain(
+                    bank_id=target_bank, contents=contents, request_context=RequestContext()
+                )
+                return f"Memory queued for background processing (operation_id: {result.get('operation_id', 'N/A')})"
+            else:
+                # Wait for completion
+                await memory.retain_batch_async(
+                    bank_id=target_bank,
+                    contents=contents,
+                    request_context=RequestContext(),
+                )
+                return f"Memory stored successfully in bank '{target_bank}'"
         except Exception as e:
             logger.error(f"Error storing memory: {e}", exc_info=True)
             return f"Error: {str(e)}"
