@@ -132,19 +132,23 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
     @mcp.tool()
     async def reflect(query: str, context: str | None = None, budget: str = "low", bank_id: str | None = None) -> str:
         """
-        Formulate a thoughtful answer using the bank's personality and stored memories.
+        Generate thoughtful analysis by synthesizing stored memories with the bank's personality.
 
-        Use this tool when the user asks for:
-        - Opinions or perspectives on topics
-        - Thoughtful analysis based on stored knowledge
-        - Responses that should reflect the bank's disposition (personality)
-        - Questions that require reasoning across multiple memories
+        WHEN TO USE THIS TOOL:
+        Use reflect when you need reasoned analysis, not just fact retrieval. This tool
+        thinks through the question using everything the bank knows and its personality traits.
 
-        Unlike recall (which just retrieves facts), reflect:
-        - Uses the bank's disposition traits (skepticism, empathy, etc.)
-        - Synthesizes information from multiple memories
-        - Forms and stores new opinions when relevant
-        - Returns a natural language response, not just raw facts
+        EXAMPLES OF GOOD QUERIES:
+        - "What patterns have emerged in how I approach debugging?"
+        - "Based on my past decisions, what architectural style do I prefer?"
+        - "What might be the best approach for this problem given what you know about me?"
+        - "How should I prioritize these tasks based on my goals?"
+
+        HOW IT DIFFERS FROM RECALL:
+        - recall: Returns raw facts matching your search (fast lookup)
+        - reflect: Reasons across memories to form a synthesized answer (deeper analysis)
+
+        Use recall for "what did I say about X?" and reflect for "what should I do about X?"
 
         Args:
             query: The question or topic to reflect on
