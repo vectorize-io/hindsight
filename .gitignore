@@ -5,7 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
-
+.mcp.json
+.osgrep
 # Virtual environments
 .venv
 
