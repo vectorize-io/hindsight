@@ -645,12 +645,16 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Run database migrations if enabled
         if self._run_migrations:
-            from ..migrations import run_migrations
+            from ..migrations import ensure_embedding_dimension, run_migrations
 
             if not self.db_url:
                 raise ValueError("Database URL is required for migrations")
             logger.info("Running database migrations...")
             run_migrations(self.db_url)
+
+            # Ensure embedding column dimension matches the model's dimension
+            # This is done after migrations and after embeddings.initialize()
+            ensure_embedding_dimension(self.db_url, self.embeddings.dimension)
 
         logger.info(f"Connecting to PostgreSQL at {self.db_url}")
 

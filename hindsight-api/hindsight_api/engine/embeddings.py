@@ -3,8 +3,8 @@ Embeddings abstraction for the memory system.
 
 Provides an interface for generating embeddings with different backends.
 
-IMPORTANT: All embeddings must produce 384-dimensional vectors to match
-the database schema (pgvector column defined as vector(384)).
+The embedding dimension is auto-detected from the model at initialization.
+The database schema is automatically adjusted to match the model's dimension.
 
 Configuration via environment variables - see hindsight_api.config for all env var names.
 """
@@ -17,11 +17,14 @@ import httpx
 
 from ..config import (
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
+    DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
-    EMBEDDING_DIMENSION,
     ENV_EMBEDDINGS_LOCAL_MODEL,
+    ENV_EMBEDDINGS_OPENAI_API_KEY,
+    ENV_EMBEDDINGS_OPENAI_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
+    ENV_LLM_API_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,14 +34,20 @@ class Embeddings(ABC):
     """
     Abstract base class for embedding generation.
 
-    All implementations MUST generate 384-dimensional embeddings to match
-    the database schema.
+    The embedding dimension is determined by the model and detected at initialization.
+    The database schema is automatically adjusted to match the model's dimension.
     """
 
     @property
     @abstractmethod
     def provider_name(self) -> str:
         """Return a human-readable name for this provider (e.g., 'local', 'tei')."""
+        pass
+
+    @property
+    @abstractmethod
+    def dimension(self) -> int:
+        """Return the embedding dimension produced by this model."""
         pass
 
     @abstractmethod
@@ -54,13 +63,13 @@ class Embeddings(ABC):
     @abstractmethod
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
-        Generate 384-dimensional embeddings for a list of texts.
+        Generate embeddings for a list of texts.
 
         Args:
             texts: List of text strings to encode
 
         Returns:
-            List of 384-dimensional embedding vectors (each is a list of floats)
+            List of embedding vectors (each is a list of floats)
         """
         pass
 
@@ -70,9 +79,7 @@ class LocalSTEmbeddings(Embeddings):
     Local embeddings implementation using SentenceTransformers.
 
     Call initialize() during startup to load the model and avoid cold starts.
-
-    Default model is BAAI/bge-small-en-v1.5 which produces 384-dimensional
-    embeddings matching the database schema.
+    The embedding dimension is auto-detected from the model.
     """
 
     def __init__(self, model_name: str | None = None):
@@ -81,15 +88,21 @@ class LocalSTEmbeddings(Embeddings):
 
         Args:
             model_name: Name of the SentenceTransformer model to use.
-                       Must produce 384-dimensional embeddings.
                        Default: BAAI/bge-small-en-v1.5
         """
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
         self._model = None
+        self._dimension: int | None = None
 
     @property
     def provider_name(self) -> str:
         return "local"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
 
     async def initialize(self) -> None:
         """Load the embedding model."""
@@ -112,26 +125,18 @@ class LocalSTEmbeddings(Embeddings):
             model_kwargs={"low_cpu_mem_usage": False, "device_map": None},
         )
 
-        # Validate dimension matches database schema
-        model_dim = self._model.get_sentence_embedding_dimension()
-        if model_dim != EMBEDDING_DIMENSION:
-            raise ValueError(
-                f"Model {self.model_name} produces {model_dim}-dimensional embeddings, "
-                f"but database schema requires {EMBEDDING_DIMENSION} dimensions. "
-                f"Use a model that produces {EMBEDDING_DIMENSION}-dimensional embeddings."
-            )
-
-        logger.info(f"Embeddings: local provider initialized (dim: {model_dim})")
+        self._dimension = self._model.get_sentence_embedding_dimension()
+        logger.info(f"Embeddings: local provider initialized (dim: {self._dimension})")
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
-        Generate 384-dimensional embeddings for a list of texts.
+        Generate embeddings for a list of texts.
 
         Args:
             texts: List of text strings to encode
 
         Returns:
-            List of 384-dimensional embedding vectors
+            List of embedding vectors
         """
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
@@ -146,7 +151,7 @@ class RemoteTEIEmbeddings(Embeddings):
     TEI provides a high-performance inference server for embedding models.
     See: https://github.com/huggingface/text-embeddings-inference
 
-    The server should be running a model that produces 384-dimensional embeddings.
+    The embedding dimension is auto-detected from the server at initialization.
     """
 
     def __init__(
@@ -174,10 +179,17 @@ class RemoteTEIEmbeddings(Embeddings):
         self.retry_delay = retry_delay
         self._client: httpx.Client | None = None
         self._model_id: str | None = None
+        self._dimension: int | None = None
 
     @property
     def provider_name(self) -> str:
         return "tei"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
 
     def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Make an HTTP request with automatic retries on transient errors."""
@@ -229,7 +241,24 @@ class RemoteTEIEmbeddings(Embeddings):
             response = self._request_with_retry("GET", f"{self.base_url}/info")
             info = response.json()
             self._model_id = info.get("model_id", "unknown")
-            logger.info(f"Embeddings: TEI provider initialized (model: {self._model_id})")
+
+            # Get dimension from server info or by doing a test embedding
+            if "max_input_length" in info and "model_dtype" in info:
+                # Try to get dimension from info endpoint (some TEI versions expose it)
+                # If not available, do a test embedding
+                pass
+
+            # Do a test embedding to detect dimension
+            test_response = self._request_with_retry(
+                "POST",
+                f"{self.base_url}/embed",
+                json={"inputs": ["test"]},
+            )
+            test_embeddings = test_response.json()
+            if test_embeddings and len(test_embeddings) > 0:
+                self._dimension = len(test_embeddings[0])
+
+            logger.info(f"Embeddings: TEI provider initialized (model: {self._model_id}, dim: {self._dimension})")
         except httpx.HTTPError as e:
             raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}")
 
@@ -269,6 +298,117 @@ class RemoteTEIEmbeddings(Embeddings):
         return all_embeddings
 
 
+class OpenAIEmbeddings(Embeddings):
+    """
+    OpenAI embeddings implementation using the OpenAI API.
+
+    Supports text-embedding-3-small (1536 dims), text-embedding-3-large (3072 dims),
+    and text-embedding-ada-002 (1536 dims, legacy).
+
+    The embedding dimension is auto-detected from the model at initialization.
+    """
+
+    # Known dimensions for OpenAI embedding models
+    MODEL_DIMENSIONS = {
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1536,
+    }
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_EMBEDDINGS_OPENAI_MODEL,
+        batch_size: int = 100,
+        max_retries: int = 3,
+    ):
+        """
+        Initialize OpenAI embeddings client.
+
+        Args:
+            api_key: OpenAI API key
+            model: OpenAI embedding model name (default: text-embedding-3-small)
+            batch_size: Maximum batch size for embedding requests (default: 100)
+            max_retries: Maximum number of retries for failed requests (default: 3)
+        """
+        self.api_key = api_key
+        self.model = model
+        self.batch_size = batch_size
+        self.max_retries = max_retries
+        self._client = None
+        self._dimension: int | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "openai"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        """Initialize the OpenAI client and detect dimension."""
+        if self._client is not None:
+            return
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("openai is required for OpenAIEmbeddings. Install it with: pip install openai")
+
+        logger.info(f"Embeddings: initializing OpenAI provider with model {self.model}")
+        self._client = OpenAI(api_key=self.api_key, max_retries=self.max_retries)
+
+        # Try to get dimension from known models, otherwise do a test embedding
+        if self.model in self.MODEL_DIMENSIONS:
+            self._dimension = self.MODEL_DIMENSIONS[self.model]
+        else:
+            # Do a test embedding to detect dimension
+            response = self._client.embeddings.create(
+                model=self.model,
+                input=["test"],
+            )
+            if response.data:
+                self._dimension = len(response.data[0].embedding)
+
+        logger.info(f"Embeddings: OpenAI provider initialized (model: {self.model}, dim: {self._dimension})")
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings using the OpenAI API.
+
+        Args:
+            texts: List of text strings to encode
+
+        Returns:
+            List of embedding vectors
+        """
+        if self._client is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+
+        if not texts:
+            return []
+
+        all_embeddings = []
+
+        # Process in batches
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+
+            response = self._client.embeddings.create(
+                model=self.model,
+                input=batch,
+            )
+
+            # Sort by index to ensure correct order
+            batch_embeddings = sorted(response.data, key=lambda x: x.index)
+            all_embeddings.extend([e.embedding for e in batch_embeddings])
+
+        return all_embeddings
+
+
 def create_embeddings_from_env() -> Embeddings:
     """
     Create an Embeddings instance based on environment variables.
@@ -289,5 +429,15 @@ def create_embeddings_from_env() -> Embeddings:
         model = os.environ.get(ENV_EMBEDDINGS_LOCAL_MODEL)
         model_name = model or DEFAULT_EMBEDDINGS_LOCAL_MODEL
         return LocalSTEmbeddings(model_name=model_name)
+    elif provider == "openai":
+        # Use dedicated embeddings API key, or fall back to LLM API key
+        api_key = os.environ.get(ENV_EMBEDDINGS_OPENAI_API_KEY) or os.environ.get(ENV_LLM_API_KEY)
+        if not api_key:
+            raise ValueError(
+                f"{ENV_EMBEDDINGS_OPENAI_API_KEY} or {ENV_LLM_API_KEY} is required "
+                f"when {ENV_EMBEDDINGS_PROVIDER} is 'openai'"
+            )
+        model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
+        return OpenAIEmbeddings(api_key=api_key, model=model)
     else:
-        raise ValueError(f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei'")
+        raise ValueError(f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei', 'openai'")

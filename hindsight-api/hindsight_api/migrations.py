@@ -229,3 +229,131 @@ def check_migration_status(
     except Exception as e:
         logger.warning(f"Unable to check migration status: {e}")
         return None, None
+
+
+def ensure_embedding_dimension(
+    database_url: str,
+    required_dimension: int,
+    schema: str | None = None,
+) -> None:
+    """
+    Ensure the embedding column dimension matches the model's dimension.
+
+    This function checks the current vector column dimension in the database
+    and adjusts it if necessary:
+    - If dimensions match: no action needed
+    - If dimensions differ and table is empty: ALTER COLUMN to new dimension
+    - If dimensions differ and table has data: raise error with migration guidance
+
+    Args:
+        database_url: SQLAlchemy database URL
+        required_dimension: The embedding dimension required by the model
+        schema: Target PostgreSQL schema name (None for public)
+
+    Raises:
+        RuntimeError: If dimension mismatch with existing data
+    """
+    schema_name = schema or "public"
+
+    engine = create_engine(database_url)
+    with engine.connect() as conn:
+        # Check if memory_units table exists
+        table_exists = conn.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = :schema AND table_name = 'memory_units'
+                )
+            """),
+            {"schema": schema_name},
+        ).scalar()
+
+        if not table_exists:
+            logger.debug(f"memory_units table does not exist in schema '{schema_name}', skipping dimension check")
+            return
+
+        # Get current column dimension from pg_attribute
+        # pgvector stores dimension in atttypmod
+        current_dim = conn.execute(
+            text("""
+                SELECT atttypmod
+                FROM pg_attribute a
+                JOIN pg_class c ON a.attrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE n.nspname = :schema
+                  AND c.relname = 'memory_units'
+                  AND a.attname = 'embedding'
+            """),
+            {"schema": schema_name},
+        ).scalar()
+
+        if current_dim is None:
+            logger.warning("Could not determine current embedding dimension, skipping check")
+            return
+
+        # pgvector stores dimension directly in atttypmod (no offset like other types)
+        current_dimension = current_dim
+
+        if current_dimension == required_dimension:
+            logger.debug(f"Embedding dimension OK: {current_dimension}")
+            return
+
+        logger.info(
+            f"Embedding dimension mismatch: database has {current_dimension}, model requires {required_dimension}"
+        )
+
+        # Check if table has data
+        row_count = conn.execute(
+            text(f"SELECT COUNT(*) FROM {schema_name}.memory_units WHERE embedding IS NOT NULL")
+        ).scalar()
+
+        if row_count > 0:
+            raise RuntimeError(
+                f"Cannot change embedding dimension from {current_dimension} to {required_dimension}: "
+                f"memory_units table contains {row_count} rows with embeddings. "
+                f"To change dimensions, you must either:\n"
+                f"  1. Re-embed all data: DELETE FROM {schema_name}.memory_units; then restart\n"
+                f"  2. Use a model with {current_dimension}-dimensional embeddings"
+            )
+
+        # Table is empty, safe to alter column
+        logger.info(f"Altering embedding column dimension from {current_dimension} to {required_dimension}")
+
+        # Drop the HNSW index on embedding column if it exists
+        # Only drop indexes that use 'hnsw' and reference the 'embedding' column
+        conn.execute(
+            text(f"""
+                DO $$
+                DECLARE idx_name TEXT;
+                BEGIN
+                    FOR idx_name IN
+                        SELECT indexname FROM pg_indexes
+                        WHERE schemaname = '{schema_name}'
+                          AND tablename = 'memory_units'
+                          AND indexdef LIKE '%hnsw%'
+                          AND indexdef LIKE '%embedding%'
+                    LOOP
+                        EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
+                    END LOOP;
+                END $$;
+            """)
+        )
+
+        # Alter the column type
+        conn.execute(
+            text(f"ALTER TABLE {schema_name}.memory_units ALTER COLUMN embedding TYPE vector({required_dimension})")
+        )
+        conn.commit()
+
+        # Recreate the HNSW index
+        conn.execute(
+            text(f"""
+                CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_hnsw
+                ON {schema_name}.memory_units
+                USING hnsw (embedding vector_cosine_ops)
+                WITH (m = 16, ef_construction = 64)
+            """)
+        )
+        conn.commit()
+
+        logger.info(f"Successfully changed embedding dimension to {required_dimension}")

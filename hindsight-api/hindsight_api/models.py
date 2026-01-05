@@ -41,6 +41,8 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from .config import EMBEDDING_DIMENSION
+
 
 class Base(AsyncAttrs, DeclarativeBase):
     """Base class for all models."""
@@ -81,7 +83,7 @@ class MemoryUnit(Base):
     bank_id: Mapped[str] = mapped_column(Text, nullable=False)
     document_id: Mapped[str | None] = mapped_column(Text)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(384))  # pgvector type
+    embedding = mapped_column(Vector(EMBEDDING_DIMENSION))  # pgvector type
     context: Mapped[str | None] = mapped_column(Text)
     event_date: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
