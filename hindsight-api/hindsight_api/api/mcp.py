@@ -261,6 +261,48 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
             logger.error(f"Error creating bank: {e}", exc_info=True)
             return json.dumps({"error": str(e)})
 
+    @mcp.tool()
+    async def list_memories(
+        type: str | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        bank_id: str | None = None,
+    ) -> str:
+        """
+        List memory units with optional filtering and search.
+
+        Use this tool to browse memories or search with full-text matching.
+        Different from recall which uses semantic similarity search.
+
+        Args:
+            type: Filter by fact type (world, experience, opinion)
+            q: Full-text search query (searches text and context fields)
+            limit: Maximum number of results (default: 100)
+            offset: Pagination offset (default: 0)
+            bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
+
+        Returns:
+            JSON with items array, total count, limit, and offset
+        """
+        target_bank = bank_id or get_current_bank_id()
+        if not target_bank:
+            return "Error: No bank_id configured"
+
+        try:
+            result = await memory.list_memory_units(
+                target_bank,
+                fact_type=type,
+                search_query=q,
+                limit=limit,
+                offset=offset,
+                request_context=RequestContext(),
+            )
+            return json.dumps(result)
+        except Exception as e:
+            logger.error(f"Error listing memories: {e}", exc_info=True)
+            return f"Error: {str(e)}"
+
     return mcp
 
 
