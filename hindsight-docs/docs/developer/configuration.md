@@ -123,6 +123,29 @@ export HINDSIGHT_API_RERANKER_TEI_URL=http://localhost:8081
 | `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
 | `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
 
+### Authentication
+
+By default, Hindsight runs without authentication. For production deployments, enable API key authentication using the built-in tenant extension:
+
+```bash
+# Enable the built-in API key authentication
+export HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+export HINDSIGHT_API_TENANT_API_KEY=your-secret-api-key
+```
+
+When enabled, all requests must include the API key in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer your-secret-api-key" \
+  http://localhost:8888/v1/default/banks
+```
+
+Requests without a valid API key receive a `401 Unauthorized` response.
+
+:::tip Custom Authentication
+For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](/docs/developer/extensions) for details.
+:::
+
 ### Retrieval
 
 | Variable | Description | Default |
@@ -194,6 +217,10 @@ export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
 HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight_dev@localhost:5432/hindsight
 HINDSIGHT_API_LLM_PROVIDER=groq
 HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
+
+# Authentication (optional, recommended for production)
+# HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+# HINDSIGHT_API_TENANT_API_KEY=your-secret-api-key
 
 # Control Plane
 HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888

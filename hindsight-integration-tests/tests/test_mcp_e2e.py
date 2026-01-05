@@ -96,28 +96,29 @@ async def test_create_bank_and_list_banks():
             print(f"Create bank result: {create_result}")
             assert create_result is not None
 
-            # Parse the result
+            # Parse the result - now uses BankProfileResponse model
             result_text = create_result.content[0].text
             result_data = json.loads(result_text)
             print(f"Parsed result: {result_data}")
 
-            # Check it was successful
-            assert result_data.get("success") is True, f"create_bank failed: {result_data}"
+            # Check fields match BankProfileResponse schema
             assert result_data.get("bank_id") == bank_id
             assert result_data.get("name") == "Test Bank"
             assert result_data.get("background") == "A bank for testing MCP integration"
+            assert "disposition" in result_data  # DispositionTraits object
 
             # Test 2: List banks and verify our bank is there
             list_result = await session.call_tool("list_banks", arguments={})
             print(f"List banks result: {list_result}")
             assert list_result is not None
 
+            # Now uses BankListResponse model with banks array
             list_text = list_result.content[0].text
             list_data = json.loads(list_text)
             print(f"Parsed list: {list_data}")
 
-            # Find our bank in the list
-            bank_ids = [b["id"] for b in list_data.get("banks", [])]
+            # Find our bank in the list - field is bank_id per BankListItem model
+            bank_ids = [b["bank_id"] for b in list_data.get("banks", [])]
             assert bank_id in bank_ids, f"Bank {bank_id} not found in list: {bank_ids}"
 
 
