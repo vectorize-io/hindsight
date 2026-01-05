@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **context** | **str** |  | [optional] 
 **metadata** | **Dict[str, str]** |  | [optional] 
 **document_id** | **str** |  | [optional] 
+**entities** | [**List[EntityInput]**](EntityInput.md) |  | [optional] 
 
 ## Example
 

@@ -16,11 +16,11 @@ from hindsight_api.api import create_app
 
 def generate_openapi_spec(output_path: str = None):
     """Generate OpenAPI spec and save to file."""
-    # Default to root openapi.json if no path specified
+    # Default to hindsight-docs/static/openapi.json (single source of truth)
     if output_path is None:
         # Get the root of the project (3 levels up from this file)
         root_dir = Path(__file__).parent.parent.parent
-        output_path = str(root_dir / "openapi.json")
+        output_path = str(root_dir / "hindsight-docs" / "static" / "openapi.json")
 
     # Create a temporary memory instance for OpenAPI generation
     _memory = MemoryEngine(

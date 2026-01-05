@@ -22,16 +22,12 @@ from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-
 class EntityInput(BaseModel):
     """
     Entity to associate with retained content.
-    """  # noqa: E501
-
+    """ # noqa: E501
     text: StrictStr = Field(description="The entity name/text")
-    type: Optional[StrictStr] = Field(
-        default=None, description="Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')"
-    )
+    type: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["text", "type"]
 
     model_config = ConfigDict(
@@ -40,12 +36,14 @@ class EntityInput(BaseModel):
         protected_namespaces=(),
     )
 
+
     def to_str(self) -> str:
         """Returns the string representation of the model using alias"""
         return pprint.pformat(self.model_dump(by_alias=True))
 
     def to_json(self) -> str:
         """Returns the JSON representation of the model using alias"""
+        # TODO: pydantic v2: use .model_dump_json(by_alias=True, exclude_unset=True) instead
         return json.dumps(self.to_dict())
 
     @classmethod
@@ -54,8 +52,17 @@ class EntityInput(BaseModel):
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return the dictionary representation of the model using alias."""
-        excluded_fields: Set[str] = set([])
+        """Return the dictionary representation of the model using alias.
+
+        This has the following differences from calling pydantic's
+        `self.model_dump(by_alias=True)`:
+
+        * `None` is only added to the output dict for nullable fields that
+          were set at model initialization. Other fields with value `None`
+          are ignored.
+        """
+        excluded_fields: Set[str] = set([
+        ])
 
         _dict = self.model_dump(
             by_alias=True,
@@ -65,7 +72,7 @@ class EntityInput(BaseModel):
         # set to None if type (nullable) is None
         # and model_fields_set contains the field
         if self.type is None and "type" in self.model_fields_set:
-            _dict["type"] = None
+            _dict['type'] = None
 
         return _dict
 
@@ -78,5 +85,10 @@ class EntityInput(BaseModel):
         if not isinstance(obj, dict):
             return cls.model_validate(obj)
 
-        _obj = cls.model_validate({"text": obj.get("text"), "type": obj.get("type")})
+        _obj = cls.model_validate({
+            "text": obj.get("text"),
+            "type": obj.get("type")
+        })
         return _obj
+
+

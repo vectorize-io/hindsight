@@ -18,11 +18,11 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.entity_input import EntityInput
 from typing import Optional, Set
 from typing_extensions import Self
-from hindsight_client_api.models.entity_input import EntityInput
 
 class MemoryItem(BaseModel):
     """
@@ -33,10 +33,7 @@ class MemoryItem(BaseModel):
     context: Optional[StrictStr] = None
     metadata: Optional[Dict[str, StrictStr]] = None
     document_id: Optional[StrictStr] = None
-    entities: Optional[List[EntityInput]] = Field(
-        default=None,
-        description="Optional entities to combine with auto-extracted entities."
-    )
+    entities: Optional[List[EntityInput]] = None
     __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities"]
 
     model_config = ConfigDict(
@@ -78,6 +75,13 @@ class MemoryItem(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in entities (list)
+        _items = []
+        if self.entities:
+            for _item_entities in self.entities:
+                if _item_entities:
+                    _items.append(_item_entities.to_dict())
+            _dict['entities'] = _items
         # set to None if timestamp (nullable) is None
         # and model_fields_set contains the field
         if self.timestamp is None and "timestamp" in self.model_fields_set:

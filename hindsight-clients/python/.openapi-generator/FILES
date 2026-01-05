@@ -30,6 +30,7 @@ hindsight_client_api/docs/DocumentsApi.md
 hindsight_client_api/docs/EntitiesApi.md
 hindsight_client_api/docs/EntityDetailResponse.md
 hindsight_client_api/docs/EntityIncludeOptions.md
+hindsight_client_api/docs/EntityInput.md
 hindsight_client_api/docs/EntityListItem.md
 hindsight_client_api/docs/EntityListResponse.md
 hindsight_client_api/docs/EntityObservationResponse.md
@@ -77,6 +78,7 @@ hindsight_client_api/models/disposition_traits.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/entity_detail_response.py
 hindsight_client_api/models/entity_include_options.py
+hindsight_client_api/models/entity_input.py
 hindsight_client_api/models/entity_list_item.py
 hindsight_client_api/models/entity_list_response.py
 hindsight_client_api/models/entity_observation_response.py

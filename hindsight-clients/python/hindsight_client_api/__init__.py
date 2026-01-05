@@ -51,6 +51,7 @@ __all__ = [
     "DocumentResponse",
     "EntityDetailResponse",
     "EntityIncludeOptions",
+    "EntityInput",
     "EntityListItem",
     "EntityListResponse",
     "EntityObservationResponse",
@@ -115,6 +116,7 @@ from hindsight_client_api.models.disposition_traits import DispositionTraits as 
 from hindsight_client_api.models.document_response import DocumentResponse as DocumentResponse
 from hindsight_client_api.models.entity_detail_response import EntityDetailResponse as EntityDetailResponse
 from hindsight_client_api.models.entity_include_options import EntityIncludeOptions as EntityIncludeOptions
+from hindsight_client_api.models.entity_input import EntityInput as EntityInput
 from hindsight_client_api.models.entity_list_item import EntityListItem as EntityListItem
 from hindsight_client_api.models.entity_list_response import EntityListResponse as EntityListResponse
 from hindsight_client_api.models.entity_observation_response import EntityObservationResponse as EntityObservationResponse

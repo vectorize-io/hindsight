@@ -73,13 +73,15 @@ fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
 }
 
 fn main() {
-    // Get the OpenAPI spec path from the project root (two levels up)
+    // Get the OpenAPI spec path from hindsight-docs/static (single source of truth)
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let openapi_path = manifest_dir
         .parent()
         .unwrap()
         .parent()
         .unwrap()
+        .join("hindsight-docs")
+        .join("static")
         .join("openapi.json");
 
     // Tell Cargo to rebuild if the OpenAPI spec changes

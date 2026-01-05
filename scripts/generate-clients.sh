@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLIENTS_DIR="$PROJECT_ROOT/hindsight-clients"
-OPENAPI_SPEC="$PROJECT_ROOT/openapi.json"
+OPENAPI_SPEC="$PROJECT_ROOT/hindsight-docs/static/openapi.json"
 
 echo "=================================================="
 echo "Hindsight API Client Generator"

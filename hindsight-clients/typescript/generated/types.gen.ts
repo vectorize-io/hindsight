@@ -432,6 +432,26 @@ export type EntityIncludeOptions = {
 };
 
 /**
+ * EntityInput
+ *
+ * Entity to associate with retained content.
+ */
+export type EntityInput = {
+  /**
+   * Text
+   *
+   * The entity name/text
+   */
+  text: string;
+  /**
+   * Type
+   *
+   * Optional entity type (e.g., 'PERSON', 'ORG', 'CONCEPT')
+   */
+  type?: string | null;
+};
+
+/**
  * EntityListItem
  *
  * Entity list item with summary.
@@ -660,6 +680,12 @@ export type MemoryItem = {
    * Optional document ID for this memory item.
    */
   document_id?: string | null;
+  /**
+   * Entities
+   *
+   * Optional entities to combine with auto-extracted entities.
+   */
+  entities?: Array<EntityInput> | null;
 };
 
 /**
