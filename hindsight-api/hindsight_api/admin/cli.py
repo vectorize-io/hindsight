@@ -214,6 +214,36 @@ def restore(
     typer.echo("Restore complete")
 
 
+async def _run_migration(db_url: str, schema: str = "public") -> None:
+    """Resolve database URL and run migrations."""
+    from ..migrations import run_migrations
+
+    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    resolved_url = await resolve_database_url(db_url)
+    run_migrations(resolved_url, schema=schema)
+
+
+@app.command(name="run-db-migration")
+def run_db_migration(
+    schema: str = typer.Option("public", "--schema", "-s", help="Database schema to run migrations on"),
+):
+    """Run database migrations to the latest version."""
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Running database migrations (schema: {schema})...")
+
+    asyncio.run(_run_migration(config.database_url, schema))
+
+    typer.echo("Database migrations completed successfully")
+
+
 def main():
     app()
 

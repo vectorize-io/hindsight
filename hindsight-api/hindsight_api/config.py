@@ -54,6 +54,9 @@ ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
 
+# Database migrations
+ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
+
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_LLM_PROVIDER = "openai"
@@ -82,6 +85,9 @@ DEFAULT_OBSERVATION_TOP_ENTITIES = 5  # Max entities to process per retain batch
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
+
+# Database migrations
+DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -152,6 +158,9 @@ class HindsightConfig:
     skip_llm_verification: bool
     lazy_reranker: bool
 
+    # Database migrations
+    run_migrations_on_startup: bool
+
     @classmethod
     def from_env(cls) -> "HindsightConfig":
         """Create configuration from environment variables."""
@@ -192,6 +201,8 @@ class HindsightConfig:
             retain_max_completion_tokens=int(
                 os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
             ),
+            # Database migrations
+            run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
         )
 
     def get_llm_base_url(self) -> str:
