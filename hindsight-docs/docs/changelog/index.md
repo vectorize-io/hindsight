@@ -8,6 +8,12 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [Unreleased]
+
+**Features**
+
+- Add per-request token usage tracking to retain and reflect endpoints for cost monitoring and billing integration.
+
 ## [0.2.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.2.0)
 
 **Features**

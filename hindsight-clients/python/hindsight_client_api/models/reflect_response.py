@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.reflect_fact import ReflectFact
+from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -30,7 +31,8 @@ class ReflectResponse(BaseModel):
     text: StrictStr
     based_on: Optional[List[ReflectFact]] = None
     structured_output: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output"]
+    usage: Optional[TokenUsage] = None
+    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,10 +80,18 @@ class ReflectResponse(BaseModel):
                 if _item_based_on:
                     _items.append(_item_based_on.to_dict())
             _dict['based_on'] = _items
+        # override the default output from pydantic by calling `to_dict()` of usage
+        if self.usage:
+            _dict['usage'] = self.usage.to_dict()
         # set to None if structured_output (nullable) is None
         # and model_fields_set contains the field
         if self.structured_output is None and "structured_output" in self.model_fields_set:
             _dict['structured_output'] = None
+
+        # set to None if usage (nullable) is None
+        # and model_fields_set contains the field
+        if self.usage is None and "usage" in self.model_fields_set:
+            _dict['usage'] = None
 
         return _dict
 
@@ -97,7 +107,8 @@ class ReflectResponse(BaseModel):
         _obj = cls.model_validate({
             "text": obj.get("text"),
             "based_on": [ReflectFact.from_dict(_item) for _item in obj["based_on"]] if obj.get("based_on") is not None else None,
-            "structured_output": obj.get("structured_output")
+            "structured_output": obj.get("structured_output"),
+            "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None
         })
         return _obj
 

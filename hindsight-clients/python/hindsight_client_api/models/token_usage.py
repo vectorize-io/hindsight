@@ -17,22 +17,19 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
 from typing_extensions import Self
 
-class RetainResponse(BaseModel):
+class TokenUsage(BaseModel):
     """
-    Response model for retain endpoint.
+    Token usage metrics for LLM calls.  Tracks input/output tokens for a single request to enable per-request cost tracking and monitoring.
     """ # noqa: E501
-    success: StrictBool
-    bank_id: StrictStr
-    items_count: StrictInt
-    var_async: StrictBool = Field(description="Whether the operation was processed asynchronously", alias="async")
-    usage: Optional[TokenUsage] = None
-    __properties: ClassVar[List[str]] = ["success", "bank_id", "items_count", "async", "usage"]
+    input_tokens: Optional[StrictInt] = Field(default=0, description="Number of input/prompt tokens consumed")
+    output_tokens: Optional[StrictInt] = Field(default=0, description="Number of output/completion tokens generated")
+    total_tokens: Optional[StrictInt] = Field(default=0, description="Total tokens (input + output)")
+    __properties: ClassVar[List[str]] = ["input_tokens", "output_tokens", "total_tokens"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +49,7 @@ class RetainResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of RetainResponse from a JSON string"""
+        """Create an instance of TokenUsage from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,19 +70,11 @@ class RetainResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of usage
-        if self.usage:
-            _dict['usage'] = self.usage.to_dict()
-        # set to None if usage (nullable) is None
-        # and model_fields_set contains the field
-        if self.usage is None and "usage" in self.model_fields_set:
-            _dict['usage'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of RetainResponse from a dict"""
+        """Create an instance of TokenUsage from a dict"""
         if obj is None:
             return None
 
@@ -93,11 +82,9 @@ class RetainResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "success": obj.get("success"),
-            "bank_id": obj.get("bank_id"),
-            "items_count": obj.get("items_count"),
-            "async": obj.get("async"),
-            "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None
+            "input_tokens": obj.get("input_tokens") if obj.get("input_tokens") is not None else 0,
+            "output_tokens": obj.get("output_tokens") if obj.get("output_tokens") is not None else 0,
+            "total_tokens": obj.get("total_tokens") if obj.get("total_tokens") is not None else 0
         })
         return _obj
 

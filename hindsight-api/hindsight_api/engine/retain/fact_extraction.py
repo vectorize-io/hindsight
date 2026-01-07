@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...config import get_config
 from ..llm_wrapper import LLMConfig, OutputTooLongError
+from ..response_models import TokenUsage
 
 
 def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
@@ -393,7 +394,7 @@ async def _extract_facts_from_chunk(
     llm_config: "LLMConfig",
     agent_name: str = None,
     extract_opinions: bool = False,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
 
@@ -685,16 +686,19 @@ Context: {sanitized_context}
 Text:
 {sanitized_chunk}"""
 
+    usage = TokenUsage()  # Track cumulative usage across retries
     for attempt in range(max_retries):
         try:
-            extraction_response_json = await llm_config.call(
+            extraction_response_json, call_usage = await llm_config.call(
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 response_format=FactExtractionResponse,
                 scope="memory_extract_facts",
                 temperature=0.1,
                 max_completion_tokens=config.retain_max_completion_tokens,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
+                return_usage=True,
             )
+            usage = usage + call_usage  # Aggregate usage across retries
 
             # Lenient parsing of facts from raw JSON
             chunk_facts = []
@@ -712,7 +716,7 @@ Text:
                         f"LLM returned non-dict JSON after {max_retries} attempts: {type(extraction_response_json).__name__}. "
                         f"Raw: {str(extraction_response_json)[:500]}"
                     )
-                    return []
+                    return [], usage
 
             raw_facts = extraction_response_json.get("facts", [])
             # Get top-level causal relationships (new schema)
@@ -927,7 +931,7 @@ Text:
                 )
                 continue
 
-            return chunk_facts
+            return chunk_facts, usage
 
         except BadRequestError as e:
             last_error = e
@@ -954,7 +958,7 @@ async def _extract_facts_with_auto_split(
     llm_config: LLMConfig,
     agent_name: str = None,
     extract_opinions: bool = False,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
 
@@ -972,7 +976,7 @@ async def _extract_facts_with_auto_split(
         extract_opinions: If True, extract ONLY opinions. If False, extract world and agent facts (no opinions)
 
     Returns:
-        List of fact dictionaries extracted from the chunk (possibly from sub-chunks)
+        Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
     """
     import logging
 
@@ -1051,12 +1055,14 @@ async def _extract_facts_with_auto_split(
 
         # Combine results from both halves
         all_facts = []
-        for sub_result in sub_results:
-            all_facts.extend(sub_result)
+        total_usage = TokenUsage()
+        for sub_facts, sub_usage in sub_results:
+            all_facts.extend(sub_facts)
+            total_usage = total_usage + sub_usage
 
         logger.info(f"Successfully extracted {len(all_facts)} facts from split chunk {chunk_index + 1}")
 
-        return all_facts
+        return all_facts, total_usage
 
 
 async def extract_facts_from_text(
@@ -1066,7 +1072,7 @@ async def extract_facts_from_text(
     agent_name: str,
     context: str = "",
     extract_opinions: bool = False,
-) -> tuple[list[Fact], list[tuple[str, int]]]:
+) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
 
@@ -1085,9 +1091,10 @@ async def extract_facts_from_text(
         extract_opinions: If True, extract ONLY opinions. If False, extract world and bank facts (no opinions)
 
     Returns:
-        Tuple of (facts, chunks) where:
+        Tuple of (facts, chunks, usage) where:
         - facts: List of Fact model instances
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
+        - usage: Aggregated token usage across all LLM calls
     """
     chunks = chunk_text(text, max_chars=3000)
     tasks = [
@@ -1106,10 +1113,12 @@ async def extract_facts_from_text(
     chunk_results = await asyncio.gather(*tasks)
     all_facts = []
     chunk_metadata = []  # [(chunk_text, fact_count), ...]
-    for chunk, chunk_facts in zip(chunks, chunk_results):
+    total_usage = TokenUsage()
+    for chunk, (chunk_facts, chunk_usage) in zip(chunks, chunk_results):
         all_facts.extend(chunk_facts)
         chunk_metadata.append((chunk, len(chunk_facts)))
-    return all_facts, chunk_metadata
+        total_usage = total_usage + chunk_usage
+    return all_facts, chunk_metadata, total_usage
 
 
 # ============================================================================
@@ -1130,7 +1139,7 @@ SECONDS_PER_FACT = 10
 
 async def extract_facts_from_contents(
     contents: list[RetainContent], llm_config, agent_name: str, extract_opinions: bool = False
-) -> tuple[list[ExtractedFactType], list[ChunkMetadata]]:
+) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
 
@@ -1147,10 +1156,10 @@ async def extract_facts_from_contents(
         extract_opinions: If True, extract only opinions; otherwise world/bank facts
 
     Returns:
-        Tuple of (extracted_facts, chunks_metadata)
+        Tuple of (extracted_facts, chunks_metadata, usage)
     """
     if not contents:
-        return [], []
+        return [], [], TokenUsage()
 
     # Step 1: Create parallel fact extraction tasks
     fact_extraction_tasks = []
@@ -1173,11 +1182,15 @@ async def extract_facts_from_contents(
     # Step 3: Flatten and convert to typed objects
     extracted_facts: list[ExtractedFactType] = []
     chunks_metadata: list[ChunkMetadata] = []
+    total_usage = TokenUsage()
 
     global_chunk_idx = 0
     global_fact_idx = 0
 
-    for content_index, (content, (facts_from_llm, chunks_from_llm)) in enumerate(zip(contents, all_fact_results)):
+    for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(
+        zip(contents, all_fact_results)
+    ):
+        total_usage = total_usage + content_usage
         chunk_start_idx = global_chunk_idx
 
         # Convert chunk tuples to ChunkMetadata objects
@@ -1231,7 +1244,7 @@ async def extract_facts_from_contents(
     # Step 4: Add time offsets to preserve ordering within each content
     _add_temporal_offsets(extracted_facts, contents)
 
-    return extracted_facts, chunks_metadata
+    return extracted_facts, chunks_metadata, total_usage
 
 
 def _parse_datetime(date_str: str):

@@ -51,6 +51,7 @@ hindsight_client_api/models/reflect_request.py
 hindsight_client_api/models/reflect_response.py
 hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
+hindsight_client_api/models/token_usage.py
 hindsight_client_api/models/update_disposition_request.py
 hindsight_client_api/models/validation_error.py
 hindsight_client_api/models/validation_error_loc_inner.py

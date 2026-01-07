@@ -151,3 +151,92 @@ async def test_noop_collector_when_metrics_disabled():
 
     assert response is not None
     print(f"\nLLM call succeeded with NoOpMetricsCollector: {response}")
+
+
+@pytest.mark.asyncio
+async def test_return_usage_returns_tuple():
+    """
+    Test that return_usage=True returns (result, TokenUsage) tuple.
+    """
+    from hindsight_api.engine.response_models import TokenUsage
+
+    api_key = get_groq_api_key()
+    if not api_key:
+        pytest.skip("Skipping: GROQ_API_KEY not set")
+
+    llm = LLMProvider(
+        provider="groq",
+        api_key=api_key,
+        base_url="",
+        model="openai/gpt-oss-20b",
+    )
+
+    # Call with return_usage=True
+    result, usage = await llm.call(
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is 2+2? Reply with just the number."}
+        ],
+        max_completion_tokens=50,
+        return_usage=True,
+    )
+
+    # Verify result is the response text
+    assert result is not None
+    assert isinstance(result, str)
+
+    # Verify usage is TokenUsage model with valid counts
+    assert isinstance(usage, TokenUsage)
+    assert usage.input_tokens > 0, f"Expected input_tokens > 0, got {usage.input_tokens}"
+    assert usage.output_tokens >= 0, f"Expected output_tokens >= 0, got {usage.output_tokens}"
+    assert usage.total_tokens == usage.input_tokens + usage.output_tokens
+
+    print(f"\nreturn_usage=True test:")
+    print(f"  result: {result}")
+    print(f"  usage: {usage}")
+
+
+@pytest.mark.asyncio
+async def test_return_usage_with_structured_output():
+    """
+    Test that return_usage=True works with structured output (JSON).
+    """
+    from pydantic import BaseModel
+    from hindsight_api.engine.response_models import TokenUsage
+
+    api_key = get_groq_api_key()
+    if not api_key:
+        pytest.skip("Skipping: GROQ_API_KEY not set")
+
+    class MathAnswer(BaseModel):
+        answer: int
+        explanation: str
+
+    llm = LLMProvider(
+        provider="groq",
+        api_key=api_key,
+        base_url="",
+        model="openai/gpt-oss-20b",
+    )
+
+    # Call with return_usage=True and structured output
+    result, usage = await llm.call(
+        messages=[{"role": "user", "content": "What is 5+3? Return the answer and a brief explanation."}],
+        response_format=MathAnswer,
+        max_completion_tokens=100,
+        return_usage=True,
+    )
+
+    # Verify result is the parsed response
+    assert isinstance(result, MathAnswer)
+    assert result.answer == 8
+    assert result.explanation is not None
+
+    # Verify usage is TokenUsage model
+    assert isinstance(usage, TokenUsage)
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+
+    print(f"\nStructured output with return_usage=True:")
+    print(f"  result: {result}")
+    print(f"  usage: {usage}")

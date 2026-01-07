@@ -3404,6 +3404,17 @@
             ],
             "title": "Structured Output",
             "description": "Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request."
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Token usage metrics for LLM calls during reflection."
           }
         },
         "type": "object",
@@ -3432,7 +3443,12 @@
             ],
             "summary": "AI is transformative"
           },
-          "text": "Based on my understanding, AI is a transformative technology..."
+          "text": "Based on my understanding, AI is a transformative technology...",
+          "usage": {
+            "input_tokens": 1500,
+            "output_tokens": 500,
+            "total_tokens": 2000
+          }
         }
       },
       "RetainRequest": {
@@ -3491,6 +3507,17 @@
             "type": "boolean",
             "title": "Async",
             "description": "Whether the operation was processed asynchronously"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)"
           }
         },
         "type": "object",
@@ -3506,7 +3533,42 @@
           "async": false,
           "bank_id": "user123",
           "items_count": 2,
-          "success": true
+          "success": true,
+          "usage": {
+            "input_tokens": 500,
+            "output_tokens": 100,
+            "total_tokens": 600
+          }
+        }
+      },
+      "TokenUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "description": "Number of input/prompt tokens consumed",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "description": "Number of output/completion tokens generated",
+            "default": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "description": "Total tokens (input + output)",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "TokenUsage",
+        "description": "Token usage metrics for LLM calls.\n\nTracks input/output tokens for a single request to enable\nper-request cost tracking and monitoring.",
+        "example": {
+          "input_tokens": 1500,
+          "output_tokens": 500,
+          "total_tokens": 2000
         }
       },
       "UpdateDispositionRequest": {

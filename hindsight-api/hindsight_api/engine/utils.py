@@ -49,7 +49,7 @@ async def extract_facts(
     if not text or not text.strip():
         return [], []
 
-    facts, chunks = await extract_facts_from_text(
+    facts, chunks, _ = await extract_facts_from_text(
         text,
         event_date,
         context=context,

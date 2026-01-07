@@ -14,6 +14,37 @@ from pydantic import BaseModel, ConfigDict, Field
 VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "opinion"])
 
 
+class TokenUsage(BaseModel):
+    """
+    Token usage metrics for LLM calls.
+
+    Tracks input/output tokens for a single request to enable
+    per-request cost tracking and monitoring.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "input_tokens": 1500,
+                "output_tokens": 500,
+                "total_tokens": 2000,
+            }
+        }
+    )
+
+    input_tokens: int = Field(default=0, description="Number of input/prompt tokens consumed")
+    output_tokens: int = Field(default=0, description="Number of output/completion tokens generated")
+    total_tokens: int = Field(default=0, description="Total tokens (input + output)")
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        """Allow aggregating token usage from multiple calls."""
+        return TokenUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
+
 class DispositionTraits(BaseModel):
     """
     Disposition traits for a memory bank.
@@ -147,6 +178,7 @@ class ReflectResult(BaseModel):
                 },
                 "new_opinions": ["Machine learning has great potential in healthcare"],
                 "structured_output": {"summary": "ML in healthcare", "confidence": 0.9},
+                "usage": {"input_tokens": 1500, "output_tokens": 500, "total_tokens": 2000},
             }
         }
     )
@@ -159,6 +191,10 @@ class ReflectResult(BaseModel):
     structured_output: dict[str, Any] | None = Field(
         default=None,
         description="Structured output parsed according to the provided response schema. Only present when response_schema was provided.",
+    )
+    usage: TokenUsage | None = Field(
+        default=None,
+        description="Token usage metrics for the LLM calls made during this reflect operation.",
     )
 
 

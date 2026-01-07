@@ -832,3 +832,134 @@ async def test_reflect_with_max_tokens(api_client):
     # Verify response has text
     assert "text" in result
     assert len(result["text"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_reflect_returns_token_usage(api_client):
+    """Test that reflect endpoint returns token usage metrics.
+
+    The usage field should contain input_tokens, output_tokens, and total_tokens
+    from the LLM call made during reflection.
+    """
+    test_bank_id = f"reflect_usage_test_{datetime.now().timestamp()}"
+
+    # Store a memory to reflect on
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The capital of France is Paris.",
+                    "context": "geography"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # Call reflect
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/reflect",
+        json={
+            "query": "What is the capital of France?"
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify response has text
+    assert "text" in result
+    assert len(result["text"]) > 0
+
+    # Verify usage field exists and has expected structure
+    assert "usage" in result, "Response should include 'usage' field"
+    usage = result["usage"]
+    assert usage is not None, "Usage should not be None for reflect"
+    assert "input_tokens" in usage, "Usage should have 'input_tokens'"
+    assert "output_tokens" in usage, "Usage should have 'output_tokens'"
+    assert "total_tokens" in usage, "Usage should have 'total_tokens'"
+
+    # Verify token counts are valid
+    assert usage["input_tokens"] > 0, f"Expected input_tokens > 0, got {usage['input_tokens']}"
+    assert usage["output_tokens"] >= 0, f"Expected output_tokens >= 0, got {usage['output_tokens']}"
+    assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+
+    print(f"Reflect token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}")
+
+
+@pytest.mark.asyncio
+async def test_retain_returns_token_usage(api_client):
+    """Test that retain endpoint returns token usage metrics for synchronous operations.
+
+    The usage field should contain input_tokens, output_tokens, and total_tokens
+    from the LLM calls made during fact extraction.
+    """
+    test_bank_id = f"retain_usage_test_{datetime.now().timestamp()}"
+
+    # Store memory synchronously (async=false is default)
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Alice is a software engineer at TechCorp. She specializes in machine learning.",
+                    "context": "team introduction"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify basic response
+    assert result["success"] is True
+    assert result["items_count"] == 1
+    assert result["async"] is False
+
+    # Verify usage field exists and has expected structure
+    assert "usage" in result, "Response should include 'usage' field"
+    usage = result["usage"]
+    assert usage is not None, "Usage should not be None for synchronous retain"
+    assert "input_tokens" in usage, "Usage should have 'input_tokens'"
+    assert "output_tokens" in usage, "Usage should have 'output_tokens'"
+    assert "total_tokens" in usage, "Usage should have 'total_tokens'"
+
+    # Verify token counts are valid
+    assert usage["input_tokens"] > 0, f"Expected input_tokens > 0, got {usage['input_tokens']}"
+    assert usage["output_tokens"] >= 0, f"Expected output_tokens >= 0, got {usage['output_tokens']}"
+    assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+
+    print(f"Retain token usage: input={usage['input_tokens']}, output={usage['output_tokens']}, total={usage['total_tokens']}")
+
+
+@pytest.mark.asyncio
+async def test_retain_async_no_usage(api_client):
+    """Test that async retain does not return usage (as it's processed in background).
+
+    When async=true, the usage field should be None since the actual
+    fact extraction happens asynchronously.
+    """
+    test_bank_id = f"retain_async_no_usage_test_{datetime.now().timestamp()}"
+
+    # Store memory asynchronously
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "async": True,
+            "items": [
+                {
+                    "content": "Bob is a data scientist.",
+                    "context": "team introduction"
+                }
+            ]
+        }
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify async response
+    assert result["success"] is True
+    assert result["async"] is True
+
+    # Usage should be None for async operations
+    assert result.get("usage") is None, "Async retain should not include usage"

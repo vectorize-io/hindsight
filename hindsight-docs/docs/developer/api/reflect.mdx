@@ -55,6 +55,20 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | `max_tokens` | int | 4096 | Maximum tokens for the response |
 | `response_schema` | object | None | JSON Schema for [structured output](#structured-output) |
 
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | The generated answer text |
+| `based_on` | array | Facts used to generate the response |
+| `structured_output` | object | Parsed structured output (when `response_schema` provided) |
+| `usage` | TokenUsage | Token usage metrics for the LLM call |
+
+The `usage` field contains:
+- `input_tokens`: Number of input/prompt tokens consumed
+- `output_tokens`: Number of output/completion tokens generated
+- `total_tokens`: Sum of input and output tokens
+
 <Tabs>
 <TabItem value="python" label="Python">
 <CodeSnippet code={reflectPy} section="reflect-with-params" language="python" />

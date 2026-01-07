@@ -18,6 +18,7 @@ def utcnow():
     return datetime.now(UTC)
 
 
+from ..response_models import TokenUsage
 from . import (
     chunk_storage,
     deduplication,
@@ -47,7 +48,7 @@ async def retain_batch(
     is_first_batch: bool = True,
     fact_type_override: str | None = None,
     confidence_score: float | None = None,
-) -> list[list[str]]:
+) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a batch of content through the retain pipeline.
 
@@ -67,7 +68,7 @@ async def retain_batch(
         confidence_score: Confidence score for opinions
 
     Returns:
-        List of unit ID lists (one list per content item)
+        Tuple of (unit ID lists, token usage for fact extraction)
     """
     start_time = time.time()
     total_chars = sum(len(item.get("content", "")) for item in contents_dicts)
@@ -99,7 +100,7 @@ async def retain_batch(
     step_start = time.time()
     extract_opinions = fact_type_override == "opinion"
 
-    extracted_facts, chunks = await fact_extraction.extract_facts_from_contents(
+    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
         contents, llm_config, agent_name, extract_opinions
     )
     log_buffer.append(
@@ -164,7 +165,7 @@ async def retain_batch(
         logger.info(
             f"RETAIN_BATCH COMPLETE: 0 facts extracted from {len(contents)} contents in {total_time:.3f}s (document tracked, no facts)"
         )
-        return [[] for _ in contents]
+        return [[] for _ in contents], usage
 
     # Apply fact_type_override if provided
     if fact_type_override:
@@ -344,7 +345,7 @@ async def retain_batch(
             non_duplicate_facts = deduplication.filter_duplicates(processed_facts, is_duplicate_flags)
 
             if not non_duplicate_facts:
-                return [[] for _ in contents]
+                return [[] for _ in contents], usage
 
             # Insert facts (document_id is now stored per-fact)
             step_start = time.time()
@@ -415,7 +416,7 @@ async def retain_batch(
 
         logger.info("\n" + "\n".join(log_buffer) + "\n")
 
-        return result_unit_ids
+        return result_unit_ids, usage
 
 
 def _map_results_to_contents(

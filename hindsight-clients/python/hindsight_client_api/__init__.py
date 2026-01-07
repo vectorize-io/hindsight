@@ -76,6 +76,7 @@ from hindsight_client_api.models.reflect_request import ReflectRequest
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.token_usage import TokenUsage
 from hindsight_client_api.models.update_disposition_request import UpdateDispositionRequest
 from hindsight_client_api.models.validation_error import ValidationError
 from hindsight_client_api.models.validation_error_loc_inner import ValidationErrorLocInner

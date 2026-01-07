@@ -136,7 +136,14 @@ from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig
 from .query_analyzer import QueryAnalyzer
-from .response_models import VALID_RECALL_FACT_TYPES, EntityObservation, EntityState, MemoryFact, ReflectResult
+from .response_models import (
+    VALID_RECALL_FACT_TYPES,
+    EntityObservation,
+    EntityState,
+    MemoryFact,
+    ReflectResult,
+    TokenUsage,
+)
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
@@ -954,7 +961,8 @@ class MemoryEngine(MemoryEngineInterface):
         document_id: str | None = None,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
-    ) -> list[list[str]]:
+        return_usage: bool = False,
+    ):
         """
         Store multiple content items as memory units in ONE batch operation.
 
@@ -975,9 +983,11 @@ class MemoryEngine(MemoryEngineInterface):
                         Applies the same document_id to ALL content items that don't specify their own.
             fact_type_override: Override fact type for all facts ('world', 'experience', 'opinion')
             confidence_score: Confidence score for opinions (0.0 to 1.0)
+            return_usage: If True, returns tuple of (unit_ids, TokenUsage). Default False for backward compatibility.
 
         Returns:
-            List of lists of unit IDs (one list per content item)
+            If return_usage=False: List of lists of unit IDs (one list per content item)
+            If return_usage=True: Tuple of (unit_ids, TokenUsage)
 
         Example (new style - per-content document_id):
             unit_ids = await memory.retain_batch_async(
@@ -1004,6 +1014,8 @@ class MemoryEngine(MemoryEngineInterface):
         start_time = time.time()
 
         if not contents:
+            if return_usage:
+                return [], TokenUsage()
             return []
 
         # Authenticate tenant and set schema in context (for fq_table())
@@ -1033,6 +1045,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Auto-chunk large batches by character count to avoid timeouts and memory issues
         # Calculate total character count
         total_chars = sum(len(item.get("content", "")) for item in contents)
+        total_usage = TokenUsage()
 
         CHARS_PER_BATCH = 600_000
 
@@ -1073,7 +1086,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Processing sub-batch {i}/{len(sub_batches)}: {len(sub_batch)} items, {sub_batch_chars:,} chars"
                 )
 
-                sub_results = await self._retain_batch_async_internal(
+                sub_results, sub_usage = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=sub_batch,
                     document_id=document_id,
@@ -1082,6 +1095,7 @@ class MemoryEngine(MemoryEngineInterface):
                     confidence_score=confidence_score,
                 )
                 all_results.extend(sub_results)
+                total_usage = total_usage + sub_usage
 
             total_time = time.time() - start_time
             logger.info(
@@ -1090,7 +1104,7 @@ class MemoryEngine(MemoryEngineInterface):
             result = all_results
         else:
             # Small batch - use internal method directly
-            result = await self._retain_batch_async_internal(
+            result, total_usage = await self._retain_batch_async_internal(
                 bank_id=bank_id,
                 contents=contents,
                 document_id=document_id,
@@ -1119,6 +1133,8 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception as e:
                 logger.warning(f"Post-retain hook error (non-fatal): {e}")
 
+        if return_usage:
+            return result, total_usage
         return result
 
     async def _retain_batch_async_internal(
@@ -1129,7 +1145,7 @@ class MemoryEngine(MemoryEngineInterface):
         is_first_batch: bool = True,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
-    ) -> list[list[str]]:
+    ) -> tuple[list[list[str]], "TokenUsage"]:
         """
         Internal method for batch processing without chunking logic.
 
@@ -1145,6 +1161,9 @@ class MemoryEngine(MemoryEngineInterface):
             is_first_batch: Whether this is the first batch (for chunked operations, only delete on first batch)
             fact_type_override: Override fact type for all facts
             confidence_score: Confidence score for opinions
+
+        Returns:
+            Tuple of (unit ID lists, token usage for fact extraction)
         """
         # Backpressure: limit concurrent retains to prevent database contention
         async with self._put_semaphore:
@@ -3192,7 +3211,7 @@ Guidelines:
             response_format = JsonSchemaWrapper(response_schema)
 
         llm_start = time.time()
-        result = await self._llm_config.call(
+        llm_result, usage = await self._llm_config.call(
             messages=messages,
             scope="memory_reflect",
             max_completion_tokens=max_tokens,
@@ -3201,17 +3220,18 @@ Guidelines:
             # Don't enforce strict_schema - not all providers support it and may retry forever
             # Soft enforcement (schema in prompt + json_object mode) is sufficient
             strict_schema=False,
+            return_usage=True,
         )
         llm_time = time.time() - llm_start
 
         # Handle response based on whether structured output was requested
         if response_schema is not None:
-            structured_output = result
+            structured_output = llm_result
             answer_text = ""  # Empty for backward compatibility
             log_buffer.append(f"[REFLECT {reflect_id}] Structured output generated")
         else:
             structured_output = None
-            answer_text = result.strip()
+            answer_text = llm_result.strip()
 
         # Submit form_opinion task for background processing
         # Pass tenant_id from request context for internal authentication in background task
@@ -3237,6 +3257,7 @@ Guidelines:
             based_on={"world": world_results, "experience": agent_results, "opinion": opinion_results},
             new_opinions=[],  # Opinions are being extracted asynchronously
             structured_output=structured_output,
+            usage=usage,
         )
 
         # Call post-operation hook if validator is configured

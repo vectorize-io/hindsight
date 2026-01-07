@@ -24,6 +24,7 @@ from ..config import (
     ENV_LLM_TIMEOUT,
 )
 from ..metrics import get_metrics_collector
+from .response_models import TokenUsage
 
 # Seed applied to every Groq request for deterministic behavior.
 DEFAULT_LLM_SEED = 4242
@@ -175,6 +176,7 @@ class LLMProvider:
         max_backoff: float = 60.0,
         skip_validation: bool = False,
         strict_schema: bool = False,
+        return_usage: bool = False,
     ) -> Any:
         """
         Make an LLM API call with retry logic.
@@ -190,9 +192,11 @@ class LLMProvider:
             max_backoff: Maximum backoff time in seconds.
             skip_validation: Return raw JSON without Pydantic validation.
             strict_schema: Use strict JSON schema enforcement (OpenAI only). Guarantees all required fields.
+            return_usage: If True, return tuple (result, TokenUsage) instead of just result.
 
         Returns:
-            Parsed response if response_format is provided, otherwise text content.
+            If return_usage=False: Parsed response if response_format is provided, otherwise text content.
+            If return_usage=True: Tuple of (result, TokenUsage) with token counts from the LLM call.
 
         Raises:
             OutputTooLongError: If output exceeds token limits.
@@ -204,7 +208,14 @@ class LLMProvider:
             # Handle Gemini provider separately
             if self.provider == "gemini":
                 return await self._call_gemini(
-                    messages, response_format, max_retries, initial_backoff, max_backoff, skip_validation, start_time
+                    messages,
+                    response_format,
+                    max_retries,
+                    initial_backoff,
+                    max_backoff,
+                    skip_validation,
+                    start_time,
+                    return_usage,
                 )
 
             # Handle Anthropic provider separately
@@ -218,6 +229,7 @@ class LLMProvider:
                     max_backoff,
                     skip_validation,
                     start_time,
+                    return_usage,
                 )
 
             # Handle Ollama with native API for structured output (better schema enforcement)
@@ -232,6 +244,7 @@ class LLMProvider:
                     max_backoff,
                     skip_validation,
                     start_time,
+                    return_usage,
                 )
 
             call_params = {
@@ -383,27 +396,38 @@ class LLMProvider:
                     # Record token usage metrics
                     duration = time.time() - start_time
                     usage = response.usage
+                    input_tokens = usage.prompt_tokens or 0 if usage else 0
+                    output_tokens = usage.completion_tokens or 0 if usage else 0
+                    total_tokens = usage.total_tokens or 0 if usage else 0
+
                     if usage:
                         get_metrics_collector().record_tokens(
                             operation=scope,
                             bank_id="llm",
-                            input_tokens=usage.prompt_tokens or 0,
-                            output_tokens=usage.completion_tokens or 0,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
                         )
 
                     # Log slow calls
                     if duration > 10.0 and usage:
-                        ratio = max(1, usage.completion_tokens) / usage.prompt_tokens
+                        ratio = max(1, output_tokens) / max(1, input_tokens)
                         cached_tokens = 0
                         if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
                             cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
                         cache_info = f", cached_tokens={cached_tokens}" if cached_tokens > 0 else ""
                         logger.info(
                             f"slow llm call: model={self.provider}/{self.model}, "
-                            f"input_tokens={usage.prompt_tokens}, output_tokens={usage.completion_tokens}, "
-                            f"total_tokens={usage.total_tokens}{cache_info}, time={duration:.3f}s, ratio out/in={ratio:.2f}"
+                            f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
+                            f"total_tokens={total_tokens}{cache_info}, time={duration:.3f}s, ratio out/in={ratio:.2f}"
                         )
 
+                    if return_usage:
+                        token_usage = TokenUsage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                        )
+                        return result, token_usage
                     return result
 
                 except LengthFinishReasonError as e:
@@ -462,6 +486,7 @@ class LLMProvider:
         max_backoff: float,
         skip_validation: bool,
         start_time: float,
+        return_usage: bool = False,
     ) -> Any:
         """Handle Anthropic-specific API calls."""
         from anthropic import APIConnectionError, APIStatusError, RateLimitError
@@ -536,24 +561,33 @@ class LLMProvider:
 
                 # Record token usage metrics
                 duration = time.time() - start_time
+                input_tokens = response.usage.input_tokens or 0 if response.usage else 0
+                output_tokens = response.usage.output_tokens or 0 if response.usage else 0
+                total_tokens = input_tokens + output_tokens
+
                 if response.usage:
                     get_metrics_collector().record_tokens(
                         operation="memory",
                         bank_id="llm",
-                        input_tokens=response.usage.input_tokens or 0,
-                        output_tokens=response.usage.output_tokens or 0,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
                     )
 
                 # Log slow calls
                 if duration > 10.0 and response.usage:
-                    input_tokens = response.usage.input_tokens
-                    output_tokens = response.usage.output_tokens
                     logger.info(
                         f"slow llm call: model={self.provider}/{self.model}, "
                         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
                         f"time={duration:.3f}s"
                     )
 
+                if return_usage:
+                    token_usage = TokenUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=total_tokens,
+                    )
+                    return result, token_usage
                 return result
 
             except json.JSONDecodeError as e:
@@ -608,6 +642,7 @@ class LLMProvider:
         max_backoff: float,
         skip_validation: bool,
         start_time: float,
+        return_usage: bool = False,
     ) -> Any:
         """
         Call Ollama using native API with JSON schema enforcement.
@@ -682,11 +717,35 @@ class LLMProvider:
                         else:
                             raise
 
+                    # Extract token usage from Ollama response
+                    # Ollama returns prompt_eval_count (input) and eval_count (output)
+                    input_tokens = result.get("prompt_eval_count", 0) or 0
+                    output_tokens = result.get("eval_count", 0) or 0
+                    total_tokens = input_tokens + output_tokens
+
+                    # Record to metrics
+                    if input_tokens > 0 or output_tokens > 0:
+                        get_metrics_collector().record_tokens(
+                            operation="memory",
+                            bank_id="llm",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+
                     # Validate against Pydantic model or return raw JSON
                     if skip_validation:
-                        return json_data
+                        validated_result = json_data
                     else:
-                        return response_format.model_validate(json_data)
+                        validated_result = response_format.model_validate(json_data)
+
+                    if return_usage:
+                        token_usage = TokenUsage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                        )
+                        return validated_result, token_usage
+                    return validated_result
 
                 except httpx.HTTPStatusError as e:
                     last_exception = e
@@ -729,6 +788,7 @@ class LLMProvider:
         max_backoff: float,
         skip_validation: bool,
         start_time: float,
+        return_usage: bool = False,
     ) -> Any:
         """Handle Gemini-specific API calls."""
         # Convert OpenAI-style messages to Gemini format
@@ -807,23 +867,34 @@ class LLMProvider:
 
                 # Record token usage metrics
                 duration = time.time() - start_time
+                input_tokens = 0
+                output_tokens = 0
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = response.usage_metadata
+                    input_tokens = usage.prompt_token_count or 0
+                    output_tokens = usage.candidates_token_count or 0
                     get_metrics_collector().record_tokens(
                         operation="memory",
                         bank_id="llm",
-                        input_tokens=usage.prompt_token_count or 0,
-                        output_tokens=usage.candidates_token_count or 0,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
                     )
 
                     # Log slow calls
                     if duration > 10.0:
                         logger.info(
                             f"slow llm call: model={self.provider}/{self.model}, "
-                            f"input_tokens={usage.prompt_token_count}, output_tokens={usage.candidates_token_count}, "
+                            f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
                             f"time={duration:.3f}s"
                         )
 
+                if return_usage:
+                    token_usage = TokenUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=input_tokens + output_tokens,
+                    )
+                    return result, token_usage
                 return result
 
             except json.JSONDecodeError as e:
