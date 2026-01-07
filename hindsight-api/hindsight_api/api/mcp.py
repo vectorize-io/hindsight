@@ -8,7 +8,6 @@ from contextvars import ContextVar
 from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
-from hindsight_api.api.http import BankListItem, BankListResponse, BankProfileResponse, DispositionTraits
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
 from hindsight_api.models import RequestContext
 
@@ -187,79 +186,6 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         except Exception as e:
             logger.error(f"Error reflecting: {e}", exc_info=True)
             return f'{{"error": "{e}", "text": ""}}'
-
-    @mcp.tool()
-    async def list_banks() -> str:
-        """
-        List all available memory banks.
-
-        Use this to discover banks for orchestration or to find
-        the correct bank_id for cross-bank operations.
-
-        Returns:
-            JSON object with banks array containing bank_id, name, disposition, background, and timestamps
-        """
-        try:
-            banks = await memory.list_banks(request_context=RequestContext())
-            bank_items = [
-                BankListItem(
-                    bank_id=b.get("bank_id") or b.get("id"),
-                    name=b.get("name"),
-                    disposition=DispositionTraits(
-                        **b.get("disposition", {"skepticism": 3, "literalism": 3, "empathy": 3})
-                    ),
-                    background=b.get("background"),
-                    created_at=str(b.get("created_at")) if b.get("created_at") else None,
-                    updated_at=str(b.get("updated_at")) if b.get("updated_at") else None,
-                )
-                for b in banks
-            ]
-            return BankListResponse(banks=bank_items).model_dump_json(indent=2)
-        except Exception as e:
-            logger.error(f"Error listing banks: {e}", exc_info=True)
-            return f'{{"error": "{e}", "banks": []}}'
-
-    @mcp.tool()
-    async def create_bank(bank_id: str, name: str | None = None, background: str | None = None) -> str:
-        """
-        Create or update a memory bank.
-
-        Use this to create new banks for different agents, sessions, or purposes.
-        Banks are isolated memory stores - each bank has its own memories and personality.
-
-        Args:
-            bank_id: Unique identifier for the bank (e.g., 'orchestrator-memory', 'agent-1')
-            name: Human-readable name for the bank
-            background: Context about what this bank stores or its purpose
-        """
-        try:
-            # Get or create the bank profile (auto-creates with defaults)
-            await memory.get_bank_profile(bank_id, request_context=RequestContext())
-
-            # Update name and/or background if provided
-            if name is not None or background is not None:
-                await memory.update_bank(bank_id, name=name, background=background, request_context=RequestContext())
-
-            # Get final profile and return using BankProfileResponse model
-            profile = await memory.get_bank_profile(bank_id, request_context=RequestContext())
-            disposition = profile.get("disposition")
-            if hasattr(disposition, "model_dump"):
-                disposition_traits = DispositionTraits(**disposition.model_dump())
-            else:
-                disposition_traits = DispositionTraits(
-                    **dict(disposition or {"skepticism": 3, "literalism": 3, "empathy": 3})
-                )
-
-            response = BankProfileResponse(
-                bank_id=bank_id,
-                name=profile.get("name") or "",
-                disposition=disposition_traits,
-                background=profile.get("background") or "",
-            )
-            return response.model_dump_json(indent=2)
-        except Exception as e:
-            logger.error(f"Error creating bank: {e}", exc_info=True)
-            return json.dumps({"error": str(e)})
 
     return mcp
 
