@@ -142,10 +142,9 @@ RUN useradd -m -s /bin/bash hindsight
 # Copy API with virtual environment from builder
 COPY --from=api-builder /app/api /app/api
 
-# Copy startup scripts
+# Copy startup script
 COPY docker/standalone/start-all.sh /app/start-all.sh
-COPY docker/standalone/retry-start.sh /app/retry-start.sh
-RUN chmod +x /app/start-all.sh /app/retry-start.sh
+RUN chmod +x /app/start-all.sh
 
 RUN chown -R hindsight:hindsight /app
 
@@ -174,7 +173,7 @@ ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=false
 ENV PYTHONUNBUFFERED=1
 
-CMD ["/app/retry-start.sh"]
+CMD ["/app/start-all.sh"]
 
 # =============================================================================
 # Stage: Final Image - Control Plane Only
@@ -194,10 +193,9 @@ COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
 
 WORKDIR /app
 
-# Copy startup scripts
+# Copy startup script
 COPY docker/standalone/start-all.sh /app/start-all.sh
-COPY docker/standalone/retry-start.sh /app/retry-start.sh
-RUN chmod +x /app/start-all.sh /app/retry-start.sh
+RUN chmod +x /app/start-all.sh
 
 # Install curl for health checks
 RUN apk add --no-cache curl bash
@@ -209,7 +207,7 @@ ENV HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888
 ENV HINDSIGHT_ENABLE_API=false
 ENV HINDSIGHT_ENABLE_CP=true
 
-CMD ["/app/retry-start.sh"]
+CMD ["/app/start-all.sh"]
 
 # =============================================================================
 # Stage: Final Image - Standalone (both API and Control Plane)
@@ -249,10 +247,9 @@ COPY --from=cp-builder /app/memory-poc/hindsight-control-plane/public ./public
 
 WORKDIR /app
 
-# Copy startup scripts
+# Copy startup script
 COPY docker/standalone/start-all.sh /app/start-all.sh
-COPY docker/standalone/retry-start.sh /app/retry-start.sh
-RUN chmod +x /app/start-all.sh /app/retry-start.sh
+RUN chmod +x /app/start-all.sh
 
 RUN chown -R hindsight:hindsight /app
 
@@ -283,7 +280,7 @@ ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=true
 ENV PYTHONUNBUFFERED=1
 
-CMD ["/app/retry-start.sh"]
+CMD ["/app/start-all.sh"]
 
 # =============================================================================
 # Default target selection based on build args
