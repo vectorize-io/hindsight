@@ -51,16 +51,16 @@ echo "=================================================="
 
 RUST_CLIENT_DIR="$CLIENTS_DIR/rust"
 
-# Clean old generated files
+# Clean old generated files (keep Cargo.lock for reproducible builds)
 echo "Cleaning old Rust generated code..."
 rm -rf "$RUST_CLIENT_DIR/target"
-rm -f "$RUST_CLIENT_DIR/Cargo.lock"
 
 # Trigger regeneration by building
+# Use --locked to ensure reproducible builds from committed Cargo.lock
 echo "Regenerating Rust client (via build.rs)..."
 cd "$RUST_CLIENT_DIR"
 cargo clean
-cargo build --release
+cargo build --release --locked
 
 echo "✓ Rust client generated at $RUST_CLIENT_DIR"
 echo ""
