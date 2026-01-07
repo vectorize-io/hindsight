@@ -83,6 +83,15 @@ class SignalItem(BaseModel):
 
     fact_id: str = Field(description="UUID of the fact to signal")
     signal_type: SignalType = Field(description="Type of signal")
+
+    @field_validator('fact_id')
+    @classmethod
+    def validate_uuid(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError(f'fact_id must be a valid UUID, got: {v}')
+        return v
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence in the signal (0.0-1.0)")
     query: str = Field(
         min_length=1,
