@@ -3,6 +3,10 @@
 # Chart version - use this to set a consistent image tag across all components
 version: "0.1.1"
 
+# Use an existing secret instead of creating one
+# The secret should contain all required keys (api secrets, controlPlane secrets, postgres-password)
+# existingSecret: "my-hindsight-secret"
+
 # Global settings
 replicaCount: 1
 

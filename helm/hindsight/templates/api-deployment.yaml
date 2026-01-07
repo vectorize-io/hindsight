@@ -15,7 +15,9 @@ spec:
   template:
     metadata:
       annotations:
+        {{- if not .Values.existingSecret }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -44,7 +46,7 @@ spec:
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: {{ include "hindsight.fullname" . }}-secret
+              name: {{ include "hindsight.secretName" . }}
               key: postgres-password
         {{- end }}
         {{- range $key, $value := .Values.api.env }}
@@ -55,7 +57,7 @@ spec:
         - name: {{ $key }}
           valueFrom:
             secretKeyRef:
-              name: {{ include "hindsight.fullname" $ }}-secret
+              name: {{ include "hindsight.secretName" $ }}
               key: {{ $key }}
         {{- end }}
         livenessProbe:

@@ -110,3 +110,14 @@ API URL for control plane
 {{- define "hindsight.apiUrl" -}}
 {{- printf "http://%s-api:%d" (include "hindsight.fullname" .) (.Values.api.service.port | int) }}
 {{- end }}
+
+{{/*
+Get the name of the secret to use
+*/}}
+{{- define "hindsight.secretName" -}}
+{{- if .Values.existingSecret }}
+{{- .Values.existingSecret }}
+{{- else }}
+{{- printf "%s-secret" (include "hindsight.fullname" .) }}
+{{- end }}
+{{- end }}
