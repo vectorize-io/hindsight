@@ -23,6 +23,7 @@ from ..config import (
     ENV_LLM_MAX_CONCURRENT,
     ENV_LLM_TIMEOUT,
 )
+from ..metrics import get_metrics_collector
 
 # Seed applied to every Groq request for deterministic behavior.
 DEFAULT_LLM_SEED = 4242
@@ -379,10 +380,19 @@ class LLMProvider:
                         response = await self._client.chat.completions.create(**call_params)
                         result = response.choices[0].message.content
 
-                    # Log slow calls
+                    # Record token usage metrics
                     duration = time.time() - start_time
                     usage = response.usage
-                    if duration > 10.0:
+                    if usage:
+                        get_metrics_collector().record_tokens(
+                            operation=scope,
+                            bank_id="llm",
+                            input_tokens=usage.prompt_tokens or 0,
+                            output_tokens=usage.completion_tokens or 0,
+                        )
+
+                    # Log slow calls
+                    if duration > 10.0 and usage:
                         ratio = max(1, usage.completion_tokens) / usage.prompt_tokens
                         cached_tokens = 0
                         if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
@@ -524,9 +534,18 @@ class LLMProvider:
                 else:
                     result = content
 
-                # Log slow calls
+                # Record token usage metrics
                 duration = time.time() - start_time
-                if duration > 10.0:
+                if response.usage:
+                    get_metrics_collector().record_tokens(
+                        operation="memory",
+                        bank_id="llm",
+                        input_tokens=response.usage.input_tokens or 0,
+                        output_tokens=response.usage.output_tokens or 0,
+                    )
+
+                # Log slow calls
+                if duration > 10.0 and response.usage:
                     input_tokens = response.usage.input_tokens
                     output_tokens = response.usage.output_tokens
                     logger.info(
@@ -786,15 +805,24 @@ class LLMProvider:
                 else:
                     result = content
 
-                # Log slow calls
+                # Record token usage metrics
                 duration = time.time() - start_time
-                if duration > 10.0 and hasattr(response, "usage_metadata") and response.usage_metadata:
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = response.usage_metadata
-                    logger.info(
-                        f"slow llm call: model={self.provider}/{self.model}, "
-                        f"input_tokens={usage.prompt_token_count}, output_tokens={usage.candidates_token_count}, "
-                        f"time={duration:.3f}s"
+                    get_metrics_collector().record_tokens(
+                        operation="memory",
+                        bank_id="llm",
+                        input_tokens=usage.prompt_token_count or 0,
+                        output_tokens=usage.candidates_token_count or 0,
                     )
+
+                    # Log slow calls
+                    if duration > 10.0:
+                        logger.info(
+                            f"slow llm call: model={self.provider}/{self.model}, "
+                            f"input_tokens={usage.prompt_token_count}, output_tokens={usage.candidates_token_count}, "
+                            f"time={duration:.3f}s"
+                        )
 
                 return result
 
