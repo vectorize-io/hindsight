@@ -113,6 +113,11 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'developer/admin-cli',
+          label: 'Admin CLI',
+        },
+        {
+          type: 'doc',
           id: 'developer/extensions',
           label: 'Extensions',
         },

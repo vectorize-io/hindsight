@@ -108,28 +108,14 @@ PostgreSQL with pgvector. Schema managed via Alembic migrations in `hindsight-ap
 
 Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
 
-### Database Backups (IMPORTANT)
-**Before any operation that may affect the database, run a backup:**
-```bash
-docker exec hindsight /backups/backup.sh
-```
-
-Operations requiring backup:
-- Running database migrations
-- Modifying Alembic migration files
-- Rebuilding Docker images
-- Resetting or recreating containers
-- Any schema changes
-- Bulk data operations
-
-Backups are stored in `~/hindsight-backups/` on the host.
-
-To restore:
-```bash
-docker exec -it hindsight /backups/restore.sh <backup-file.sql.gz>
-```
-
 ## Key Conventions
+
+### Code Quality
+**Always run the lint script after making Python or TypeScript/Node changes:**
+```bash
+./scripts/hooks/lint.sh
+```
+This runs the same checks as the pre-commit hook (Ruff for Python, ESLint/Prettier for TypeScript).
 
 ### Memory Banks
 - Each bank is an isolated memory store (like a "brain" for one user/agent)
@@ -153,10 +139,28 @@ docker exec -it hindsight /backups/restore.sh <backup-file.sql.gz>
 - Next.js App Router for control plane
 - Tailwind CSS with shadcn/ui components
 
-### Rust Style (CLI)
-- Async with tokio
-- reqwest for HTTP client
-- progenitor for API client generation from OpenAPI
+### Adding New API Configuration Flags
+
+When adding a new environment variable configuration:
+
+1. **config.py** (`hindsight-api/hindsight_api/config.py`):
+   - Add `ENV_*` constant for the environment variable name
+   - Add `DEFAULT_*` constant for the default value
+   - Add field to `HindsightConfig` dataclass
+   - Add initialization in `from_env()` method
+
+2. **main.py** (`hindsight-api/hindsight_api/main.py`):
+   - Add field to the manual `HindsightConfig()` constructor call (search for "CLI override")
+
+3. **Use the config** in code:
+   ```python
+   from ...config import get_config
+   config = get_config()
+   value = config.your_new_field
+   ```
+
+4. **Documentation** (`hindsight-docs/docs/developer/configuration.md`):
+   - Add to appropriate section table with Variable, Description, Default
 
 ## Environment Setup
 

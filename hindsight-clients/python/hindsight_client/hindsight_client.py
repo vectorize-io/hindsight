@@ -74,6 +74,8 @@ class Hindsight:
         """
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
+        if api_key:
+            self._api_client.set_default_header("Authorization", f"Bearer {api_key}")
         self._memory_api = memory_api.MemoryApi(self._api_client)
         self._banks_api = banks_api.BanksApi(self._api_client)
 

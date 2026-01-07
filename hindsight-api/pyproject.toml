@@ -38,6 +38,7 @@ dependencies = [
     "dateparser>=1.2.2",
     "google-genai>=1.0.0",
     "anthropic>=0.40.0",
+    "typer>=0.9.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,7 @@ test = [
 [project.scripts]
 hindsight-api = "hindsight_api.main:main"
 hindsight-local-mcp = "hindsight_api.mcp_local:main"
+hindsight-admin = "hindsight_api.admin.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["hindsight_api"]
@@ -75,7 +77,7 @@ log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
-addopts = "--timeout 120 -n 8 --durations=10 -v"
+addopts = "--timeout 120 -n 8 --dist loadgroup --durations=10 -v"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 log_auto_indent = true

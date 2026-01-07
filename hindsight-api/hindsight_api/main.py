@@ -184,8 +184,10 @@ def main():
             graph_retriever=config.graph_retriever,
             observation_min_facts=config.observation_min_facts,
             observation_top_entities=config.observation_top_entities,
+            retain_max_completion_tokens=config.retain_max_completion_tokens,
             skip_llm_verification=config.skip_llm_verification,
             lazy_reranker=config.lazy_reranker,
+            run_migrations_on_startup=config.run_migrations_on_startup,
         )
     config.configure_logging()
     if not args.daemon:
@@ -211,7 +213,11 @@ def main():
         logging.info(f"Loaded tenant extension: {tenant_extension.__class__.__name__}")
 
     # Create MemoryEngine (reads configuration from environment)
-    _memory = MemoryEngine(operation_validator=operation_validator, tenant_extension=tenant_extension)
+    _memory = MemoryEngine(
+        operation_validator=operation_validator,
+        tenant_extension=tenant_extension,
+        run_migrations=config.run_migrations_on_startup,
+    )
 
     # Set extension context on tenant extension (needed for schema provisioning)
     if tenant_extension:

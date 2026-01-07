@@ -132,3 +132,56 @@ async def stop_embedded_postgres() -> None:
     global _default_instance
     if _default_instance:
         await _default_instance.stop()
+
+
+def parse_pg0_url(db_url: str) -> tuple[bool, str | None, int | None]:
+    """
+    Parse a database URL and check if it's a pg0:// embedded database URL.
+
+    Supports:
+    - "pg0" -> default instance "hindsight"
+    - "pg0://instance-name" -> named instance
+    - "pg0://instance-name:port" -> named instance with explicit port
+    - Any other URL (e.g., postgresql://) -> not a pg0 URL
+
+    Args:
+        db_url: The database URL to parse
+
+    Returns:
+        Tuple of (is_pg0, instance_name, port)
+        - is_pg0: True if this is a pg0 URL
+        - instance_name: The instance name (or None if not pg0)
+        - port: The explicit port (or None for auto-assign)
+    """
+    if db_url == "pg0":
+        return True, "hindsight", None
+
+    if db_url.startswith("pg0://"):
+        url_part = db_url[6:]  # Remove "pg0://"
+        if ":" in url_part:
+            instance_name, port_str = url_part.rsplit(":", 1)
+            return True, instance_name or "hindsight", int(port_str)
+        else:
+            return True, url_part or "hindsight", None
+
+    return False, None, None
+
+
+async def resolve_database_url(db_url: str) -> str:
+    """
+    Resolve a database URL, handling pg0:// embedded database URLs.
+
+    If the URL is a pg0:// URL, starts the embedded PostgreSQL and returns
+    the actual postgresql:// connection URL. Otherwise, returns the URL unchanged.
+
+    Args:
+        db_url: Database URL (pg0://, pg0, or postgresql://)
+
+    Returns:
+        The resolved postgresql:// connection URL
+    """
+    is_pg0, instance_name, port = parse_pg0_url(db_url)
+    if is_pg0:
+        pg0 = EmbeddedPostgres(name=instance_name, port=port)
+        return await pg0.ensure_running()
+    return db_url

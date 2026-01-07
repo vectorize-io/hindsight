@@ -8,6 +8,11 @@ import logging
 import os
 from dataclasses import dataclass
 
+from dotenv import find_dotenv, load_dotenv
+
+# Load .env file, searching current and parent directories (overrides existing env vars)
+load_dotenv(find_dotenv(usecwd=True), override=True)
+
 logger = logging.getLogger(__name__)
 
 # Environment variable names
@@ -42,9 +47,15 @@ ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
 ENV_OBSERVATION_MIN_FACTS = "HINDSIGHT_API_OBSERVATION_MIN_FACTS"
 ENV_OBSERVATION_TOP_ENTITIES = "HINDSIGHT_API_OBSERVATION_TOP_ENTITIES"
 
+# Retain settings
+ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
+
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
+
+# Database migrations
+ENV_RUN_MIGRATIONS_ON_STARTUP = "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP"
 
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
@@ -71,6 +82,12 @@ DEFAULT_MCP_LOCAL_BANK_ID = "mcp"
 # Observation thresholds
 DEFAULT_OBSERVATION_MIN_FACTS = 5  # Min facts required to generate entity observations
 DEFAULT_OBSERVATION_TOP_ENTITIES = 5  # Max entities to process per retain batch
+
+# Retain settings
+DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
+
+# Database migrations
+DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -134,9 +151,15 @@ class HindsightConfig:
     observation_min_facts: int
     observation_top_entities: int
 
+    # Retain settings
+    retain_max_completion_tokens: int
+
     # Optimization flags
     skip_llm_verification: bool
     lazy_reranker: bool
+
+    # Database migrations
+    run_migrations_on_startup: bool
 
     @classmethod
     def from_env(cls) -> "HindsightConfig":
@@ -174,6 +197,12 @@ class HindsightConfig:
             observation_top_entities=int(
                 os.getenv(ENV_OBSERVATION_TOP_ENTITIES, str(DEFAULT_OBSERVATION_TOP_ENTITIES))
             ),
+            # Retain settings
+            retain_max_completion_tokens=int(
+                os.getenv(ENV_RETAIN_MAX_COMPLETION_TOKENS, str(DEFAULT_RETAIN_MAX_COMPLETION_TOKENS))
+            ),
+            # Database migrations
+            run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
         )
 
     def get_llm_base_url(self) -> str:
@@ -220,6 +249,19 @@ class HindsightConfig:
         logger.info(f"Graph retriever: {self.graph_retriever}")
 
 
+# Cached config instance
+_config_cache: HindsightConfig | None = None
+
+
 def get_config() -> HindsightConfig:
-    """Get the current configuration from environment variables."""
-    return HindsightConfig.from_env()
+    """Get the cached configuration, loading from environment on first call."""
+    global _config_cache
+    if _config_cache is None:
+        _config_cache = HindsightConfig.from_env()
+    return _config_cache
+
+
+def clear_config_cache() -> None:
+    """Clear the config cache. Useful for testing or reloading config."""
+    global _config_cache
+    _config_cache = None

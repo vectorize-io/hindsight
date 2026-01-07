@@ -20,8 +20,17 @@ The API service handles all memory operations (retain, recall, reflect).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
+| `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
+
+To run migrations manually (e.g., before starting the API), use the admin CLI:
+
+```bash
+hindsight-admin run-db-migration
+# Or for a specific schema:
+hindsight-admin run-db-migration --schema tenant_acme
+```
 
 ### LLM Provider
 
@@ -182,6 +191,14 @@ Controls when the system generates entity observations (summaries about entities
 |----------|-------------|---------|
 | `HINDSIGHT_API_OBSERVATION_MIN_FACTS` | Minimum facts about an entity before generating observations | `5` |
 | `HINDSIGHT_API_OBSERVATION_TOP_ENTITIES` | Max entities to process per retain batch | `5` |
+
+### Retain
+
+Controls the retain (memory ingestion) pipeline.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 
 ### Local MCP Server
 

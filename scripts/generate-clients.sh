@@ -51,16 +51,16 @@ echo "=================================================="
 
 RUST_CLIENT_DIR="$CLIENTS_DIR/rust"
 
-# Clean old generated files
+# Clean old generated files (keep Cargo.lock for reproducible builds)
 echo "Cleaning old Rust generated code..."
 rm -rf "$RUST_CLIENT_DIR/target"
-rm -f "$RUST_CLIENT_DIR/Cargo.lock"
 
 # Trigger regeneration by building
+# Use --locked to ensure reproducible builds from committed Cargo.lock
 echo "Regenerating Rust client (via build.rs)..."
 cd "$RUST_CLIENT_DIR"
 cargo clean
-cargo build --release
+cargo build --release --locked
 
 echo "✓ Rust client generated at $RUST_CLIENT_DIR"
 echo ""
@@ -324,9 +324,11 @@ rm -rf "$TYPESCRIPT_CLIENT_DIR/services"
 rm -f "$TYPESCRIPT_CLIENT_DIR/index.ts"
 
 # Generate new client using @hey-api/openapi-ts
+# Use npm run generate to use the locally installed version (pinned in package.json)
+# instead of npx --yes which would fetch the latest version
 echo "Generating from $OPENAPI_SPEC..."
 cd "$TYPESCRIPT_CLIENT_DIR"
-npx --yes @hey-api/openapi-ts
+npm run generate
 
 echo "✓ TypeScript client generated at $TYPESCRIPT_CLIENT_DIR"
 echo ""

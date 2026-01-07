@@ -8,5 +8,8 @@
   ],
   "scripts": {
     "prepare": "./scripts/setup-hooks.sh"
+  },
+  "overrides": {
+    "qs": "^6.14.1"
   }
 }

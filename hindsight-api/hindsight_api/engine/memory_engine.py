@@ -132,7 +132,7 @@ if TYPE_CHECKING:
 
 from enum import Enum
 
-from ..pg0 import EmbeddedPostgres
+from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig
 from .query_analyzer import QueryAnalyzer
@@ -259,31 +259,14 @@ class MemoryEngine(MemoryEngineInterface):
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
         # Track pg0 instance (if used)
         self._pg0: EmbeddedPostgres | None = None
-        self._pg0_instance_name: str | None = None
 
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
         # Supports: "pg0" (default instance), "pg0://instance-name" (named instance), or regular postgresql:// URL
-        if db_url == "pg0":
-            self._use_pg0 = True
-            self._pg0_instance_name = "hindsight"
-            self._pg0_port = None  # Use default port
-            self.db_url = None
-        elif db_url.startswith("pg0://"):
-            self._use_pg0 = True
-            # Parse instance name and optional port: pg0://instance-name or pg0://instance-name:port
-            url_part = db_url[6:]  # Remove "pg0://"
-            if ":" in url_part:
-                self._pg0_instance_name, port_str = url_part.rsplit(":", 1)
-                self._pg0_port = int(port_str)
-            else:
-                self._pg0_instance_name = url_part or "hindsight"
-                self._pg0_port = None  # Use default port
+        self._use_pg0, self._pg0_instance_name, self._pg0_port = parse_pg0_url(db_url)
+        if self._use_pg0:
             self.db_url = None
         else:
-            self._use_pg0 = False
-            self._pg0_instance_name = None
-            self._pg0_port = None
             self.db_url = db_url
 
         # Set default base URL if not provided
