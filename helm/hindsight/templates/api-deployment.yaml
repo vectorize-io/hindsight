@@ -39,9 +39,13 @@ spec:
         - name: http
           containerPort: {{ .Values.api.service.targetPort }}
           protocol: TCP
+        {{- if .Values.existingSecret }}
+        envFrom:
+        - secretRef:
+            name: {{ .Values.existingSecret }}
+        {{- end }}
         env:
-        - name: HINDSIGHT_API_DATABASE_URL
-          value: {{ include "hindsight.databaseUrl" . | quote }}
+        {{- /* POSTGRES_PASSWORD must be defined before DATABASE_URL for $(VAR) interpolation */}}
         {{- if not .Values.postgresql.enabled }}
         - name: POSTGRES_PASSWORD
           valueFrom:
@@ -49,16 +53,21 @@ spec:
               name: {{ include "hindsight.secretName" . }}
               key: postgres-password
         {{- end }}
+        - name: HINDSIGHT_API_DATABASE_URL
+          value: {{ include "hindsight.databaseUrl" . | quote }}
         {{- range $key, $value := .Values.api.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
+        {{- /* Only use api.secrets when not using existingSecret (for chart-managed secrets) */}}
+        {{- if not .Values.existingSecret }}
         {{- range $key, $value := .Values.api.secrets }}
         - name: {{ $key }}
           valueFrom:
             secretKeyRef:
               name: {{ include "hindsight.secretName" $ }}
               key: {{ $key }}
+        {{- end }}
         {{- end }}
         livenessProbe:
           {{- toYaml .Values.api.livenessProbe | nindent 10 }}

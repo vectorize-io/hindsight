@@ -3,8 +3,13 @@
 # Chart version - use this to set a consistent image tag across all components
 version: "0.1.1"
 
-# Use an existing secret instead of creating one
-# The secret should contain all required keys (api secrets, controlPlane secrets, postgres-password)
+# Use an existing secret instead of creating one from values
+# When set, all keys from this secret are injected as environment variables via envFrom
+# Required keys:
+#   - postgres-password: PostgreSQL password (when postgresql.enabled=false)
+# Optional keys (any key becomes an env var):
+#   - HINDSIGHT_API_LLM_API_KEY: API key for LLM provider
+#   - Any other env vars you want to inject
 # existingSecret: "my-hindsight-secret"
 
 # Global settings
