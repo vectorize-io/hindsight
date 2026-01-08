@@ -93,6 +93,31 @@ def format_facts_for_prompt(facts: list[MemoryFact]) -> str:
     return json.dumps(formatted, indent=2)
 
 
+def format_entity_summaries_for_prompt(entities: dict) -> str:
+    """Format entity summaries for inclusion in the reflect prompt.
+
+    Args:
+        entities: Dict mapping entity name to EntityState objects
+
+    Returns:
+        Formatted string with entity summaries, or empty string if no summaries
+    """
+    if not entities:
+        return ""
+
+    summaries = []
+    for name, state in entities.items():
+        # Get summary from observations (summary is stored as single observation)
+        if state.observations:
+            summary_text = state.observations[0].text
+            summaries.append(f"## {name}\n{summary_text}")
+
+    if not summaries:
+        return ""
+
+    return "\n\n".join(summaries)
+
+
 def build_think_prompt(
     agent_facts_text: str,
     world_facts_text: str,
@@ -102,6 +127,7 @@ def build_think_prompt(
     disposition: DispositionTraits,
     background: str,
     context: str | None = None,
+    entity_summaries_text: str | None = None,
 ) -> str:
     """Build the think prompt for the LLM."""
     disposition_desc = build_disposition_description(disposition)
@@ -127,6 +153,14 @@ ADDITIONAL CONTEXT:
 
 """
 
+    entity_section = ""
+    if entity_summaries_text:
+        entity_section = f"""
+KEY PEOPLE, PLACES & THINGS I KNOW ABOUT:
+{entity_summaries_text}
+
+"""
+
     return f"""Here's what I know and have experienced:
 
 MY IDENTITY & EXPERIENCES:
@@ -138,7 +172,7 @@ WHAT I KNOW ABOUT THE WORLD:
 MY EXISTING OPINIONS & BELIEFS:
 {opinion_facts_text}
 
-{context_section}{name_section}{disposition_desc}{background_section}
+{entity_section}{context_section}{name_section}{disposition_desc}{background_section}
 
 QUESTION: {query}
 

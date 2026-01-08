@@ -836,6 +836,91 @@ class BankStatsResponse(BaseModel):
     failed_operations: int
 
 
+# Mental Model models
+
+
+class SetBankGoalRequest(BaseModel):
+    """Request model for setting a bank's goal."""
+
+    model_config = ConfigDict(json_schema_extra={"example": {"goal": "Be a PM for the engineering team"}})
+
+    goal: str = Field(description="The goal for this bank/agent")
+
+
+class MentalModelResponse(BaseModel):
+    """Response model for a mental model."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "team-structure",
+                "bank_id": "test-bank",
+                "type": "entity",
+                "subtype": "structural",
+                "name": "Team Structure",
+                "description": "Who's on the team and their roles",
+                "summary": "The team consists of...",
+                "entity_id": None,
+                "source_facts": [],
+                "triggers": ["team", "member", "role"],
+                "links": [],
+                "last_updated": "2024-01-15T10:30:00Z",
+                "created_at": "2024-01-10T08:00:00Z",
+            }
+        }
+    )
+
+    id: str
+    bank_id: str
+    type: str
+    subtype: str
+    name: str
+    description: str
+    summary: str | None = None
+    entity_id: str | None = None
+    source_facts: list[str] = []
+    triggers: list[str] = []
+    links: list[str] = []
+    last_updated: str | None = None
+    created_at: str
+
+
+class MentalModelListResponse(BaseModel):
+    """Response model for listing mental models."""
+
+    items: list[MentalModelResponse]
+
+
+class ResearchRequest(BaseModel):
+    """Request model for research endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"query": "Who should handle the database migration task?"}}
+    )
+
+    query: str = Field(description="The research question to answer")
+
+
+class ResearchResponse(BaseModel):
+    """Response model for research endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "answer": "Based on the team structure, Tom is the best fit...",
+                "mental_models_used": ["team-structure", "entity-abc123"],
+                "facts_used": ["fact-id-1", "fact-id-2"],
+                "question_type": "WHO",
+            }
+        }
+    )
+
+    answer: str
+    mental_models_used: list[str] = []
+    facts_used: list[str] = []
+    question_type: str | None = None
+
+
 class OperationResponse(BaseModel):
     """Response model for a single async operation."""
 
@@ -904,6 +989,22 @@ class CancelOperationResponse(BaseModel):
     success: bool
     message: str
     operation_id: str
+
+
+class AsyncOperationSubmitResponse(BaseModel):
+    """Response model for submitting an async operation."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "queued",
+            }
+        }
+    )
+
+    operation_id: str
+    status: str
 
 
 def create_app(
@@ -1628,6 +1729,203 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/entities/{entity_id}/regenerate: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # =========================================================================
+    # Mental Models endpoints
+    # =========================================================================
+
+    @app.put(
+        "/v1/default/banks/{bank_id}/goal",
+        summary="Set bank goal",
+        description="Set the goal for a bank. The goal is used to derive structural mental models.",
+        operation_id="set_bank_goal",
+        tags=["Mental Models"],
+    )
+    async def api_set_bank_goal(
+        bank_id: str,
+        request: SetBankGoalRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Set the goal for a bank."""
+        try:
+            result = await app.state.memory.set_bank_goal(
+                bank_id=bank_id,
+                goal=request.goal,
+                request_context=request_context,
+            )
+            return result
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PUT /v1/default/banks/{bank_id}/goal: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/mental-models",
+        response_model=MentalModelListResponse,
+        summary="List mental models",
+        description="List all mental models for a bank, optionally filtered by subtype or type.",
+        operation_id="list_mental_models",
+        tags=["Mental Models"],
+    )
+    async def api_list_mental_models(
+        bank_id: str,
+        subtype: str | None = Query(None, description="Filter by subtype: structural or emergent"),
+        model_type: str | None = Query(None, alias="type", description="Filter by type: entity, concept, or event"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List mental models for a bank."""
+        try:
+            models = await app.state.memory.list_mental_models(
+                bank_id=bank_id,
+                subtype=subtype,
+                model_type=model_type,
+                request_context=request_context,
+            )
+            return MentalModelListResponse(items=[MentalModelResponse(**m) for m in models])
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+        response_model=MentalModelResponse,
+        summary="Get mental model",
+        description="Get a specific mental model by ID.",
+        operation_id="get_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_get_mental_model(
+        bank_id: str,
+        model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get a mental model by ID."""
+        try:
+            model = await app.state.memory.get_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=request_context,
+            )
+            if model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{model_id}' not found")
+            return MentalModelResponse(**model)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models/{model_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/refresh",
+        response_model=AsyncOperationSubmitResponse,
+        summary="Refresh all mental models (async)",
+        description="Submit a background job to refresh all mental models for a bank. "
+        "The job will: 1) Derive structural models from the bank's goal, "
+        "2) Promote relevant entities to emergent models, "
+        "3) Generate summaries for all mental models. "
+        "Use GET /banks/{bank_id}/operations to check progress.",
+        operation_id="refresh_mental_models",
+        tags=["Mental Models"],
+    )
+    async def api_refresh_mental_models(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit a background job to refresh all mental models for a bank.
+
+        Requires a goal to be set for the bank first.
+        """
+        try:
+            result = await app.state.memory.refresh_mental_models(
+                bank_id=bank_id,
+                request_context=request_context,
+            )
+            return AsyncOperationSubmitResponse(**result)
+        except ValueError as e:
+            # Goal not set or other validation error
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models/refresh: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+        response_model=DeleteResponse,
+        summary="Delete mental model",
+        description="Delete a mental model.",
+        operation_id="delete_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_delete_mental_model(
+        bank_id: str,
+        model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Delete a mental model."""
+        try:
+            deleted = await app.state.memory.delete_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=request_context,
+            )
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Mental model '{model_id}' not found")
+            return DeleteResponse(success=True, deleted_count=1)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{model_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/research",
+        response_model=ResearchResponse,
+        summary="Research query",
+        description="Execute a research query against mental models. Returns a synthesized answer with sources.",
+        operation_id="research",
+        tags=["Mental Models"],
+    )
+    async def api_research(
+        bank_id: str,
+        request: ResearchRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Execute a research query."""
+        try:
+            result = await app.state.memory.research(
+                bank_id=bank_id,
+                query=request.query,
+                request_context=request_context,
+            )
+            return ResearchResponse(**result)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/research: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
