@@ -52,6 +52,9 @@ _PROTECTED_TABLES = frozenset(
         "documents",
         "chunks",
         "async_operations",
+        "fact_usefulness",
+        "usefulness_signals",
+        "query_pattern_stats",
     ]
 )
 
@@ -1335,6 +1338,9 @@ class MemoryEngine(MemoryEngineInterface):
         max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        boost_by_usefulness: bool = False,
+        usefulness_weight: float = 0.3,
+        min_usefulness: float = 0.0,
         request_context: "RequestContext",
     ) -> RecallResultModel:
         """
@@ -1429,6 +1435,9 @@ class MemoryEngine(MemoryEngineInterface):
                         max_entity_tokens,
                         include_chunks,
                         max_chunk_tokens,
+                        boost_by_usefulness,
+                        usefulness_weight,
+                        min_usefulness,
                         request_context,
                     )
                     break  # Success - exit retry loop
@@ -1546,6 +1555,9 @@ class MemoryEngine(MemoryEngineInterface):
         max_entity_tokens: int = 500,
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
+        boost_by_usefulness: bool = False,
+        usefulness_weight: float = 0.3,
+        min_usefulness: float = 0.0,
         request_context: "RequestContext" = None,
     ) -> RecallResultModel:
         """
@@ -1833,6 +1845,38 @@ class MemoryEngine(MemoryEngineInterface):
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append(
                     "  [4.6] Combined scoring: cross_encoder(0.6) + rrf(0.2) + temporal(0.1) + recency(0.1)"
+                )
+
+            # Step 4.7: Apply usefulness boost if enabled
+            if boost_by_usefulness and scored_results:
+                # Get usefulness scores for all candidate facts
+                # Pass query_embedding for query-context aware scoring
+                fact_ids = [sr.id for sr in scored_results]
+                async with acquire_with_retry(pool) as usefulness_conn:
+                    usefulness_scores = await self._get_usefulness_scores_for_facts(
+                        usefulness_conn, bank_id, fact_ids, query_embedding=query_embedding
+                    )
+
+                # Filter by min_usefulness
+                if min_usefulness > 0.0:
+                    original_count = len(scored_results)
+                    scored_results = [sr for sr in scored_results if usefulness_scores.get(sr.id, 0.5) >= min_usefulness]
+                    log_buffer.append(
+                        f"  [4.7] Usefulness filter: {original_count} -> {len(scored_results)} results "
+                        f"(min_usefulness={min_usefulness})"
+                    )
+
+                # Apply usefulness boost to weight
+                # New weight = (1 - usefulness_weight) * old_weight + usefulness_weight * usefulness_score
+                for sr in scored_results:
+                    usefulness = usefulness_scores.get(sr.id, 0.5)
+                    sr.weight = (1 - usefulness_weight) * sr.weight + usefulness_weight * usefulness
+
+                # Re-sort by updated weight
+                scored_results.sort(key=lambda x: x.weight, reverse=True)
+                log_buffer.append(
+                    f"  [4.7] Usefulness boost applied: weight={usefulness_weight}, "
+                    f"boosted {len(scored_results)} results"
                 )
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
@@ -4226,3 +4270,462 @@ Guidelines:
             "operation_id": str(operation_id),
             "items_count": len(contents),
         }
+
+    # =========================================================================
+    # Feedback Signal Methods
+    # =========================================================================
+
+    # Signal weights for usefulness score calculation
+    SIGNAL_WEIGHTS = {
+        "used": 1.0,
+        "ignored": -0.5,
+        "helpful": 1.5,
+        "not_helpful": -1.0,
+    }
+
+    # Cosine similarity threshold for matching similar queries
+    # Queries with similarity >= this threshold are considered "the same" query context
+    QUERY_SIMILARITY_THRESHOLD = 0.85
+
+    async def submit_signals(
+        self,
+        bank_id: str,
+        signals: list[dict],
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Submit feedback signals for facts.
+
+        This method updates both global usefulness scores (for backwards compatibility)
+        and query-context aware scores (for accurate per-query feedback).
+
+        Args:
+            bank_id: The memory bank ID
+            signals: List of signal dicts with fact_id, signal_type, confidence, query, context
+            request_context: Request context for authentication
+
+        Returns:
+            Dict with success status and list of updated fact IDs
+        """
+        import hashlib
+
+        await self._authenticate_tenant(request_context)
+
+        pool = await self._get_pool()
+        updated_facts = set()
+
+        # Step 1: Extract unique queries and generate embeddings
+        unique_queries = list({s["query"] for s in signals if s.get("query")})
+        query_embeddings: dict[str, list[float]] = {}
+
+        if unique_queries:
+            embeddings_list = embedding_utils.generate_embedding(self.embeddings, unique_queries[0])
+            # For batch, we need to generate all embeddings
+            if len(unique_queries) == 1:
+                query_embeddings[unique_queries[0]] = embeddings_list
+            else:
+                # Generate embeddings for all unique queries
+                all_embeddings = await embedding_utils.generate_embeddings_batch(
+                    self.embeddings, unique_queries
+                )
+                for query_text, emb in zip(unique_queries, all_embeddings):
+                    query_embeddings[query_text] = emb
+
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                for signal in signals:
+                    fact_id = signal["fact_id"]
+                    signal_type = signal["signal_type"]
+                    confidence = signal.get("confidence", 1.0)
+                    query = signal["query"]  # Now required
+                    context = signal.get("context")
+
+                    # Generate query hash for pattern tracking
+                    query_hash = hashlib.sha256(query.lower().strip().encode()).hexdigest()[:16]
+
+                    # Get the query embedding
+                    query_embedding = query_embeddings.get(query)
+                    query_embedding_str = str(query_embedding) if query_embedding else None
+
+                    # Insert signal record with query embedding
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("usefulness_signals")}
+                        (fact_id, bank_id, signal_type, confidence, query_hash, context, query_embedding)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        uuid.UUID(fact_id),
+                        bank_id,
+                        signal_type,
+                        confidence,
+                        query_hash,
+                        context,
+                        query_embedding_str,
+                    )
+
+                    # Calculate delta for usefulness score
+                    weight = self.SIGNAL_WEIGHTS.get(signal_type, 0)
+                    delta = weight * confidence * 0.1
+
+                    # Update global fact_usefulness (for backwards compatibility)
+                    # Decay formula: new_score = old_score * (0.95 ^ (seconds_since_last_decay / 604800))
+                    # 604800 seconds = 1 week
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("fact_usefulness")}
+                        (fact_id, bank_id, usefulness_score, signal_count, last_signal_at, last_decay_at)
+                        VALUES ($1, $2, GREATEST(0.0, LEAST(1.0, 0.5 + $3)), 1, now(), now())
+                        ON CONFLICT (fact_id) DO UPDATE SET
+                            usefulness_score = GREATEST(0.0, LEAST(1.0,
+                                -- Apply decay first
+                                (fact_usefulness.usefulness_score *
+                                 POWER(0.95, EXTRACT(EPOCH FROM (now() - fact_usefulness.last_decay_at)) / 604800.0))
+                                -- Then apply new signal delta
+                                + $3
+                            )),
+                            signal_count = fact_usefulness.signal_count + 1,
+                            last_signal_at = now(),
+                            last_decay_at = now(),
+                            updated_at = now()
+                        """,
+                        uuid.UUID(fact_id),
+                        bank_id,
+                        delta,
+                    )
+
+                    # Update query-context aware usefulness (query_fact_usefulness)
+                    if query_embedding:
+                        # Find existing entry with similar query for this fact
+                        # Uses cosine similarity: 1 - cosine_distance
+                        existing_row = await conn.fetchrow(
+                            f"""
+                            SELECT id, usefulness_score, signal_count, last_decay_at,
+                                   1 - (query_embedding <=> $1) as similarity
+                            FROM {fq_table("query_fact_usefulness")}
+                            WHERE bank_id = $2 AND fact_id = $3
+                              AND 1 - (query_embedding <=> $1) >= $4
+                            ORDER BY similarity DESC
+                            LIMIT 1
+                            """,
+                            query_embedding_str,
+                            bank_id,
+                            uuid.UUID(fact_id),
+                            self.QUERY_SIMILARITY_THRESHOLD,
+                        )
+
+                        if existing_row:
+                            # Update existing entry (similar query context exists)
+                            # Apply time decay then new signal
+                            await conn.execute(
+                                f"""
+                                UPDATE {fq_table("query_fact_usefulness")}
+                                SET usefulness_score = GREATEST(0.0, LEAST(1.0,
+                                        (usefulness_score *
+                                         POWER(0.95, EXTRACT(EPOCH FROM (now() - last_decay_at)) / 604800.0))
+                                        + $1
+                                    )),
+                                    signal_count = signal_count + 1,
+                                    last_signal_at = now(),
+                                    last_decay_at = now(),
+                                    updated_at = now()
+                                WHERE id = $2
+                                """,
+                                delta,
+                                existing_row["id"],
+                            )
+                        else:
+                            # Insert new entry (new query context for this fact)
+                            await conn.execute(
+                                f"""
+                                INSERT INTO {fq_table("query_fact_usefulness")}
+                                (bank_id, fact_id, query_embedding, query_example, usefulness_score, signal_count, last_signal_at)
+                                VALUES ($1, $2, $3, $4, GREATEST(0.0, LEAST(1.0, 0.5 + $5)), 1, now())
+                                """,
+                                bank_id,
+                                uuid.UUID(fact_id),
+                                query_embedding_str,
+                                query[:200],  # Store truncated example
+                                delta,
+                            )
+
+                    updated_facts.add(fact_id)
+
+                    # Update query pattern stats
+                    count_column = {
+                        "used": "used_count",
+                        "ignored": "ignored_count",
+                        "helpful": "helpful_count",
+                        "not_helpful": "not_helpful_count",
+                    }.get(signal_type, "used_count")
+
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("query_pattern_stats")}
+                        (bank_id, query_hash, query_example, total_signals, {count_column})
+                        VALUES ($1, $2, $3, 1, 1)
+                        ON CONFLICT (bank_id, query_hash) DO UPDATE SET
+                            total_signals = query_pattern_stats.total_signals + 1,
+                            {count_column} = query_pattern_stats.{count_column} + 1,
+                            updated_at = now()
+                        """,
+                        bank_id,
+                        query_hash,
+                        query[:200],  # Store truncated example
+                    )
+
+        return {
+            "success": True,
+            "signals_processed": len(signals),
+            "updated_facts": list(updated_facts),
+        }
+
+    async def get_fact_usefulness_stats(
+        self,
+        bank_id: str,
+        fact_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """
+        Get usefulness statistics for a specific fact.
+
+        Args:
+            bank_id: The memory bank ID
+            fact_id: The fact UUID
+            request_context: Request context for authentication
+
+        Returns:
+            Dict with usefulness stats or None if no signals exist
+        """
+        await self._authenticate_tenant(request_context)
+
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Get aggregate stats with live decay calculation
+            row = await conn.fetchrow(
+                f"""
+                SELECT
+                    fact_id,
+                    usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - last_decay_at)) / 604800.0) as usefulness_score,
+                    signal_count,
+                    last_signal_at,
+                    created_at
+                FROM {fq_table("fact_usefulness")}
+                WHERE fact_id = $1 AND bank_id = $2
+                """,
+                uuid.UUID(fact_id),
+                bank_id,
+            )
+
+            if not row:
+                return None
+
+            # Get signal breakdown
+            breakdown = await conn.fetch(
+                f"""
+                SELECT signal_type, COUNT(*) as count
+                FROM {fq_table("usefulness_signals")}
+                WHERE fact_id = $1 AND bank_id = $2
+                GROUP BY signal_type
+                """,
+                uuid.UUID(fact_id),
+                bank_id,
+            )
+
+            signal_breakdown = {r["signal_type"]: r["count"] for r in breakdown}
+
+            return {
+                "fact_id": str(row["fact_id"]),
+                "usefulness_score": max(0.0, min(1.0, row["usefulness_score"])),
+                "signal_count": row["signal_count"],
+                "signal_breakdown": signal_breakdown,
+                "last_signal_at": row["last_signal_at"].isoformat() if row["last_signal_at"] else None,
+                "created_at": row["created_at"].isoformat(),
+            }
+
+    async def get_bank_usefulness_stats(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Get aggregate usefulness statistics for a bank.
+
+        Args:
+            bank_id: The memory bank ID
+            request_context: Request context for authentication
+
+        Returns:
+            Dict with bank-level usefulness stats
+        """
+        await self._authenticate_tenant(request_context)
+
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Get aggregate stats with time decay applied
+            agg_row = await conn.fetchrow(
+                f"""
+                SELECT
+                    COUNT(*) as total_facts,
+                    AVG(usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - last_decay_at)) / 604800.0)) as avg_score,
+                    SUM(signal_count) as total_signals
+                FROM {fq_table("fact_usefulness")}
+                WHERE bank_id = $1
+                """,
+                bank_id,
+            )
+
+            # Get signal distribution
+            dist = await conn.fetch(
+                f"""
+                SELECT signal_type, COUNT(*) as count
+                FROM {fq_table("usefulness_signals")}
+                WHERE bank_id = $1
+                GROUP BY signal_type
+                """,
+                bank_id,
+            )
+
+            signal_distribution = {r["signal_type"]: r["count"] for r in dist}
+
+            # Get top 10 most useful facts
+            top_facts = await conn.fetch(
+                f"""
+                SELECT
+                    fu.fact_id,
+                    fu.usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - fu.last_decay_at)) / 604800.0) as score,
+                    mu.text
+                FROM {fq_table("fact_usefulness")} fu
+                JOIN {fq_table("memory_units")} mu ON fu.fact_id = mu.id
+                WHERE fu.bank_id = $1
+                ORDER BY score DESC
+                LIMIT 10
+                """,
+                bank_id,
+            )
+
+            # Get bottom 10 least useful facts
+            bottom_facts = await conn.fetch(
+                f"""
+                SELECT
+                    fu.fact_id,
+                    fu.usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - fu.last_decay_at)) / 604800.0) as score,
+                    mu.text
+                FROM {fq_table("fact_usefulness")} fu
+                JOIN {fq_table("memory_units")} mu ON fu.fact_id = mu.id
+                WHERE fu.bank_id = $1
+                ORDER BY score ASC
+                LIMIT 10
+                """,
+                bank_id,
+            )
+
+            return {
+                "bank_id": bank_id,
+                "total_facts_with_signals": agg_row["total_facts"] or 0,
+                "average_usefulness": float(agg_row["avg_score"]) if agg_row["avg_score"] else 0.5,
+                "total_signals": agg_row["total_signals"] or 0,
+                "signal_distribution": signal_distribution,
+                "top_useful_facts": [
+                    {"fact_id": str(r["fact_id"]), "score": float(r["score"]), "text": r["text"][:100] if r["text"] else ""}
+                    for r in top_facts
+                ],
+                "least_useful_facts": [
+                    {"fact_id": str(r["fact_id"]), "score": float(r["score"]), "text": r["text"][:100] if r["text"] else ""}
+                    for r in bottom_facts
+                ],
+            }
+
+    async def _get_usefulness_scores_for_facts(
+        self,
+        conn,
+        bank_id: str,
+        fact_ids: list[str],
+        query_embedding: list[float] | None = None,
+    ) -> dict[str, float]:
+        """
+        Get usefulness scores for a list of facts (internal method for recall integration).
+
+        Uses query-context aware scoring when query_embedding is provided:
+        1. First tries to find scores for similar queries (cosine similarity >= 0.85)
+        2. Falls back to global scores for facts without query-specific signals
+        3. Falls back to 0.5 (neutral) for facts without any signals
+
+        Args:
+            conn: Database connection
+            bank_id: The memory bank ID
+            fact_ids: List of fact UUIDs
+            query_embedding: Optional query embedding for context-aware scoring
+
+        Returns:
+            Dict mapping fact_id to usefulness_score (0.5 default for facts without signals)
+        """
+        if not fact_ids:
+            return {}
+
+        uuid_list = [uuid.UUID(fid) for fid in fact_ids]
+
+        # Default to 0.5 (neutral) for all facts
+        scores = {fid: 0.5 for fid in fact_ids}
+
+        # Step 1: Try query-context aware scores if query_embedding provided
+        if query_embedding:
+            query_embedding_str = str(query_embedding)
+
+            # Find the best matching query context for each fact
+            # Uses cosine similarity to find semantically similar queries
+            query_rows = await conn.fetch(
+                f"""
+                WITH ranked_queries AS (
+                    SELECT
+                        fact_id,
+                        usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - last_decay_at)) / 604800.0) as score,
+                        1 - (query_embedding <=> $1) as similarity,
+                        ROW_NUMBER() OVER (PARTITION BY fact_id ORDER BY 1 - (query_embedding <=> $1) DESC) as rn
+                    FROM {fq_table("query_fact_usefulness")}
+                    WHERE fact_id = ANY($2::uuid[])
+                      AND bank_id = $3
+                      AND 1 - (query_embedding <=> $1) >= $4
+                )
+                SELECT fact_id, score, similarity
+                FROM ranked_queries
+                WHERE rn = 1
+                """,
+                query_embedding_str,
+                uuid_list,
+                bank_id,
+                self.QUERY_SIMILARITY_THRESHOLD,
+            )
+
+            # Apply query-context scores
+            for row in query_rows:
+                scores[str(row["fact_id"])] = max(0.0, min(1.0, row["score"]))
+
+        # Step 2: Fill in remaining facts with global scores
+        # (facts that didn't have query-specific signals)
+        facts_needing_global = [fid for fid in fact_ids if scores[fid] == 0.5]
+
+        if facts_needing_global:
+            global_uuid_list = [uuid.UUID(fid) for fid in facts_needing_global]
+
+            global_rows = await conn.fetch(
+                f"""
+                SELECT
+                    fact_id,
+                    usefulness_score * POWER(0.95, EXTRACT(EPOCH FROM (now() - last_decay_at)) / 604800.0) as score
+                FROM {fq_table("fact_usefulness")}
+                WHERE fact_id = ANY($1::uuid[]) AND bank_id = $2
+                """,
+                global_uuid_list,
+                bank_id,
+            )
+
+            for row in global_rows:
+                fact_id_str = str(row["fact_id"])
+                # Only update if still at default (0.5) - don't override query-specific scores
+                if scores[fact_id_str] == 0.5:
+                    scores[fact_id_str] = max(0.0, min(1.0, row["score"]))
+
+        return scores

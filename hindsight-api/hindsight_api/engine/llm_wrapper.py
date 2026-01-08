@@ -232,6 +232,8 @@ class LLMProvider:
                     skip_validation,
                     start_time,
                     return_usage,
+                    max_completion_tokens=max_completion_tokens,
+                    temperature=temperature,
                 )
 
             # Handle Anthropic provider separately
@@ -362,6 +364,23 @@ class LLMProvider:
                             content = content.strip()
                             if len(content) < original_len:
                                 logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
+
+                        # Handle empty response (None or empty string after stripping)
+                        if not content or not content.strip():
+                            finish_reason = response.choices[0].finish_reason if response.choices else "unknown"
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                logger.warning(
+                                    f"LLM returned empty response (finish_reason={finish_reason}), "
+                                    f"retrying in {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                                )
+                                await asyncio.sleep(backoff)
+                                continue
+                            else:
+                                raise RuntimeError(
+                                    f"LLM returned empty response after {max_retries + 1} attempts "
+                                    f"(finish_reason={finish_reason})"
+                                )
 
                         # For local models, they may wrap JSON in markdown code blocks
                         if self.provider in ("lmstudio", "ollama"):
@@ -817,8 +836,10 @@ class LLMProvider:
         skip_validation: bool,
         start_time: float,
         return_usage: bool = False,
+        max_completion_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> Any:
-        """Handle Gemini-specific API calls."""
+        """Handle Gemini-specific API calls with Gemini 3 optimizations."""
         # Convert OpenAI-style messages to Gemini format
         system_instruction = None
         gemini_contents = []
@@ -854,6 +875,31 @@ class LLMProvider:
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_schema"] = response_format
 
+        # Add temperature if provided
+        if temperature is not None:
+            config_kwargs["temperature"] = temperature
+
+        # Add max output tokens if provided
+        if max_completion_tokens is not None:
+            config_kwargs["max_output_tokens"] = max_completion_tokens
+
+        # Check if using Gemini 3 model and add thinking config
+        # Gemini 3 models support thinking_level: LOW, MEDIUM (flash only), HIGH
+        model_lower = self.model.lower()
+        is_gemini_3 = "gemini-3" in model_lower or "gemini3" in model_lower
+        if is_gemini_3:
+            # Map reasoning_effort to Gemini thinking_level
+            thinking_level_map = {
+                "low": "LOW",
+                "medium": "MEDIUM",
+                "high": "HIGH",
+            }
+            thinking_level = thinking_level_map.get(self.reasoning_effort.lower(), "LOW")
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_level=thinking_level
+            )
+            logger.debug(f"Gemini 3 thinking_level: {thinking_level} (from reasoning_effort: {self.reasoning_effort})")
+
         generation_config = genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         last_exception = None
@@ -868,21 +914,37 @@ class LLMProvider:
 
                 content = response.text
 
-                # Handle empty response
-                if content is None:
+                # Handle empty response (None or empty string)
+                if not content or not content.strip():
                     block_reason = None
+                    finish_reason = None
                     if hasattr(response, "candidates") and response.candidates:
                         candidate = response.candidates[0]
                         if hasattr(candidate, "finish_reason"):
-                            block_reason = candidate.finish_reason
+                            finish_reason = candidate.finish_reason
+                        # Check for content filtering
+                        if hasattr(candidate, "safety_ratings"):
+                            for rating in candidate.safety_ratings or []:
+                                if hasattr(rating, "blocked") and rating.blocked:
+                                    block_reason = f"blocked by {rating.category}"
+                                    break
+
+                    reason_info = f"finish_reason={finish_reason}"
+                    if block_reason:
+                        reason_info += f", {block_reason}"
 
                     if attempt < max_retries:
-                        logger.warning(f"Gemini returned empty response (reason: {block_reason}), retrying...")
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
+                        logger.warning(
+                            f"Gemini returned empty response ({reason_info}), "
+                            f"retrying in {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                        )
                         await asyncio.sleep(backoff)
                         continue
                     else:
-                        raise RuntimeError(f"Gemini returned empty response after {max_retries + 1} attempts")
+                        raise RuntimeError(
+                            f"Gemini returned empty response after {max_retries + 1} attempts ({reason_info})"
+                        )
 
                 if response_format is not None:
                     json_data = json.loads(content)
@@ -952,7 +1014,13 @@ class LLMProvider:
                 if e.code in (400, 429, 500, 502, 503, 504) or (e.code and e.code >= 500):
                     last_exception = e
                     if attempt < max_retries:
-                        backoff = min(initial_backoff * (2**attempt), max_backoff)
+                        # Use longer backoff for rate limits (429) - free tier has 15 RPM
+                        if e.code == 429:
+                            # For rate limits, use minimum 10s backoff, max 120s
+                            backoff = min(max(10.0, initial_backoff * (2**attempt)), 120.0)
+                            logger.warning(f"Gemini rate limit hit (429), backing off {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                        else:
+                            backoff = min(initial_backoff * (2**attempt), max_backoff)
                         jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
                         await asyncio.sleep(backoff + jitter)
                     else:
@@ -960,6 +1028,25 @@ class LLMProvider:
                         raise
                 else:
                     logger.error(f"Gemini API error: {type(e).__name__}: {str(e)}")
+                    raise
+
+            except genai_errors.ClientError as e:
+                # Handle ClientError (includes 429 rate limit)
+                error_code = getattr(e, 'code', None) or 429  # Default to 429 for rate limits
+                if error_code == 429 or "RESOURCE_EXHAUSTED" in str(e):
+                    last_exception = e
+                    if attempt < max_retries:
+                        # Use longer backoff for rate limits - free tier has 15 RPM
+                        backoff = min(max(10.0, initial_backoff * (2**attempt)), 120.0)
+                        logger.warning(f"Gemini rate limit hit, backing off {backoff:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                        jitter = backoff * 0.2 * (2 * (time.time() % 1) - 1)
+                        await asyncio.sleep(backoff + jitter)
+                        continue
+                    else:
+                        logger.error(f"Gemini rate limit error after {max_retries + 1} attempts: {str(e)}")
+                        raise
+                else:
+                    logger.error(f"Gemini client error: {type(e).__name__}: {str(e)}")
                     raise
 
             except Exception as e:
@@ -1034,8 +1121,9 @@ class LLMProvider:
             raise ValueError("HINDSIGHT_API_LLM_API_KEY environment variable is required")
         base_url = os.getenv("HINDSIGHT_API_LLM_BASE_URL", "")
         model = os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b")
+        reasoning_effort = os.getenv("HINDSIGHT_API_LLM_THINKING_LEVEL", "low")
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="low")
+        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort=reasoning_effort)
 
     @classmethod
     def for_answer_generation(cls) -> "LLMProvider":
@@ -1048,8 +1136,9 @@ class LLMProvider:
             )
         base_url = os.getenv("HINDSIGHT_API_ANSWER_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_ANSWER_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
+        reasoning_effort = os.getenv("HINDSIGHT_API_LLM_THINKING_LEVEL", "high")
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="high")
+        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort=reasoning_effort)
 
     @classmethod
     def for_judge(cls) -> "LLMProvider":
@@ -1062,8 +1151,9 @@ class LLMProvider:
             )
         base_url = os.getenv("HINDSIGHT_API_JUDGE_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
+        reasoning_effort = os.getenv("HINDSIGHT_API_LLM_THINKING_LEVEL", "high")
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="high")
+        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort=reasoning_effort)
 
 
 # Backwards compatibility alias

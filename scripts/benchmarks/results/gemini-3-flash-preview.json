@@ -1,0 +1,274 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3-flash-preview",
+  "bank_id": "benchmark-20260104_150608",
+  "timestamp": "2026-01-04T15:06:08.668897",
+  "retain": {
+    "success_rate": 1.0,
+    "total_time": 193.75880432128906,
+    "avg_time": 19.375880432128906,
+    "facts_extracted": 0,
+    "entities_extracted": 0,
+    "failures": 0
+  },
+  "recall": {
+    "success_rate": 1.0,
+    "total_time": 3.348891496658325,
+    "avg_time": 0.41861143708229065,
+    "avg_relevance": 24.0
+  },
+  "details": {
+    "retain_results": [
+      {
+        "content": "The Camarilla trading system uses pivot points cal...",
+        "success": true,
+        "time": 10.83958911895752,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User prefers to trade EUR/USD during the London se...",
+        "success": true,
+        "time": 11.673033952713013,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The backtesting showed that the H4 breakout strate...",
+        "success": true,
+        "time": 11.16137409210205,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Python was used to build the trading bot. The main...",
+        "success": true,
+        "time": 23.952484130859375,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User experienced significant losses on March 15th,...",
+        "success": true,
+        "time": 23.9190731048584,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The optimal position size is 2% of account balance...",
+        "success": true,
+        "time": 25.6699960231781,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User's trading journal shows best performance on T...",
+        "success": true,
+        "time": 29.93116283416748,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The mobile app integration uses React Native with ...",
+        "success": true,
+        "time": 11.625300884246826,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Database schema includes tables for trades, signal...",
+        "success": true,
+        "time": 19.96181011199951,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Authentication is handled via JWT tokens with 24-h...",
+        "success": true,
+        "time": 25.024980068206787,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      }
+    ],
+    "recall_results": [
+      {
+        "query": "What is the win rate of the H4 breakout strategy?",
+        "success": true,
+        "time": 0.9546496868133545,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "Backtesting analysis of the H4 breakout trading strategy revealed a 62% win rate when specific Relat",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The H4 breakout strategy's execution logic requires an RSI (Relative Strength Index) reading of abov",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The Camarilla trading system designates H3, H4, L3, and L4 as its key price levels which function as",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "When does the user prefer to trade EUR/USD?",
+        "success": true,
+        "time": 0.4134049415588379,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The user has a established preference for trading the EUR/USD (Euro vs US Dollar) currency pair duri",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user maintains a policy of avoiding any trading activities during the occurrence of news events.",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user developed a trading bot using the Python programming language as the foundational technolog",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What happened on March 15th 2024?",
+        "success": true,
+        "time": 0.22597789764404297,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The user experienced significant financial losses in their trading activities following an unexpecte",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user adopted a new trading principle to always check the economic calendar before opening any ne",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user developed a trading bot using the Python programming language as the foundational technolog",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What programming language was used for the trading bot?",
+        "success": true,
+        "time": 0.30295276641845703,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The user developed a trading bot using the Python programming language as the foundational technolog",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user's trading bot relies on the ta-lib library as a key dependency for calculating technical in",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user's trading bot incorporates the ccxt library as a core dependency to manage connectivity wit",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What is the recommended position size?",
+        "success": true,
+        "time": 0.33051300048828125,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The user defined that the optimal position size for their trading activities is exactly 2% of the to",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The H4 breakout strategy's execution logic requires an RSI (Relative Strength Index) reading of abov",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user adopted a new trading principle to always check the economic calendar before opening any ne",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "Which days show the best trading performance?",
+        "success": true,
+        "time": 0.4209868907928467,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The user's trading journal analysis reveals that their trading performance is consistently at its pe",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user maintains a detailed trading journal where they record their trades, analyze performance, a",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user's trading journal data indicates that Mondays tend to have a significantly higher frequency",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "How is authentication handled in the system?",
+        "success": true,
+        "time": 0.35957813262939453,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The authentication system utilizes JSON Web Tokens (JWT) as the primary method for handling user acc",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The user developed a trading bot using the Python programming language as the foundational technolog",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The database schema is structured with specific tables including trades, signals, user_preferences, ",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What are the Camarilla pivot levels used for breakouts?",
+        "success": true,
+        "time": 0.34082818031311035,
+        "memories_count": 24,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The Camarilla trading system designates H3, H4, L3, and L4 as its key price levels which function as",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The H4 breakout strategy's execution logic requires an RSI (Relative Strength Index) reading of abov",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The Camarilla trading system utilizes a methodology to calculate specific pivot points derived from ",
+            "fact_type": "world"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,274 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-4.5",
+  "bank_id": "benchmark-20260104_145444",
+  "timestamp": "2026-01-04T14:54:44.442619",
+  "retain": {
+    "success_rate": 1.0,
+    "total_time": 37.09347605705261,
+    "avg_time": 3.7093476057052612,
+    "facts_extracted": 0,
+    "entities_extracted": 0,
+    "failures": 0
+  },
+  "recall": {
+    "success_rate": 1.0,
+    "total_time": 2.9052493572235107,
+    "avg_time": 0.36315616965293884,
+    "avg_relevance": 17.0
+  },
+  "details": {
+    "retain_results": [
+      {
+        "content": "The Camarilla trading system uses pivot points cal...",
+        "success": true,
+        "time": 3.3380041122436523,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User prefers to trade EUR/USD during the London se...",
+        "success": true,
+        "time": 3.005510091781616,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The backtesting showed that the H4 breakout strate...",
+        "success": true,
+        "time": 2.4241139888763428,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Python was used to build the trading bot. The main...",
+        "success": true,
+        "time": 1.8498828411102295,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User experienced significant losses on March 15th,...",
+        "success": true,
+        "time": 6.476660966873169,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The optimal position size is 2% of account balance...",
+        "success": true,
+        "time": 5.543329954147339,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "User's trading journal shows best performance on T...",
+        "success": true,
+        "time": 7.510835886001587,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "The mobile app integration uses React Native with ...",
+        "success": true,
+        "time": 2.201282024383545,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Database schema includes tables for trades, signal...",
+        "success": true,
+        "time": 2.1075901985168457,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      },
+      {
+        "content": "Authentication is handled via JWT tokens with 24-h...",
+        "success": true,
+        "time": 2.636265993118286,
+        "error": null,
+        "facts": 0,
+        "entities": 0
+      }
+    ],
+    "recall_results": [
+      {
+        "query": "What is the win rate of the H4 breakout strategy?",
+        "success": true,
+        "time": 0.8559279441833496,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The H4 breakout strategy combined with RSI confirmation (above 70 for shorts and below 30 for longs)",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The Camarilla trading system has four key levels designated as H3, H4, L3, and L4 that serve as brea",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User observes that Mondays tend to have more false breakouts compared to other trading days | When: ",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "When does the user prefer to trade EUR/USD?",
+        "success": true,
+        "time": 0.3596327304840088,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "User prefers to trade EUR/USD currency pair during the London trading session between 8:00 AM and 12",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User observes that Tuesday and Wednesday trading days perform best in their trading | When: Ongoing ",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User avoids trading during news events | Involving: user | This is a risk management preference - th",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What happened on March 15th 2024?",
+        "success": true,
+        "time": 0.17951011657714844,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "User experienced significant financial losses due to an unexpected Federal Reserve announcement that",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User learned the lesson to always check the economic calendar before opening trading positions | Inv",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User avoids trading during news events | Involving: user | This is a risk management preference - th",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What programming language was used for the trading bot?",
+        "success": true,
+        "time": 0.25060296058654785,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "Python was used to build a trading bot with main dependencies including pandas for data analysis, cc",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The Camarilla trading system uses pivot points that are calculated from the previous day's high, low",
+            "fact_type": "world"
+          },
+          {
+            "fact": "A database schema includes tables for trades, signals, user_preferences, and historical_data, with P",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What is the recommended position size?",
+        "success": true,
+        "time": 0.28905224800109863,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The optimal position size for trading is 2% of account balance per trade | Involving: trader/investo",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User learned the lesson to always check the economic calendar before opening trading positions | Inv",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The risk-reward ratio should be a minimum of 1:2 for all trades, meaning potential reward must be at",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "Which days show the best trading performance?",
+        "success": true,
+        "time": 0.36485719680786133,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "User observes that Tuesday and Wednesday trading days perform best in their trading | When: Ongoing ",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User's trading journal shows that Tuesday and Wednesday trading sessions have the best performance, ",
+            "fact_type": "world"
+          },
+          {
+            "fact": "User observes that Mondays tend to have more false breakouts compared to other trading days | When: ",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "How is authentication handled in the system?",
+        "success": true,
+        "time": 0.3121459484100342,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "Authentication system uses JWT tokens with a 24-hour expiration period, and refresh tokens are store",
+            "fact_type": "world"
+          },
+          {
+            "fact": "Push notifications are sent via Firebase Cloud Messaging for the mobile app | This is a technical im",
+            "fact_type": "world"
+          },
+          {
+            "fact": "A database schema includes tables for trades, signals, user_preferences, and historical_data, with P",
+            "fact_type": "world"
+          }
+        ]
+      },
+      {
+        "query": "What are the Camarilla pivot levels used for breakouts?",
+        "success": true,
+        "time": 0.2935202121734619,
+        "memories_count": 17,
+        "error": null,
+        "memories": [
+          {
+            "fact": "The Camarilla trading system has four key levels designated as H3, H4, L3, and L4 that serve as brea",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The Camarilla trading system uses pivot points that are calculated from the previous day's high, low",
+            "fact_type": "world"
+          },
+          {
+            "fact": "The H4 breakout strategy combined with RSI confirmation (above 70 for shorts and below 30 for longs)",
+            "fact_type": "world"
+          }
+        ]
+      }
+    ]
+  }
+}
