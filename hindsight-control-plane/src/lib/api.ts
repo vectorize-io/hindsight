@@ -246,7 +246,60 @@ export class ControlPlaneClient {
         empathy: number;
       };
       background: string;
+      goal: string | null;
     }>(`/api/profile/${bankId}`);
+  }
+
+  /**
+   * Set bank goal
+   */
+  async setBankGoal(bankId: string, goal: string) {
+    return this.fetchApi(`/api/banks/${bankId}/goal`, {
+      method: "PUT",
+      body: JSON.stringify({ goal }),
+    });
+  }
+
+  /**
+   * List mental models for a bank
+   */
+  async listMentalModels(bankId: string) {
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        type: string;
+        subtype: string;
+        name: string;
+        description: string;
+        summary: string | null;
+        entity_id: string | null;
+        source_facts: string[];
+        triggers: string[];
+        links: string[];
+        last_updated: string | null;
+        created_at: string;
+      }>;
+    }>(`/api/banks/${bankId}/mental-models`);
+  }
+
+  /**
+   * Refresh mental models for a bank (async)
+   */
+  async refreshMentalModels(bankId: string) {
+    return this.fetchApi<{ operation_id: string; message: string }>(
+      `/api/banks/${bankId}/mental-models/refresh`,
+      { method: "POST" }
+    );
+  }
+
+  /**
+   * Delete a mental model
+   */
+  async deleteMentalModel(bankId: string, modelId: string) {
+    return this.fetchApi(`/api/banks/${bankId}/mental-models/${modelId}`, {
+      method: "DELETE",
+    });
   }
 
   /**

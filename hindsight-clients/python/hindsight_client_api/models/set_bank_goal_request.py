@@ -17,22 +17,17 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.disposition_traits import DispositionTraits
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class BankProfileResponse(BaseModel):
+class SetBankGoalRequest(BaseModel):
     """
-    Response model for bank profile.
+    Request model for setting a bank's goal.
     """ # noqa: E501
-    bank_id: StrictStr
-    name: StrictStr
-    disposition: DispositionTraits
-    background: StrictStr
-    goal: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "background", "goal"]
+    goal: StrictStr = Field(description="The goal for this bank/agent")
+    __properties: ClassVar[List[str]] = ["goal"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +47,7 @@ class BankProfileResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of BankProfileResponse from a JSON string"""
+        """Create an instance of SetBankGoalRequest from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,19 +68,11 @@ class BankProfileResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of disposition
-        if self.disposition:
-            _dict['disposition'] = self.disposition.to_dict()
-        # set to None if goal (nullable) is None
-        # and model_fields_set contains the field
-        if self.goal is None and "goal" in self.model_fields_set:
-            _dict['goal'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of BankProfileResponse from a dict"""
+        """Create an instance of SetBankGoalRequest from a dict"""
         if obj is None:
             return None
 
@@ -93,10 +80,6 @@ class BankProfileResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "bank_id": obj.get("bank_id"),
-            "name": obj.get("name"),
-            "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
-            "background": obj.get("background"),
             "goal": obj.get("goal")
         })
         return _obj

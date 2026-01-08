@@ -781,6 +781,430 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/goal": {
+      "put": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Set bank goal",
+        "description": "Set the goal for a bank. The goal is used to derive structural mental models.",
+        "operationId": "set_bank_goal",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBankGoalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/mental-models": {
+      "get": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "List mental models",
+        "description": "List all mental models for a bank, optionally filtered by subtype or type.",
+        "operationId": "list_mental_models",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "subtype",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by subtype: structural or emergent",
+              "title": "Subtype"
+            },
+            "description": "Filter by subtype: structural or emergent"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by type: entity, concept, or event",
+              "title": "Type"
+            },
+            "description": "Filter by type: entity, concept, or event"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MentalModelListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/mental-models/{model_id}": {
+      "get": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Get mental model",
+        "description": "Get a specific mental model by ID.",
+        "operationId": "get_mental_model",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MentalModelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Delete mental model",
+        "description": "Delete a mental model.",
+        "operationId": "delete_mental_model",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/mental-models/refresh": {
+      "post": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Refresh all mental models (async)",
+        "description": "Submit a background job to refresh all mental models for a bank. The job will: 1) Derive structural models from the bank's goal, 2) Promote relevant entities to emergent models, 3) Generate summaries for all mental models. Use GET /banks/{bank_id}/operations to check progress.",
+        "operationId": "refresh_mental_models",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncOperationSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/research": {
+      "post": {
+        "tags": [
+          "Mental Models"
+        ],
+        "summary": "Research query",
+        "description": "Execute a research query against mental models. Returns a synthesized answer with sources.",
+        "operationId": "research",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/documents": {
       "get": {
         "tags": [
@@ -1790,6 +2214,29 @@
           "update_disposition": true
         }
       },
+      "AsyncOperationSubmitResponse": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "status"
+        ],
+        "title": "AsyncOperationSubmitResponse",
+        "description": "Response model for submitting an async operation.",
+        "example": {
+          "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+          "status": "queued"
+        }
+      },
       "BackgroundResponse": {
         "properties": {
           "background": {
@@ -1933,6 +2380,17 @@
           "background": {
             "type": "string",
             "title": "Background"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
           }
         },
         "type": "object",
@@ -1952,6 +2410,7 @@
             "literalism": 3,
             "skepticism": 3
           },
+          "goal": "Be a PM for the engineering team",
           "name": "Alice"
         }
       },
@@ -3098,6 +3557,142 @@
           "timestamp": "2024-01-15T10:30:00Z"
         }
       },
+      "MentalModelListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MentalModelResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "MentalModelListResponse",
+        "description": "Response model for listing mental models."
+      },
+      "MentalModelResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "subtype": {
+            "type": "string",
+            "title": "Subtype"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "source_facts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Facts",
+            "default": []
+          },
+          "triggers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Triggers",
+            "default": []
+          },
+          "links": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Links",
+            "default": []
+          },
+          "last_updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "bank_id",
+          "type",
+          "subtype",
+          "name",
+          "description",
+          "created_at"
+        ],
+        "title": "MentalModelResponse",
+        "description": "Response model for a mental model.",
+        "example": {
+          "bank_id": "test-bank",
+          "created_at": "2024-01-10T08:00:00Z",
+          "description": "Who's on the team and their roles",
+          "id": "team-structure",
+          "last_updated": "2024-01-15T10:30:00Z",
+          "links": [],
+          "name": "Team Structure",
+          "source_facts": [],
+          "subtype": "structural",
+          "summary": "The team consists of...",
+          "triggers": [
+            "team",
+            "member",
+            "role"
+          ],
+          "type": "entity"
+        }
+      },
       "OperationResponse": {
         "properties": {
           "id": {
@@ -3842,6 +4437,77 @@
           }
         }
       },
+      "ResearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "The research question to answer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "ResearchRequest",
+        "description": "Request model for research endpoint.",
+        "example": {
+          "query": "Who should handle the database migration task?"
+        }
+      },
+      "ResearchResponse": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "mental_models_used": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mental Models Used",
+            "default": []
+          },
+          "facts_used": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Facts Used",
+            "default": []
+          },
+          "question_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "ResearchResponse",
+        "description": "Response model for research endpoint.",
+        "example": {
+          "answer": "Based on the team structure, Tom is the best fit...",
+          "facts_used": [
+            "fact-id-1",
+            "fact-id-2"
+          ],
+          "mental_models_used": [
+            "team-structure",
+            "entity-abc123"
+          ],
+          "question_type": "WHO"
+        }
+      },
       "RetainRequest": {
         "properties": {
           "items": {
@@ -3961,6 +4627,24 @@
             "output_tokens": 100,
             "total_tokens": 600
           }
+        }
+      },
+      "SetBankGoalRequest": {
+        "properties": {
+          "goal": {
+            "type": "string",
+            "title": "Goal",
+            "description": "The goal for this bank/agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "SetBankGoalRequest",
+        "description": "Request model for setting a bank's goal.",
+        "example": {
+          "goal": "Be a PM for the engineering team"
         }
       },
       "TagItem": {

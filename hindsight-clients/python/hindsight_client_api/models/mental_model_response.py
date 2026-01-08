@@ -19,20 +19,27 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.disposition_traits import DispositionTraits
 from typing import Optional, Set
 from typing_extensions import Self
 
-class BankProfileResponse(BaseModel):
+class MentalModelResponse(BaseModel):
     """
-    Response model for bank profile.
+    Response model for a mental model.
     """ # noqa: E501
+    id: StrictStr
     bank_id: StrictStr
+    type: StrictStr
+    subtype: StrictStr
     name: StrictStr
-    disposition: DispositionTraits
-    background: StrictStr
-    goal: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "background", "goal"]
+    description: StrictStr
+    summary: Optional[StrictStr] = None
+    entity_id: Optional[StrictStr] = None
+    source_facts: Optional[List[StrictStr]] = None
+    triggers: Optional[List[StrictStr]] = None
+    links: Optional[List[StrictStr]] = None
+    last_updated: Optional[StrictStr] = None
+    created_at: StrictStr
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "type", "subtype", "name", "description", "summary", "entity_id", "source_facts", "triggers", "links", "last_updated", "created_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -52,7 +59,7 @@ class BankProfileResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of BankProfileResponse from a JSON string"""
+        """Create an instance of MentalModelResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,19 +80,26 @@ class BankProfileResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of disposition
-        if self.disposition:
-            _dict['disposition'] = self.disposition.to_dict()
-        # set to None if goal (nullable) is None
+        # set to None if summary (nullable) is None
         # and model_fields_set contains the field
-        if self.goal is None and "goal" in self.model_fields_set:
-            _dict['goal'] = None
+        if self.summary is None and "summary" in self.model_fields_set:
+            _dict['summary'] = None
+
+        # set to None if entity_id (nullable) is None
+        # and model_fields_set contains the field
+        if self.entity_id is None and "entity_id" in self.model_fields_set:
+            _dict['entity_id'] = None
+
+        # set to None if last_updated (nullable) is None
+        # and model_fields_set contains the field
+        if self.last_updated is None and "last_updated" in self.model_fields_set:
+            _dict['last_updated'] = None
 
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of BankProfileResponse from a dict"""
+        """Create an instance of MentalModelResponse from a dict"""
         if obj is None:
             return None
 
@@ -93,11 +107,19 @@ class BankProfileResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "id": obj.get("id"),
             "bank_id": obj.get("bank_id"),
+            "type": obj.get("type"),
+            "subtype": obj.get("subtype"),
             "name": obj.get("name"),
-            "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
-            "background": obj.get("background"),
-            "goal": obj.get("goal")
+            "description": obj.get("description"),
+            "summary": obj.get("summary"),
+            "entity_id": obj.get("entity_id"),
+            "source_facts": obj.get("source_facts"),
+            "triggers": obj.get("triggers"),
+            "links": obj.get("links"),
+            "last_updated": obj.get("last_updated"),
+            "created_at": obj.get("created_at")
         })
         return _obj
 

@@ -28,6 +28,7 @@ class BankProfile(TypedDict):
     name: str
     disposition: DispositionTraits
     background: str
+    goal: str | None
 
 
 class BackgroundMergeResponse(BaseModel):
@@ -39,7 +40,7 @@ class BackgroundMergeResponse(BaseModel):
 
 async def get_bank_profile(pool, bank_id: str) -> BankProfile:
     """
-    Get bank profile (name, disposition + background).
+    Get bank profile (name, disposition + background + goal).
     Auto-creates bank with default values if not exists.
 
     Args:
@@ -47,13 +48,13 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
         bank_id: bank IDentifier
 
     Returns:
-        BankProfile with name, typed DispositionTraits, and background
+        BankProfile with name, typed DispositionTraits, background, and goal
     """
     async with acquire_with_retry(pool) as conn:
         # Try to get existing bank
         row = await conn.fetchrow(
             f"""
-            SELECT name, disposition, background
+            SELECT name, disposition, background, goal
             FROM {fq_table("banks")} WHERE bank_id = $1
             """,
             bank_id,
@@ -66,7 +67,10 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
                 disposition_data = json.loads(disposition_data)
 
             return BankProfile(
-                name=row["name"], disposition=DispositionTraits(**disposition_data), background=row["background"]
+                name=row["name"],
+                disposition=DispositionTraits(**disposition_data),
+                background=row["background"],
+                goal=row["goal"],
             )
 
         # Bank doesn't exist, create with defaults
@@ -82,7 +86,7 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
             "",
         )
 
-        return BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), background="")
+        return BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), background="", goal=None)
 
 
 async def update_bank_disposition(pool, bank_id: str, disposition: dict[str, int]) -> None:

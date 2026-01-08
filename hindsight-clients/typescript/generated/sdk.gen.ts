@@ -21,6 +21,9 @@ import type {
   DeleteDocumentData,
   DeleteDocumentErrors,
   DeleteDocumentResponses,
+  DeleteMentalModelData,
+  DeleteMentalModelErrors,
+  DeleteMentalModelResponses,
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
@@ -42,6 +45,9 @@ import type {
   GetMemoryData,
   GetMemoryErrors,
   GetMemoryResponses,
+  GetMentalModelData,
+  GetMentalModelErrors,
+  GetMentalModelResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
   ListBanksData,
@@ -56,6 +62,9 @@ import type {
   ListMemoriesData,
   ListMemoriesErrors,
   ListMemoriesResponses,
+  ListMentalModelsData,
+  ListMentalModelsErrors,
+  ListMentalModelsResponses,
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
@@ -70,12 +79,21 @@ import type {
   ReflectData,
   ReflectErrors,
   ReflectResponses,
+  RefreshMentalModelsData,
+  RefreshMentalModelsErrors,
+  RefreshMentalModelsResponses,
   RegenerateEntityObservationsData,
   RegenerateEntityObservationsErrors,
   RegenerateEntityObservationsResponses,
+  ResearchData,
+  ResearchErrors,
+  ResearchResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
+  SetBankGoalData,
+  SetBankGoalErrors,
+  SetBankGoalResponses,
   UpdateBankDispositionData,
   UpdateBankDispositionErrors,
   UpdateBankDispositionResponses,
@@ -298,6 +316,110 @@ export const regenerateEntityObservations = <
   >({
     url: "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate",
     ...options,
+  });
+
+/**
+ * Set bank goal
+ *
+ * Set the goal for a bank. The goal is used to derive structural mental models.
+ */
+export const setBankGoal = <ThrowOnError extends boolean = false>(
+  options: Options<SetBankGoalData, ThrowOnError>,
+) =>
+  (options.client ?? client).put<
+    SetBankGoalResponses,
+    SetBankGoalErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/goal",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * List mental models
+ *
+ * List all mental models for a bank, optionally filtered by subtype or type.
+ */
+export const listMentalModels = <ThrowOnError extends boolean = false>(
+  options: Options<ListMentalModelsData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListMentalModelsResponses,
+    ListMentalModelsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/mental-models", ...options });
+
+/**
+ * Delete mental model
+ *
+ * Delete a mental model.
+ */
+export const deleteMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).delete<
+    DeleteMentalModelResponses,
+    DeleteMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+    ...options,
+  });
+
+/**
+ * Get mental model
+ *
+ * Get a specific mental model by ID.
+ */
+export const getMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<GetMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetMentalModelResponses,
+    GetMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+    ...options,
+  });
+
+/**
+ * Refresh all mental models (async)
+ *
+ * Submit a background job to refresh all mental models for a bank. The job will: 1) Derive structural models from the bank's goal, 2) Promote relevant entities to emergent models, 3) Generate summaries for all mental models. Use GET /banks/{bank_id}/operations to check progress.
+ */
+export const refreshMentalModels = <ThrowOnError extends boolean = false>(
+  options: Options<RefreshMentalModelsData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    RefreshMentalModelsResponses,
+    RefreshMentalModelsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/mental-models/refresh", ...options });
+
+/**
+ * Research query
+ *
+ * Execute a research query against mental models. Returns a synthesized answer with sources.
+ */
+export const research = <ThrowOnError extends boolean = false>(
+  options: Options<ResearchData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    ResearchResponses,
+    ResearchErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/research",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

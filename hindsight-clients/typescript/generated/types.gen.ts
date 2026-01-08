@@ -25,6 +25,22 @@ export type AddBackgroundRequest = {
 };
 
 /**
+ * AsyncOperationSubmitResponse
+ *
+ * Response model for submitting an async operation.
+ */
+export type AsyncOperationSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+};
+
+/**
  * BackgroundResponse
  *
  * Response model for background update.
@@ -97,6 +113,10 @@ export type BankProfileResponse = {
    * Background
    */
   background: string;
+  /**
+   * Goal
+   */
+  goal?: string | null;
 };
 
 /**
@@ -741,6 +761,78 @@ export type MemoryItem = {
 };
 
 /**
+ * MentalModelListResponse
+ *
+ * Response model for listing mental models.
+ */
+export type MentalModelListResponse = {
+  /**
+   * Items
+   */
+  items: Array<MentalModelResponse>;
+};
+
+/**
+ * MentalModelResponse
+ *
+ * Response model for a mental model.
+ */
+export type MentalModelResponse = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Type
+   */
+  type: string;
+  /**
+   * Subtype
+   */
+  subtype: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Description
+   */
+  description: string;
+  /**
+   * Summary
+   */
+  summary?: string | null;
+  /**
+   * Entity Id
+   */
+  entity_id?: string | null;
+  /**
+   * Source Facts
+   */
+  source_facts?: Array<string>;
+  /**
+   * Triggers
+   */
+  triggers?: Array<string>;
+  /**
+   * Links
+   */
+  links?: Array<string>;
+  /**
+   * Last Updated
+   */
+  last_updated?: string | null;
+  /**
+   * Created At
+   */
+  created_at: string;
+};
+
+/**
  * OperationResponse
  *
  * Response model for a single async operation.
@@ -1053,6 +1145,44 @@ export type ReflectResponse = {
 };
 
 /**
+ * ResearchRequest
+ *
+ * Request model for research endpoint.
+ */
+export type ResearchRequest = {
+  /**
+   * Query
+   *
+   * The research question to answer
+   */
+  query: string;
+};
+
+/**
+ * ResearchResponse
+ *
+ * Response model for research endpoint.
+ */
+export type ResearchResponse = {
+  /**
+   * Answer
+   */
+  answer: string;
+  /**
+   * Mental Models Used
+   */
+  mental_models_used?: Array<string>;
+  /**
+   * Facts Used
+   */
+  facts_used?: Array<string>;
+  /**
+   * Question Type
+   */
+  question_type?: string | null;
+};
+
+/**
  * RetainRequest
  *
  * Request model for retain endpoint.
@@ -1110,6 +1240,20 @@ export type RetainResponse = {
    * Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)
    */
   usage?: TokenUsage | null;
+};
+
+/**
+ * SetBankGoalRequest
+ *
+ * Request model for setting a bank's goal.
+ */
+export type SetBankGoalRequest = {
+  /**
+   * Goal
+   *
+   * The goal for this bank/agent
+   */
+  goal: string;
 };
 
 /**
@@ -1626,6 +1770,249 @@ export type RegenerateEntityObservationsResponses = {
 
 export type RegenerateEntityObservationsResponse =
   RegenerateEntityObservationsResponses[keyof RegenerateEntityObservationsResponses];
+
+export type SetBankGoalData = {
+  body: SetBankGoalRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/goal";
+};
+
+export type SetBankGoalErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type SetBankGoalError = SetBankGoalErrors[keyof SetBankGoalErrors];
+
+export type SetBankGoalResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type ListMentalModelsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Subtype
+     *
+     * Filter by subtype: structural or emergent
+     */
+    subtype?: string | null;
+    /**
+     * Type
+     *
+     * Filter by type: entity, concept, or event
+     */
+    type?: string | null;
+  };
+  url: "/v1/default/banks/{bank_id}/mental-models";
+};
+
+export type ListMentalModelsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListMentalModelsError =
+  ListMentalModelsErrors[keyof ListMentalModelsErrors];
+
+export type ListMentalModelsResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelListResponse;
+};
+
+export type ListMentalModelsResponse =
+  ListMentalModelsResponses[keyof ListMentalModelsResponses];
+
+export type DeleteMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Model Id
+     */
+    model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}";
+};
+
+export type DeleteMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteMentalModelError =
+  DeleteMentalModelErrors[keyof DeleteMentalModelErrors];
+
+export type DeleteMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteResponse;
+};
+
+export type DeleteMentalModelResponse =
+  DeleteMentalModelResponses[keyof DeleteMentalModelResponses];
+
+export type GetMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Model Id
+     */
+    model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}";
+};
+
+export type GetMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetMentalModelError =
+  GetMentalModelErrors[keyof GetMentalModelErrors];
+
+export type GetMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelResponse;
+};
+
+export type GetMentalModelResponse =
+  GetMentalModelResponses[keyof GetMentalModelResponses];
+
+export type RefreshMentalModelsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/refresh";
+};
+
+export type RefreshMentalModelsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type RefreshMentalModelsError =
+  RefreshMentalModelsErrors[keyof RefreshMentalModelsErrors];
+
+export type RefreshMentalModelsResponses = {
+  /**
+   * Successful Response
+   */
+  200: AsyncOperationSubmitResponse;
+};
+
+export type RefreshMentalModelsResponse =
+  RefreshMentalModelsResponses[keyof RefreshMentalModelsResponses];
+
+export type ResearchData = {
+  body: ResearchRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/research";
+};
+
+export type ResearchErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ResearchError = ResearchErrors[keyof ResearchErrors];
+
+export type ResearchResponses = {
+  /**
+   * Successful Response
+   */
+  200: ResearchResponse;
+};
+
+export type ResearchResponse2 = ResearchResponses[keyof ResearchResponses];
 
 export type ListDocumentsData = {
   body?: never;

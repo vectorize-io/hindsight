@@ -261,3 +261,32 @@ class EntityState(BaseModel):
     observations: list[EntityObservation] = Field(
         default_factory=list, description="List of observations about this entity"
     )
+
+
+class MentalModel(BaseModel):
+    """
+    A manually configured mental model for tracking specific topics/areas.
+
+    Mental models are user-defined focus areas that the agent should track
+    and maintain summaries for, unlike auto-extracted entities.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "team-dynamics",
+                "name": "Team Dynamics",
+                "description": "Track how the team collaborates, communication patterns, conflicts, and resolutions",
+                "summary": "The team has strong collaboration...",
+                "summary_updated_at": "2024-01-15T10:30:00Z",
+                "created_at": "2024-01-10T08:00:00Z",
+            }
+        }
+    )
+
+    id: str = Field(description="Unique identifier (alphanumeric lowercase)")
+    name: str = Field(description="Display name for the mental model")
+    description: str = Field(description="Prompt/directions for what to track and summarize")
+    summary: str | None = Field(None, description="Generated summary based on relevant facts")
+    summary_updated_at: str | None = Field(None, description="ISO format date when summary was last updated")
+    created_at: str = Field(description="ISO format date when the mental model was created")

@@ -21,6 +21,7 @@ from hindsight_client_api.api.banks_api import BanksApi
 from hindsight_client_api.api.documents_api import DocumentsApi
 from hindsight_client_api.api.entities_api import EntitiesApi
 from hindsight_client_api.api.memory_api import MemoryApi
+from hindsight_client_api.api.mental_models_api import MentalModelsApi
 from hindsight_client_api.api.monitoring_api import MonitoringApi
 from hindsight_client_api.api.operations_api import OperationsApi
 
@@ -37,6 +38,7 @@ from hindsight_client_api.exceptions import ApiException
 
 # import models into sdk package
 from hindsight_client_api.models.add_background_request import AddBackgroundRequest
+from hindsight_client_api.models.async_operation_submit_response import AsyncOperationSubmitResponse
 from hindsight_client_api.models.background_response import BackgroundResponse
 from hindsight_client_api.models.bank_list_item import BankListItem
 from hindsight_client_api.models.bank_list_response import BankListResponse
@@ -66,6 +68,8 @@ from hindsight_client_api.models.list_documents_response import ListDocumentsRes
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.list_tags_response import ListTagsResponse
 from hindsight_client_api.models.memory_item import MemoryItem
+from hindsight_client_api.models.mental_model_list_response import MentalModelListResponse
+from hindsight_client_api.models.mental_model_response import MentalModelResponse
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
 from hindsight_client_api.models.recall_request import RecallRequest
@@ -75,8 +79,11 @@ from hindsight_client_api.models.reflect_fact import ReflectFact
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from hindsight_client_api.models.reflect_request import ReflectRequest
 from hindsight_client_api.models.reflect_response import ReflectResponse
+from hindsight_client_api.models.research_request import ResearchRequest
+from hindsight_client_api.models.research_response import ResearchResponse
 from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.set_bank_goal_request import SetBankGoalRequest
 from hindsight_client_api.models.tag_item import TagItem
 from hindsight_client_api.models.token_usage import TokenUsage
 from hindsight_client_api.models.update_disposition_request import UpdateDispositionRequest
