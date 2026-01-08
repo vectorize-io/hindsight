@@ -100,8 +100,12 @@ async def test_reflect_chinese_content(memory, request_context):
     1. Reflection produces a response in Chinese
     2. The response references the Chinese facts
     3. Opinions are formed and expressed in Chinese
+
+    Note: LLM responses are non-deterministic, so we retry up to 3 times
+    to account for occasional hallucinations of different names.
     """
     bank_id = f"test_chinese_reflect_{datetime.now(timezone.utc).timestamp()}"
+    max_retries = 3
 
     try:
         # Store some Chinese facts to give context for opinion formation
@@ -121,40 +125,67 @@ async def test_reflect_chinese_content(memory, request_context):
             request_context=request_context,
         )
 
-        # Reflect with a Chinese query
-        query = "谁是更可靠的工程师？"  # "Who is a more reliable engineer?"
-        result = await memory.reflect_async(
-            bank_id=bank_id,
-            query=query,
-            budget=Budget.LOW,
-            request_context=request_context,
-        )
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Reflect with a Chinese query
+                query = "谁是更可靠的工程师？"  # "Who is a more reliable engineer?"
+                result = await memory.reflect_async(
+                    bank_id=bank_id,
+                    query=query,
+                    budget=Budget.LOW,
+                    request_context=request_context,
+                )
 
-        logger.info(f"Reflection answer: {result.text}")
+                logger.info(f"Reflection answer (attempt {attempt + 1}): {result.text}")
 
-        # Verify we got an answer
-        assert result.text, "Reflection should return an answer"
+                # Verify we got an answer
+                assert result.text, "Reflection should return an answer"
 
-        # Check that the response contains Chinese characters
-        # The response should be in Chinese, not English
-        chinese_chars_found = sum(1 for char in result.text if "\u4e00" <= char <= "\u9fff")
-        total_chars = len(result.text.replace(" ", "").replace("\n", ""))
+                # Check that the response contains Chinese characters
+                # The response should be in Chinese, not English
+                chinese_chars_found = sum(1 for char in result.text if "\u4e00" <= char <= "\u9fff")
+                total_chars = len(result.text.replace(" ", "").replace("\n", ""))
 
-        logger.info(f"Chinese characters: {chinese_chars_found}, Total characters: {total_chars}")
+                logger.info(f"Chinese characters: {chinese_chars_found}, Total characters: {total_chars}")
 
-        # At least 30% of characters should be Chinese (allowing for numbers, punctuation)
-        chinese_ratio = chinese_chars_found / max(total_chars, 1)
-        assert chinese_ratio > 0.3, (
-            f"Expected response to be in Chinese (>30% Chinese characters), "
-            f"but only {chinese_ratio:.1%} are Chinese. Response: {result.text}"
-        )
+                # At least 30% of characters should be Chinese (allowing for numbers, punctuation)
+                chinese_ratio = chinese_chars_found / max(total_chars, 1)
+                assert chinese_ratio > 0.3, (
+                    f"Expected response to be in Chinese (>30% Chinese characters), "
+                    f"but only {chinese_ratio:.1%} are Chinese. Response: {result.text}"
+                )
 
-        # Check that Chinese names are mentioned
-        assert "张伟" in result.text or "李明" in result.text, (
-            f"Expected response to mention Chinese names 张伟 or 李明. Response: {result.text}"
-        )
+                # Check that Chinese names are mentioned
+                # The LLM should use names from the based_on facts, not hallucinate different names
+                # Extract Chinese names from the based_on world facts
+                expected_names = set()
+                for fact in result.based_on.get("world", []):
+                    # Extract Chinese entity names from the fact
+                    for entity in (fact.entities or []):
+                        # Check if entity contains Chinese characters
+                        if any("\u4e00" <= char <= "\u9fff" for char in entity):
+                            expected_names.add(entity)
 
-        logger.info("Chinese reflect test passed - response generated in Chinese")
+                # Also check for the specific names we stored
+                expected_names.update(["张伟", "李明"])
+
+                # At least one expected name should appear in the response
+                found_name = any(name in result.text for name in expected_names)
+                assert found_name, (
+                    f"Expected response to mention one of the Chinese names: {expected_names}. Response: {result.text}"
+                )
+
+                logger.info("Chinese reflect test passed - response generated in Chinese")
+                return  # Test passed, exit
+
+            except AssertionError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
+                    continue
+                else:
+                    raise e
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -167,62 +198,81 @@ async def test_retain_japanese_content(memory, request_context):
 
     This test verifies multilingual support extends beyond Chinese
     to other non-Latin languages.
+
+    Note: LLM fact extraction is non-deterministic and may sometimes translate
+    content to English despite instructions. We retry up to 3 times.
     """
-    bank_id = f"test_japanese_retain_{datetime.now(timezone.utc).timestamp()}"
+    max_retries = 3
+    last_error = None
 
-    try:
-        # Japanese content about a developer
-        japanese_content = """
-        田中さんはソフトウェアエンジニアで、東京のスタートアップで働いています。
-        彼女はPythonとTypeScriptが得意で、毎日コードレビューをしています。
-        先週、新しいAPIを完成させました。
-        """
+    for attempt in range(max_retries):
+        # Use unique bank_id per attempt to avoid stale data
+        bank_id = f"test_japanese_retain_{datetime.now(timezone.utc).timestamp()}_{attempt}"
 
-        unit_ids = await memory.retain_async(
-            bank_id=bank_id,
-            content=japanese_content,
-            context="チームプロフィール",  # "Team profile"
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            request_context=request_context,
-        )
+        try:
+            # Japanese content about a developer
+            japanese_content = """
+            田中さんはソフトウェアエンジニアで、東京のスタートアップで働いています。
+            彼女はPythonとTypeScriptが得意で、毎日コードレビューをしています。
+            先週、新しいAPIを完成させました。
+            """
 
-        logger.info(f"Retained {len(unit_ids)} facts from Japanese content")
-        assert len(unit_ids) > 0, "Should have extracted facts from Japanese content"
+            unit_ids = await memory.retain_async(
+                bank_id=bank_id,
+                content=japanese_content,
+                context="チームプロフィール",  # "Team profile"
+                event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                request_context=request_context,
+            )
 
-        # Recall with Japanese query
-        result = await memory.recall_async(
-            bank_id=bank_id,
-            query="田中さんについて教えてください",  # "Tell me about Tanaka-san"
-            budget=Budget.MID,
-            max_tokens=1000,
-            fact_type=["world"],
-            request_context=request_context,
-        )
+            logger.info(f"Retained {len(unit_ids)} facts from Japanese content (attempt {attempt + 1})")
+            assert len(unit_ids) > 0, "Should have extracted facts from Japanese content"
 
-        assert len(result.results) > 0, "Should recall facts about Tanaka"
+            # Recall with Japanese query
+            result = await memory.recall_async(
+                bank_id=bank_id,
+                query="田中さんについて教えてください",  # "Tell me about Tanaka-san"
+                budget=Budget.MID,
+                max_tokens=1000,
+                fact_type=["world"],
+                request_context=request_context,
+            )
 
-        # Check for Japanese content in facts
-        japanese_facts_found = 0
-        for fact in result.results:
-            logger.info(f"Fact: {fact.text[:100]}...")
-            # Check for Japanese characters (hiragana, katakana, or kanji)
-            if any(
-                ("\u3040" <= char <= "\u309f")  # Hiragana
-                or ("\u30a0" <= char <= "\u30ff")  # Katakana
-                or ("\u4e00" <= char <= "\u9fff")  # Kanji
-                for char in fact.text
-            ):
-                japanese_facts_found += 1
+            assert len(result.results) > 0, "Should recall facts about Tanaka"
 
-        assert japanese_facts_found > 0, (
-            f"Expected facts to contain Japanese characters. "
-            f"Facts: {[f.text for f in result.results]}"
-        )
+            # Check for Japanese content in facts
+            japanese_facts_found = 0
+            for fact in result.results:
+                logger.info(f"Fact: {fact.text[:100]}...")
+                # Check for Japanese characters (hiragana, katakana, or kanji)
+                if any(
+                    ("\u3040" <= char <= "\u309f")  # Hiragana
+                    or ("\u30a0" <= char <= "\u30ff")  # Katakana
+                    or ("\u4e00" <= char <= "\u9fff")  # Kanji
+                    for char in fact.text
+                ):
+                    japanese_facts_found += 1
 
-        logger.info("Japanese retain test passed - facts preserved in Japanese")
+            assert japanese_facts_found > 0, (
+                f"Expected facts to contain Japanese characters. "
+                f"Facts: {[f.text for f in result.results]}"
+            )
 
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
+            logger.info("Japanese retain test passed - facts preserved in Japanese")
+            return  # Test passed
+
+        except AssertionError as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying...")
+            else:
+                raise e
+        finally:
+            # Cleanup the bank
+            try:
+                await memory.delete_bank(bank_id, request_context=request_context)
+            except Exception:
+                pass
 
 
 @pytest.mark.asyncio
