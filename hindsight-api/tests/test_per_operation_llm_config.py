@@ -11,29 +11,41 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def setup_test_env():
-    """Set up environment for each test."""
-    # Set environment variables
-    os.environ["HINDSIGHT_API_SKIP_LLM_VERIFICATION"] = "true"
-    os.environ["HINDSIGHT_API_LAZY_RERANKER"] = "true"
-
-    # Default LLM config
-    os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "mock"
-    os.environ["HINDSIGHT_API_LLM_MODEL"] = "default-model"
-
-    # Retain-specific config
-    os.environ["HINDSIGHT_API_RETAIN_LLM_PROVIDER"] = "mock"
-    os.environ["HINDSIGHT_API_RETAIN_LLM_MODEL"] = "retain-model"
-
-    # Reflect-specific config
-    os.environ["HINDSIGHT_API_REFLECT_LLM_PROVIDER"] = "mock"
-    os.environ["HINDSIGHT_API_REFLECT_LLM_MODEL"] = "reflect-model"
-
+    """Set up environment for each test, restoring original values after."""
     from hindsight_api.config import clear_config_cache
+
+    # Save original environment values
+    env_vars_to_set = {
+        "HINDSIGHT_API_SKIP_LLM_VERIFICATION": "true",
+        "HINDSIGHT_API_LAZY_RERANKER": "true",
+        "HINDSIGHT_API_LLM_PROVIDER": "mock",
+        "HINDSIGHT_API_LLM_MODEL": "default-model",
+        "HINDSIGHT_API_RETAIN_LLM_PROVIDER": "mock",
+        "HINDSIGHT_API_RETAIN_LLM_MODEL": "retain-model",
+        "HINDSIGHT_API_REFLECT_LLM_PROVIDER": "mock",
+        "HINDSIGHT_API_REFLECT_LLM_MODEL": "reflect-model",
+    }
+
+    # Save original values
+    original_values = {}
+    for key in env_vars_to_set:
+        original_values[key] = os.environ.get(key)
+
+    # Set test values
+    for key, value in env_vars_to_set.items():
+        os.environ[key] = value
+
     clear_config_cache()
 
     yield
 
-    # Cleanup (optional)
+    # Restore original environment
+    for key, original_value in original_values.items():
+        if original_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original_value
+
     clear_config_cache()
 
 
