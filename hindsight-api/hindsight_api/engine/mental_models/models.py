@@ -2,7 +2,7 @@
 Pydantic models for mental models.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -51,7 +51,9 @@ class MentalModel(BaseModel):
 
     # Timestamps
     last_updated: datetime | None = Field(default=None, description="When summary was last regenerated")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="When this model was created")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc), description="When this model was created"
+    )
 
 
 class StructuralModelTemplate(BaseModel):
