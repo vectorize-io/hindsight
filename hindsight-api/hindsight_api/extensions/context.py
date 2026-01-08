@@ -96,7 +96,7 @@ class DefaultExtensionContext(ExtensionContext):
 
     async def run_migration(self, schema: str) -> None:
         """Run migrations for a specific schema."""
-        from hindsight_api.migrations import run_migrations
+        from hindsight_api.migrations import ensure_embedding_dimension, run_migrations
 
         # Prefer getting URL from memory engine (handles pg0 case where URL is set after init)
         db_url = self._database_url
@@ -106,6 +106,15 @@ class DefaultExtensionContext(ExtensionContext):
                 db_url = engine_url
 
         run_migrations(db_url, schema=schema)
+
+        # Ensure embedding column dimension matches the model's dimension
+        # This is needed because migrations create columns with default dimension
+        if self._memory_engine is not None:
+            embeddings = getattr(self._memory_engine, "embeddings", None)
+            if embeddings is not None:
+                dimension = getattr(embeddings, "dimension", None)
+                if dimension is not None:
+                    ensure_embedding_dimension(db_url, dimension, schema=schema)
 
     def get_memory_engine(self) -> "MemoryEngineInterface":
         """Get the memory engine interface."""
