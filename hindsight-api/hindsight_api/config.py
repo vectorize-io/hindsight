@@ -115,7 +115,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8888
 DEFAULT_LOG_LEVEL = "info"
 DEFAULT_MCP_ENABLED = True
-DEFAULT_GRAPH_RETRIEVER = "bfs"  # Options: "bfs", "mpfp"
+DEFAULT_GRAPH_RETRIEVER = "mpfp"  # Options: "mpfp", "bfs"
 DEFAULT_MCP_LOCAL_BANK_ID = "mcp"
 
 # Observation thresholds

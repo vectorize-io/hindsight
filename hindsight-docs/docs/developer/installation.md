@@ -171,4 +171,4 @@ PORT=80 HINDSIGHT_CP_DATAPLANE_API_URL=https://api.hindsight.io npx @vectorize-i
 
 - [Configuration](./configuration.md) — Environment variables and settings
 - [Models](./models.md) — ML models and providers
-- [Metrics](./metrics.md) — Monitoring and observability
+- [Monitoring](./monitoring.md) — Metrics and observability
