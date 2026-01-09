@@ -106,6 +106,9 @@ ENV_TASK_BACKEND = "HINDSIGHT_API_TASK_BACKEND"
 ENV_TASK_BACKEND_MEMORY_BATCH_SIZE = "HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_SIZE"
 ENV_TASK_BACKEND_MEMORY_BATCH_INTERVAL = "HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_INTERVAL"
 
+# Reflect agent settings
+ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
+
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_LLM_PROVIDER = "openai"
@@ -171,6 +174,9 @@ DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_TASK_BACKEND = "memory"  # Options: "memory", "noop"
 DEFAULT_TASK_BACKEND_MEMORY_BATCH_SIZE = 10
 DEFAULT_TASK_BACKEND_MEMORY_BATCH_INTERVAL = 1.0  # seconds
+
+# Reflect agent settings
+DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -291,6 +297,9 @@ class HindsightConfig:
     task_backend_memory_batch_size: int
     task_backend_memory_batch_interval: float
 
+    # Reflect agent settings
+    reflect_max_iterations: int
+
     @classmethod
     def from_env(cls) -> "HindsightConfig":
         """Create configuration from environment variables."""
@@ -380,6 +389,8 @@ class HindsightConfig:
             task_backend_memory_batch_interval=float(
                 os.getenv(ENV_TASK_BACKEND_MEMORY_BATCH_INTERVAL, str(DEFAULT_TASK_BACKEND_MEMORY_BATCH_INTERVAL))
             ),
+            # Reflect agent settings
+            reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
         )
 
     def get_llm_base_url(self) -> str:

@@ -139,6 +139,9 @@ from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig
 from .query_analyzer import QueryAnalyzer
+from .reflect import run_reflect_agent
+from .reflect.models import MentalModelInput
+from .reflect.tools import tool_expand, tool_learn, tool_lookup, tool_recall
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     EntityObservation,
@@ -663,10 +666,6 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             if task_type == "access_count_update":
                 await self._handle_access_count_update(task_dict)
-            elif task_type == "reinforce_opinion":
-                await self._handle_reinforce_opinion(task_dict)
-            elif task_type == "form_opinion":
-                await self._handle_form_opinion(task_dict)
             elif task_type == "batch_retain":
                 await self._handle_batch_retain(task_dict)
             elif task_type == "refresh_mental_models":
@@ -1497,6 +1496,13 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
                 f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
             )
+
+        # Filter out 'opinion' - opinions are no longer returned from recall
+        # (learnings are now stored as mental models instead)
+        fact_type = [ft for ft in fact_type if ft != "opinion"]
+        if not fact_type:
+            # All requested types were opinions - return empty result
+            return RecallResult(results=[], entities={}, chunks={})
 
         # Validate operation if validator is configured
         if self._operation_validator:
@@ -3124,246 +3130,6 @@ class MemoryEngine(MemoryEngineInterface):
                 "created_at": chunk["created_at"].isoformat() if chunk["created_at"] else "",
             }
 
-    async def _evaluate_opinion_update_async(
-        self,
-        opinion_text: str,
-        opinion_confidence: float,
-        new_event_text: str,
-        entity_name: str,
-    ) -> dict[str, Any] | None:
-        """
-        Evaluate if an opinion should be updated based on a new event.
-
-        Args:
-            opinion_text: Current opinion text (includes reasons)
-            opinion_confidence: Current confidence score (0.0-1.0)
-            new_event_text: Text of the new event
-            entity_name: Name of the entity this opinion is about
-
-        Returns:
-            Dict with 'action' ('keep'|'update'), 'new_confidence', 'new_text' (if action=='update')
-            or None if no changes needed
-        """
-
-        class OpinionEvaluation(BaseModel):
-            """Evaluation of whether an opinion should be updated."""
-
-            action: str = Field(description="Action to take: 'keep' (no change) or 'update' (modify opinion)")
-            reasoning: str = Field(description="Brief explanation of why this action was chosen")
-            new_confidence: float = Field(
-                description="New confidence score (0.0-1.0). Can be higher, lower, or same as before."
-            )
-            new_opinion_text: str | None = Field(
-                default=None,
-                description="If action is 'update', the revised opinion text that acknowledges the previous view. Otherwise None.",
-            )
-
-        evaluation_prompt = f"""You are evaluating whether an existing opinion should be updated based on new information.
-
-ENTITY: {entity_name}
-
-EXISTING OPINION:
-{opinion_text}
-Current confidence: {opinion_confidence:.2f}
-
-NEW EVENT:
-{new_event_text}
-
-Evaluate whether this new event:
-1. REINFORCES the opinion (increase confidence, keep text)
-2. WEAKENS the opinion (decrease confidence, keep text)
-3. CHANGES the opinion (update both text and confidence, noting "Previously I thought X, but now Y...")
-4. IRRELEVANT (keep everything as is)
-
-Guidelines:
-- Only suggest 'update' action if the new event genuinely contradicts or significantly modifies the opinion
-- If updating the text, acknowledge the previous opinion and explain the change
-- Confidence should reflect accumulated evidence (0.0 = no confidence, 1.0 = very confident)
-- Small changes in confidence are normal; large jumps should be rare"""
-
-        try:
-            result = await self._reflect_llm_config.call(
-                messages=[
-                    {"role": "system", "content": "You evaluate and update opinions based on new information."},
-                    {"role": "user", "content": evaluation_prompt},
-                ],
-                response_format=OpinionEvaluation,
-                scope="memory_evaluate_opinion",
-                temperature=0.3,  # Lower temperature for more consistent evaluation
-            )
-
-            # Only return updates if something actually changed
-            if result.action == "keep" and abs(result.new_confidence - opinion_confidence) < 0.01:
-                return None
-
-            return {
-                "action": result.action,
-                "reasoning": result.reasoning,
-                "new_confidence": result.new_confidence,
-                "new_text": result.new_opinion_text if result.action == "update" else None,
-            }
-
-        except Exception as e:
-            logger.warning(f"Failed to evaluate opinion update: {str(e)}")
-            return None
-
-    async def _handle_form_opinion(self, task_dict: dict[str, Any]):
-        """
-        Handler for form opinion tasks.
-
-        Args:
-            task_dict: Dict with keys: 'bank_id', 'answer_text', 'query', 'tenant_id'
-        """
-        bank_id = task_dict["bank_id"]
-        answer_text = task_dict["answer_text"]
-        query = task_dict["query"]
-        tenant_id = task_dict.get("tenant_id")
-
-        await self._extract_and_store_opinions_async(
-            bank_id=bank_id, answer_text=answer_text, query=query, tenant_id=tenant_id
-        )
-
-    async def _handle_reinforce_opinion(self, task_dict: dict[str, Any]):
-        """
-        Handler for reinforce opinion tasks.
-
-        Args:
-            task_dict: Dict with keys: 'bank_id', 'created_unit_ids', 'unit_texts', 'unit_entities'
-        """
-        bank_id = task_dict["bank_id"]
-        created_unit_ids = task_dict["created_unit_ids"]
-        unit_texts = task_dict["unit_texts"]
-        unit_entities = task_dict["unit_entities"]
-
-        await self._reinforce_opinions_async(
-            bank_id=bank_id, created_unit_ids=created_unit_ids, unit_texts=unit_texts, unit_entities=unit_entities
-        )
-
-    async def _reinforce_opinions_async(
-        self,
-        bank_id: str,
-        created_unit_ids: list[str],
-        unit_texts: list[str],
-        unit_entities: list[list[dict[str, str]]],
-    ):
-        """
-        Background task to reinforce opinions based on newly ingested events.
-
-        This runs asynchronously and does not block the put operation.
-
-        Args:
-            bank_id: bank ID
-            created_unit_ids: List of newly created memory unit IDs
-            unit_texts: Texts of the newly created units
-            unit_entities: Entities extracted from each unit
-        """
-        try:
-            # Extract all unique entity names from the new units
-            entity_names = set()
-            for entities_list in unit_entities:
-                for entity in entities_list:
-                    # Handle both Entity objects and dicts
-                    if hasattr(entity, "text"):
-                        entity_names.add(entity.text)
-                    elif isinstance(entity, dict):
-                        entity_names.add(entity["text"])
-
-            if not entity_names:
-                return
-
-            pool = await self._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                # Find all opinions related to these entities
-                opinions = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT mu.id, mu.text, mu.confidence_score, e.canonical_name
-                    FROM {fq_table("memory_units")} mu
-                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE mu.bank_id = $1
-                      AND mu.fact_type = 'opinion'
-                      AND e.canonical_name = ANY($2::text[])
-                    """,
-                    bank_id,
-                    list(entity_names),
-                )
-
-                if not opinions:
-                    return
-
-                # Use cached LLM config
-                if self._reflect_llm_config is None:
-                    logger.error("[REINFORCE] LLM config not available, skipping opinion reinforcement")
-                    return
-
-                # Evaluate each opinion against the new events
-                updates_to_apply = []
-                for opinion in opinions:
-                    opinion_id = str(opinion["id"])
-                    opinion_text = opinion["text"]
-                    opinion_confidence = opinion["confidence_score"]
-                    entity_name = opinion["canonical_name"]
-
-                    # Find all new events mentioning this entity
-                    relevant_events = []
-                    for unit_text, entities_list in zip(unit_texts, unit_entities):
-                        if any(e["text"] == entity_name for e in entities_list):
-                            relevant_events.append(unit_text)
-
-                    if not relevant_events:
-                        continue
-
-                    # Combine all relevant events
-                    combined_events = "\n".join(relevant_events)
-
-                    # Evaluate if opinion should be updated
-                    evaluation = await self._evaluate_opinion_update_async(
-                        opinion_text, opinion_confidence, combined_events, entity_name
-                    )
-
-                    if evaluation:
-                        updates_to_apply.append({"opinion_id": opinion_id, "evaluation": evaluation})
-
-                # Apply all updates in a single transaction
-                if updates_to_apply:
-                    async with conn.transaction():
-                        for update in updates_to_apply:
-                            opinion_id = update["opinion_id"]
-                            evaluation = update["evaluation"]
-
-                            if evaluation["action"] == "update" and evaluation["new_text"]:
-                                # Update both text and confidence
-                                await conn.execute(
-                                    f"""
-                                    UPDATE {fq_table("memory_units")}
-                                    SET text = $1, confidence_score = $2, updated_at = NOW()
-                                    WHERE id = $3
-                                    """,
-                                    evaluation["new_text"],
-                                    evaluation["new_confidence"],
-                                    uuid.UUID(opinion_id),
-                                )
-                            else:
-                                # Only update confidence
-                                await conn.execute(
-                                    f"""
-                                    UPDATE {fq_table("memory_units")}
-                                    SET confidence_score = $1, updated_at = NOW()
-                                    WHERE id = $2
-                                    """,
-                                    evaluation["new_confidence"],
-                                    uuid.UUID(opinion_id),
-                                )
-
-                else:
-                    pass  # No opinions to update
-
-        except Exception as e:
-            logger.error(f"[REINFORCE] Error during opinion reinforcement: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
-
     # ==================== bank profile Methods ====================
 
     async def get_bank_profile(
@@ -3476,30 +3242,32 @@ Guidelines:
         tags_match: TagsMatch = "any",
     ) -> ReflectResult:
         """
-        Reflect and formulate an answer using bank identity, world facts, and opinions.
+        Reflect and formulate an answer using an agentic loop with tools.
 
-        This method:
-        1. Retrieves experience (conversations and events)
-        2. Retrieves world facts (general knowledge)
-        3. Retrieves existing opinions (bank's formed perspectives)
-        4. Uses LLM to formulate an answer
-        5. Extracts and stores any new opinions formed during reflection
-        6. Optionally generates structured output based on response_schema
-        7. Returns plain text answer and the facts used
+        The reflect agent iteratively uses tools to:
+        1. lookup: Get mental models (synthesized knowledge)
+        2. recall: Search facts (semantic + temporal retrieval)
+        3. learn: Create/update mental models with new insights
+        4. expand: Get chunk/document context for memories
+
+        The agent starts with empty context and must call tools to gather
+        information. On the last iteration, tools are removed to force a
+        final text response.
 
         Args:
             bank_id: bank identifier
             query: Question to answer
-            budget: Budget level for memory exploration (low=100, mid=300, high=600 units)
-            context: Additional context string to include in LLM prompt (not used in recall)
-            response_schema: Optional JSON Schema for structured output
+            budget: Budget level (currently unused, reserved for future)
+            context: Additional context string to include in agent prompt
+            max_tokens: Max tokens (currently unused, reserved for future)
+            response_schema: Optional JSON Schema for structured output (not yet supported)
 
         Returns:
             ReflectResult containing:
-                - text: Plain text answer (no markdown)
-                - based_on: Dict with 'world', 'experience', and 'opinion' fact lists (MemoryFact objects)
-                - new_opinions: List of newly formed opinions
-                - structured_output: Optional dict if response_schema was provided
+                - text: Plain text answer
+                - based_on: Empty dict (agent retrieves facts dynamically)
+                - new_opinions: Empty list (learnings stored as mental models)
+                - structured_output: None (not yet supported for agentic reflect)
         """
         # Use cached LLM config
         if self._reflect_llm_config is None:
@@ -3523,137 +3291,69 @@ Guidelines:
 
         reflect_start = time.time()
         reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
-        log_buffer = []
-        query_short = query[:50] + "..." if len(query) > 50 else query
-        budget_val = budget.value if budget else "default"
-        log_buffer.append(
-            f"[REFLECT {reflect_id}] Query: '{query_short}' (budget={budget_val}, max_tokens={max_tokens})"
-        )
+        logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...")
 
-        # Steps 1-3: Run multi-fact-type search (12-way retrieval: 4 methods × 3 fact types)
-        recall_start = time.time()
-        metrics = get_metrics_collector()
-        with metrics.record_operation(
-            "recall", bank_id=bank_id, source="reflect", budget=budget.value if budget else None
-        ):
-            search_result = await self.recall_async(
+        # Get bank profile for agent identity
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+
+        # Pre-fetch mental models list so agent sees them immediately (filtered by tags)
+        mental_models = await self.list_mental_models(
+            bank_id=bank_id, tags=tags, tags_match=tags_match, request_context=request_context
+        )
+        if mental_models:
+            models_list = "\n".join(
+                f"- {m['id']}: {m['name']} ({m['type']}) - {m.get('description', '')}" for m in mental_models
+            )
+            models_context = f"## Available Mental Models\n{models_list}\n\nUse lookup(model_id) to get full details of a matching model."
+            context = f"{models_context}\n\n{context}" if context else models_context
+
+        # Get max iterations from config
+        config = get_config()
+        max_iterations = config.reflect_max_iterations
+
+        # Run agentic loop with database connection
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            # Create tool callbacks that capture the connection
+            async def lookup_fn(model_id: str | None = None) -> dict[str, Any]:
+                return await tool_lookup(conn, bank_id, model_id)
+
+            async def recall_fn(q: str) -> dict[str, Any]:
+                return await tool_recall(self, bank_id, q, request_context, tags=tags, tags_match=tags_match)
+
+            async def learn_fn(input: MentalModelInput) -> dict[str, Any]:
+                return await tool_learn(conn, bank_id, input, tags=tags)
+
+            async def expand_fn(memory_id: str, depth: str) -> dict[str, Any]:
+                return await tool_expand(conn, bank_id, memory_id, depth)
+
+            # Run the agent
+            agent_result = await run_reflect_agent(
+                llm_config=self._reflect_llm_config,
                 bank_id=bank_id,
                 query=query,
-                budget=budget,
-                max_tokens=4096,
-                enable_trace=False,
-                fact_type=["experience", "world", "opinion"],
-                include_entities=True,
-                request_context=request_context,
-                tags=tags,
-                tags_match=tags_match,
+                bank_profile=profile,
+                lookup_fn=lookup_fn,
+                recall_fn=recall_fn,
+                learn_fn=learn_fn,
+                expand_fn=expand_fn,
+                context=context,
+                max_iterations=max_iterations,
             )
-        recall_time = time.time() - recall_start
-
-        all_results = search_result.results
-
-        # Split results by fact type for structured response
-        agent_results = [r for r in all_results if r.fact_type == "experience"]
-        world_results = [r for r in all_results if r.fact_type == "world"]
-        opinion_results = [r for r in all_results if r.fact_type == "opinion"]
-
-        num_entities = len(search_result.entities) if search_result.entities else 0
-        log_buffer.append(
-            f"  [1] Recall: {len(all_results)} facts (experience={len(agent_results)}, world={len(world_results)}, opinion={len(opinion_results)}), {num_entities} entities in {recall_time:.3f}s"
-        )
-
-        # Format facts for LLM
-        agent_facts_text = think_utils.format_facts_for_prompt(agent_results)
-        world_facts_text = think_utils.format_facts_for_prompt(world_results)
-        opinion_facts_text = think_utils.format_facts_for_prompt(opinion_results)
-
-        # Format entity summaries for LLM
-        entity_summaries_text = think_utils.format_entity_summaries_for_prompt(search_result.entities)
-
-        # Get bank profile (name, disposition + background)
-        profile = await self.get_bank_profile(bank_id, request_context=request_context)
-        name = profile["name"]
-        disposition = profile["disposition"]  # Typed as DispositionTraits
-        background = profile["background"]
-
-        # Build the prompt
-        prompt = think_utils.build_think_prompt(
-            agent_facts_text=agent_facts_text,
-            world_facts_text=world_facts_text,
-            opinion_facts_text=opinion_facts_text,
-            query=query,
-            name=name,
-            disposition=disposition,
-            background=background,
-            context=context,
-            entity_summaries_text=entity_summaries_text,
-        )
-
-        log_buffer.append(f"  [2] Build prompt: {len(prompt)} chars")
-
-        system_message = think_utils.get_system_message(disposition)
-        messages = [{"role": "system", "content": system_message}, {"role": "user", "content": prompt}]
-
-        # Prepare response_format if schema provided
-        response_format = None
-        if response_schema is not None:
-            # Wrapper class to provide Pydantic-like interface for raw JSON schemas
-            class JsonSchemaWrapper:
-                def __init__(self, schema: dict):
-                    self._schema = schema
-
-                def model_json_schema(self):
-                    return self._schema
-
-            response_format = JsonSchemaWrapper(response_schema)
-
-        llm_start = time.time()
-        llm_result, usage = await self._reflect_llm_config.call(
-            messages=messages,
-            scope="memory_reflect",
-            max_completion_tokens=max_tokens,
-            response_format=response_format,
-            skip_validation=True if response_format else False,
-            # Don't enforce strict_schema - not all providers support it and may retry forever
-            # Soft enforcement (schema in prompt + json_object mode) is sufficient
-            strict_schema=False,
-            return_usage=True,
-        )
-        llm_time = time.time() - llm_start
-
-        # Handle response based on whether structured output was requested
-        if response_schema is not None:
-            structured_output = llm_result
-            answer_text = ""  # Empty for backward compatibility
-            log_buffer.append(f"  [3] LLM call: structured output in {llm_time:.3f}s")
-        else:
-            structured_output = None
-            answer_text = llm_result.strip()
-            log_buffer.append(f"  [3] LLM call: {len(answer_text)} chars in {llm_time:.3f}s")
-
-        # Submit form_opinion task for background processing
-        # Pass tenant_id from request context for internal authentication in background task
-        await self._task_backend.submit_task(
-            {
-                "type": "form_opinion",
-                "bank_id": bank_id,
-                "answer_text": answer_text,
-                "query": query,
-                "tenant_id": getattr(request_context, "tenant_id", None) if request_context else None,
-            }
-        )
 
         total_time = time.time() - reflect_start
-        log_buffer.append(f"  [REFLECT {reflect_id}] Complete: {len(answer_text)} chars | {total_time:.3f}s")
-        logger.info("\n" + "\n".join(log_buffer))
+        logger.info(
+            f"[REFLECT {reflect_id}] Complete: {len(agent_result.text)} chars, "
+            f"{agent_result.iterations} iterations, {agent_result.tools_called} tool calls | {total_time:.3f}s"
+        )
 
-        # Return response with facts split by type
+        # Return response (compatible with existing API)
         result = ReflectResult(
-            text=answer_text,
-            based_on={"world": world_results, "experience": agent_results, "opinion": opinion_results},
-            new_opinions=[],  # Opinions are being extracted asynchronously
-            structured_output=structured_output,
-            usage=usage,
+            text=agent_result.text,
+            based_on={"world": [], "experience": [], "opinion": []},  # Agent retrieves dynamically
+            new_opinions=[],  # Learnings stored as mental models
+            structured_output=None,  # Not yet supported for agentic reflect
+            usage=None,  # Token tracking not yet implemented for agentic loop
         )
 
         # Call post-operation hook if validator is configured
@@ -3676,50 +3376,6 @@ Guidelines:
                 logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
         return result
-
-    async def _extract_and_store_opinions_async(
-        self, bank_id: str, answer_text: str, query: str, tenant_id: str | None = None
-    ):
-        """
-        Background task to extract and store opinions from think response.
-
-        This runs asynchronously and does not block the think response.
-
-        Args:
-            bank_id: bank IDentifier
-            answer_text: The generated answer text
-            query: The original query
-            tenant_id: Tenant identifier for internal authentication
-        """
-        try:
-            # Extract opinions from the answer
-            new_opinions = await think_utils.extract_opinions_from_text(
-                self._reflect_llm_config, text=answer_text, query=query
-            )
-
-            # Store new opinions
-            if new_opinions:
-                from datetime import datetime
-
-                current_time = datetime.now(UTC)
-                # Use internal context with tenant_id for background authentication
-                # Extension can check internal=True to bypass normal auth
-                from hindsight_api.models import RequestContext
-
-                internal_context = RequestContext(tenant_id=tenant_id, internal=True)
-                for opinion in new_opinions:
-                    await self.retain_async(
-                        bank_id=bank_id,
-                        content=opinion.opinion,
-                        context=f"formed during thinking about: {query}",
-                        event_date=current_time,
-                        fact_type_override="opinion",
-                        confidence_score=opinion.confidence,
-                        request_context=internal_context,
-                    )
-
-        except Exception as e:
-            logger.warning(f"[REFLECT] Failed to extract/store opinions: {str(e)}")
 
     async def get_entity_observations(
         self,
@@ -4220,7 +3876,7 @@ Guidelines:
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Refresh the summary for a mental model."""
+        """Refresh the summary for a mental model using the reflect agent."""
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
 
@@ -4229,73 +3885,52 @@ Guidelines:
         if not model:
             return None
 
-        # Import synthesis module
-        from .mental_models.synthesis import generate_mental_model_summary
+        # Import reflect agent and tools
+        from .reflect.agent import run_reflect_agent
+        from .reflect.tools import tool_expand, tool_lookup, tool_recall
 
-        # Create recall function
-        async def recall_fn(query: str, max_tokens: int) -> tuple[list[MemoryFact], list[list[float]]]:
-            result = await self.recall_async(
-                bank_id=bank_id,
-                query=query,
-                max_tokens=max_tokens,
-                fact_type=["world", "experience"],
-                include_entities=False,
-                include_chunks=False,
-                request_context=request_context,
-            )
+        # Get bank profile for agent context
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+        bank_profile = {
+            "name": profile.get("name", "Assistant"),
+            "background": profile.get("background", ""),
+            "goal": profile.get("goal", ""),
+        }
 
-            facts = result.results
-            if not facts:
-                return [], []
+        # Build query for the agent - instruct to explore multiple facets
+        query = f"""Generate a comprehensive summary about '{model['name']}': {model['description']}
 
-            # Fetch embeddings
-            fact_ids = [uuid.UUID(f.id) for f in facts]
-            async with acquire_with_retry(pool) as conn:
-                rows = await conn.fetch(
-                    f"SELECT id, embedding FROM {fq_table('memory_units')} WHERE id = ANY($1)",
-                    fact_ids,
-                )
+To create a thorough summary:
+1. Use multiple recall queries to explore different aspects and facets of this topic
+2. Search for related events, relationships, preferences, patterns, and historical context
+3. Use expand to get full context when a fact seems important but incomplete
+4. Synthesize all findings into a coherent, multi-faceted summary
 
-            embedding_map: dict[str, list[float]] = {}
-            for row in rows:
-                raw_emb = row["embedding"]
-                if raw_emb is not None:
-                    if isinstance(raw_emb, str):
-                        import json
+The summary should cover all relevant dimensions discovered through your research."""
 
-                        try:
-                            emb = json.loads(raw_emb)
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-                    elif isinstance(raw_emb, (list, tuple)):
-                        emb = list(raw_emb)
-                    else:
-                        emb = list(raw_emb)
-                    embedding_map[str(row["id"])] = emb
-
-            embeddings = []
-            filtered_facts = []
-            for fact in facts:
-                if fact.id in embedding_map:
-                    filtered_facts.append(fact)
-                    embeddings.append(embedding_map[fact.id])
-
-            return filtered_facts, embeddings
-
-        # Generate summary
+        # Run the reflect agent with tools (no learn tool for summary generation)
+        config = get_config()
         metrics = get_metrics_collector()
         with metrics.record_operation("mental_model_refresh", bank_id=bank_id, source="api"):
-            result = await generate_mental_model_summary(
-                self._llm_config,
-                model["name"],
-                model["description"],
-                recall_fn,
-                bank_id=bank_id,
-            )
+            async with acquire_with_retry(pool) as conn:
+                result = await run_reflect_agent(
+                    llm_config=self._reflect_llm_config,
+                    bank_id=bank_id,
+                    query=query,
+                    bank_profile=bank_profile,
+                    lookup_fn=lambda mid=None: tool_lookup(conn, bank_id, mid),
+                    recall_fn=lambda q: tool_recall(self, bank_id, q, request_context),
+                    expand_fn=lambda mem_id, depth: tool_expand(conn, bank_id, mem_id, depth),
+                    learn_fn=None,  # Disable learn tool for summary generation
+                    max_iterations=config.reflect_max_iterations,
+                )
 
-        result.log()
+        logger.info(
+            f"[MENTAL_MODEL] Refreshed model '{model_id}' summary: "
+            f"{result.iterations} iterations, {result.tools_called} tool calls"
+        )
 
-        # Update the model
+        # Update the model with the new summary
         async with acquire_with_retry(pool) as conn:
             updated_row = await conn.fetchrow(
                 f"""
@@ -4305,7 +3940,7 @@ Guidelines:
                 RETURNING id, bank_id, type, subtype, name, description, summary,
                           entity_id, source_facts, triggers, links, tags, last_updated, created_at
                 """,
-                result.summary,
+                result.text,
                 bank_id,
                 model_id,
             )
