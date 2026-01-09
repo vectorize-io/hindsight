@@ -233,13 +233,17 @@ def clear_injection_debug() -> None:
     _last_injection_debug = None
 
 
-def _inject_memories(messages: List[dict]) -> List[dict]:
+def _inject_memories(messages: List[dict], custom_query: Optional[str] = None) -> List[dict]:
     """Inject memories into messages list.
 
     Returns the modified messages list with memories injected into the system message.
     Uses reflect API when defaults.use_reflect=True, otherwise uses recall API.
 
     When verbose=True in config, stores debug info retrievable via get_last_injection_debug().
+
+    Args:
+        messages: List of message dicts to inject memories into
+        custom_query: Optional custom query to use for memory lookup instead of user message
     """
     global _last_injection_debug
     import logging
@@ -262,17 +266,15 @@ def _inject_memories(messages: List[dict]) -> List[dict]:
     if not messages:
         return messages
 
-    # Extract user query from last user message
-    user_query = None
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            content = msg.get("content")
-            if isinstance(content, str):
-                user_query = content
-                break
+    # hindsight_query is required when inject_memories=True
+    if not custom_query:
+        raise ValueError(
+            "hindsight_query is required when inject_memories=True. "
+            "Pass hindsight_query='your query' to specify what to search for in memory. "
+            "Example: hindsight_query=recipient_name or hindsight_query='What do I know about Alice?'"
+        )
 
-    if not user_query:
-        return messages
+    user_query = custom_query
 
     # Use bank_id from defaults
     bank_id = defaults.bank_id
@@ -292,13 +294,24 @@ def _inject_memories(messages: List[dict]) -> List[dict]:
 
         # Use reflect API if use_reflect is enabled
         if defaults.use_reflect:
+            # Build common reflect parameters
+            reflect_kwargs = {
+                "query": user_query,
+                "budget": defaults.recall_budget or "mid",
+            }
+            # Add context if provided (shapes reasoning but not retrieval)
+            if defaults.reflect_context:
+                reflect_kwargs["context"] = defaults.reflect_context
+            # Add response_schema for structured output
+            if defaults.reflect_response_schema:
+                reflect_kwargs["response_schema"] = defaults.reflect_response_schema
+
             # If reflect_include_facts is enabled, use the API directly to include facts
             if defaults.reflect_include_facts:
                 from hindsight_client_api.models import reflect_request, reflect_include_options
                 request_obj = reflect_request.ReflectRequest(
-                    query=user_query,
-                    budget=defaults.recall_budget or "mid",
                     include=reflect_include_options.ReflectIncludeOptions(facts={}),
+                    **reflect_kwargs,
                 )
                 import asyncio
                 try:
@@ -320,8 +333,7 @@ def _inject_memories(messages: List[dict]) -> List[dict]:
             else:
                 result = client.reflect(
                     bank_id=bank_id,
-                    query=user_query,
-                    budget=defaults.recall_budget or "mid",
+                    **reflect_kwargs,
                 )
             reflect_text = result.text if hasattr(result, 'text') else str(result)
 
@@ -501,6 +513,9 @@ def _wrapped_completion(*args, **kwargs):
     """
     config = get_config()
 
+    # Extract hindsight-specific kwargs
+    custom_query = kwargs.pop("hindsight_query", None)
+
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
     if messages is None and len(args) > 1:
@@ -513,7 +528,7 @@ def _wrapped_completion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages)
+            injected_messages = _inject_memories(messages, custom_query=custom_query)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -540,6 +555,9 @@ async def _wrapped_acompletion(*args, **kwargs):
     """
     config = get_config()
 
+    # Extract hindsight-specific kwargs
+    custom_query = kwargs.pop("hindsight_query", None)
+
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
     if messages is None and len(args) > 1:
@@ -552,7 +570,7 @@ async def _wrapped_acompletion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages)
+            injected_messages = _inject_memories(messages, custom_query=custom_query)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -899,6 +917,8 @@ def completion(*args, **kwargs):
     Args:
         *args: Positional arguments passed to litellm.completion()
         **kwargs: Keyword arguments passed to litellm.completion()
+            Special hindsight_* kwargs:
+            - hindsight_query: Custom query for memory lookup (overrides user message)
 
     Returns:
         LiteLLM ModelResponse object
@@ -920,8 +940,18 @@ def completion(*args, **kwargs):
         ...     model="gpt-4o-mini",
         ...     messages=[{"role": "user", "content": "Hello!"}]
         ... )
+        >>>
+        >>> # With custom query for memory lookup
+        >>> response = hindsight_litellm.completion(
+        ...     model="gpt-4o-mini",
+        ...     messages=[{"role": "user", "content": "Please deliver package to Alice"}],
+        ...     hindsight_query="Where is Alice located?",  # Focused query for memory
+        ... )
     """
     config = get_config()
+
+    # Extract hindsight-specific kwargs
+    custom_query = kwargs.pop("hindsight_query", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -935,7 +965,7 @@ def completion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages)
+            injected_messages = _inject_memories(messages, custom_query=custom_query)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -960,6 +990,8 @@ async def acompletion(*args, **kwargs):
     Args:
         *args: Positional arguments passed to litellm.acompletion()
         **kwargs: Keyword arguments passed to litellm.acompletion()
+            Special hindsight_* kwargs:
+            - hindsight_query: Custom query for memory lookup (overrides user message)
 
     Returns:
         LiteLLM ModelResponse object
@@ -988,6 +1020,9 @@ async def acompletion(*args, **kwargs):
     """
     config = get_config()
 
+    # Extract hindsight-specific kwargs
+    custom_query = kwargs.pop("hindsight_query", None)
+
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
     if messages is None and len(args) > 1:
@@ -1000,7 +1035,7 @@ async def acompletion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages)
+            injected_messages = _inject_memories(messages, custom_query=custom_query)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e

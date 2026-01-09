@@ -16,7 +16,7 @@ Bank management (bank_name, background) should be done via the Hindsight API
 directly using hindsight_client, not through this module.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -73,8 +73,14 @@ class HindsightDefaults:
         max_memory_tokens: Maximum tokens for injected memory context
         use_reflect: Use reflect API instead of recall for memory injection
         reflect_include_facts: Include facts used by reflect in debug info
+        reflect_context: Additional context for reflect reasoning (does not affect retrieval)
+        reflect_response_schema: JSON Schema for structured reflect output
         include_entities: Include entity observations in recall results
         trace: Enable trace info for recall debugging
+
+    Note:
+        For custom queries, use the hindsight_query kwarg per-call instead of a default,
+        since queries typically need to be dynamic (e.g., include recipient name).
     """
 
     bank_id: Optional[str] = None
@@ -85,6 +91,8 @@ class HindsightDefaults:
     max_memory_tokens: int = 4096
     use_reflect: bool = False
     reflect_include_facts: bool = False
+    reflect_context: Optional[str] = None  # Context for reflect reasoning
+    reflect_response_schema: Optional[Dict[str, Any]] = None  # JSON Schema for structured output
     include_entities: bool = True  # Include entity observations by default
     trace: bool = False  # Enable trace info for debugging
 
@@ -210,6 +218,8 @@ def set_defaults(
     max_memory_tokens: Optional[int] = None,
     use_reflect: Optional[bool] = None,
     reflect_include_facts: Optional[bool] = None,
+    reflect_context: Optional[str] = None,
+    reflect_response_schema: Optional[Dict[str, Any]] = None,
     include_entities: Optional[bool] = None,
     trace: Optional[bool] = None,
 ) -> HindsightDefaults:
@@ -228,11 +238,17 @@ def set_defaults(
         max_memory_tokens: Default max tokens for memory context
         use_reflect: Default whether to use reflect API instead of recall
         reflect_include_facts: Default whether to include facts in reflect debug info
+        reflect_context: Default context for reflect reasoning (shapes LLM response, not retrieval)
+        reflect_response_schema: Default JSON Schema for structured reflect output
         include_entities: Default whether to include entity observations in recall (default True)
         trace: Default whether to enable trace info for debugging (default False)
 
     Returns:
         The configured HindsightDefaults instance
+
+    Note:
+        For custom memory queries, use hindsight_query per-call instead of a default,
+        since queries typically need to be dynamic (e.g., include recipient name).
 
     Example:
         >>> from hindsight_litellm import set_defaults
@@ -240,13 +256,14 @@ def set_defaults(
         ...     bank_id="my-agent",
         ...     recall_budget="high",
         ...     fact_types=["world", "opinion"],
+        ...     reflect_context="I am a delivery agent finding package recipients.",
         ... )
         >>>
-        >>> # Override per-call:
+        >>> # Override per-call with dynamic query:
         >>> response = litellm.completion(
         ...     model="gpt-4",
         ...     messages=[...],
-        ...     hindsight_bank_id="different-bank",  # Overrides default
+        ...     hindsight_query=f"Where is {recipient_name} located?",  # Dynamic query
         ... )
     """
     global _global_defaults
@@ -264,6 +281,8 @@ def set_defaults(
         max_memory_tokens=max_memory_tokens if max_memory_tokens is not None else current.max_memory_tokens,
         use_reflect=use_reflect if use_reflect is not None else current.use_reflect,
         reflect_include_facts=reflect_include_facts if reflect_include_facts is not None else current.reflect_include_facts,
+        reflect_context=reflect_context if reflect_context is not None else current.reflect_context,
+        reflect_response_schema=reflect_response_schema if reflect_response_schema is not None else current.reflect_response_schema,
         include_entities=include_entities if include_entities is not None else current.include_entities,
         trace=trace if trace is not None else current.trace,
     )
@@ -389,6 +408,8 @@ def set_document_id(document_id: str | None) -> None:
             max_memory_tokens=_global_defaults.max_memory_tokens,
             use_reflect=_global_defaults.use_reflect,
             reflect_include_facts=_global_defaults.reflect_include_facts,
+            reflect_context=_global_defaults.reflect_context,
+            reflect_response_schema=_global_defaults.reflect_response_schema,
             include_entities=_global_defaults.include_entities,
             trace=_global_defaults.trace,
         )
