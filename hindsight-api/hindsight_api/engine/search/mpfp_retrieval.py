@@ -16,6 +16,7 @@ Key properties:
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -25,6 +26,9 @@ from .graph_retrieval import GraphRetriever
 from .types import RetrievalResult
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL in seconds - adjacency data is refreshed after this period
+ADJACENCY_CACHE_TTL_SECONDS = 60
 
 
 # -----------------------------------------------------------------------------
@@ -62,6 +66,14 @@ class TypedAdjacency:
             return []
 
         return [EdgeTarget(node_id=n.node_id, weight=n.weight / total) for n in neighbors]
+
+
+@dataclass
+class CachedAdjacency:
+    """Adjacency data with timestamp for TTL-based caching."""
+
+    adjacency: TypedAdjacency
+    loaded_at: float  # time.time() when loaded
 
 
 @dataclass
@@ -280,15 +292,55 @@ class MPFPGraphRetriever(GraphRetriever):
     then fuses results via RRF.
     """
 
-    def __init__(self, config: MPFPConfig | None = None):
+    def __init__(self, config: MPFPConfig | None = None, cache_ttl: float = ADJACENCY_CACHE_TTL_SECONDS):
         """
         Initialize MPFP retriever.
 
         Args:
             config: Algorithm configuration (uses defaults if None)
+            cache_ttl: Time-to-live for cached adjacency data in seconds
         """
         self.config = config or MPFPConfig()
-        self._adjacency_cache: dict[str, TypedAdjacency] = {}
+        self.cache_ttl = cache_ttl
+        self._adjacency_cache: dict[str, CachedAdjacency] = {}
+        self._cache_lock = asyncio.Lock()
+
+    async def _get_adjacency(self, pool, bank_id: str) -> TypedAdjacency:
+        """
+        Get adjacency data for a bank, using cache if available and fresh.
+
+        Uses TTL-based caching to avoid reloading the full graph on every request.
+        Cache is invalidated after cache_ttl seconds to pick up new edges.
+        """
+        now = time.time()
+
+        # Check cache (without lock for read)
+        cached = self._adjacency_cache.get(bank_id)
+        if cached is not None and (now - cached.loaded_at) < self.cache_ttl:
+            logger.debug(f"MPFP cache hit for bank {bank_id}, age={(now - cached.loaded_at):.1f}s")
+            return cached.adjacency
+
+        # Cache miss or expired - load with lock to prevent thundering herd
+        async with self._cache_lock:
+            # Double-check after acquiring lock (another request may have loaded it)
+            cached = self._adjacency_cache.get(bank_id)
+            if cached is not None and (now - cached.loaded_at) < self.cache_ttl:
+                return cached.adjacency
+
+            # Load fresh adjacency data
+            logger.info(f"MPFP cache miss for bank {bank_id}, loading adjacency data...")
+            adjacency = await load_typed_adjacency(pool, bank_id)
+
+            # Cache it
+            self._adjacency_cache[bank_id] = CachedAdjacency(
+                adjacency=adjacency,
+                loaded_at=time.time(),
+            )
+
+            edge_count = sum(len(edges) for node_edges in adjacency.graphs.values() for edges in node_edges.values())
+            logger.info(f"MPFP cached {edge_count} edges for bank {bank_id}")
+
+            return adjacency
 
     @property
     def name(self) -> str:
@@ -321,8 +373,8 @@ class MPFPGraphRetriever(GraphRetriever):
         Returns:
             List of RetrievalResult with activation scores
         """
-        # Load typed adjacency (could cache per bank_id with TTL)
-        adjacency = await load_typed_adjacency(pool, bank_id)
+        # Get adjacency from cache or load if expired
+        adjacency = await self._get_adjacency(pool, bank_id)
 
         # Convert seeds to SeedNode format
         semantic_seed_nodes = self._convert_seeds(semantic_seeds, "similarity")
