@@ -3601,32 +3601,47 @@ Guidelines:
         bank_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        List all entities for a bank.
+        List all entities for a bank with pagination.
 
         Args:
             bank_id: bank IDentifier
             limit: Maximum number of entities to return
+            offset: Offset for pagination
             request_context: Request context for authentication.
 
         Returns:
-            List of entity dicts with id, canonical_name, mention_count, first_seen, last_seen
+            Dict with items, total, limit, offset
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
+            # Get total count
+            total_row = await conn.fetchrow(
+                f"""
+                SELECT COUNT(*) as total
+                FROM {fq_table("entities")}
+                WHERE bank_id = $1
+                """,
+                bank_id,
+            )
+            total = total_row["total"] if total_row else 0
+
+            # Get paginated entities
             rows = await conn.fetch(
                 f"""
                 SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
                 FROM {fq_table("entities")}
                 WHERE bank_id = $1
                 ORDER BY mention_count DESC, last_seen DESC
-                LIMIT $2
+                LIMIT $2 OFFSET $3
                 """,
                 bank_id,
                 limit,
+                offset,
             )
 
             entities = []
@@ -3653,7 +3668,12 @@ Guidelines:
                         "metadata": metadata,
                     }
                 )
-            return entities
+            return {
+                "items": entities,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
 
     async def get_entity_state(
         self,

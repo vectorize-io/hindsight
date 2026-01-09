@@ -11,11 +11,12 @@ export async function GET(request: NextRequest) {
     }
 
     const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
+    const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
 
     const response = await sdk.listEntities({
       client: lowLevelClient,
       path: { bank_id: bankId },
-      query: { limit },
+      query: { limit, offset },
     });
 
     if (response.error) {

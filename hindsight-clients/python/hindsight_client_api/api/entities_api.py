@@ -338,6 +338,7 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -354,12 +355,14 @@ class EntitiesApi:
     ) -> EntityListResponse:
         """List entities
 
-        List all entities (people, organizations, etc.) known by the bank, ordered by mention count.
+        List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.
 
         :param bank_id: (required)
         :type bank_id: str
         :param limit: Maximum number of entities to return
         :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -387,6 +390,7 @@ class EntitiesApi:
         _param = self._list_entities_serialize(
             bank_id=bank_id,
             limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -414,6 +418,7 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -430,12 +435,14 @@ class EntitiesApi:
     ) -> ApiResponse[EntityListResponse]:
         """List entities
 
-        List all entities (people, organizations, etc.) known by the bank, ordered by mention count.
+        List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.
 
         :param bank_id: (required)
         :type bank_id: str
         :param limit: Maximum number of entities to return
         :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -463,6 +470,7 @@ class EntitiesApi:
         _param = self._list_entities_serialize(
             bank_id=bank_id,
             limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -490,6 +498,7 @@ class EntitiesApi:
         self,
         bank_id: StrictStr,
         limit: Annotated[Optional[StrictInt], Field(description="Maximum number of entities to return")] = None,
+        offset: Annotated[Optional[StrictInt], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -506,12 +515,14 @@ class EntitiesApi:
     ) -> RESTResponseType:
         """List entities
 
-        List all entities (people, organizations, etc.) known by the bank, ordered by mention count.
+        List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.
 
         :param bank_id: (required)
         :type bank_id: str
         :param limit: Maximum number of entities to return
         :type limit: int
+        :param offset: Offset for pagination
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -539,6 +550,7 @@ class EntitiesApi:
         _param = self._list_entities_serialize(
             bank_id=bank_id,
             limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -561,6 +573,7 @@ class EntitiesApi:
         self,
         bank_id,
         limit,
+        offset,
         authorization,
         _request_auth,
         _content_type,
@@ -589,6 +602,10 @@ class EntitiesApi:
         if limit is not None:
             
             _query_params.append(('limit', limit))
+            
+        if offset is not None:
+            
+            _query_params.append(('offset', offset))
             
         # process the header parameters
         if authorization is not None:

@@ -449,6 +449,38 @@ class TestEntities:
         assert response is not None
         assert response.items is not None
         assert isinstance(response.items, list)
+        # Verify pagination fields
+        assert response.total is not None
+        assert response.limit is not None
+        assert response.offset is not None
+        assert response.offset == 0
+        assert response.limit == 100  # default limit
+
+    def test_list_entities_with_pagination(self, client, bank_id):
+        """Test listing entities with pagination parameters."""
+        import asyncio
+        from hindsight_client_api import ApiClient, Configuration
+        from hindsight_client_api.api import EntitiesApi
+
+        async def do_list_paginated():
+            config = Configuration(host=HINDSIGHT_API_URL)
+            api_client = ApiClient(config)
+            api = EntitiesApi(api_client)
+
+            # Test with custom limit
+            response = await api.list_entities(bank_id=bank_id, limit=5, offset=0)
+            assert response.limit == 5
+            assert response.offset == 0
+            assert len(response.items) <= 5
+
+            # Test with offset
+            response_offset = await api.list_entities(bank_id=bank_id, limit=1, offset=1)
+            assert response_offset.offset == 1
+            assert response_offset.limit == 1
+
+            return response
+
+        asyncio.get_event_loop().run_until_complete(do_list_paginated())
 
     def test_get_entity(self, client, bank_id):
         """Test getting a specific entity."""

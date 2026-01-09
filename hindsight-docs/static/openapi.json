@@ -502,7 +502,7 @@
           "Entities"
         ],
         "summary": "List entities",
-        "description": "List all entities (people, organizations, etc.) known by the bank, ordered by mention count.",
+        "description": "List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.",
         "operationId": "list_entities",
         "parameters": [
           {
@@ -525,6 +525,18 @@
               "title": "Limit"
             },
             "description": "Maximum number of entities to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
           },
           {
             "name": "authorization",
@@ -2423,11 +2435,26 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "total",
+          "limit",
+          "offset"
         ],
         "title": "EntityListResponse",
         "description": "Response model for entity list endpoint.",
@@ -2440,7 +2467,10 @@
               "last_seen": "2024-02-01T14:00:00Z",
               "mention_count": 15
             }
-          ]
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 150
         }
       },
       "EntityObservationResponse": {

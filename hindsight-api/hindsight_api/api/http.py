@@ -188,12 +188,18 @@ class EntityListResponse(BaseModel):
                         "first_seen": "2024-01-15T10:30:00Z",
                         "last_seen": "2024-02-01T14:00:00Z",
                     }
-                ]
+                ],
+                "total": 150,
+                "limit": 100,
+                "offset": 0,
             }
         }
     )
 
     items: list[EntityListItem]
+    total: int
+    limit: int
+    offset: int
 
 
 class EntityDetailResponse(BaseModel):
@@ -1516,19 +1522,27 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/entities",
         response_model=EntityListResponse,
         summary="List entities",
-        description="List all entities (people, organizations, etc.) known by the bank, ordered by mention count.",
+        description="List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.",
         operation_id="list_entities",
         tags=["Entities"],
     )
     async def api_list_entities(
         bank_id: str,
         limit: int = Query(default=100, description="Maximum number of entities to return"),
+        offset: int = Query(default=0, description="Offset for pagination"),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """List entities for a memory bank."""
+        """List entities for a memory bank with pagination."""
         try:
-            entities = await app.state.memory.list_entities(bank_id, limit=limit, request_context=request_context)
-            return EntityListResponse(items=[EntityListItem(**e) for e in entities])
+            data = await app.state.memory.list_entities(
+                bank_id, limit=limit, offset=offset, request_context=request_context
+            )
+            return EntityListResponse(
+                items=[EntityListItem(**e) for e in data["items"]],
+                total=data["total"],
+                limit=data["limit"],
+                offset=data["offset"],
+            )
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:

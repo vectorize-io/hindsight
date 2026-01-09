@@ -250,11 +250,34 @@ async def test_full_api_workflow(api_client, test_bank_id):
     # 8. Test Entity Endpoints
     # ================================================================
 
-    # List entities
+    # List entities with pagination
     response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities")
     assert response.status_code == 200
     entities_data = response.json()
     assert "items" in entities_data
+    assert "total" in entities_data
+    assert "limit" in entities_data
+    assert "offset" in entities_data
+    assert entities_data["offset"] == 0
+    assert entities_data["limit"] == 100  # default limit
+
+    # Test pagination with custom limit and offset
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities?limit=5&offset=0")
+    assert response.status_code == 200
+    paginated_data = response.json()
+    assert paginated_data["limit"] == 5
+    assert paginated_data["offset"] == 0
+    assert len(paginated_data["items"]) <= 5
+
+    # Test offset
+    if entities_data["total"] > 1:
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities?limit=1&offset=1")
+        assert response.status_code == 200
+        offset_data = response.json()
+        assert offset_data["offset"] == 1
+        # With offset=1, we should get different entity than first one (if there are multiple)
+        if len(offset_data["items"]) > 0 and len(entities_data["items"]) > 1:
+            assert offset_data["items"][0]["id"] != entities_data["items"][0]["id"]
 
     # Get specific entity if any exist
     if len(entities_data['items']) > 0:

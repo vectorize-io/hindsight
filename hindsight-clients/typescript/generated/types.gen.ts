@@ -495,6 +495,18 @@ export type EntityListResponse = {
    * Items
    */
   items: Array<EntityListItem>;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
 };
 
 /**
@@ -1376,6 +1388,12 @@ export type ListEntitiesData = {
      * Maximum number of entities to return
      */
     limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
   };
   url: "/v1/default/banks/{bank_id}/entities";
 };

@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 from typing import Any, ClassVar, Dict, List
 from hindsight_client_api.models.entity_list_item import EntityListItem
 from typing import Optional, Set
@@ -28,7 +28,10 @@ class EntityListResponse(BaseModel):
     Response model for entity list endpoint.
     """ # noqa: E501
     items: List[EntityListItem]
-    __properties: ClassVar[List[str]] = ["items"]
+    total: StrictInt
+    limit: StrictInt
+    offset: StrictInt
+    __properties: ClassVar[List[str]] = ["items", "total", "limit", "offset"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -88,7 +91,10 @@ class EntityListResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "items": [EntityListItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
+            "items": [EntityListItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
+            "total": obj.get("total"),
+            "limit": obj.get("limit"),
+            "offset": obj.get("offset")
         })
         return _obj
 

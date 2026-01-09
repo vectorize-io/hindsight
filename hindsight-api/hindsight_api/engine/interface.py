@@ -406,18 +406,20 @@ class MemoryEngineInterface(ABC):
         bank_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
-        List entities for a bank.
+        List entities for a bank with pagination.
 
         Args:
             bank_id: The memory bank ID.
             limit: Maximum results.
+            offset: Offset for pagination.
             request_context: Request context for authentication.
 
         Returns:
-            List of entity dicts.
+            Dict with items, total, limit, offset.
         """
         ...
 

@@ -127,11 +127,17 @@ export class ControlPlaneClient {
   /**
    * List entities
    */
-  async listEntities(params: { bank_id: string; limit?: number }) {
+  async listEntities(params: { bank_id: string; limit?: number; offset?: number }) {
     const queryParams = new URLSearchParams();
     queryParams.append("bank_id", params.bank_id);
     if (params.limit) queryParams.append("limit", params.limit.toString());
-    return this.fetchApi(`/api/entities?${queryParams}`);
+    if (params.offset) queryParams.append("offset", params.offset.toString());
+    return this.fetchApi<{
+      items: any[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/api/entities?${queryParams}`);
   }
 
   /**

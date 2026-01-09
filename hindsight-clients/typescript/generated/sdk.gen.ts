@@ -236,7 +236,7 @@ export const getAgentStats = <ThrowOnError extends boolean = false>(
 /**
  * List entities
  *
- * List all entities (people, organizations, etc.) known by the bank, ordered by mention count.
+ * List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.
  */
 export const listEntities = <ThrowOnError extends boolean = false>(
   options: Options<ListEntitiesData, ThrowOnError>,
