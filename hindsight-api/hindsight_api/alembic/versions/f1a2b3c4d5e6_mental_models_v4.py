@@ -1,11 +1,11 @@
 """mental_models_v4
 
-Revision ID: g2b3c4d5e6f7
-Revises: f1a2b3c4d5e6
+Revision ID: f1a2b3c4d5e6
+Revises: e0a1b2c3d4e5
 Create Date: 2026-01-08 00:00:00.000000
 
 This migration implements the v4 mental models system:
-1. Removes entity summary columns (entities no longer have summaries)
+1. Deletes existing observation memory_units (observations now in mental models)
 2. Adds goal field to banks (for structural model derivation)
 3. Creates mental_models table with full v4 schema
 
@@ -20,8 +20,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "g2b3c4d5e6f7"
-down_revision: str | Sequence[str] | None = "f1a2b3c4d5e6"
+revision: str = "f1a2b3c4d5e6"
+down_revision: str | Sequence[str] | None = "e0a1b2c3d4e5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -29,16 +29,17 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Apply mental models v4 changes."""
 
-    # Step 1: Remove summary columns from entities if they exist
-    # (entities no longer have summaries - columns were added by f1a2b3c4d5e6)
-    op.execute("ALTER TABLE entities DROP COLUMN IF EXISTS summary_fact_count")
-    op.execute("ALTER TABLE entities DROP COLUMN IF EXISTS summary_updated_at")
-    op.execute("ALTER TABLE entities DROP COLUMN IF EXISTS summary")
+    # Step 1: Delete observation memory_units (cascades to unit_entities links)
+    # Observations are now handled through mental models, not memory_units
+    op.execute("DELETE FROM memory_units WHERE fact_type = 'observation'")
 
-    # Step 2: Add goal field to banks (if not exists)
+    # Step 2: Drop observation-specific index (if it exists)
+    op.execute("DROP INDEX IF EXISTS idx_memory_units_observation_date")
+
+    # Step 3: Add goal field to banks (if not exists)
     op.execute("ALTER TABLE banks ADD COLUMN IF NOT EXISTS goal TEXT")
 
-    # Step 3: Create mental_models table with v4 schema (if not exists)
+    # Step 4: Create mental_models table with v4 schema (if not exists)
     op.execute("""
         CREATE TABLE IF NOT EXISTS mental_models (
             id VARCHAR(64) NOT NULL,
@@ -66,7 +67,7 @@ def upgrade() -> None:
     # Add tags column if table already exists (for existing databases)
     op.execute("ALTER TABLE mental_models ADD COLUMN IF NOT EXISTS tags VARCHAR[] DEFAULT '{}'")
 
-    # Step 4: Create indexes for efficient queries (if not exist)
+    # Step 5: Create indexes for efficient queries (if not exist)
     op.execute("CREATE INDEX IF NOT EXISTS idx_mental_models_bank_id ON mental_models(bank_id)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_mental_models_type ON mental_models(bank_id, type)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_mental_models_subtype ON mental_models(bank_id, subtype)")
@@ -84,7 +85,4 @@ def downgrade() -> None:
     # Remove goal from banks
     op.execute("ALTER TABLE banks DROP COLUMN IF EXISTS goal")
 
-    # Restore summary columns to entities (for compatibility with f1a2b3c4d5e6)
-    op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS summary TEXT")
-    op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS summary_updated_at TIMESTAMP WITH TIME ZONE")
-    op.execute("ALTER TABLE entities ADD COLUMN IF NOT EXISTS summary_fact_count INTEGER DEFAULT 0 NOT NULL")
+    # Note: Cannot restore deleted observations - they are lost on downgrade
