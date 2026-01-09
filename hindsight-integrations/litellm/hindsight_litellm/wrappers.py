@@ -261,6 +261,7 @@ def reflect(
     bank_id: Optional[str] = None,
     budget: Optional[str] = None,
     context: Optional[str] = None,
+    response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
 ) -> ReflectResult:
     """Generate a contextual answer based on memories.
@@ -274,10 +275,11 @@ def reflect(
             use different bank_ids per user (e.g., f"user-{user_id}")
         budget: Budget level for reflection (low, mid, high)
         context: Additional context to include in the reflection
+        response_schema: JSON Schema for structured output
         hindsight_api_url: Override the configured API URL
 
     Returns:
-        ReflectResult with synthesized answer text
+        ReflectResult with synthesized answer text (or structured_output if schema provided)
 
     Raises:
         RuntimeError: If Hindsight is not configured and no overrides provided
@@ -314,6 +316,7 @@ def reflect(
             query=query,
             budget=target_budget,
             context=context,
+            response_schema=response_schema,
         )
 
         # Convert to ReflectResult
@@ -352,6 +355,7 @@ async def areflect(
     bank_id: Optional[str] = None,
     budget: Optional[str] = None,
     context: Optional[str] = None,
+    response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
 ) -> ReflectResult:
     """Async version of reflect().
@@ -367,6 +371,7 @@ async def areflect(
             bank_id=bank_id,
             budget=budget,
             context=context,
+            response_schema=response_schema,
             hindsight_api_url=hindsight_api_url,
         )
     )
