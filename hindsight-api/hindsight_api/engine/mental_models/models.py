@@ -21,6 +21,7 @@ class MentalModelSubtype(str, Enum):
 
     STRUCTURAL = "structural"  # Derived from goal, created upfront
     EMERGENT = "emergent"  # Discovered from data patterns
+    LEARNED = "learned"  # Formed through reflection
 
 
 class MentalModel(BaseModel):
