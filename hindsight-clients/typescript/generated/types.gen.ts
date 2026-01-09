@@ -1320,6 +1320,12 @@ export type ListBanksResponse = ListBanksResponses[keyof ListBanksResponses];
 
 export type GetAgentStatsData = {
   body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
   path: {
     /**
      * Bank Id

@@ -939,6 +939,7 @@ class BanksApi:
     async def get_agent_stats(
         self,
         bank_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -958,6 +959,8 @@ class BanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param authorization:
+        :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -982,6 +985,7 @@ class BanksApi:
 
         _param = self._get_agent_stats_serialize(
             bank_id=bank_id,
+            authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1007,6 +1011,7 @@ class BanksApi:
     async def get_agent_stats_with_http_info(
         self,
         bank_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1026,6 +1031,8 @@ class BanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param authorization:
+        :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1050,6 +1057,7 @@ class BanksApi:
 
         _param = self._get_agent_stats_serialize(
             bank_id=bank_id,
+            authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1075,6 +1083,7 @@ class BanksApi:
     async def get_agent_stats_without_preload_content(
         self,
         bank_id: StrictStr,
+        authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1094,6 +1103,8 @@ class BanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param authorization:
+        :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1118,6 +1129,7 @@ class BanksApi:
 
         _param = self._get_agent_stats_serialize(
             bank_id=bank_id,
+            authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1138,6 +1150,7 @@ class BanksApi:
     def _get_agent_stats_serialize(
         self,
         bank_id,
+        authorization,
         _request_auth,
         _content_type,
         _headers,
@@ -1163,6 +1176,8 @@ class BanksApi:
             _path_params['bank_id'] = bank_id
         # process the query parameters
         # process the header parameters
+        if authorization is not None:
+            _header_params['authorization'] = authorization
         # process the form parameters
         # process the body parameter
 
