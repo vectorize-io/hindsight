@@ -3590,7 +3590,7 @@ class MemoryEngine(MemoryEngineInterface):
         }
 
         # Build query for the agent - instruct to explore multiple facets
-        query = f"""Generate a comprehensive summary about '{model['name']}': {model['description']}
+        query = f"""Generate a comprehensive summary about '{model["name"]}': {model["description"]}
 
 To create a thorough summary:
 1. Use multiple recall queries to explore different aspects and facets of this topic

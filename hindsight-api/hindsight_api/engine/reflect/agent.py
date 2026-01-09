@@ -133,7 +133,9 @@ async def run_reflect_agent(
             )
             llm_trace.append({"scope": f"agent_{iteration + 1}", "duration_ms": int((time.time() - llm_start) * 1000)})
         except Exception as e:
-            llm_trace.append({"scope": f"agent_{iteration + 1}_err", "duration_ms": int((time.time() - llm_start) * 1000)})
+            llm_trace.append(
+                {"scope": f"agent_{iteration + 1}_err", "duration_ms": int((time.time() - llm_start) * 1000)}
+            )
             logger.warning(f"[REFLECT {reflect_id}] LLM call failed: {e}, forcing final response")
             prompt = build_final_prompt(query, context_history, bank_profile, context)
             llm_start = time.time()
