@@ -553,3 +553,242 @@ async def test_mpfp_lazy_loading_efficiency(memory, request_context):
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ============================================================================
+# MPFP Performance Benchmark Tests
+# ============================================================================
+# These tests require an external database with a large memory bank to be useful.
+# Set EXTERNAL_DATABASE_URL and BENCHMARK_BANK_ID environment variables to run.
+# Example:
+#   EXTERNAL_DATABASE_URL=postgresql://user:pass@host:port/db \
+#   BENCHMARK_BANK_ID=load-test \
+#   pytest tests/test_mpfp_retrieval.py::test_mpfp_edge_loading_performance -v -s
+
+
+import os
+import asyncpg
+
+EXTERNAL_DATABASE_URL = os.environ.get("EXTERNAL_DATABASE_URL")
+BENCHMARK_BANK_ID = os.environ.get("BENCHMARK_BANK_ID", "load-test")
+
+requires_external_db = pytest.mark.skipif(
+    EXTERNAL_DATABASE_URL is None,
+    reason="EXTERNAL_DATABASE_URL not set - skipping external DB benchmark",
+)
+
+
+@requires_external_db
+@pytest.mark.asyncio
+async def test_mpfp_edge_loading_performance():
+    """
+    Benchmark MPFP edge loading performance.
+
+    This test measures the performance of the LATERAL query optimization
+    for loading edges in the MPFP graph traversal algorithm.
+
+    Set EXTERNAL_DATABASE_URL to point to a database with existing data.
+    Set BENCHMARK_BANK_ID to specify which bank to query (default: load-test).
+
+    Example usage:
+        EXTERNAL_DATABASE_URL=postgresql://hindsight:hindsight@localhost:5435/hindsight \
+        BENCHMARK_BANK_ID=load-test \
+        pytest tests/test_mpfp_retrieval.py::test_mpfp_edge_loading_performance -v -s
+    """
+    import time
+
+    # Connect to external database
+    pool = await asyncpg.create_pool(EXTERNAL_DATABASE_URL, min_size=2, max_size=10)
+
+    try:
+        # Get some sample node IDs from the database
+        async with pool.acquire() as conn:
+            # First check how many links exist
+            stats = await conn.fetchrow("""
+                SELECT
+                    count(*) as total_links,
+                    count(DISTINCT from_unit_id) as unique_sources
+                FROM memory_links
+            """)
+            print(f"\n📊 Database Stats:")
+            print(f"   Total links: {stats['total_links']:,}")
+            print(f"   Unique sources: {stats['unique_sources']:,}")
+
+            # Get edge distribution by type
+            type_stats = await conn.fetch("""
+                SELECT link_type, count(*) as cnt,
+                       round(avg(weight)::numeric, 3) as avg_weight
+                FROM memory_links
+                GROUP BY link_type
+                ORDER BY cnt DESC
+            """)
+            print(f"\n   Edge distribution:")
+            for row in type_stats:
+                print(f"     - {row['link_type']}: {row['cnt']:,} (avg_weight={row['avg_weight']})")
+
+            # Get sample frontier nodes (from memory_units in the benchmark bank)
+            # bank_id is the text primary key in banks table
+            frontier_rows = await conn.fetch("""
+                SELECT id FROM memory_units
+                WHERE bank_id = $1
+                LIMIT 100
+            """, BENCHMARK_BANK_ID)
+
+            if not frontier_rows:
+                pytest.skip(f"No memory units found for bank '{BENCHMARK_BANK_ID}'")
+
+            frontier_node_ids = [str(row['id']) for row in frontier_rows]
+            print(f"\n🎯 Testing with {len(frontier_node_ids)} frontier nodes from bank '{BENCHMARK_BANK_ID}'")
+
+        # Test 1: Original query approach (all edges, no per-type limit)
+        async with pool.acquire() as conn:
+            start = time.time()
+            original_rows = await conn.fetch("""
+                SELECT ml.from_unit_id, ml.to_unit_id, ml.link_type, ml.weight
+                FROM memory_links ml
+                WHERE ml.from_unit_id = ANY($1::uuid[])
+                  AND ml.weight >= 0.1
+                ORDER BY ml.from_unit_id, ml.link_type, ml.weight DESC
+            """, frontier_node_ids)
+            original_time = time.time() - start
+            original_count = len(original_rows)
+
+        # Test 2: New LATERAL query approach (top-k per type)
+        async with pool.acquire() as conn:
+            start = time.time()
+            lateral_rows = await conn.fetch("""
+                WITH frontier(node_id) AS (SELECT unnest($1::uuid[]))
+                SELECT f.node_id as from_unit_id, lt.link_type, edges.to_unit_id, edges.weight
+                FROM frontier f
+                CROSS JOIN (VALUES ('semantic'), ('temporal'), ('entity'), ('causes'), ('caused_by')) AS lt(link_type)
+                CROSS JOIN LATERAL (
+                    SELECT ml.to_unit_id, ml.weight
+                    FROM memory_links ml
+                    WHERE ml.from_unit_id = f.node_id
+                      AND ml.link_type = lt.link_type
+                      AND ml.weight >= 0.1
+                    ORDER BY ml.weight DESC
+                    LIMIT 20
+                ) edges
+            """, frontier_node_ids)
+            lateral_time = time.time() - start
+            lateral_count = len(lateral_rows)
+
+        # Print results
+        print(f"\n⏱️  Performance Comparison ({len(frontier_node_ids)} nodes):")
+        print(f"\n   Original (all edges):")
+        print(f"     - Time: {original_time * 1000:.2f}ms")
+        print(f"     - Rows: {original_count:,}")
+        print(f"     - Rows/node: {original_count / len(frontier_node_ids):.1f}")
+
+        print(f"\n   LATERAL (top-20 per type):")
+        print(f"     - Time: {lateral_time * 1000:.2f}ms")
+        print(f"     - Rows: {lateral_count:,}")
+        print(f"     - Rows/node: {lateral_count / len(frontier_node_ids):.1f}")
+
+        speedup = original_time / lateral_time if lateral_time > 0 else float('inf')
+        reduction = (1 - lateral_count / original_count) * 100 if original_count > 0 else 0
+        print(f"\n   📈 Improvement:")
+        print(f"     - Speedup: {speedup:.2f}x faster")
+        print(f"     - Data reduction: {reduction:.1f}% fewer rows")
+
+        # Assert improvement (should be at least some improvement for large datasets)
+        if original_count > 1000:
+            # For large datasets, expect significant improvement
+            assert speedup >= 1.5, f"Expected at least 1.5x speedup, got {speedup:.2f}x"
+            assert reduction >= 30, f"Expected at least 30% data reduction, got {reduction:.1f}%"
+            print(f"\n✅ Performance test PASSED!")
+        else:
+            print(f"\n⚠️ Dataset too small ({original_count} rows) for meaningful performance comparison")
+
+    finally:
+        await pool.close()
+
+
+@requires_external_db
+@pytest.mark.asyncio
+async def test_mpfp_full_retrieval_performance():
+    """
+    Benchmark full MPFP retrieval including traversal and reranking.
+
+    This test measures end-to-end MPFP retrieval performance.
+    """
+    import time
+
+    pool = await asyncpg.create_pool(EXTERNAL_DATABASE_URL, min_size=2, max_size=10)
+
+    try:
+        # Get a sample query embedding from an existing memory unit
+        async with pool.acquire() as conn:
+            # Check if bank exists
+            bank_exists = await conn.fetchval("""
+                SELECT 1 FROM banks WHERE bank_id = $1
+            """, BENCHMARK_BANK_ID)
+            if not bank_exists:
+                pytest.skip(f"Bank '{BENCHMARK_BANK_ID}' not found")
+
+            sample = await conn.fetchrow("""
+                SELECT embedding::text as embedding_str
+                FROM memory_units
+                WHERE bank_id = $1
+                  AND embedding IS NOT NULL
+                LIMIT 1
+            """, BENCHMARK_BANK_ID)
+
+            if not sample:
+                pytest.skip("No memory units with embeddings found")
+
+            query_embedding_str = sample['embedding_str']
+
+        # Run MPFP retrieval
+        retriever = MPFPGraphRetriever()
+
+        print(f"\n🔍 Running MPFP retrieval benchmark on bank '{BENCHMARK_BANK_ID}'...")
+
+        # Warm-up run
+        await retriever.retrieve(
+            pool=pool,
+            query_embedding_str=query_embedding_str,
+            bank_id=BENCHMARK_BANK_ID,
+            fact_type="world",
+            budget=100,
+            query_text="test query",
+        )
+
+        # Timed runs
+        timings_list = []
+        for i in range(3):
+            start = time.time()
+            results, timings = await retriever.retrieve(
+                pool=pool,
+                query_embedding_str=query_embedding_str,
+                bank_id=BENCHMARK_BANK_ID,
+                fact_type="opinion",
+                budget=100,
+                query_text="What did I say about training models?",
+            )
+            elapsed = time.time() - start
+            timings_list.append((elapsed, timings, len(results)))
+
+        # Print results
+        print(f"\n⏱️  MPFP Retrieval Results (3 runs):")
+        for i, (elapsed, timings, count) in enumerate(timings_list):
+            print(f"\n   Run {i + 1}:")
+            print(f"     - Total: {elapsed * 1000:.2f}ms")
+            print(f"     - Results: {count}")
+            if timings:
+                print(f"     - Seeds: {timings.seeds_time * 1000:.2f}ms")
+                print(f"     - Patterns: {timings.pattern_count}")
+                print(f"     - Traverse: {timings.traverse * 1000:.2f}ms")
+                print(f"     - Edge load: {timings.edge_load_time * 1000:.2f}ms")
+                print(f"     - Edges: {timings.edge_count:,}")
+                print(f"     - DB queries: {timings.db_queries}")
+                print(f"     - Fusion: {timings.fusion * 1000:.2f}ms")
+                print(f"     - Fetch: {timings.fetch * 1000:.2f}ms")
+
+        avg_time = sum(t[0] for t in timings_list) / len(timings_list)
+        print(f"\n   📊 Average: {avg_time * 1000:.2f}ms")
+        print(f"\n✅ MPFP retrieval benchmark complete!")
+
+    finally:
+        await pool.close()

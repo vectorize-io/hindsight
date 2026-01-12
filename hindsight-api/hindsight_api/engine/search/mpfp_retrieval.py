@@ -153,13 +153,20 @@ class SeedNode:
 async def load_all_edges_for_frontier(
     pool,
     node_ids: list[str],
+    top_k_per_type: int = 20,
 ) -> dict[str, dict[str, list[EdgeTarget]]]:
     """
-    Load ALL edge types for frontier nodes in one query.
+    Load top-k edges per (node, edge_type) for frontier nodes.
+
+    Uses a LATERAL join to efficiently fetch only the top-k edges per type,
+    avoiding loading hundreds of entity edges when only 20 are needed.
+
+    Requires composite index: (from_unit_id, link_type, weight DESC)
 
     Args:
         pool: Database connection pool
         node_ids: Frontier node IDs to load edges for
+        top_k_per_type: Max edges to load per (node, link_type) pair
 
     Returns:
         Dict mapping edge_type -> from_node_id -> list of EdgeTarget
@@ -168,15 +175,26 @@ async def load_all_edges_for_frontier(
         return {}
 
     async with acquire_with_retry(pool) as conn:
+        # Use LATERAL join to get top-k per (from_node, link_type)
+        # This leverages the composite index for efficient early termination
         rows = await conn.fetch(
             f"""
-            SELECT ml.from_unit_id, ml.to_unit_id, ml.link_type, ml.weight
-            FROM {fq_table("memory_links")} ml
-            WHERE ml.from_unit_id = ANY($1::uuid[])
-              AND ml.weight >= 0.1
-            ORDER BY ml.from_unit_id, ml.link_type, ml.weight DESC
+            WITH frontier(node_id) AS (SELECT unnest($1::uuid[]))
+            SELECT f.node_id as from_unit_id, lt.link_type, edges.to_unit_id, edges.weight
+            FROM frontier f
+            CROSS JOIN (VALUES ('semantic'), ('temporal'), ('entity'), ('causes'), ('caused_by')) AS lt(link_type)
+            CROSS JOIN LATERAL (
+                SELECT ml.to_unit_id, ml.weight
+                FROM {fq_table("memory_links")} ml
+                WHERE ml.from_unit_id = f.node_id
+                  AND ml.link_type = lt.link_type
+                  AND ml.weight >= 0.1
+                ORDER BY ml.weight DESC
+                LIMIT $2
+            ) edges
             """,
             node_ids,
+            top_k_per_type,
         )
 
     # Group by edge_type -> from_node -> neighbors
@@ -242,12 +260,12 @@ async def mpfp_traverse_async(
         # Find nodes that need edge loading (all edge types at once)
         uncached = cache.get_uncached(active_nodes)
 
-        # Batch load ALL edges for uncached nodes (one query for all edge types)
+        # Batch load top-k edges per type for uncached nodes (one query for all edge types)
         if uncached:
             import time
 
             load_start = time.time()
-            edges_by_type = await load_all_edges_for_frontier(pool, uncached)
+            edges_by_type = await load_all_edges_for_frontier(pool, uncached, config.top_k_neighbors)
             cache.edge_load_time += time.time() - load_start
             cache.db_queries += 1
             cache.add_all_edges(edges_by_type, uncached)
