@@ -24,6 +24,8 @@ class MPFPTimings:
     fetch: float = 0.0  # Time to fetch memory unit details
     seeds_time: float = 0.0  # Time to find semantic seeds (if fallback used)
     result_count: int = 0  # Number of results returned
+    # Detailed per-hop timing: list of {hop, exec_time, uncached, load_time, edges_loaded, total_time}
+    hop_details: list[dict] = field(default_factory=list)
 
 
 @dataclass

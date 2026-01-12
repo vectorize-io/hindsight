@@ -231,44 +231,9 @@ Budget and max_tokens control different aspects of recall:
 
 ## Graph Retrieval Algorithms
 
-Hindsight supports two graph traversal algorithms, each optimized for different scenarios:
+Hindsight supports multiple graph traversal algorithms. The default (`link_expansion`) is optimized for fast retrieval with target latency under 100ms.
 
-| Algorithm | Default | Best For | Complexity |
-|-----------|---------|----------|------------|
-| **MPFP** | ✓ | Large graphs, production | O(P × H × F × K) |
-| **BFS** | | Small graphs, debugging | O(V + E) |
-
-### MPFP (Meta-Path Forward Push)
-
-A sublinear graph traversal algorithm that follows predefined meta-paths (patterns of edge types) using lazy edge loading.
-
-**How it works:**
-1. Starts from semantic entry points (top similar facts)
-2. Follows multiple meta-path patterns in parallel:
-   - `semantic → semantic` (topic expansion)
-   - `entity → temporal` (entity timeline)
-   - `semantic → causes` (causal reasoning)
-   - `entity → semantic` (entity context)
-3. Loads edges lazily per hop, only for active frontier nodes
-4. Fuses results from all patterns via Reciprocal Rank Fusion (RRF)
-
-**Complexity:** O(P × H × F × K) where P = patterns (~7), H = hops (2), F = frontier size (~20-100), K = neighbors per node (20).
-
-**Use case:** Production workloads with large memory banks (10k+ facts). Only loads the edges it needs, avoiding full graph scans.
-
-### BFS (Breadth-First Spreading Activation)
-
-Classic spreading activation that propagates relevance scores through the graph using breadth-first traversal.
-
-**How it works:**
-1. Starts from semantic entry points with initial activation scores
-2. Spreads activation to neighbors with decay (α = 0.8 per hop)
-3. Boosts causal links (causes, enables, prevents)
-4. Continues until budget exhausted or activation below threshold
-
-**Complexity:** O(V + E) where V and E are visited nodes and edges, bounded by budget.
-
-**Use case:** Small memory banks, debugging, or when you need to understand exactly how results were found.
+See [Configuration → Retrieval](./configuration#retrieval) for available algorithms and how to configure them.
 
 ---
 

@@ -544,3 +544,243 @@ class TestRemoteTEICrossEncoderConfig:
             assert encoder.base_url == "http://test:9000"
             assert encoder.batch_size == 256
             assert encoder.max_concurrent == 16
+
+
+# ============================================================================
+# TEI Reranker Performance Benchmark Tests
+# ============================================================================
+# These tests require a running TEI server to measure actual performance.
+# Set TEI_RERANKER_URL environment variable to run.
+# Example:
+#   TEI_RERANKER_URL=http://localhost:8000 \
+#   pytest tests/test_tei_cross_encoder.py::test_tei_reranker_performance -v -s -n0
+
+import os
+
+TEI_RERANKER_URL = os.environ.get("TEI_RERANKER_URL")
+
+requires_tei_server = pytest.mark.skipif(
+    TEI_RERANKER_URL is None,
+    reason="TEI_RERANKER_URL not set - skipping TEI performance benchmark",
+)
+
+
+@requires_tei_server
+@pytest.mark.asyncio
+async def test_tei_reranker_performance():
+    """
+    Benchmark TEI reranker performance with different configurations.
+
+    This test measures latency for different batch sizes and concurrency levels
+    to find the optimal configuration for your TEI server.
+
+    Example usage:
+        TEI_RERANKER_URL=http://localhost:8000 \
+        pytest tests/test_tei_cross_encoder.py::test_tei_reranker_performance -v -s -n0
+    """
+    import httpx
+
+    # Get server info
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{TEI_RERANKER_URL}/info")
+        info = response.json()
+        print(f"\n📊 TEI Server Info:")
+        print(f"   URL: {TEI_RERANKER_URL}")
+        print(f"   Model: {info.get('model_id', 'unknown')}")
+        if "reranker_model" in info:
+            print(f"   Reranker Model: {info['reranker_model']}")
+
+    # Generate test data (800 pairs to simulate real workload)
+    num_pairs = 800
+    query = "What did I say about training machine learning models and artificial intelligence?"
+    test_pairs = [
+        (query, f"Document {i} about machine learning, neural networks, and AI training techniques.")
+        for i in range(num_pairs)
+    ]
+
+    # Test configurations: (batch_size, max_concurrent)
+    configs = [
+        (128, 8),   # Default
+        (256, 4),   # Larger batches, fewer concurrent
+        (256, 8),   # Larger batches, same concurrent
+        (512, 2),   # Very large batches, few concurrent
+        (512, 4),   # Very large batches, moderate concurrent
+        (64, 16),   # Smaller batches, more concurrent
+        (800, 1),   # Single batch (all at once)
+    ]
+
+    results = []
+    print(f"\n⏱️  Benchmarking {num_pairs} pairs with different configurations:\n")
+
+    for batch_size, max_concurrent in configs:
+        encoder = RemoteTEICrossEncoder(
+            base_url=TEI_RERANKER_URL,
+            batch_size=batch_size,
+            max_concurrent=max_concurrent,
+            timeout=60.0,
+        )
+        await encoder.initialize()
+
+        # Warm-up run
+        await encoder.predict(test_pairs[:100])
+
+        # Timed runs (3 iterations)
+        times = []
+        for _ in range(3):
+            start = time.time()
+            scores = await encoder.predict(test_pairs)
+            elapsed = time.time() - start
+            times.append(elapsed)
+            assert len(scores) == num_pairs
+
+        avg_time = sum(times) / len(times)
+        min_time = min(times)
+        results.append({
+            "batch_size": batch_size,
+            "max_concurrent": max_concurrent,
+            "avg_ms": avg_time * 1000,
+            "min_ms": min_time * 1000,
+            "num_batches": (num_pairs + batch_size - 1) // batch_size,
+        })
+
+        print(f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
+              f"avg={avg_time * 1000:6.1f}ms, min={min_time * 1000:6.1f}ms "
+              f"({results[-1]['num_batches']} batches)")
+
+    # Find best configuration
+    best = min(results, key=lambda x: x["avg_ms"])
+    print(f"\n🏆 Best Configuration:")
+    print(f"   batch_size={best['batch_size']}, max_concurrent={best['max_concurrent']}")
+    print(f"   Average: {best['avg_ms']:.1f}ms, Min: {best['min_ms']:.1f}ms")
+
+    # Performance target check
+    target_ms = 100
+    if best["avg_ms"] <= target_ms:
+        print(f"\n✅ Target met! Average {best['avg_ms']:.1f}ms <= {target_ms}ms")
+    else:
+        print(f"\n⚠️ Target NOT met. Average {best['avg_ms']:.1f}ms > {target_ms}ms")
+        print(f"   Consider: larger batch size, GPU optimization, or faster network")
+
+
+@requires_tei_server
+@pytest.mark.asyncio
+async def test_tei_reranker_concurrent_requests():
+    """
+    Test TEI reranker performance under concurrent request load.
+
+    This simulates multiple parallel recall requests hitting the reranker
+    at the same time.
+    """
+    # Smaller batches to simulate typical recall workload
+    num_pairs_per_request = 200
+    num_concurrent_requests = 4
+
+    query = "Tell me about machine learning and AI training"
+    test_pairs = [
+        (query, f"Document {i} about ML and training.")
+        for i in range(num_pairs_per_request)
+    ]
+
+    # Test configurations
+    configs = [
+        (128, 8),   # Default
+        (256, 4),   # Larger batches
+        (512, 2),   # Very large batches
+        (200, 1),   # Single batch per request
+    ]
+
+    print(f"\n⏱️  Concurrent Load Test: {num_concurrent_requests} parallel requests, "
+          f"{num_pairs_per_request} pairs each:\n")
+
+    for batch_size, max_concurrent in configs:
+        encoder = RemoteTEICrossEncoder(
+            base_url=TEI_RERANKER_URL,
+            batch_size=batch_size,
+            max_concurrent=max_concurrent,
+            timeout=60.0,
+        )
+        await encoder.initialize()
+
+        # Warm-up
+        await encoder.predict(test_pairs[:50])
+
+        async def run_single_request():
+            start = time.time()
+            scores = await encoder.predict(test_pairs)
+            return time.time() - start, len(scores)
+
+        # Run concurrent requests
+        times = []
+        for _ in range(3):  # 3 iterations
+            start = time.time()
+            results = await asyncio.gather(*[run_single_request() for _ in range(num_concurrent_requests)])
+            total_time = time.time() - start
+
+            individual_times = [r[0] for r in results]
+            times.append({
+                "total": total_time,
+                "max_individual": max(individual_times),
+                "avg_individual": sum(individual_times) / len(individual_times),
+            })
+
+        avg_total = sum(t["total"] for t in times) / len(times)
+        avg_max_individual = sum(t["max_individual"] for t in times) / len(times)
+
+        print(f"   batch_size={batch_size:4d}, max_concurrent={max_concurrent:2d}: "
+              f"total={avg_total * 1000:6.1f}ms, slowest_req={avg_max_individual * 1000:6.1f}ms")
+
+
+@requires_tei_server
+@pytest.mark.asyncio
+async def test_tei_reranker_latency_breakdown():
+    """
+    Measure latency breakdown for TEI reranker requests.
+
+    This helps identify where time is spent: network vs processing.
+    """
+    import httpx
+
+    print(f"\n⏱️  Latency Breakdown Test:\n")
+
+    # Test single document latency (network overhead)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        times = []
+        for _ in range(10):
+            start = time.time()
+            await client.post(
+                f"{TEI_RERANKER_URL}/rerank",
+                json={
+                    "query": "test query",
+                    "texts": ["test document"],
+                    "return_text": False,
+                },
+            )
+            times.append((time.time() - start) * 1000)
+
+        avg_single = sum(times) / len(times)
+        print(f"   Single doc latency (raw HTTP): {avg_single:.2f}ms")
+
+    # Test batch latencies
+    batch_sizes = [10, 50, 100, 200, 500]
+    for batch_size in batch_sizes:
+        texts = [f"Document {i} about machine learning" for i in range(batch_size)]
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            times = []
+            for _ in range(5):
+                start = time.time()
+                await client.post(
+                    f"{TEI_RERANKER_URL}/rerank",
+                    json={
+                        "query": "What about machine learning?",
+                        "texts": texts,
+                        "return_text": False,
+                    },
+                )
+                times.append((time.time() - start) * 1000)
+
+            avg = sum(times) / len(times)
+            per_doc = avg / batch_size
+            print(f"   Batch size {batch_size:4d}: {avg:6.1f}ms total, {per_doc:.2f}ms/doc")
+
+    print(f"\n   💡 Insight: Higher per-doc time at small batches = network overhead dominant")
+    print(f"   💡 Insight: Lower per-doc time at large batches = GPU efficiently utilized")

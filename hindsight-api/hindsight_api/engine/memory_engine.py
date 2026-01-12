@@ -409,10 +409,8 @@ class MemoryEngine(MemoryEngineInterface):
             self._task_backend = AsyncIOQueueBackend(batch_size=_task_batch_size, batch_interval=_task_batch_interval)
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
-        # Limit concurrent searches to prevent connection pool exhaustion
-        # Each search can use 2-4 connections, so with 10 concurrent searches
-        # we use ~20-40 connections max, staying well within pool limits
-        self._search_semaphore = asyncio.Semaphore(10)
+        # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
+        self._search_semaphore = asyncio.Semaphore(get_config().recall_max_concurrent)
 
         # Backpressure for put operations: limit concurrent puts to prevent database contention
         # Each put_batch holds a connection for the entire transaction, so we limit to 5
@@ -1418,7 +1416,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Backpressure: limit concurrent recalls to prevent overwhelming the database
         result = None
         error_msg = None
+        semaphore_wait_start = time.time()
         async with self._search_semaphore:
+            semaphore_wait = time.time() - semaphore_wait_start
             # Retry loop for connection errors
             max_retries = 3
             for attempt in range(max_retries + 1):
@@ -1436,6 +1436,7 @@ class MemoryEngine(MemoryEngineInterface):
                         include_chunks,
                         max_chunk_tokens,
                         request_context,
+                        semaphore_wait=semaphore_wait,
                     )
                     break  # Success - exit retry loop
                 except Exception as e:
@@ -1553,6 +1554,7 @@ class MemoryEngine(MemoryEngineInterface):
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext" = None,
+        semaphore_wait: float = 0.0,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -1612,20 +1614,16 @@ class MemoryEngine(MemoryEngineInterface):
             query_embedding_str = str(query_embedding)
 
             from .search.retrieval import get_default_graph_retriever, retrieve_parallel
-            from .search.temporal_extraction import extract_temporal_constraint
 
             # Track each retrieval start time
             retrieval_start = time.time()
 
-            # Pre-extract temporal constraint once (shared across all fact types)
-            tc_start = time.time()
-            temporal_constraint = extract_temporal_constraint(
-                query, reference_date=question_date, analyzer=self.query_analyzer
-            )
-            tc_duration = time.time() - tc_start
+            # Temporal extraction now runs IN PARALLEL with other retrievals inside retrieve_parallel
+            # This prevents slow dateparser from blocking semantic/BM25/graph retrieval
+            tc_duration = 0.0  # Will be tracked inside temporal retrieval timing
 
             # Run retrieval for each fact type in parallel
-            # MPFP does lazy edge loading internally, no need to pre-load adjacency
+            # Each retrieve_parallel uses ~4 connections, so 3 fact types = ~12 concurrent connections
             retrieval_tasks = [
                 retrieve_parallel(
                     pool,
@@ -1636,7 +1634,7 @@ class MemoryEngine(MemoryEngineInterface):
                     thinking_budget,
                     question_date,
                     self.query_analyzer,
-                    temporal_constraint=temporal_constraint,
+                    temporal_constraint=None,  # Extracted in parallel inside retrieve_parallel
                 )
                 for ft in fact_type
             ]
@@ -1649,10 +1647,17 @@ class MemoryEngine(MemoryEngineInterface):
             bm25_results = []
             graph_results = []
             temporal_results = []
-            aggregated_timings = {"semantic": 0.0, "bm25": 0.0, "graph": 0.0, "temporal": 0.0}
+            aggregated_timings = {
+                "semantic": 0.0,
+                "bm25": 0.0,
+                "graph": 0.0,
+                "temporal": 0.0,
+                "temporal_extraction": 0.0,
+            }
             all_mpfp_timings = []
 
             detected_temporal_constraint = None
+            max_conn_wait = 0.0
             for idx, retrieval_result in enumerate(all_retrievals):
                 # Log fact types in this retrieval batch
                 ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
@@ -1673,6 +1678,8 @@ class MemoryEngine(MemoryEngineInterface):
                     detected_temporal_constraint = retrieval_result.temporal_constraint
                 # Collect MPFP timings
                 all_mpfp_timings.extend(retrieval_result.mpfp_timings)
+                # Track max connection wait
+                max_conn_wait = max(max_conn_wait, retrieval_result.max_conn_wait)
 
             # If no temporal results from any fact type, set to None
             if not temporal_results:
@@ -1696,6 +1703,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"semantic={len(semantic_results)}({aggregated_timings['semantic']:.3f}s)",
                 f"bm25={len(bm25_results)}({aggregated_timings['bm25']:.3f}s)",
                 f"graph={len(graph_results)}({aggregated_timings['graph']:.3f}s)",
+                f"temporal_extraction={aggregated_timings['temporal_extraction']:.3f}s",
             ]
             temporal_info = ""
             if detected_temporal_constraint:
@@ -1709,8 +1717,9 @@ class MemoryEngine(MemoryEngineInterface):
                 f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {parallel_duration:.3f}s{setup_info}{temporal_info}"
             )
 
-            # Log MPFP timing breakdown if available
+            # Log graph retriever timing breakdown if available
             if all_mpfp_timings:
+                retriever_name = get_default_graph_retriever().name.upper()
                 mpfp_total = all_mpfp_timings[0]  # Take first fact type's timing as representative
                 mpfp_parts = [
                     f"db_queries={mpfp_total.db_queries}",
@@ -1720,7 +1729,20 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 if mpfp_total.seeds_time > 0.01:
                     mpfp_parts.append(f"seeds={mpfp_total.seeds_time:.3f}s")
-                log_buffer.append(f"      [MPFP] {', '.join(mpfp_parts)}")
+                if mpfp_total.fusion > 0.001:
+                    mpfp_parts.append(f"fusion={mpfp_total.fusion:.3f}s")
+                if mpfp_total.fetch > 0.001:
+                    mpfp_parts.append(f"fetch={mpfp_total.fetch:.3f}s")
+                log_buffer.append(f"      [{retriever_name}] {', '.join(mpfp_parts)}")
+                # Log detailed hop timing for debugging slow queries
+                if mpfp_total.hop_details:
+                    for hd in mpfp_total.hop_details:
+                        log_buffer.append(
+                            f"        hop{hd['hop']}: exec={hd.get('exec_time', 0) * 1000:.0f}ms, "
+                            f"uncached={hd.get('uncached_after_filter', 0)}, "
+                            f"load={hd.get('load_time', 0) * 1000:.0f}ms, "
+                            f"edges={hd.get('edges_loaded', 0)}"
+                        )
 
             # Record retrieval results for tracer - per fact type
             if tracer:
@@ -1819,11 +1841,24 @@ class MemoryEngine(MemoryEngineInterface):
             # Ensure reranker is initialized (for lazy initialization mode)
             await reranker_instance.ensure_initialized()
 
+            # Pre-filter candidates to reduce reranking cost (RRF already provides good ranking)
+            # This is especially important for remote rerankers with network latency
+            reranker_max_candidates = get_config().reranker_max_candidates
+            pre_filtered_count = 0
+            if len(merged_candidates) > reranker_max_candidates:
+                # Sort by RRF score and take top candidates
+                merged_candidates.sort(key=lambda mc: mc.rrf_score, reverse=True)
+                pre_filtered_count = len(merged_candidates) - reranker_max_candidates
+                merged_candidates = merged_candidates[:reranker_max_candidates]
+
             # Rerank using cross-encoder
             scored_results = await reranker_instance.rerank(query, merged_candidates)
 
             step_duration = time.time() - step_start
-            log_buffer.append(f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s")
+            pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
+            log_buffer.append(
+                f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s{pre_filter_note}"
+            )
 
             # Step 4.5: Combine cross-encoder score with retrieval signals
             # This preserves retrieval work (RRF, temporal, recency) instead of pure cross-encoder ranking
@@ -2153,8 +2188,15 @@ class MemoryEngine(MemoryEngineInterface):
             total_time = time.time() - recall_start
             num_chunks = len(chunks_dict) if chunks_dict else 0
             num_entities = len(entities_dict) if entities_dict else 0
+            # Include wait times in log if significant
+            wait_parts = []
+            if semaphore_wait > 0.01:
+                wait_parts.append(f"sem={semaphore_wait:.3f}s")
+            if max_conn_wait > 0.01:
+                wait_parts.append(f"conn={max_conn_wait:.3f}s")
+            wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
             log_buffer.append(
-                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s"
+                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )
             logger.info("\n" + "\n".join(log_buffer))
 

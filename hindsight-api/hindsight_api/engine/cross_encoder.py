@@ -16,6 +16,8 @@ import httpx
 
 from ..config import (
     DEFAULT_RERANKER_COHERE_MODEL,
+    DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
+    DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_PROVIDER,
@@ -23,6 +25,8 @@ from ..config import (
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     ENV_COHERE_API_KEY,
     ENV_RERANKER_COHERE_MODEL,
+    ENV_RERANKER_FLASHRANK_CACHE_DIR,
+    ENV_RERANKER_FLASHRANK_MODEL,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
     ENV_RERANKER_PROVIDER,
@@ -172,7 +176,12 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
     Note: The TEI server must be running a cross-encoder/reranker model.
 
     Requests are made in parallel with configurable batch size and max concurrency (backpressure).
+    Uses a GLOBAL semaphore to limit concurrent requests across ALL recall operations.
     """
+
+    # Global semaphore shared across all instances and calls to prevent thundering herd
+    _global_semaphore: asyncio.Semaphore | None = None
+    _global_max_concurrent: int = DEFAULT_RERANKER_TEI_MAX_CONCURRENT
 
     def __init__(
         self,
@@ -190,7 +199,8 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
             base_url: Base URL of the TEI server (e.g., "http://localhost:8080")
             timeout: Request timeout in seconds (default: 30.0)
             batch_size: Maximum batch size for rerank requests (default: 128)
-            max_concurrent: Maximum concurrent requests for backpressure (default: 8)
+            max_concurrent: Maximum concurrent requests for backpressure (default: 8).
+                           This is a GLOBAL limit across all parallel recall operations.
             max_retries: Maximum number of retries for failed requests (default: 3)
             retry_delay: Initial delay between retries in seconds, doubles each retry (default: 0.5)
         """
@@ -202,6 +212,14 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         self.retry_delay = retry_delay
         self._async_client: httpx.AsyncClient | None = None
         self._model_id: str | None = None
+
+        # Update global semaphore if max_concurrent changed
+        if (
+            RemoteTEICrossEncoder._global_semaphore is None
+            or RemoteTEICrossEncoder._global_max_concurrent != max_concurrent
+        ):
+            RemoteTEICrossEncoder._global_max_concurrent = max_concurrent
+            RemoteTEICrossEncoder._global_semaphore = asyncio.Semaphore(max_concurrent)
 
     @property
     def provider_name(self) -> str:
@@ -327,9 +345,10 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
                 batch_texts = texts[i : i + self.batch_size]
                 tasks_info.append((query, batch_indices, batch_texts))
 
-        # Run all requests in parallel with semaphore for backpressure
+        # Run all requests in parallel with GLOBAL semaphore for backpressure
+        # This ensures max_concurrent is respected across ALL parallel recall operations
         all_scores = [0.0] * len(pairs)
-        semaphore = asyncio.Semaphore(self.max_concurrent)
+        semaphore = RemoteTEICrossEncoder._global_semaphore
 
         tasks = [
             self._rerank_query_group(self._async_client, semaphore, query, texts) for query, _, texts in tasks_info
@@ -458,6 +477,170 @@ class CohereCrossEncoder(CrossEncoderModel):
         return all_scores
 
 
+class RRFPassthroughCrossEncoder(CrossEncoderModel):
+    """
+    Passthrough cross-encoder that preserves RRF scores without neural reranking.
+
+    This is useful for:
+    - Testing retrieval quality without reranking overhead
+    - Deployments where reranking latency is unacceptable
+    - Debugging to isolate retrieval vs reranking issues
+    """
+
+    def __init__(self):
+        """Initialize RRF passthrough cross-encoder."""
+        pass
+
+    @property
+    def provider_name(self) -> str:
+        return "rrf"
+
+    async def initialize(self) -> None:
+        """No initialization needed."""
+        logger.info("Reranker: RRF passthrough provider initialized (neural reranking disabled)")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Return neutral scores - actual ranking uses RRF scores from retrieval.
+
+        Args:
+            pairs: List of (query, document) tuples (ignored)
+
+        Returns:
+            List of 0.5 scores (neutral, lets RRF scores dominate)
+        """
+        # Return neutral scores so RRF ranking is preserved
+        return [0.5] * len(pairs)
+
+
+class FlashRankCrossEncoder(CrossEncoderModel):
+    """
+    FlashRank cross-encoder implementation.
+
+    FlashRank is an ultra-lite reranking library that runs on CPU without
+    requiring PyTorch or Transformers. It's ideal for serverless deployments
+    with minimal cold-start overhead.
+
+    Available models:
+    - ms-marco-TinyBERT-L-2-v2: Fastest, ~4MB
+    - ms-marco-MiniLM-L-12-v2: Best quality, ~34MB (default)
+    - rank-T5-flan: Best zero-shot, ~110MB
+    - ms-marco-MultiBERT-L-12: Multi-lingual, ~150MB
+    """
+
+    # Shared executor for CPU-bound reranking
+    _executor: ThreadPoolExecutor | None = None
+    _max_concurrent: int = 4
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        cache_dir: str | None = None,
+        max_length: int = 512,
+        max_concurrent: int = 4,
+    ):
+        """
+        Initialize FlashRank cross-encoder.
+
+        Args:
+            model_name: FlashRank model name. Default: ms-marco-MiniLM-L-12-v2
+            cache_dir: Directory to cache downloaded models. Default: system cache
+            max_length: Maximum sequence length for reranking. Default: 512
+            max_concurrent: Maximum concurrent reranking calls. Default: 4
+        """
+        self.model_name = model_name or DEFAULT_RERANKER_FLASHRANK_MODEL
+        self.cache_dir = cache_dir or DEFAULT_RERANKER_FLASHRANK_CACHE_DIR
+        self.max_length = max_length
+        self._ranker = None
+        FlashRankCrossEncoder._max_concurrent = max_concurrent
+
+    @property
+    def provider_name(self) -> str:
+        return "flashrank"
+
+    async def initialize(self) -> None:
+        """Load the FlashRank model."""
+        if self._ranker is not None:
+            return
+
+        try:
+            from flashrank import Ranker  # type: ignore[import-untyped]
+        except ImportError:
+            raise ImportError("flashrank is required for FlashRankCrossEncoder. Install it with: pip install flashrank")
+
+        logger.info(f"Reranker: initializing FlashRank provider with model {self.model_name}")
+
+        # Initialize ranker with optional cache directory
+        ranker_kwargs = {"model_name": self.model_name, "max_length": self.max_length}
+        if self.cache_dir:
+            ranker_kwargs["cache_dir"] = self.cache_dir
+
+        self._ranker = Ranker(**ranker_kwargs)
+
+        # Initialize shared executor
+        if FlashRankCrossEncoder._executor is None:
+            FlashRankCrossEncoder._executor = ThreadPoolExecutor(
+                max_workers=FlashRankCrossEncoder._max_concurrent,
+                thread_name_prefix="flashrank",
+            )
+            logger.info(
+                f"Reranker: FlashRank provider initialized (max_concurrent={FlashRankCrossEncoder._max_concurrent})"
+            )
+        else:
+            logger.info("Reranker: FlashRank provider initialized (using existing executor)")
+
+    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Synchronous predict - processes each query group."""
+        from flashrank import RerankRequest  # type: ignore[import-untyped]
+
+        if not pairs:
+            return []
+
+        # Group pairs by query
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            # Build passages list for FlashRank
+            passages = [{"id": i, "text": text} for i, (_, text) in enumerate(indexed_texts)]
+            global_indices = [idx for idx, _ in indexed_texts]
+
+            # Create rerank request
+            request = RerankRequest(query=query, passages=passages)
+            results = self._ranker.rerank(request)
+
+            # Map scores back to original positions
+            for result in results:
+                local_idx = result["id"]
+                score = result["score"]
+                global_idx = global_indices[local_idx]
+                all_scores[global_idx] = score
+
+        return all_scores
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Score query-document pairs using FlashRank.
+
+        Args:
+            pairs: List of (query, document) tuples to score
+
+        Returns:
+            List of relevance scores (higher = more relevant)
+        """
+        if self._ranker is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        # Run in thread pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on environment variables.
@@ -489,5 +672,13 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
         model = os.environ.get(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL)
         return CohereCrossEncoder(api_key=api_key, model=model)
+    elif provider == "flashrank":
+        model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
+        cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)
+        return FlashRankCrossEncoder(model_name=model, cache_dir=cache_dir)
+    elif provider == "rrf":
+        return RRFPassthroughCrossEncoder()
     else:
-        raise ValueError(f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere'")
+        raise ValueError(
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'rrf'"
+        )

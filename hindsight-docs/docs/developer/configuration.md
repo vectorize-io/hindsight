@@ -210,15 +210,6 @@ export HINDSIGHT_API_COHERE_API_KEY=your-api-key  # shared with embeddings
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 ```
 
-### Server
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HINDSIGHT_API_HOST` | Bind address | `0.0.0.0` |
-| `HINDSIGHT_API_PORT` | Server port | `8888` |
-| `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
-| `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
-
 ### Authentication
 
 By default, Hindsight runs without authentication. For production deployments, enable API key authentication using the built-in tenant extension:
@@ -242,11 +233,29 @@ Requests without a valid API key receive a `401 Unauthorized` response.
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.
 :::
 
+### Server
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_HOST` | Bind address | `0.0.0.0` |
+| `HINDSIGHT_API_PORT` | Server port | `8888` |
+| `HINDSIGHT_API_WORKERS` | Number of uvicorn worker processes | `1` |
+| `HINDSIGHT_API_LOG_LEVEL` | Log level: `debug`, `info`, `warning`, `error` | `info` |
+| `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
+
 ### Retrieval
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_GRAPH_RETRIEVER` | Graph retrieval algorithm: `bfs` or `mpfp` | `bfs` |
+| `HINDSIGHT_API_GRAPH_RETRIEVER` | Graph retrieval algorithm: `link_expansion`, `mpfp`, or `bfs` | `link_expansion` |
+| `HINDSIGHT_API_RECALL_MAX_CONCURRENT` | Max concurrent recall operations per worker (backpressure) | `32` |
+| `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
+
+#### Graph Retrieval Algorithms
+
+- **`link_expansion`** (default): Fast, simple graph expansion from semantic seeds via entity co-occurrence and causal links. Target latency under 100ms. Recommended for most use cases.
+- **`mpfp`**: Multi-Path Fact Propagation - iterative graph traversal with activation spreading. More thorough but slower.
+- **`bfs`**: Breadth-first search from seed facts. Simple but less effective for large graphs.
 
 ### Entity Observations
 

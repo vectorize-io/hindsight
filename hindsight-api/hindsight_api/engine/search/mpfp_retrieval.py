@@ -49,6 +49,7 @@ class EdgeCache:
     Grows per-hop as edges are loaded for frontier nodes.
     Shared across patterns to avoid redundant loads.
     Loads ALL edge types at once to minimize DB queries.
+    Thread-safe via asyncio lock to prevent redundant concurrent loads.
     """
 
     # edge_type -> from_node_id -> list of EdgeTarget
@@ -58,6 +59,10 @@ class EdgeCache:
     # Timing stats
     db_queries: int = 0
     edge_load_time: float = 0.0
+    # Detailed hop timing for debugging
+    hop_details: list[dict] = field(default_factory=list)
+    # Lock to prevent redundant concurrent loads
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def get_neighbors(self, edge_type: str, node_id: str) -> list[EdgeTarget]:
         """Get neighbors for a node via a specific edge type."""
@@ -153,13 +158,20 @@ class SeedNode:
 async def load_all_edges_for_frontier(
     pool,
     node_ids: list[str],
+    top_k_per_type: int = 20,
 ) -> dict[str, dict[str, list[EdgeTarget]]]:
     """
-    Load ALL edge types for frontier nodes in one query.
+    Load top-k edges per (node, edge_type) for frontier nodes.
+
+    Uses a LATERAL join to efficiently fetch only the top-k edges per type,
+    avoiding loading hundreds of entity edges when only 20 are needed.
+
+    Requires composite index: (from_unit_id, link_type, weight DESC)
 
     Args:
         pool: Database connection pool
         node_ids: Frontier node IDs to load edges for
+        top_k_per_type: Max edges to load per (node, link_type) pair
 
     Returns:
         Dict mapping edge_type -> from_node_id -> list of EdgeTarget
@@ -168,15 +180,26 @@ async def load_all_edges_for_frontier(
         return {}
 
     async with acquire_with_retry(pool) as conn:
+        # Use LATERAL join to get top-k per (from_node, link_type)
+        # This leverages the composite index for efficient early termination
         rows = await conn.fetch(
             f"""
-            SELECT ml.from_unit_id, ml.to_unit_id, ml.link_type, ml.weight
-            FROM {fq_table("memory_links")} ml
-            WHERE ml.from_unit_id = ANY($1::uuid[])
-              AND ml.weight >= 0.1
-            ORDER BY ml.from_unit_id, ml.link_type, ml.weight DESC
+            WITH frontier(node_id) AS (SELECT unnest($1::uuid[]))
+            SELECT f.node_id as from_unit_id, lt.link_type, edges.to_unit_id, edges.weight
+            FROM frontier f
+            CROSS JOIN (VALUES ('semantic'), ('temporal'), ('entity'), ('causes'), ('caused_by')) AS lt(link_type)
+            CROSS JOIN LATERAL (
+                SELECT ml.to_unit_id, ml.weight
+                FROM {fq_table("memory_links")} ml
+                WHERE ml.from_unit_id = f.node_id
+                  AND ml.link_type = lt.link_type
+                  AND ml.weight >= 0.1
+                ORDER BY ml.weight DESC
+                LIMIT $2
+            ) edges
             """,
             node_ids,
+            top_k_per_type,
         )
 
     # Group by edge_type -> from_node -> neighbors
@@ -197,6 +220,162 @@ async def load_all_edges_for_frontier(
 # -----------------------------------------------------------------------------
 
 
+@dataclass
+class PatternState:
+    """State for a pattern traversal between hops."""
+
+    pattern: list[str]
+    hop_index: int
+    scores: dict[str, float]
+    frontier: dict[str, float]
+
+
+def _init_pattern_state(seeds: list[SeedNode], pattern: list[str]) -> PatternState:
+    """Initialize pattern state from seeds."""
+    if not seeds:
+        return PatternState(pattern=pattern, hop_index=0, scores={}, frontier={})
+
+    total_seed_score = sum(s.score for s in seeds)
+    if total_seed_score == 0:
+        total_seed_score = len(seeds)
+
+    frontier = {s.node_id: s.score / total_seed_score for s in seeds}
+    return PatternState(pattern=pattern, hop_index=0, scores={}, frontier=frontier)
+
+
+def _execute_hop(state: PatternState, cache: EdgeCache, config: MPFPConfig) -> set[str]:
+    """
+    Execute ONE hop of traversal, return frontier nodes for next hop.
+
+    This is a pure function that uses cached edges (no DB access).
+    Returns set of uncached nodes needed for next hop.
+    """
+    if state.hop_index >= len(state.pattern):
+        return set()
+
+    edge_type = state.pattern[state.hop_index]
+
+    # Collect active nodes above threshold
+    active_nodes = [node_id for node_id, mass in state.frontier.items() if mass >= config.threshold]
+    if not active_nodes:
+        state.frontier = {}
+        return set()
+
+    # Propagate mass using cached edges
+    next_frontier: dict[str, float] = {}
+    uncached_for_next: set[str] = set()
+
+    for node_id, mass in state.frontier.items():
+        if mass < config.threshold:
+            continue
+
+        # Keep α portion for this node
+        state.scores[node_id] = state.scores.get(node_id, 0) + config.alpha * mass
+
+        # Push (1-α) to neighbors
+        push_mass = (1 - config.alpha) * mass
+        neighbors = cache.get_normalized_neighbors(edge_type, node_id, config.top_k_neighbors)
+
+        for neighbor in neighbors:
+            next_frontier[neighbor.node_id] = next_frontier.get(neighbor.node_id, 0) + push_mass * neighbor.weight
+            # Track if we'll need edges for this node in the next hop
+            if not cache.is_fully_loaded(neighbor.node_id):
+                uncached_for_next.add(neighbor.node_id)
+
+    state.frontier = next_frontier
+    state.hop_index += 1
+
+    return uncached_for_next
+
+
+def _finalize_pattern(state: PatternState, config: MPFPConfig) -> PatternResult:
+    """Finalize pattern by adding remaining frontier mass to scores."""
+    for node_id, mass in state.frontier.items():
+        if mass >= config.threshold:
+            state.scores[node_id] = state.scores.get(node_id, 0) + mass
+
+    return PatternResult(pattern=state.pattern, scores=state.scores)
+
+
+async def mpfp_traverse_hop_synchronized(
+    pool,
+    pattern_jobs: list[tuple[list[SeedNode], list[str]]],
+    config: MPFPConfig,
+    cache: EdgeCache,
+) -> list[PatternResult]:
+    """
+    Execute ALL patterns with hop-synchronized edge loading.
+
+    Instead of running each pattern independently (causing multiple DB queries),
+    this function:
+    1. Runs hop 1 for ALL patterns (using pre-warmed seed edges)
+    2. Collects ALL unique hop-2 frontier nodes across patterns
+    3. Pre-warms hop-2 edges in ONE query
+    4. Runs hop 2 for ALL patterns
+
+    This reduces DB queries from O(patterns * hops) to O(hops).
+
+    Args:
+        pool: Database connection pool
+        pattern_jobs: List of (seeds, pattern) tuples
+        config: Algorithm parameters
+        cache: Shared edge cache (should be pre-warmed with seed edges)
+
+    Returns:
+        List of PatternResult for each pattern
+    """
+    import time
+
+    # Initialize all pattern states
+    states = [_init_pattern_state(seeds, pattern) for seeds, pattern in pattern_jobs]
+
+    # Determine max hops (all patterns should be same length, but be safe)
+    max_hops = max((len(p) for _, p in pattern_jobs), default=0)
+
+    # Detailed timing for debugging
+    hop_times: list[dict] = []
+
+    # Execute hop-by-hop across ALL patterns
+    for hop in range(max_hops):
+        hop_start = time.time()
+        hop_timing = {"hop": hop, "patterns_executed": 0, "uncached_count": 0, "load_time": 0.0}
+
+        # Execute this hop for all patterns, collect uncached nodes for next hop
+        all_uncached: set[str] = set()
+        exec_start = time.time()
+        for state in states:
+            if state.hop_index < len(state.pattern):
+                uncached = _execute_hop(state, cache, config)
+                all_uncached.update(uncached)
+                hop_timing["patterns_executed"] += 1
+        hop_timing["exec_time"] = time.time() - exec_start
+
+        # Pre-warm edges for ALL uncached nodes before next hop
+        hop_timing["uncached_count"] = len(all_uncached)
+        if all_uncached:
+            uncached_list = list(all_uncached - cache._fully_loaded)
+            hop_timing["uncached_after_filter"] = len(uncached_list)
+            if uncached_list:
+                load_start = time.time()
+                edges_by_type = await load_all_edges_for_frontier(pool, uncached_list, config.top_k_neighbors)
+                hop_timing["load_time"] = time.time() - load_start
+                cache.edge_load_time += hop_timing["load_time"]
+                cache.db_queries += 1
+                cache.add_all_edges(edges_by_type, uncached_list)
+                hop_timing["edges_loaded"] = sum(
+                    len(neighbors) for edges in edges_by_type.values() for neighbors in edges.values()
+                )
+
+        hop_timing["total_time"] = time.time() - hop_start
+        hop_times.append(hop_timing)
+
+    # Store hop timing details in cache for logging
+    cache.hop_details = hop_times
+
+    # Finalize all patterns
+    return [_finalize_pattern(state, config) for state in states]
+
+
 async def mpfp_traverse_async(
     pool,
     seeds: list[SeedNode],
@@ -207,76 +386,14 @@ async def mpfp_traverse_async(
     """
     Async Forward Push traversal with lazy edge loading.
 
-    Loads ALL edge types per hop to minimize DB queries.
-
-    Args:
-        pool: Database connection pool
-        seeds: Entry point nodes with initial scores
-        pattern: Sequence of edge types to follow
-        config: Algorithm parameters
-        cache: Shared edge cache (grows as edges are loaded)
-
-    Returns:
-        PatternResult with accumulated scores per node
+    NOTE: For better performance with multiple patterns, use mpfp_traverse_hop_synchronized().
+    This function is kept for single-pattern use cases.
     """
     if not seeds:
         return PatternResult(pattern=pattern, scores={})
 
-    scores: dict[str, float] = {}
-
-    # Initialize frontier with seed masses (normalized)
-    total_seed_score = sum(s.score for s in seeds)
-    if total_seed_score == 0:
-        total_seed_score = len(seeds)  # fallback to uniform
-
-    frontier: dict[str, float] = {s.node_id: s.score / total_seed_score for s in seeds}
-
-    # Follow pattern hop by hop
-    for edge_type in pattern:
-        # Collect frontier nodes above threshold
-        active_nodes = [node_id for node_id, mass in frontier.items() if mass >= config.threshold]
-
-        if not active_nodes:
-            break
-
-        # Find nodes that need edge loading (all edge types at once)
-        uncached = cache.get_uncached(active_nodes)
-
-        # Batch load ALL edges for uncached nodes (one query for all edge types)
-        if uncached:
-            import time
-
-            load_start = time.time()
-            edges_by_type = await load_all_edges_for_frontier(pool, uncached)
-            cache.edge_load_time += time.time() - load_start
-            cache.db_queries += 1
-            cache.add_all_edges(edges_by_type, uncached)
-
-        # Propagate mass
-        next_frontier: dict[str, float] = {}
-
-        for node_id, mass in frontier.items():
-            if mass < config.threshold:
-                continue
-
-            # Keep α portion for this node
-            scores[node_id] = scores.get(node_id, 0) + config.alpha * mass
-
-            # Push (1-α) to neighbors
-            push_mass = (1 - config.alpha) * mass
-            neighbors = cache.get_normalized_neighbors(edge_type, node_id, config.top_k_neighbors)
-
-            for neighbor in neighbors:
-                next_frontier[neighbor.node_id] = next_frontier.get(neighbor.node_id, 0) + push_mass * neighbor.weight
-
-        frontier = next_frontier
-
-    # Final frontier nodes get their remaining mass
-    for node_id, mass in frontier.items():
-        if mass >= config.threshold:
-            scores[node_id] = scores.get(node_id, 0) + mass
-
-    return PatternResult(pattern=pattern, scores=scores)
+    results = await mpfp_traverse_hop_synchronized(pool, [(seeds, pattern)], config, cache)
+    return results[0] if results else PatternResult(pattern=pattern, scores={})
 
 
 def rrf_fusion(
@@ -363,7 +480,13 @@ class MPFPGraphRetriever(GraphRetriever):
         Args:
             config: Algorithm configuration (uses defaults if None)
         """
-        self.config = config or MPFPConfig()
+        if config is None:
+            # Read top_k_neighbors from global config
+            from ...config import get_config
+
+            global_config = get_config()
+            config = MPFPConfig(top_k_neighbors=global_config.mpfp_top_k_neighbors)
+        self.config = config
 
     @property
     def name(self) -> str:
@@ -433,18 +556,30 @@ class MPFPGraphRetriever(GraphRetriever):
         # Shared edge cache across all patterns
         cache = EdgeCache()
 
-        # Run all patterns in parallel (each does lazy edge loading)
+        # Pre-warm cache with ALL seed node edges BEFORE running patterns
+        # This prevents redundant DB queries at hop 1
+        all_seed_ids = list({s.node_id for seeds, _ in pattern_jobs for s in seeds})
+        if all_seed_ids:
+            import time as time_module
+
+            prewarm_start = time_module.time()
+            edges_by_type = await load_all_edges_for_frontier(pool, all_seed_ids, self.config.top_k_neighbors)
+            cache.edge_load_time += time_module.time() - prewarm_start
+            cache.db_queries += 1
+            cache.add_all_edges(edges_by_type, all_seed_ids)
+
+        # Run all patterns with HOP-SYNCHRONIZED edge loading
+        # This batches hop-2 edge loads across ALL patterns into ONE query
+        # Reduces DB queries from O(patterns * hops) to O(hops)
         step_start = time.time()
-        pattern_tasks = [
-            mpfp_traverse_async(pool, seeds, pattern, self.config, cache) for seeds, pattern in pattern_jobs
-        ]
-        pattern_results = await asyncio.gather(*pattern_tasks)
+        pattern_results = await mpfp_traverse_hop_synchronized(pool, pattern_jobs, self.config, cache)
         timings.traverse = time.time() - step_start
 
         # Record edge loading stats from cache
         timings.edge_count = sum(len(neighbors) for g in cache.graphs.values() for neighbors in g.values())
         timings.db_queries = cache.db_queries
         timings.edge_load_time = cache.edge_load_time
+        timings.hop_details = cache.hop_details
 
         # Fuse results
         step_start = time.time()

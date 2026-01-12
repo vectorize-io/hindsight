@@ -27,10 +27,17 @@ config.configure_logging()
 
 # Create app at module level (required for uvicorn import string)
 # MemoryEngine reads configuration from environment variables automatically
-_memory = MemoryEngine()
+# Note: run_migrations=True by default, but migrations are idempotent so safe with workers
+_memory = MemoryEngine(run_migrations=config.run_migrations_on_startup)
 
 # Create unified app with both HTTP and optionally MCP
-app = create_app(memory=_memory, http_api_enabled=True, mcp_api_enabled=config.mcp_enabled, mcp_mount_path="/mcp")
+app = create_app(
+    memory=_memory,
+    http_api_enabled=True,
+    mcp_api_enabled=config.mcp_enabled,
+    mcp_mount_path="/mcp",
+    initialize_memory=True,
+)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import BFSGraphRetriever, GraphRetriever
+from .link_expansion_retrieval import LinkExpansionRetriever
 from .mpfp_retrieval import MPFPGraphRetriever
 from .types import MPFPTimings, RetrievalResult
 
@@ -35,6 +36,7 @@ class ParallelRetrievalResult:
     timings: dict[str, float] = field(default_factory=dict)
     temporal_constraint: tuple | None = None  # (start_date, end_date)
     mpfp_timings: list[MPFPTimings] = field(default_factory=list)  # MPFP sub-step timings per fact type
+    max_conn_wait: float = 0.0  # Maximum connection acquisition wait time across all methods
 
 
 # Default graph retriever instance (can be overridden)
@@ -49,13 +51,18 @@ def get_default_graph_retriever() -> GraphRetriever:
         retriever_type = config.graph_retriever.lower()
         if retriever_type == "mpfp":
             _default_graph_retriever = MPFPGraphRetriever()
-            logger.info("Using MPFP graph retriever")
+            logger.info(
+                f"Using MPFP graph retriever (top_k_neighbors={_default_graph_retriever.config.top_k_neighbors})"
+            )
         elif retriever_type == "bfs":
             _default_graph_retriever = BFSGraphRetriever()
             logger.info("Using BFS graph retriever")
+        elif retriever_type == "link_expansion":
+            _default_graph_retriever = LinkExpansionRetriever()
+            logger.info("Using LinkExpansion graph retriever")
         else:
-            logger.warning(f"Unknown graph retriever '{retriever_type}', falling back to MPFP")
-            _default_graph_retriever = MPFPGraphRetriever()
+            logger.warning(f"Unknown graph retriever '{retriever_type}', falling back to link_expansion")
+            _default_graph_retriever = LinkExpansionRetriever()
     return _default_graph_retriever
 
 
@@ -390,17 +397,11 @@ async def retrieve_parallel(
     Returns:
         ParallelRetrievalResult with semantic, bm25, graph, temporal results and timings
     """
-    # Extract temporal constraint if not pre-provided
-    if temporal_constraint is None:
-        from .temporal_extraction import extract_temporal_constraint
-
-        temporal_constraint = extract_temporal_constraint(
-            query_text, reference_date=question_date, analyzer=query_analyzer
-        )
-
     retriever = graph_retriever or get_default_graph_retriever()
 
-    if retriever.name == "mpfp":
+    # Use optimized parallel path for MPFP and LinkExpansion (runs all methods truly in parallel)
+    # BFS uses legacy path that extracts temporal constraint upfront
+    if retriever.name in ("mpfp", "link_expansion"):
         return await _retrieve_parallel_mpfp(
             pool,
             query_text,
@@ -410,8 +411,17 @@ async def retrieve_parallel(
             thinking_budget,
             temporal_constraint,
             retriever,
+            question_date,
+            query_analyzer,
         )
     else:
+        # For BFS, extract temporal constraint upfront (legacy path)
+        if temporal_constraint is None:
+            from .temporal_extraction import extract_temporal_constraint
+
+            temporal_constraint = extract_temporal_constraint(
+                query_text, reference_date=question_date, analyzer=query_analyzer
+            )
         return await _retrieve_parallel_bfs(
             pool, query_text, query_embedding_str, bank_id, fact_type, thinking_budget, temporal_constraint, retriever
         )
@@ -423,6 +433,7 @@ class _TimedResult:
 
     results: list[RetrievalResult]
     time: float
+    conn_wait: float = 0.0  # Connection acquisition wait time
 
 
 async def _retrieve_parallel_mpfp(
@@ -434,6 +445,8 @@ async def _retrieve_parallel_mpfp(
     thinking_budget: int,
     temporal_constraint: tuple | None,
     retriever: GraphRetriever,
+    question_date: datetime | None = None,
+    query_analyzer=None,
 ) -> ParallelRetrievalResult:
     """
     MPFP retrieval with true parallelization.
@@ -442,40 +455,37 @@ async def _retrieve_parallel_mpfp(
     - Semantic: vector similarity search
     - BM25: keyword search
     - Graph: MPFP traversal (does its own semantic seeds internally)
-    - Temporal: date-range search (if constraint detected)
+    - Temporal: date extraction (if needed) + date-range search
 
-    Graph does its own semantic query for seeds, avoiding chain dependency.
+    Temporal extraction runs IN PARALLEL with other retrievals, so even if
+    dateparser is slow, it doesn't block semantic/BM25/graph.
     """
     import time
 
     async def run_semantic() -> _TimedResult:
         """Independent semantic retrieval."""
         start = time.time()
+        acquire_start = time.time()
         async with acquire_with_retry(pool) as conn:
+            conn_wait = time.time() - acquire_start
             results = await retrieve_semantic(conn, query_embedding_str, bank_id, fact_type, limit=thinking_budget)
-        return _TimedResult(results, time.time() - start)
+        return _TimedResult(results, time.time() - start, conn_wait)
 
     async def run_bm25() -> _TimedResult:
         """Independent BM25 retrieval."""
         start = time.time()
+        acquire_start = time.time()
         async with acquire_with_retry(pool) as conn:
+            conn_wait = time.time() - acquire_start
             results = await retrieve_bm25(conn, query_text, bank_id, fact_type, limit=thinking_budget)
-        return _TimedResult(results, time.time() - start)
+        return _TimedResult(results, time.time() - start, conn_wait)
 
     async def run_graph() -> tuple[list[RetrievalResult], float, MPFPTimings | None]:
         """Independent graph retrieval - does its own semantic seeds."""
         start = time.time()
 
-        # Get temporal seeds if needed (graph uses them for temporal patterns)
-        temporal_seeds = None
-        if temporal_constraint:
-            tc_start, tc_end = temporal_constraint
-            async with acquire_with_retry(pool) as conn:
-                temporal_seeds = await _get_temporal_entry_points(
-                    conn, query_embedding_str, bank_id, fact_type, tc_start, tc_end, limit=20
-                )
-
         # MPFP does its own semantic seeds via _find_semantic_seeds
+        # Note: temporal_seeds not used here to avoid dependency on temporal extraction
         results, mpfp_timing = await retriever.retrieve(
             pool=pool,
             query_embedding_str=query_embedding_str,
@@ -484,14 +494,50 @@ async def _retrieve_parallel_mpfp(
             budget=thinking_budget,
             query_text=query_text,
             semantic_seeds=None,  # Let MPFP find its own seeds
-            temporal_seeds=temporal_seeds,
+            temporal_seeds=None,  # Don't wait for temporal extraction
         )
         return results, time.time() - start, mpfp_timing
 
-    async def run_temporal(tc_start, tc_end) -> _TimedResult:
-        """Independent temporal retrieval."""
+    @dataclass
+    class _TemporalWithConstraint:
+        """Temporal results with the extracted constraint."""
+
+        results: list[RetrievalResult]
+        time: float
+        constraint: tuple | None
+        extraction_time: float  # Time spent in query analyzer (dateparser)
+        conn_wait: float = 0.0  # Connection acquisition wait time
+
+    async def run_temporal_with_extraction() -> _TemporalWithConstraint:
+        """
+        Extract temporal constraint AND run temporal retrieval.
+
+        This runs in parallel with semantic/BM25/graph, so dateparser
+        latency doesn't block other retrievals.
+        """
         start = time.time()
+
+        # Use pre-provided constraint if available
+        tc = temporal_constraint
+        extraction_time = 0.0
+
+        # Otherwise extract from query (this is the potentially slow dateparser call)
+        if tc is None:
+            from .temporal_extraction import extract_temporal_constraint
+
+            extraction_start = time.time()
+            tc = extract_temporal_constraint(query_text, reference_date=question_date, analyzer=query_analyzer)
+            extraction_time = time.time() - extraction_start
+
+        # If no temporal constraint found, return empty (but still report extraction time)
+        if tc is None:
+            return _TemporalWithConstraint([], time.time() - start, None, extraction_time, 0.0)
+
+        # Run temporal retrieval with the extracted constraint
+        tc_start, tc_end = tc
+        acquire_start = time.time()
         async with acquire_with_retry(pool) as conn:
+            conn_wait = time.time() - acquire_start
             results = await retrieve_temporal(
                 conn,
                 query_embedding_str,
@@ -502,52 +548,36 @@ async def _retrieve_parallel_mpfp(
                 budget=thinking_budget,
                 semantic_threshold=0.1,
             )
-        return _TimedResult(results, time.time() - start)
+        return _TemporalWithConstraint(results, time.time() - start, tc, extraction_time, conn_wait)
 
-    # Run all methods in parallel (no chain dependencies)
-    if temporal_constraint:
-        tc_start, tc_end = temporal_constraint
-        semantic_result, bm25_result, graph_result, temporal_result = await asyncio.gather(
-            run_semantic(),
-            run_bm25(),
-            run_graph(),
-            run_temporal(tc_start, tc_end),
-        )
-        graph_results, graph_time, mpfp_timing = graph_result
-        return ParallelRetrievalResult(
-            semantic=semantic_result.results,
-            bm25=bm25_result.results,
-            graph=graph_results,
-            temporal=temporal_result.results,
-            timings={
-                "semantic": semantic_result.time,
-                "bm25": bm25_result.time,
-                "graph": graph_time,
-                "temporal": temporal_result.time,
-            },
-            temporal_constraint=temporal_constraint,
-            mpfp_timings=[mpfp_timing] if mpfp_timing else [],
-        )
-    else:
-        semantic_result, bm25_result, graph_result = await asyncio.gather(
-            run_semantic(),
-            run_bm25(),
-            run_graph(),
-        )
-        graph_results, graph_time, mpfp_timing = graph_result
-        return ParallelRetrievalResult(
-            semantic=semantic_result.results,
-            bm25=bm25_result.results,
-            graph=graph_results,
-            temporal=None,
-            timings={
-                "semantic": semantic_result.time,
-                "bm25": bm25_result.time,
-                "graph": graph_time,
-            },
-            temporal_constraint=None,
-            mpfp_timings=[mpfp_timing] if mpfp_timing else [],
-        )
+    # Run ALL methods in parallel (including temporal extraction!)
+    semantic_result, bm25_result, graph_result, temporal_result = await asyncio.gather(
+        run_semantic(),
+        run_bm25(),
+        run_graph(),
+        run_temporal_with_extraction(),
+    )
+    graph_results, graph_time, mpfp_timing = graph_result
+
+    # Compute max connection wait across all methods (graph handles its own connections)
+    max_conn_wait = max(semantic_result.conn_wait, bm25_result.conn_wait, temporal_result.conn_wait)
+
+    return ParallelRetrievalResult(
+        semantic=semantic_result.results,
+        bm25=bm25_result.results,
+        graph=graph_results,
+        temporal=temporal_result.results if temporal_result.results else None,
+        timings={
+            "semantic": semantic_result.time,
+            "bm25": bm25_result.time,
+            "graph": graph_time,
+            "temporal": temporal_result.time,
+            "temporal_extraction": temporal_result.extraction_time,
+        },
+        temporal_constraint=temporal_result.constraint,
+        mpfp_timings=[mpfp_timing] if mpfp_timing else [],
+        max_conn_wait=max_conn_wait,
+    )
 
 
 async def _get_temporal_entry_points(

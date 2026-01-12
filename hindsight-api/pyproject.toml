@@ -37,10 +37,12 @@ dependencies = [
     "anthropic>=0.40.0",
     "typer>=0.9.0",
     "cohere>=5.0.0",
+    "flashrank>=0.2.0",
     # Local ML models for embeddings/reranking - can be excluded in Docker with INCLUDE_LOCAL_MODELS=false
     "sentence-transformers>=3.0.0,<3.3.0",
     "transformers>=4.30.0,<4.46.0",
     "torch>=2.0.0",
+    "uvloop>=0.22.1",
 ]
 
 [project.optional-dependencies]

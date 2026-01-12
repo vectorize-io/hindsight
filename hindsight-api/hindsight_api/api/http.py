@@ -1196,6 +1196,9 @@ def _register_routes(app: FastAPI):
         bank_id: str, request: RecallRequest, request_context: RequestContext = Depends(get_request_context)
     ):
         """Run a recall and return results with trace."""
+        import time
+
+        handler_start = time.time()
         metrics = get_metrics_collector()
 
         try:
@@ -1221,10 +1224,12 @@ def _register_routes(app: FastAPI):
             include_chunks = request.include.chunks is not None
             max_chunk_tokens = request.include.chunks.max_tokens if include_chunks else 8192
 
+            pre_recall = time.time() - handler_start
             # Run recall with tracing (record metrics)
             with metrics.record_operation(
                 "recall", bank_id=bank_id, source="api", budget=request.budget.value, max_tokens=request.max_tokens
             ):
+                recall_start = time.time()
                 core_result = await app.state.memory.recall_async(
                     bank_id=bank_id,
                     query=request.query,
@@ -1283,9 +1288,21 @@ def _register_routes(app: FastAPI):
                         ],
                     )
 
-            return RecallResponse(
+            response = RecallResponse(
                 results=recall_results, trace=core_result.trace, entities=entities_response, chunks=chunks_response
             )
+
+            handler_duration = time.time() - handler_start
+            recall_duration = time.time() - recall_start
+            post_recall = handler_duration - pre_recall - recall_duration
+            if handler_duration > 1.0:
+                logging.info(
+                    f"[RECALL HTTP] bank={bank_id} handler_total={handler_duration:.3f}s "
+                    f"pre={pre_recall:.3f}s recall={recall_duration:.3f}s post={post_recall:.3f}s "
+                    f"results={len(recall_results)} entities={len(entities_response) if entities_response else 0}"
+                )
+
+            return response
         except HTTPException:
             raise
         except OperationValidationError as e:
@@ -1295,8 +1312,11 @@ def _register_routes(app: FastAPI):
         except Exception as e:
             import traceback
 
+            handler_duration = time.time() - handler_start
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/recall: {error_detail}")
+            logger.error(
+                f"[RECALL ERROR] bank={bank_id} handler_duration={handler_duration:.3f}s error={str(e)}\n{error_detail}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(

@@ -84,7 +84,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
 
     Performance:
     - ~10-50ms per query
-    - No model loading required
+    - No model loading required (lazy import on first use)
     """
 
     def __init__(self):
@@ -112,8 +112,6 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         Returns:
             QueryAnalysis with temporal_constraint if found
         """
-        self.load()
-
         if reference_date is None:
             reference_date = datetime.now()
 
@@ -122,6 +120,9 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         period_result = self._extract_period(query_lower, reference_date)
         if period_result is not None:
             return QueryAnalysis(temporal_constraint=period_result)
+
+        # Lazy load dateparser (only imports on first call, then cached)
+        self.load()
 
         # Use dateparser's search_dates to find temporal expressions
         settings = {
