@@ -24,6 +24,7 @@ from ..config import (
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     ENV_COHERE_API_KEY,
+    ENV_RERANKER_COHERE_BASE_URL,
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
@@ -392,6 +393,7 @@ class CohereCrossEncoder(CrossEncoderModel):
         self,
         api_key: str,
         model: str = DEFAULT_RERANKER_COHERE_MODEL,
+        base_url: str | None = None,
         timeout: float = 60.0,
     ):
         """
@@ -400,10 +402,12 @@ class CohereCrossEncoder(CrossEncoderModel):
         Args:
             api_key: Cohere API key
             model: Cohere rerank model name (default: rerank-english-v3.0)
+            base_url: Custom base URL for Cohere-compatible API (e.g., Azure-hosted endpoint)
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url
         self.timeout = timeout
         self._client = None
 
@@ -421,8 +425,14 @@ class CohereCrossEncoder(CrossEncoderModel):
         except ImportError:
             raise ImportError("cohere is required for CohereCrossEncoder. Install it with: pip install cohere")
 
-        logger.info(f"Reranker: initializing Cohere provider with model {self.model}")
-        self._client = cohere.Client(api_key=self.api_key, timeout=self.timeout)
+        base_url_msg = f" at {self.base_url}" if self.base_url else ""
+        logger.info(f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg}")
+
+        # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
+        client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        self._client = cohere.Client(**client_kwargs)
         logger.info("Reranker: Cohere provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
@@ -671,7 +681,8 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         if not api_key:
             raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
         model = os.environ.get(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL)
-        return CohereCrossEncoder(api_key=api_key, model=model)
+        base_url = os.environ.get(ENV_RERANKER_COHERE_BASE_URL) or None
+        return CohereCrossEncoder(api_key=api_key, model=model, base_url=base_url)
     elif provider == "flashrank":
         model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
         cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)

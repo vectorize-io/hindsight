@@ -21,9 +21,11 @@ from ..config import (
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
     ENV_COHERE_API_KEY,
+    ENV_EMBEDDINGS_COHERE_BASE_URL,
     ENV_EMBEDDINGS_COHERE_MODEL,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
+    ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
@@ -322,6 +324,7 @@ class OpenAIEmbeddings(Embeddings):
         self,
         api_key: str,
         model: str = DEFAULT_EMBEDDINGS_OPENAI_MODEL,
+        base_url: str | None = None,
         batch_size: int = 100,
         max_retries: int = 3,
     ):
@@ -331,11 +334,13 @@ class OpenAIEmbeddings(Embeddings):
         Args:
             api_key: OpenAI API key
             model: OpenAI embedding model name (default: text-embedding-3-small)
+            base_url: Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI endpoint)
             batch_size: Maximum batch size for embedding requests (default: 100)
             max_retries: Maximum number of retries for failed requests (default: 3)
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url
         self.batch_size = batch_size
         self.max_retries = max_retries
         self._client = None
@@ -361,8 +366,14 @@ class OpenAIEmbeddings(Embeddings):
         except ImportError:
             raise ImportError("openai is required for OpenAIEmbeddings. Install it with: pip install openai")
 
-        logger.info(f"Embeddings: initializing OpenAI provider with model {self.model}")
-        self._client = OpenAI(api_key=self.api_key, max_retries=self.max_retries)
+        base_url_msg = f" at {self.base_url}" if self.base_url else ""
+        logger.info(f"Embeddings: initializing OpenAI provider with model {self.model}{base_url_msg}")
+
+        # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
+        client_kwargs = {"api_key": self.api_key, "max_retries": self.max_retries}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        self._client = OpenAI(**client_kwargs)
 
         # Try to get dimension from known models, otherwise do a test embedding
         if self.model in self.MODEL_DIMENSIONS:
@@ -435,6 +446,7 @@ class CohereEmbeddings(Embeddings):
         self,
         api_key: str,
         model: str = DEFAULT_EMBEDDINGS_COHERE_MODEL,
+        base_url: str | None = None,
         batch_size: int = 96,
         timeout: float = 60.0,
         input_type: str = "search_document",
@@ -445,6 +457,7 @@ class CohereEmbeddings(Embeddings):
         Args:
             api_key: Cohere API key
             model: Cohere embedding model name (default: embed-english-v3.0)
+            base_url: Custom base URL for Cohere-compatible API (e.g., Azure-hosted endpoint)
             batch_size: Maximum batch size for embedding requests (default: 96, Cohere's limit)
             timeout: Request timeout in seconds (default: 60.0)
             input_type: Input type for embeddings (default: search_document).
@@ -452,6 +465,7 @@ class CohereEmbeddings(Embeddings):
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url
         self.batch_size = batch_size
         self.timeout = timeout
         self.input_type = input_type
@@ -478,8 +492,14 @@ class CohereEmbeddings(Embeddings):
         except ImportError:
             raise ImportError("cohere is required for CohereEmbeddings. Install it with: pip install cohere")
 
-        logger.info(f"Embeddings: initializing Cohere provider with model {self.model}")
-        self._client = cohere.Client(api_key=self.api_key, timeout=self.timeout)
+        base_url_msg = f" at {self.base_url}" if self.base_url else ""
+        logger.info(f"Embeddings: initializing Cohere provider with model {self.model}{base_url_msg}")
+
+        # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
+        client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        self._client = cohere.Client(**client_kwargs)
 
         # Try to get dimension from known models, otherwise do a test embedding
         if self.model in self.MODEL_DIMENSIONS:
@@ -558,12 +578,14 @@ def create_embeddings_from_env() -> Embeddings:
                 f"when {ENV_EMBEDDINGS_PROVIDER} is 'openai'"
             )
         model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
-        return OpenAIEmbeddings(api_key=api_key, model=model)
+        base_url = os.environ.get(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None
+        return OpenAIEmbeddings(api_key=api_key, model=model, base_url=base_url)
     elif provider == "cohere":
         api_key = os.environ.get(ENV_COHERE_API_KEY)
         if not api_key:
             raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'cohere'")
         model = os.environ.get(ENV_EMBEDDINGS_COHERE_MODEL, DEFAULT_EMBEDDINGS_COHERE_MODEL)
-        return CohereEmbeddings(api_key=api_key, model=model)
+        base_url = os.environ.get(ENV_EMBEDDINGS_COHERE_BASE_URL) or None
+        return CohereEmbeddings(api_key=api_key, model=model, base_url=base_url)
     else:
         raise ValueError(f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei', 'openai', 'cohere'")
