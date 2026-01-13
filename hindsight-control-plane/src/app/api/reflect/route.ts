@@ -5,12 +5,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const bankId = body.bank_id || body.agent_id || "default";
-    const { query, context, budget, thinking_budget, include_facts } = body;
+    const { query, context, budget, thinking_budget, include_facts, tags, tags_match } = body;
 
     const requestBody: any = {
       query,
       budget: budget || (thinking_budget ? "mid" : "low"),
       context: context || undefined,
+      tags,
+      tags_match,
     };
 
     // Add include options if specified

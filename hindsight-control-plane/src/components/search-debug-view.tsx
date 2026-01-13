@@ -25,6 +25,8 @@ import {
   FileText,
   Users,
   ArrowDown,
+  Tag,
+  Calendar,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -32,6 +34,7 @@ import { MemoryDetailPanel } from "./memory-detail-panel";
 
 type FactType = "world" | "experience" | "opinion";
 type Budget = "low" | "mid" | "high";
+type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 type ViewMode = "results" | "trace" | "json";
 
 export function SearchDebugView() {
@@ -45,6 +48,8 @@ export function SearchDebugView() {
   const [queryDate, setQueryDate] = useState("");
   const [includeChunks, setIncludeChunks] = useState(false);
   const [includeEntities, setIncludeEntities] = useState(false);
+  const [tags, setTags] = useState("");
+  const [tagsMatch, setTagsMatch] = useState<TagsMatch>("any");
 
   // Results state
   const [results, setResults] = useState<any[] | null>(null);
@@ -83,6 +88,14 @@ export function SearchDebugView() {
 
   const INITIAL_RESULTS_COUNT = 5;
 
+  // Helper to find full memory data from results when clicking trace items
+  const selectMemoryFromTrace = (traceResult: any) => {
+    const nodeId = traceResult.id || traceResult.node_id;
+    // Try to find the full result with all metadata
+    const fullResult = results?.find((r: any) => r.id === nodeId || r.node_id === nodeId);
+    setSelectedMemory(fullResult || traceResult);
+  };
+
   const runSearch = async () => {
     if (!currentBank) {
       alert("Please select a memory bank first");
@@ -99,6 +112,12 @@ export function SearchDebugView() {
     setLoading(true);
 
     try {
+      // Parse tags from comma-separated string
+      const parsedTags = tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
       const requestBody: any = {
         bank_id: currentBank,
         query: query,
@@ -111,6 +130,7 @@ export function SearchDebugView() {
           chunks: includeChunks ? { max_tokens: 8192 } : null,
         },
         ...(queryDate && { query_timestamp: queryDate }),
+        ...(parsedTags.length > 0 && { tags: parsedTags, tags_match: tagsMatch }),
       };
 
       const data: any = await client.recall(requestBody);
@@ -245,6 +265,31 @@ export function SearchDebugView() {
                 <span className="text-sm">Entities</span>
               </label>
             </div>
+          </div>
+
+          {/* Tags Filter */}
+          <div className="flex items-center gap-4 mt-4 pt-4 border-t">
+            <Tag className="h-4 w-4 text-muted-foreground" />
+            <div className="flex-1 max-w-md">
+              <Input
+                type="text"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                placeholder="Filter by tags (comma-separated)"
+                className="h-8"
+              />
+            </div>
+            <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
+              <SelectTrigger className="w-40 h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any (incl. untagged)</SelectItem>
+                <SelectItem value="all">All (incl. untagged)</SelectItem>
+                <SelectItem value="any_strict">Any (strict)</SelectItem>
+                <SelectItem value="all_strict">All (strict)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
@@ -507,9 +552,29 @@ export function SearchDebugView() {
                                               }}
                                             >
                                               <div className="flex items-center justify-between mb-1">
-                                                <span className="font-medium text-sm text-foreground capitalize">
-                                                  {method.method_name}
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                  <span className="font-medium text-sm text-foreground capitalize">
+                                                    {method.method_name}
+                                                  </span>
+                                                  {/* Show temporal range inline */}
+                                                  {method.method_name === "temporal" &&
+                                                    method.metadata?.constraint && (
+                                                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                                        <Calendar className="h-3 w-3" />
+                                                        {method.metadata.constraint.start
+                                                          ? new Date(
+                                                              method.metadata.constraint.start
+                                                            ).toLocaleDateString()
+                                                          : "any"}
+                                                        {" → "}
+                                                        {method.metadata.constraint.end
+                                                          ? new Date(
+                                                              method.metadata.constraint.end
+                                                            ).toLocaleDateString()
+                                                          : "any"}
+                                                      </span>
+                                                    )}
+                                                </div>
                                                 {isMethodExpanded ? (
                                                   <ChevronDown className="h-3 w-3 text-muted-foreground" />
                                                 ) : (
@@ -546,7 +611,7 @@ export function SearchDebugView() {
                                                         className="p-2 bg-background rounded cursor-pointer hover:bg-muted/50 transition-colors border border-border"
                                                         onClick={(e) => {
                                                           e.stopPropagation();
-                                                          setSelectedMemory(r);
+                                                          selectMemoryFromTrace(r);
                                                         }}
                                                       >
                                                         <div className="flex items-start gap-2">
@@ -684,7 +749,7 @@ export function SearchDebugView() {
                                   className="p-3 bg-muted/30 rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setSelectedMemory(r);
+                                    selectMemoryFromTrace(r);
                                   }}
                                 >
                                   <div className="flex items-start gap-3">
@@ -792,7 +857,7 @@ export function SearchDebugView() {
                                     className="p-3 bg-muted/30 rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setSelectedMemory(r);
+                                      selectMemoryFromTrace(r);
                                     }}
                                   >
                                     <div className="flex items-start gap-3">
@@ -931,6 +996,7 @@ export function SearchDebugView() {
             memory={selectedMemory}
             onClose={() => setSelectedMemory(null)}
             inPanel
+            bankId={currentBank || undefined}
           />
         </div>
       )}

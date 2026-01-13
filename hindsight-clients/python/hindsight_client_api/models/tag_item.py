@@ -18,23 +18,17 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class DocumentResponse(BaseModel):
+class TagItem(BaseModel):
     """
-    Response model for get document endpoint.
+    Single tag with usage count.
     """ # noqa: E501
-    id: StrictStr
-    bank_id: StrictStr
-    original_text: StrictStr
-    content_hash: Optional[StrictStr]
-    created_at: StrictStr
-    updated_at: StrictStr
-    memory_unit_count: StrictInt
-    tags: Optional[List[StrictStr]] = Field(default=None, description="Tags associated with this document")
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "tags"]
+    tag: StrictStr = Field(description="The tag value")
+    count: StrictInt = Field(description="Number of memories with this tag")
+    __properties: ClassVar[List[str]] = ["tag", "count"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -54,7 +48,7 @@ class DocumentResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of DocumentResponse from a JSON string"""
+        """Create an instance of TagItem from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -75,16 +69,11 @@ class DocumentResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # set to None if content_hash (nullable) is None
-        # and model_fields_set contains the field
-        if self.content_hash is None and "content_hash" in self.model_fields_set:
-            _dict['content_hash'] = None
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of DocumentResponse from a dict"""
+        """Create an instance of TagItem from a dict"""
         if obj is None:
             return None
 
@@ -92,14 +81,8 @@ class DocumentResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "bank_id": obj.get("bank_id"),
-            "original_text": obj.get("original_text"),
-            "content_hash": obj.get("content_hash"),
-            "created_at": obj.get("created_at"),
-            "updated_at": obj.get("updated_at"),
-            "memory_unit_count": obj.get("memory_unit_count"),
-            "tags": obj.get("tags")
+            "tag": obj.get("tag"),
+            "count": obj.get("count")
         })
         return _obj
 

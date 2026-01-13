@@ -377,6 +377,12 @@ export type DocumentResponse = {
    * Memory Unit Count
    */
   memory_unit_count: number;
+  /**
+   * Tags
+   *
+   * Tags associated with this document
+   */
+  tags?: Array<string>;
 };
 
 /**
@@ -667,6 +673,30 @@ export type ListMemoryUnitsResponse = {
 };
 
 /**
+ * ListTagsResponse
+ *
+ * Response model for list tags endpoint.
+ */
+export type ListTagsResponse = {
+  /**
+   * Items
+   */
+  items: Array<TagItem>;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
  * MemoryItem
  *
  * Single memory item for retain.
@@ -806,9 +836,9 @@ export type RecallRequest = {
   /**
    * Tags Match
    *
-   * How to match tags: 'any' returns memories matching ANY tag (OR), 'all' returns memories matching ALL tags (AND).
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict";
 };
 
 /**
@@ -989,9 +1019,9 @@ export type ReflectRequest = {
   /**
    * Tags Match
    *
-   * How to match tags: 'any' uses memories matching ANY tag (OR), 'all' uses memories matching ALL tags (AND).
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
-  tags_match?: "any" | "all";
+  tags_match?: "any" | "all" | "any_strict" | "all_strict";
 };
 
 /**
@@ -1080,6 +1110,26 @@ export type RetainResponse = {
    * Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)
    */
   usage?: TokenUsage | null;
+};
+
+/**
+ * TagItem
+ *
+ * Single tag with usage count.
+ */
+export type TagItem = {
+  /**
+   * Tag
+   *
+   * The tag value
+   */
+  tag: string;
+  /**
+   * Count
+   *
+   * Number of memories with this tag
+   */
+  count: number;
 };
 
 /**
@@ -1264,6 +1314,44 @@ export type ListMemoriesResponses = {
 
 export type ListMemoriesResponse =
   ListMemoriesResponses[keyof ListMemoriesResponses];
+
+export type GetMemoryData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Memory Id
+     */
+    memory_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/{memory_id}";
+};
+
+export type GetMemoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
+
+export type GetMemoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
 
 export type RecallMemoriesData = {
   body: RecallRequest;
@@ -1671,6 +1759,61 @@ export type GetDocumentResponses = {
 
 export type GetDocumentResponse =
   GetDocumentResponses[keyof GetDocumentResponses];
+
+export type ListTagsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Prefix
+     *
+     * Filter tags by prefix (e.g., 'user:' to find user:alice, user:bob)
+     */
+    prefix?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of tags to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/tags";
+};
+
+export type ListTagsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListTagsError = ListTagsErrors[keyof ListTagsErrors];
+
+export type ListTagsResponses = {
+  /**
+   * Successful Response
+   */
+  200: ListTagsResponse;
+};
+
+export type ListTagsResponse2 = ListTagsResponses[keyof ListTagsResponses];
 
 export type GetChunkData = {
   body?: never;

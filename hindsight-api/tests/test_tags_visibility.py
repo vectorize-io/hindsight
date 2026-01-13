@@ -9,13 +9,14 @@ Use cases:
 
 The tags use OR-based matching: a memory matches if ANY of its tags overlap with the request tags.
 """
+from datetime import datetime
+
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
-from datetime import datetime
-from hindsight_api.api import create_app
-from hindsight_api.engine.search.tags import build_tags_where_clause_simple
 
+from hindsight_api.api import create_app
+from hindsight_api.engine.search.tags import build_tags_where_clause_simple, filter_results_by_tags
 
 # ============================================================================
 # Unit Tests for tags SQL builder
@@ -35,35 +36,202 @@ class TestTagsWhereClauseBuilder:
         result = build_tags_where_clause_simple([], 5)
         assert result == ""
 
-    def test_tags_generates_overlap_clause(self):
-        """When tags are provided, should generate PostgreSQL array overlap clause."""
-        result = build_tags_where_clause_simple(["user_a"], 5)
-        assert result == "AND tags && $5"
-
     def test_tags_with_different_param_num(self):
         """Should use the provided parameter number."""
         result = build_tags_where_clause_simple(["user_a", "user_b"], 3)
-        assert result == "AND tags && $3"
+        # Default is "any" which includes untagged
+        assert "$3" in result
 
     def test_tags_with_table_alias(self):
         """Should include table alias when provided."""
         result = build_tags_where_clause_simple(["user_a"], 5, table_alias="mu.")
-        assert result == "AND mu.tags && $5"
+        assert "mu.tags" in result
+
+    # ---- Test "any" mode (OR, includes untagged - default) ----
+
+    def test_tags_match_any_includes_untagged(self):
+        """When match='any', should include untagged memories (NULL or empty)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="any")
+        # Should use OR with NULL/empty check
+        assert "IS NULL" in result
+        assert "= '{}'" in result
+        assert "&&" in result  # overlap operator
 
     def test_tags_match_any_uses_overlap(self):
         """When match='any', should use overlap operator (&&)."""
         result = build_tags_where_clause_simple(["user_a"], 5, match="any")
-        assert result == "AND tags && $5"
+        assert "&&" in result
+
+    # ---- Test "all" mode (AND, includes untagged) ----
+
+    def test_tags_match_all_includes_untagged(self):
+        """When match='all', should include untagged memories (NULL or empty)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="all")
+        # Should use OR with NULL/empty check
+        assert "IS NULL" in result
+        assert "= '{}'" in result
+        assert "@>" in result  # contains operator
 
     def test_tags_match_all_uses_contains(self):
         """When match='all', should use contains operator (@>)."""
         result = build_tags_where_clause_simple(["user_a"], 5, match="all")
-        assert result == "AND tags @> $5"
+        assert "@>" in result
 
-    def test_tags_match_all_with_table_alias(self):
-        """Should use contains operator with table alias."""
-        result = build_tags_where_clause_simple(["user_a", "user_b"], 3, table_alias="mu.", match="all")
-        assert result == "AND mu.tags @> $3"
+    # ---- Test "any_strict" mode (OR, excludes untagged) ----
+
+    def test_tags_match_any_strict_excludes_untagged(self):
+        """When match='any_strict', should exclude untagged memories."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="any_strict")
+        # Should require tags to be NOT NULL and not empty
+        assert "IS NOT NULL" in result
+        assert "!= '{}'" in result
+        assert "&&" in result  # overlap operator
+
+    def test_tags_match_any_strict_uses_overlap(self):
+        """When match='any_strict', should use overlap operator (&&)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="any_strict")
+        assert "&&" in result
+        # Should NOT include untagged
+        assert "IS NULL" not in result or "IS NOT NULL" in result
+
+    # ---- Test "all_strict" mode (AND, excludes untagged) ----
+
+    def test_tags_match_all_strict_excludes_untagged(self):
+        """When match='all_strict', should exclude untagged memories."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="all_strict")
+        # Should require tags to be NOT NULL and not empty
+        assert "IS NOT NULL" in result
+        assert "!= '{}'" in result
+        assert "@>" in result  # contains operator
+
+    def test_tags_match_all_strict_uses_contains(self):
+        """When match='all_strict', should use contains operator (@>)."""
+        result = build_tags_where_clause_simple(["user_a"], 5, match="all_strict")
+        assert "@>" in result
+
+    # ---- Test table alias with all modes ----
+
+    def test_tags_match_any_with_table_alias(self):
+        """Should include table alias with any mode."""
+        result = build_tags_where_clause_simple(["user_a"], 3, table_alias="mu.", match="any")
+        assert "mu.tags" in result
+
+    def test_tags_match_all_strict_with_table_alias(self):
+        """Should include table alias with all_strict mode."""
+        result = build_tags_where_clause_simple(["user_a", "user_b"], 3, table_alias="mu.", match="all_strict")
+        assert "mu.tags" in result
+        assert "@>" in result
+        assert "IS NOT NULL" in result
+
+
+# ============================================================================
+# Unit Tests for filter_results_by_tags (Python-side filtering)
+# ============================================================================
+
+
+class MockResult:
+    """Mock result object for testing filter_results_by_tags."""
+
+    def __init__(self, tags):
+        self.tags = tags
+
+
+class TestFilterResultsByTags:
+    """Unit tests for the Python-side tags filter function."""
+
+    def test_no_tags_returns_all(self):
+        """When tags is None, should return all results."""
+        results = [MockResult(["a"]), MockResult(["b"]), MockResult(None)]
+        filtered = filter_results_by_tags(results, None)
+        assert len(filtered) == 3
+
+    def test_empty_tags_returns_all(self):
+        """When tags is empty list, should return all results."""
+        results = [MockResult(["a"]), MockResult(["b"]), MockResult(None)]
+        filtered = filter_results_by_tags(results, [])
+        assert len(filtered) == 3
+
+    # ---- Test "any" mode (OR, includes untagged) ----
+
+    def test_any_mode_includes_matching_tags(self):
+        """'any' mode should include results with matching tags."""
+        results = [MockResult(["a"]), MockResult(["b"]), MockResult(["c"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="any")
+        # "a" and "b" match, "c" doesn't match and isn't untagged, so excluded
+        assert len(filtered) == 2
+        tags_found = [r.tags[0] for r in filtered if r.tags]
+        assert "a" in tags_found
+        assert "b" in tags_found
+        assert "c" not in tags_found
+
+    def test_any_mode_includes_untagged(self):
+        """'any' mode should include untagged results."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a"], match="any")
+        assert len(filtered) == 3  # a matches, None is untagged, [] is untagged
+
+    def test_any_mode_includes_partial_overlap(self):
+        """'any' mode should include results with ANY overlapping tag."""
+        results = [MockResult(["a", "x"]), MockResult(["b", "y"])]
+        filtered = filter_results_by_tags(results, ["a"], match="any")
+        # ["a", "x"] matches, ["b", "y"] doesn't, but untagged would be included
+        tags_found = [r.tags for r in filtered]
+        assert ["a", "x"] in tags_found
+
+    # ---- Test "any_strict" mode (OR, excludes untagged) ----
+
+    def test_any_strict_excludes_untagged(self):
+        """'any_strict' mode should exclude untagged results."""
+        results = [MockResult(["a"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a"], match="any_strict")
+        assert len(filtered) == 1  # Only ["a"] matches
+        assert filtered[0].tags == ["a"]
+
+    def test_any_strict_excludes_non_matching(self):
+        """'any_strict' mode should exclude non-matching tagged results."""
+        results = [MockResult(["a"]), MockResult(["b"]), MockResult(["c"])]
+        filtered = filter_results_by_tags(results, ["a"], match="any_strict")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a"]
+
+    # ---- Test "all" mode (AND, includes untagged) ----
+
+    def test_all_mode_requires_all_tags(self):
+        """'all' mode should require ALL requested tags to be present."""
+        results = [MockResult(["a", "b"]), MockResult(["a"]), MockResult(["b"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="all")
+        # Only ["a", "b"] has both tags, but untagged would also be included
+        tags_found = [r.tags for r in filtered]
+        assert ["a", "b"] in tags_found
+
+    def test_all_mode_includes_untagged(self):
+        """'all' mode should include untagged results."""
+        results = [MockResult(["a", "b"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="all")
+        assert len(filtered) == 3  # ["a", "b"] matches, None is untagged, [] is untagged
+
+    # ---- Test "all_strict" mode (AND, excludes untagged) ----
+
+    def test_all_strict_requires_all_tags(self):
+        """'all_strict' mode should require ALL requested tags."""
+        results = [MockResult(["a", "b"]), MockResult(["a"]), MockResult(["b"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="all_strict")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a", "b"]
+
+    def test_all_strict_excludes_untagged(self):
+        """'all_strict' mode should exclude untagged results."""
+        results = [MockResult(["a", "b"]), MockResult(None), MockResult([])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="all_strict")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a", "b"]
+
+    def test_all_strict_allows_superset(self):
+        """'all_strict' mode should allow results with MORE tags than requested."""
+        results = [MockResult(["a", "b", "c"]), MockResult(["a"])]
+        filtered = filter_results_by_tags(results, ["a", "b"], match="all_strict")
+        assert len(filtered) == 1
+        assert filtered[0].tags == ["a", "b", "c"]  # Has a, b, AND c
 
 
 # ============================================================================
@@ -453,3 +621,168 @@ async def test_student_tracking_visibility(api_client):
 
     assert any("Student A" in t for t in teacher_texts), "Teacher should see Student A's data"
     assert any("Student B" in t for t in teacher_texts), "Teacher should see Student B's data"
+
+
+# ============================================================================
+# Tests for list_tags API endpoint
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_tags_returns_all_tags(api_client):
+    """Test that list_tags returns all unique tags with counts."""
+    bank_id = f"list_tags_test_{datetime.now().timestamp()}"
+
+    # Store memories with various tags
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Memory 1 for user alice.", "tags": ["user:alice"]},
+                {"content": "Memory 2 for user alice.", "tags": ["user:alice"]},
+                {"content": "Memory 3 for user bob.", "tags": ["user:bob"]},
+                {"content": "Memory 4 in session 123.", "tags": ["session:123"]},
+                {"content": "Memory 5 for alice in session 456.", "tags": ["user:alice", "session:456"]},
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # List all tags
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags")
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify structure
+    assert "items" in result
+    assert "total" in result
+    assert "limit" in result
+    assert "offset" in result
+
+    # Verify tags and counts
+    tags_map = {item["tag"]: item["count"] for item in result["items"]}
+    assert "user:alice" in tags_map
+    assert tags_map["user:alice"] == 3  # 3 memories have this tag
+    assert "user:bob" in tags_map
+    assert tags_map["user:bob"] == 1
+    assert "session:123" in tags_map
+    assert tags_map["session:123"] == 1
+    assert "session:456" in tags_map
+    assert tags_map["session:456"] == 1
+
+    assert result["total"] == 4  # 4 unique tags
+
+
+@pytest.mark.asyncio
+async def test_list_tags_with_prefix_filter(api_client):
+    """Test that list_tags filters by prefix for wildcard expansion."""
+    bank_id = f"list_tags_prefix_test_{datetime.now().timestamp()}"
+
+    # Store memories with various tags
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Memory for alice.", "tags": ["user:alice"]},
+                {"content": "Memory for bob.", "tags": ["user:bob"]},
+                {"content": "Memory for charlie.", "tags": ["user:charlie"]},
+                {"content": "Session memory.", "tags": ["session:abc"]},
+                {"content": "Room memory.", "tags": ["room:123"]},
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # List tags with 'user:' prefix (to expand 'user:*' wildcard)
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags", params={"prefix": "user:"})
+    assert response.status_code == 200
+    result = response.json()
+
+    # Should only return user:* tags
+    tags = [item["tag"] for item in result["items"]]
+    assert "user:alice" in tags
+    assert "user:bob" in tags
+    assert "user:charlie" in tags
+    assert "session:abc" not in tags
+    assert "room:123" not in tags
+    assert result["total"] == 3
+
+
+@pytest.mark.asyncio
+async def test_list_tags_pagination(api_client):
+    """Test that list_tags supports pagination."""
+    bank_id = f"list_tags_pagination_test_{datetime.now().timestamp()}"
+
+    # Store memories with many tags - use meaningful content for fact extraction
+    names = ["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry", "Ivan", "Julia"]
+    items = [
+        {"content": f"{name} works as a software engineer at company {i}.", "tags": [f"tag:{i:03d}"]}
+        for i, name in enumerate(names)
+    ]
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={"items": items}
+    )
+    assert response.status_code == 200
+
+    # Get first page (limit 3)
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags", params={"limit": 3, "offset": 0})
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["items"]) == 3
+    assert result["total"] == 10
+    assert result["limit"] == 3
+    assert result["offset"] == 0
+
+    # Get second page
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags", params={"limit": 3, "offset": 3})
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["items"]) == 3
+    assert result["offset"] == 3
+
+
+@pytest.mark.asyncio
+async def test_list_tags_empty_bank(api_client):
+    """Test that list_tags returns empty for bank with no tags."""
+    bank_id = f"list_tags_empty_test_{datetime.now().timestamp()}"
+
+    # List tags without storing anything
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags")
+    assert response.status_code == 200
+    result = response.json()
+
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_tags_ordered_by_count(api_client):
+    """Test that list_tags returns tags ordered by frequency (most used first)."""
+    bank_id = f"list_tags_order_test_{datetime.now().timestamp()}"
+
+    # Store memories with tags having different frequencies - use meaningful content
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/memories",
+        json={
+            "items": [
+                {"content": "Alice works at a startup company as a developer.", "tags": ["rare"]},
+                {"content": "Bob is a senior engineer at Google.", "tags": ["common"]},
+                {"content": "Charlie manages the marketing team at Microsoft.", "tags": ["common"]},
+                {"content": "Diana leads the design department at Apple.", "tags": ["common"]},
+                {"content": "Eve is a data scientist at Amazon.", "tags": ["medium"]},
+                {"content": "Frank handles customer support at Meta.", "tags": ["medium"]},
+            ]
+        }
+    )
+    assert response.status_code == 200
+
+    # List tags - should be ordered by count descending
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/tags")
+    assert response.status_code == 200
+    result = response.json()
+
+    tags = [item["tag"] for item in result["items"]]
+    # common (3) should come before medium (2) which should come before rare (1)
+    assert tags.index("common") < tags.index("medium")
+    assert tags.index("medium") < tags.index("rare")

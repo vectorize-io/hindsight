@@ -138,7 +138,13 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
 
 
 async def handle_document_tracking(
-    conn, bank_id: str, document_id: str, combined_content: str, is_first_batch: bool, retain_params: dict | None = None
+    conn,
+    bank_id: str,
+    document_id: str,
+    combined_content: str,
+    is_first_batch: bool,
+    retain_params: dict | None = None,
+    document_tags: list[str] | None = None,
 ) -> None:
     """
     Handle document tracking in the database.
@@ -150,6 +156,7 @@ async def handle_document_tracking(
         combined_content: Combined content text from all content items
         is_first_batch: Whether this is the first batch (for chunked operations)
         retain_params: Optional parameters passed during retain (context, event_date, etc.)
+        document_tags: Optional list of tags to associate with the document
     """
     import hashlib
 
@@ -166,13 +173,14 @@ async def handle_document_tracking(
     # Insert document (or update if exists from concurrent operations)
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params, tags)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (id, bank_id) DO UPDATE
         SET original_text = EXCLUDED.original_text,
             content_hash = EXCLUDED.content_hash,
             metadata = EXCLUDED.metadata,
             retain_params = EXCLUDED.retain_params,
+            tags = EXCLUDED.tags,
             updated_at = NOW()
         """,
         document_id,
@@ -181,4 +189,5 @@ async def handle_document_tracking(
         content_hash,
         json.dumps({}),  # Empty metadata dict
         json.dumps(retain_params) if retain_params else None,
+        document_tags or [],
     )

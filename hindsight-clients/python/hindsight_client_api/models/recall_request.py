@@ -36,7 +36,7 @@ class RecallRequest(BaseModel):
     query_timestamp: Optional[StrictStr] = None
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
     tags: Optional[List[StrictStr]] = None
-    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' returns memories matching ANY tag (OR), 'all' returns memories matching ALL tags (AND).")
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
     __properties: ClassVar[List[str]] = ["query", "types", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match"]
 
     @field_validator('tags_match')
@@ -45,8 +45,8 @@ class RecallRequest(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['any', 'all']):
-            raise ValueError("must be one of enum values ('any', 'all')")
+        if value not in set(['any', 'all', 'any_strict', 'all_strict']):
+            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict')")
         return value
 
     model_config = ConfigDict(

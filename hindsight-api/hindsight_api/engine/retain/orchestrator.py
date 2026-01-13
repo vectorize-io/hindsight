@@ -137,7 +137,7 @@ async def retain_batch(
                         if first_item.get("metadata"):
                             retain_params["metadata"] = first_item["metadata"]
                     await fact_storage.handle_document_tracking(
-                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params
+                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
                     )
                 else:
                     # Check for per-item document_ids
@@ -165,7 +165,7 @@ async def retain_batch(
                             if first_item.get("metadata"):
                                 retain_params["metadata"] = first_item["metadata"]
                         await fact_storage.handle_document_tracking(
-                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params
+                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params, document_tags
                         )
 
         total_time = time.time() - start_time
@@ -231,7 +231,7 @@ async def retain_batch(
                         retain_params["metadata"] = first_item["metadata"]
 
                 await fact_storage.handle_document_tracking(
-                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params
+                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
                 )
                 document_ids_added.append(document_id)
                 doc_id_mapping[None] = document_id  # For backwards compatibility
@@ -275,7 +275,13 @@ async def retain_batch(
                                     retain_params["metadata"] = first_item["metadata"]
 
                             await fact_storage.handle_document_tracking(
-                                conn, bank_id, actual_doc_id, combined_content, is_first_batch, retain_params
+                                conn,
+                                bank_id,
+                                actual_doc_id,
+                                combined_content,
+                                is_first_batch,
+                                retain_params,
+                                document_tags,
                             )
                             document_ids_added.append(actual_doc_id)
 

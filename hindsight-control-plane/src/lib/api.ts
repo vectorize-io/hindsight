@@ -53,6 +53,8 @@ export class ControlPlaneClient {
       chunks?: { max_tokens: number } | null;
     };
     query_timestamp?: string;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict";
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",
@@ -69,6 +71,8 @@ export class ControlPlaneClient {
     budget?: string;
     context?: string;
     include_facts?: boolean;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict";
   }) {
     return this.fetchApi("/api/reflect", {
       method: "POST",
@@ -207,6 +211,26 @@ export class ControlPlaneClient {
    */
   async getChunk(chunkId: string) {
     return this.fetchApi(`/api/chunks/${chunkId}`);
+  }
+
+  /**
+   * Get a single memory by ID
+   */
+  async getMemory(memoryId: string, bankId: string) {
+    return this.fetchApi<{
+      id: string;
+      text: string;
+      context: string;
+      date: string;
+      type: string;
+      mentioned_at: string | null;
+      occurred_start: string | null;
+      occurred_end: string | null;
+      entities: string[];
+      document_id: string | null;
+      chunk_id: string | null;
+      tags: string[];
+    }>(`/api/memories/${memoryId}?bank_id=${bankId}`);
   }
 
   /**

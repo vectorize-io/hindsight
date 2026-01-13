@@ -449,7 +449,7 @@ async def fetch_memory_units_by_ids(
         rows = await conn.fetch(
             f"""
             SELECT id, text, context, event_date, occurred_start, occurred_end,
-                   mentioned_at, access_count, embedding, fact_type, document_id, chunk_id
+                   mentioned_at, access_count, embedding, fact_type, document_id, chunk_id, tags
             FROM {fq_table("memory_units")}
             WHERE id = ANY($1::uuid[])
               AND fact_type = $2
@@ -540,6 +540,9 @@ class MPFPGraphRetriever(GraphRetriever):
                 pool, query_embedding_str, bank_id, fact_type, tags=tags, tags_match=tags_match
             )
             timings.seeds_time = time.time() - seeds_start
+            logger.debug(
+                f"[MPFP] Found {len(semantic_seed_nodes)} semantic seeds for fact_type={fact_type} (tags={tags}, tags_match={tags_match})"
+            )
 
         # Collect all pattern jobs
         pattern_jobs = []
@@ -555,6 +558,9 @@ class MPFPGraphRetriever(GraphRetriever):
                 pattern_jobs.append((temporal_seed_nodes, pattern))
 
         if not pattern_jobs:
+            logger.debug(
+                f"[MPFP] No pattern jobs (semantic_seeds={len(semantic_seed_nodes)}, temporal_seeds={len(temporal_seed_nodes)})"
+            )
             return [], timings
 
         timings.pattern_count = len(pattern_jobs)
@@ -593,6 +599,7 @@ class MPFPGraphRetriever(GraphRetriever):
         timings.fusion = time.time() - step_start
 
         if not fused:
+            logger.debug(f"[MPFP] No fused results after RRF fusion (pattern_count={len(pattern_results)})")
             return [], timings
 
         # Get top result IDs
@@ -602,6 +609,13 @@ class MPFPGraphRetriever(GraphRetriever):
         step_start = time.time()
         results = await fetch_memory_units_by_ids(pool, result_ids, fact_type)
         timings.fetch = time.time() - step_start
+
+        # Filter results by tags (graph traversal may have picked up unfiltered memories)
+        if tags:
+            from .tags import filter_results_by_tags
+
+            results = filter_results_by_tags(results, tags, match=tags_match)
+
         timings.result_count = len(results)
 
         # Add activation scores from fusion

@@ -42,6 +42,7 @@ from hindsight_client_api.models.http_validation_error import HTTPValidationErro
 from hindsight_client_api.models.include_options import IncludeOptions
 from hindsight_client_api.models.list_documents_response import ListDocumentsResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
+from hindsight_client_api.models.list_tags_response import ListTagsResponse
 from hindsight_client_api.models.memory_item import MemoryItem
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
@@ -54,6 +55,7 @@ from hindsight_client_api.models.reflect_request import ReflectRequest
 from hindsight_client_api.models.reflect_response import ReflectResponse
 from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
+from hindsight_client_api.models.tag_item import TagItem
 from hindsight_client_api.models.token_usage import TokenUsage
 from hindsight_client_api.models.update_disposition_request import UpdateDispositionRequest
 from hindsight_client_api.models.validation_error import ValidationError

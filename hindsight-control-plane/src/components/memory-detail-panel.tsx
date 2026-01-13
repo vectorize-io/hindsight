@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, X } from "lucide-react";
+import { Copy, Check, X, Loader2 } from "lucide-react";
 import { DocumentChunkModal } from "./document-chunk-modal";
+import { client } from "@/lib/api";
 
 interface MemoryDetailPanelProps {
   memory: any;
   onClose: () => void;
   compact?: boolean;
   inPanel?: boolean;
+  bankId?: string;
 }
 
 export function MemoryDetailPanel({
@@ -17,10 +19,40 @@ export function MemoryDetailPanel({
   onClose,
   compact = false,
   inPanel = false,
+  bankId,
 }: MemoryDetailPanelProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [modalType, setModalType] = useState<"document" | "chunk" | null>(null);
   const [modalId, setModalId] = useState<string | null>(null);
+  const [fullMemory, setFullMemory] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch full memory data when panel opens
+  useEffect(() => {
+    const memoryId = memory?.id || memory?.node_id;
+    if (!memoryId || !bankId) {
+      setFullMemory(null);
+      return;
+    }
+
+    setLoading(true);
+    client
+      .getMemory(memoryId, bankId)
+      .then((data) => {
+        setFullMemory(data);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch memory details:", err);
+        // Fall back to showing the partial data we have
+        setFullMemory(null);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [memory?.id, memory?.node_id, bankId]);
+
+  // Use full memory data if available, otherwise fall back to the partial data passed in
+  const displayMemory = fullMemory || memory;
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -50,7 +82,7 @@ export function MemoryDetailPanel({
   if (!memory) return null;
 
   // Handle both 'id' and 'node_id' (trace results use node_id)
-  const memoryId = memory.id || memory.node_id;
+  const memoryId = displayMemory.id || displayMemory.node_id;
 
   const labelSize = compact ? "text-[10px]" : "text-xs";
   const textSize = compact ? "text-xs" : "text-sm";
@@ -71,123 +103,156 @@ export function MemoryDetailPanel({
             </Button>
           </div>
 
-          <div className="space-y-5">
-            {/* Full Text */}
-            <div>
-              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                Full Text
-              </div>
-              <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
-                {memory.text}
-              </div>
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Loading memory details...</span>
             </div>
-
-            {/* Context */}
-            {memory.context && (
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  Context
-                </div>
-                <div className="text-sm text-foreground">{memory.context}</div>
-              </div>
-            )}
-
-            {/* Dates */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  Occurred
-                </div>
-                <div className="text-sm font-medium text-foreground">
-                  {memory.occurred_start ? new Date(memory.occurred_start).toLocaleString() : "N/A"}
-                </div>
-              </div>
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  Mentioned
-                </div>
-                <div className="text-sm font-medium text-foreground">
-                  {memory.mentioned_at ? new Date(memory.mentioned_at).toLocaleString() : "N/A"}
-                </div>
-              </div>
-            </div>
-
-            {/* Entities */}
-            {memory.entities && (
+          ) : (
+            <div className="space-y-5">
+              {/* Full Text */}
               <div>
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                  Entities
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                  Full Text
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {(Array.isArray(memory.entities)
-                    ? memory.entities
-                    : String(memory.entities).split(", ")
-                  ).map((entity: any, i: number) => {
-                    const entityText =
-                      typeof entity === "string" ? entity : entity?.name || JSON.stringify(entity);
-                    return (
+                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
+                  {displayMemory.text}
+                </div>
+              </div>
+
+              {/* Context */}
+              {displayMemory.context && (
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                    Context
+                  </div>
+                  <div className="text-sm text-foreground">{displayMemory.context}</div>
+                </div>
+              )}
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                    Occurred
+                  </div>
+                  <div className="text-sm font-medium text-foreground">
+                    {displayMemory.occurred_start
+                      ? new Date(displayMemory.occurred_start).toLocaleString()
+                      : "N/A"}
+                  </div>
+                </div>
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                    Mentioned
+                  </div>
+                  <div className="text-sm font-medium text-foreground">
+                    {displayMemory.mentioned_at
+                      ? new Date(displayMemory.mentioned_at).toLocaleString()
+                      : "N/A"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Entities */}
+              {displayMemory.entities &&
+                (Array.isArray(displayMemory.entities)
+                  ? displayMemory.entities.length > 0
+                  : displayMemory.entities) && (
+                  <div>
+                    <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
+                      Entities
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(Array.isArray(displayMemory.entities)
+                        ? displayMemory.entities
+                        : String(displayMemory.entities).split(", ")
+                      ).map((entity: any, i: number) => {
+                        const entityText =
+                          typeof entity === "string"
+                            ? entity
+                            : entity?.name || JSON.stringify(entity);
+                        return (
+                          <span
+                            key={i}
+                            className="text-sm px-3 py-1.5 rounded-full bg-primary/10 text-primary font-medium"
+                          >
+                            {entityText}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+              {/* Tags */}
+              {displayMemory.tags && displayMemory.tags.length > 0 && (
+                <div>
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-3">Tags</div>
+                  <div className="flex flex-wrap gap-2">
+                    {displayMemory.tags.map((tag: string, i: number) => (
                       <span
                         key={i}
-                        className="text-sm px-3 py-1.5 rounded-full bg-primary/10 text-primary font-medium"
+                        className="text-sm px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
                       >
-                        {entityText}
+                        {tag}
                       </span>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* ID */}
-            {memoryId && (
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                  Memory ID
+              {/* ID */}
+              {memoryId && (
+                <div className="p-4 bg-muted/50 rounded-lg">
+                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                    Memory ID
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs font-mono break-all flex-1 text-muted-foreground">
+                      {memoryId}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 flex-shrink-0"
+                      onClick={() => copyToClipboard(memoryId)}
+                    >
+                      {copiedId === memoryId ? (
+                        <Check className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <code className="text-xs font-mono break-all flex-1 text-muted-foreground">
-                    {memoryId}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 flex-shrink-0"
-                    onClick={() => copyToClipboard(memoryId)}
-                  >
-                    {copiedId === memoryId ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
+              )}
 
-            {/* Document/Chunk buttons */}
-            {(memory.document_id || memory.chunk_id) && (
-              <div className="flex gap-3 pt-2">
-                {memory.document_id && (
-                  <Button
-                    onClick={() => openDocumentModal(memory.document_id)}
-                    variant="secondary"
-                    className="flex-1"
-                  >
-                    View Document
-                  </Button>
-                )}
-                {memory.chunk_id && (
-                  <Button
-                    onClick={() => openChunkModal(memory.chunk_id)}
-                    variant="secondary"
-                    className="flex-1"
-                  >
-                    View Chunk
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
+              {/* Document/Chunk buttons */}
+              {(displayMemory.document_id || displayMemory.chunk_id) && (
+                <div className="flex gap-3 pt-2">
+                  {displayMemory.document_id && (
+                    <Button
+                      onClick={() => openDocumentModal(displayMemory.document_id)}
+                      variant="secondary"
+                      className="flex-1"
+                    >
+                      View Document
+                    </Button>
+                  )}
+                  {displayMemory.chunk_id && (
+                    <Button
+                      onClick={() => openChunkModal(displayMemory.chunk_id)}
+                      variant="secondary"
+                      className="flex-1"
+                    >
+                      View Chunk
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Document/Chunk Modal */}
@@ -225,123 +290,158 @@ export function MemoryDetailPanel({
           </Button>
         </div>
 
-        <div className={gap}>
-          {/* Full Text */}
-          <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
-            <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
-              Full Text
-            </div>
-            <div className={`${textSize} whitespace-pre-wrap`}>{memory.text}</div>
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Loading...</span>
           </div>
-
-          {/* Context */}
-          {memory.context && (
+        ) : (
+          <div className={gap}>
+            {/* Full Text */}
             <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
               <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
-                Context
+                Full Text
               </div>
-              <div className={textSize}>{memory.context}</div>
+              <div className={`${textSize} whitespace-pre-wrap`}>{displayMemory.text}</div>
             </div>
-          )}
 
-          {/* Dates */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
-              <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
-                Occurred
+            {/* Context */}
+            {displayMemory.context && (
+              <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
+                  Context
+                </div>
+                <div className={textSize}>{displayMemory.context}</div>
               </div>
-              <div className={textSize}>
-                {memory.occurred_start ? new Date(memory.occurred_start).toLocaleString() : "N/A"}
-              </div>
-            </div>
-            <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
-              <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
-                Mentioned
-              </div>
-              <div className={textSize}>
-                {memory.mentioned_at ? new Date(memory.mentioned_at).toLocaleString() : "N/A"}
-              </div>
-            </div>
-          </div>
+            )}
 
-          {/* Entities */}
-          {memory.entities && (
-            <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
-              <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-2`}>
-                Entities
+            {/* Dates */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
+                  Occurred
+                </div>
+                <div className={textSize}>
+                  {displayMemory.occurred_start
+                    ? new Date(displayMemory.occurred_start).toLocaleString()
+                    : "N/A"}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1">
-                {(Array.isArray(memory.entities)
-                  ? memory.entities
-                  : String(memory.entities).split(", ")
-                ).map((entity: any, i: number) => {
-                  const entityText =
-                    typeof entity === "string" ? entity : entity?.name || JSON.stringify(entity);
-                  return (
+              <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
+                  Mentioned
+                </div>
+                <div className={textSize}>
+                  {displayMemory.mentioned_at
+                    ? new Date(displayMemory.mentioned_at).toLocaleString()
+                    : "N/A"}
+                </div>
+              </div>
+            </div>
+
+            {/* Entities */}
+            {displayMemory.entities &&
+              (Array.isArray(displayMemory.entities)
+                ? displayMemory.entities.length > 0
+                : displayMemory.entities) && (
+                <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                  <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-2`}>
+                    Entities
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {(Array.isArray(displayMemory.entities)
+                      ? displayMemory.entities
+                      : String(displayMemory.entities).split(", ")
+                    ).map((entity: any, i: number) => {
+                      const entityText =
+                        typeof entity === "string"
+                          ? entity
+                          : entity?.name || JSON.stringify(entity);
+                      return (
+                        <span
+                          key={i}
+                          className={`${compact ? "text-[10px] px-1.5 py-0.5" : "text-xs px-2 py-1"} rounded bg-secondary text-secondary-foreground`}
+                        >
+                          {entityText}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+            {/* Tags */}
+            {displayMemory.tags && displayMemory.tags.length > 0 && (
+              <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-2`}>
+                  Tags
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {displayMemory.tags.map((tag: string, i: number) => (
                     <span
                       key={i}
-                      className={`${compact ? "text-[10px] px-1.5 py-0.5" : "text-xs px-2 py-1"} rounded bg-secondary text-secondary-foreground`}
+                      className={`${compact ? "text-[10px] px-1.5 py-0.5" : "text-xs px-2 py-1"} rounded bg-amber-500/10 text-amber-600 dark:text-amber-400`}
                     >
-                      {entityText}
+                      {tag}
                     </span>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* ID */}
-          {memoryId && (
-            <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
-              <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
-                Memory ID
+            {/* ID */}
+            {memoryId && (
+              <div className={`${compact ? "p-2" : "p-3"} bg-muted rounded-lg`}>
+                <div className={`${labelSize} font-bold text-muted-foreground uppercase mb-1`}>
+                  Memory ID
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`${compact ? "text-[10px]" : "text-sm"} font-mono break-all`}>
+                    {memoryId}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    onClick={() => copyToClipboard(memoryId)}
+                  >
+                    {copiedId === memoryId ? (
+                      <Check className="h-3 w-3 text-green-600" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={`${compact ? "text-[10px]" : "text-sm"} font-mono break-all`}>
-                  {memoryId}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 flex-shrink-0"
-                  onClick={() => copyToClipboard(memoryId)}
-                >
-                  {copiedId === memoryId ? (
-                    <Check className="h-3 w-3 text-green-600" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Document/Chunk buttons */}
-          {(memory.document_id || memory.chunk_id) && (
-            <div className={`flex gap-2 ${compact ? "pt-1" : ""}`}>
-              {memory.document_id && (
-                <Button
-                  onClick={() => openDocumentModal(memory.document_id)}
-                  size="sm"
-                  variant="secondary"
-                  className={`flex-1 ${compact ? "h-7 text-xs" : ""}`}
-                >
-                  View Document
-                </Button>
-              )}
-              {memory.chunk_id && (
-                <Button
-                  onClick={() => openChunkModal(memory.chunk_id)}
-                  size="sm"
-                  variant="secondary"
-                  className={`flex-1 ${compact ? "h-7 text-xs" : ""}`}
-                >
-                  View Chunk
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
+            {/* Document/Chunk buttons */}
+            {(displayMemory.document_id || displayMemory.chunk_id) && (
+              <div className={`flex gap-2 ${compact ? "pt-1" : ""}`}>
+                {displayMemory.document_id && (
+                  <Button
+                    onClick={() => openDocumentModal(displayMemory.document_id)}
+                    size="sm"
+                    variant="secondary"
+                    className={`flex-1 ${compact ? "h-7 text-xs" : ""}`}
+                  >
+                    View Document
+                  </Button>
+                )}
+                {displayMemory.chunk_id && (
+                  <Button
+                    onClick={() => openChunkModal(displayMemory.chunk_id)}
+                    size="sm"
+                    variant="secondary"
+                    className={`flex-1 ${compact ? "h-7 text-xs" : ""}`}
+                  >
+                    View Chunk
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Document/Chunk Modal */}

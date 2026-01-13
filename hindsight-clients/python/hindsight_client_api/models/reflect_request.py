@@ -35,7 +35,7 @@ class ReflectRequest(BaseModel):
     include: Optional[ReflectIncludeOptions] = Field(default=None, description="Options for including additional data (disabled by default)")
     response_schema: Optional[Dict[str, Any]] = None
     tags: Optional[List[StrictStr]] = None
-    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' uses memories matching ANY tag (OR), 'all' uses memories matching ALL tags (AND).")
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
     __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match"]
 
     @field_validator('tags_match')
@@ -44,8 +44,8 @@ class ReflectRequest(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['any', 'all']):
-            raise ValueError("must be one of enum values ('any', 'all')")
+        if value not in set(['any', 'all', 'any_strict', 'all_strict']):
+            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict')")
         return value
 
     model_config = ConfigDict(

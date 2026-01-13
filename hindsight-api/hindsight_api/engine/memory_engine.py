@@ -1600,7 +1600,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize tracer if requested
         from .search.tracer import SearchTracer
 
-        tracer = SearchTracer(query, thinking_budget, max_tokens) if enable_trace else None
+        tracer = (
+            SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match) if enable_trace else None
+        )
         if tracer:
             tracer.start()
 
@@ -1610,8 +1612,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Buffer logs for clean output in concurrent scenarios
         recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         log_buffer = []
+        tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
         log_buffer.append(
-            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens})"
+            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens}{tags_info})"
         )
 
         try:
@@ -1763,6 +1766,11 @@ class MemoryEngine(MemoryEngineInterface):
                             f"edges={hd.get('edges_loaded', 0)}"
                         )
 
+            # Record temporal constraint in tracer if detected
+            if tracer and detected_temporal_constraint:
+                start_dt, end_dt = detected_temporal_constraint
+                tracer.record_temporal_constraint(start_dt, end_dt)
+
             # Record retrieval results for tracer - per fact type
             if tracer:
                 # Convert RetrievalResult to old tuple format for tracer
@@ -1805,14 +1813,22 @@ class MemoryEngine(MemoryEngineInterface):
                         fact_type=ft_name,
                     )
 
-                    # Add temporal retrieval results for this fact type (even if empty, to show it ran)
-                    if rr.temporal is not None:
+                    # Add temporal retrieval results for this fact type
+                    # Show temporal even with 0 results if constraint was detected
+                    if rr.temporal is not None or rr.temporal_constraint is not None:
+                        temporal_metadata = {"budget": thinking_budget}
+                        if rr.temporal_constraint:
+                            start_dt, end_dt = rr.temporal_constraint
+                            temporal_metadata["constraint"] = {
+                                "start": start_dt.isoformat() if start_dt else None,
+                                "end": end_dt.isoformat() if end_dt else None,
+                            }
                         tracer.add_retrieval_results(
                             method_name="temporal",
-                            results=to_tuple_format(rr.temporal),
+                            results=to_tuple_format(rr.temporal or []),
                             duration_seconds=rr.timings.get("temporal", 0.0),
                             score_field="temporal_score",
-                            metadata={"budget": thinking_budget},
+                            metadata=temporal_metadata,
                             fact_type=ft_name,
                         )
 
@@ -2072,6 +2088,7 @@ class MemoryEngine(MemoryEngineInterface):
                         mentioned_at=result_dict.get("mentioned_at"),
                         document_id=result_dict.get("document_id"),
                         chunk_id=result_dict.get("chunk_id"),
+                        tags=result_dict.get("tags"),
                     )
                 )
 
@@ -2287,11 +2304,11 @@ class MemoryEngine(MemoryEngineInterface):
             doc = await conn.fetchrow(
                 f"""
                 SELECT d.id, d.bank_id, d.original_text, d.content_hash,
-                       d.created_at, d.updated_at, COUNT(mu.id) as unit_count
+                       d.created_at, d.updated_at, d.tags, COUNT(mu.id) as unit_count
                 FROM {fq_table("documents")} d
                 LEFT JOIN {fq_table("memory_units")} mu ON mu.document_id = d.id
                 WHERE d.id = $1 AND d.bank_id = $2
-                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at
+                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at, d.tags
                 """,
                 document_id,
                 bank_id,
@@ -2308,6 +2325,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "memory_unit_count": doc["unit_count"],
                 "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
                 "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
+                "tags": list(doc["tags"]) if doc["tags"] else [],
             }
 
     async def delete_document(
@@ -2795,6 +2813,68 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    async def get_memory_unit(
+        self,
+        bank_id: str,
+        memory_id: str,
+        request_context: "RequestContext",
+    ):
+        """
+        Get a single memory unit by ID.
+
+        Args:
+            bank_id: Bank ID
+            memory_id: Memory unit ID
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with memory unit data or None if not found
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Get the memory unit
+            row = await conn.fetchrow(
+                f"""
+                SELECT id, text, context, event_date, occurred_start, occurred_end,
+                       mentioned_at, fact_type, document_id, chunk_id, tags
+                FROM {fq_table("memory_units")}
+                WHERE id = $1 AND bank_id = $2
+                """,
+                memory_id,
+                bank_id,
+            )
+
+            if not row:
+                return None
+
+            # Get entity information
+            entities_rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON ue.entity_id = e.id
+                WHERE ue.unit_id = $1
+                """,
+                row["id"],
+            )
+            entities = [r["canonical_name"] for r in entities_rows]
+
+            return {
+                "id": str(row["id"]),
+                "text": row["text"],
+                "context": row["context"] if row["context"] else "",
+                "date": row["event_date"].isoformat() if row["event_date"] else "",
+                "type": row["fact_type"],
+                "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
+                "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
+                "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
+                "entities": entities,
+                "document_id": row["document_id"] if row["document_id"] else None,
+                "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
+                "tags": row["tags"] if row["tags"] else [],
+            }
 
     async def list_documents(
         self,
@@ -3737,6 +3817,81 @@ Guidelines:
                 )
             return {
                 "items": entities,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+
+    async def list_tags(
+        self,
+        bank_id: str,
+        *,
+        prefix: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        List all unique tags for a bank with usage counts.
+
+        Use this to discover available tags or expand wildcard patterns.
+        For example, to expand 'user:*', call with prefix='user:' and use
+        the returned tags in your recall filter.
+
+        Args:
+            bank_id: Bank identifier
+            prefix: Filter tags starting with this prefix (e.g., 'user:')
+            limit: Maximum number of tags to return
+            offset: Offset for pagination
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with items (list of {tag, count}), total, limit, offset
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Build prefix filter if provided
+            prefix_clause = ""
+            params: list[Any] = [bank_id]
+            if prefix:
+                prefix_clause = "AND tag LIKE $2"
+                params.append(f"{prefix}%")
+
+            # Get total count of distinct tags matching prefix
+            total_row = await conn.fetchrow(
+                f"""
+                SELECT COUNT(DISTINCT tag) as total
+                FROM {fq_table("memory_units")}, unnest(tags) AS tag
+                WHERE bank_id = $1 AND tags IS NOT NULL AND tags != '{{}}'
+                {prefix_clause}
+                """,
+                *params,
+            )
+            total = total_row["total"] if total_row else 0
+
+            # Get paginated tags with counts, ordered by frequency
+            limit_param = len(params) + 1
+            offset_param = len(params) + 2
+            params.extend([limit, offset])
+
+            rows = await conn.fetch(
+                f"""
+                SELECT tag, COUNT(*) as count
+                FROM {fq_table("memory_units")}, unnest(tags) AS tag
+                WHERE bank_id = $1 AND tags IS NOT NULL AND tags != '{{}}'
+                {prefix_clause}
+                GROUP BY tag
+                ORDER BY count DESC, tag ASC
+                LIMIT ${limit_param} OFFSET ${offset_param}
+                """,
+                *params,
+            )
+
+            items = [{"tag": row["tag"], "count": row["count"]} for row in rows]
+
+            return {
+                "items": items,
                 "total": total,
                 "limit": limit,
                 "offset": offset,

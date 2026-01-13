@@ -18,7 +18,7 @@ import time
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
-from .tags import TagsMatch
+from .tags import TagsMatch, filter_results_by_tags
 from .types import MPFPTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -31,26 +31,32 @@ async def _find_semantic_seeds(
     fact_type: str,
     limit: int = 20,
     threshold: float = 0.3,
+    tags: list[str] | None = None,
+    tags_match: TagsMatch = "any",
 ) -> list[RetrievalResult]:
     """Find semantic seeds via embedding search."""
+    from .tags import build_tags_where_clause_simple
+
+    tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+    params = [query_embedding_str, bank_id, fact_type, threshold, limit]
+    if tags:
+        params.append(tags)
+
     rows = await conn.fetch(
         f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end,
-               mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
+               mentioned_at, access_count, embedding, fact_type, document_id, chunk_id, tags,
                1 - (embedding <=> $1::vector) AS similarity
         FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND embedding IS NOT NULL
           AND fact_type = $3
           AND (1 - (embedding <=> $1::vector)) >= $4
+          {tags_clause}
         ORDER BY embedding <=> $1::vector
         LIMIT $5
         """,
-        query_embedding_str,
-        bank_id,
-        fact_type,
-        threshold,
-        limit,
+        *params,
     )
     return [RetrievalResult.from_db_row(dict(r)) for r in rows]
 
@@ -129,15 +135,27 @@ class LinkExpansionRetriever(GraphRetriever):
             else:
                 seeds_start = time.time()
                 all_seeds = await _find_semantic_seeds(
-                    conn, query_embedding_str, bank_id, fact_type, limit=20, threshold=0.3
+                    conn,
+                    query_embedding_str,
+                    bank_id,
+                    fact_type,
+                    limit=20,
+                    threshold=0.3,
+                    tags=tags,
+                    tags_match=tags_match,
                 )
                 timings.seeds_time = time.time() - seeds_start
+                logger.debug(
+                    f"[LinkExpansion] Found {len(all_seeds)} semantic seeds for fact_type={fact_type} "
+                    f"(tags={tags}, tags_match={tags_match})"
+                )
 
             # Add temporal seeds if provided
             if temporal_seeds:
                 all_seeds.extend(temporal_seeds)
 
             if not all_seeds:
+                logger.debug("[LinkExpansion] No seeds found, returning empty results")
                 return [], timings
 
             seed_ids = list({s.id for s in all_seeds})
@@ -151,7 +169,7 @@ class LinkExpansionRetriever(GraphRetriever):
                 SELECT
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at, mu.access_count, mu.embedding,
-                    mu.fact_type, mu.document_id, mu.chunk_id,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
                     COUNT(*)::float AS score
                 FROM {fq_table("unit_entities")} seed_ue
                 JOIN {fq_table("entities")} e ON seed_ue.entity_id = e.id
@@ -176,7 +194,7 @@ class LinkExpansionRetriever(GraphRetriever):
                 SELECT DISTINCT ON (mu.id)
                     mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                     mu.occurred_end, mu.mentioned_at, mu.access_count, mu.embedding,
-                    mu.fact_type, mu.document_id, mu.chunk_id,
+                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
                     ml.weight + 1.0 AS score
                 FROM {fq_table("memory_links")} ml
                 JOIN {fq_table("memory_units")} mu ON ml.to_unit_id = mu.id
@@ -222,6 +240,10 @@ class LinkExpansionRetriever(GraphRetriever):
             result = RetrievalResult.from_db_row(dict(row))
             result.activation = row["score"]
             results.append(result)
+
+        # Apply tags filtering (graph expansion may reach untagged memories)
+        if tags:
+            results = filter_results_by_tags(results, tags, match=tags_match)
 
         timings.result_count = len(results)
         timings.traverse = time.time() - start_time

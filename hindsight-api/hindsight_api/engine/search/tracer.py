@@ -22,6 +22,7 @@ from .trace import (
     SearchPhaseMetrics,
     SearchSummary,
     SearchTrace,
+    TemporalConstraint,
     WeightComponents,
 )
 
@@ -45,7 +46,14 @@ class SearchTracer:
         json_output = trace.to_json()
     """
 
-    def __init__(self, query: str, budget: int, max_tokens: int):
+    def __init__(
+        self,
+        query: str,
+        budget: int,
+        max_tokens: int,
+        tags: list[str] | None = None,
+        tags_match: str | None = None,
+    ):
         """
         Initialize tracer.
 
@@ -53,10 +61,14 @@ class SearchTracer:
             query: Search query text
             budget: Maximum nodes to explore
             max_tokens: Maximum tokens to return in results
+            tags: Tags filter applied to recall
+            tags_match: Tags matching mode (any, all, any_strict, all_strict)
         """
         self.query_text = query
         self.budget = budget
         self.max_tokens = max_tokens
+        self.tags = tags
+        self.tags_match = tags_match
 
         # Trace data
         self.query_embedding: list[float] | None = None
@@ -65,6 +77,9 @@ class SearchTracer:
         self.visits: list[NodeVisit] = []
         self.pruned: list[PruningDecision] = []
         self.phase_metrics: list[SearchPhaseMetrics] = []
+
+        # Temporal constraint detected from query
+        self.temporal_constraint: TemporalConstraint | None = None
 
         # New 4-way retrieval tracking
         self.retrieval_results: list[RetrievalMethodResults] = []
@@ -87,6 +102,11 @@ class SearchTracer:
     def record_query_embedding(self, embedding: list[float]):
         """Record the query embedding."""
         self.query_embedding = embedding
+
+    def record_temporal_constraint(self, start: datetime | None, end: datetime | None):
+        """Record the detected temporal constraint from query analysis."""
+        if start is not None or end is not None:
+            self.temporal_constraint = TemporalConstraint(start=start, end=end)
 
     def add_entry_point(self, node_id: str, text: str, similarity: float, rank: int):
         """
@@ -428,6 +448,9 @@ class SearchTracer:
             timestamp=datetime.now(UTC),
             budget=self.budget,
             max_tokens=self.max_tokens,
+            tags=self.tags,
+            tags_match=self.tags_match,
+            temporal_constraint=self.temporal_constraint,
         )
 
         # Create summary

@@ -85,6 +85,7 @@ class MemoryFact(BaseModel):
                 "metadata": {"source": "slack"},
                 "chunk_id": "bank123_session_abc123_0",
                 "activation": 0.95,
+                "tags": ["user_a", "session_123"],
             }
         }
     )
@@ -102,6 +103,7 @@ class MemoryFact(BaseModel):
     chunk_id: str | None = Field(
         None, description="ID of the chunk this fact was extracted from (format: bank_id_document_id_chunk_index)"
     )
+    tags: list[str] | None = Field(None, description="Visibility scope tags associated with this fact")
 
 
 class ChunkInfo(BaseModel):

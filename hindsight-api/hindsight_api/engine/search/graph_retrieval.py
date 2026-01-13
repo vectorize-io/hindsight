@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
-from .tags import TagsMatch
+from .tags import TagsMatch, filter_results_by_tags
 from .types import MPFPTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -177,7 +177,15 @@ class BFSGraphRetriever(GraphRetriever):
         )
 
         if not entry_points:
+            logger.debug(
+                f"[BFS] No entry points found for fact_type={fact_type} (tags={tags}, tags_match={tags_match})"
+            )
             return []
+
+        logger.debug(
+            f"[BFS] Found {len(entry_points)} entry points for fact_type={fact_type} "
+            f"(tags={tags}, tags_match={tags_match})"
+        )
 
         # Step 2: BFS spreading activation
         visited = set()
@@ -209,7 +217,7 @@ class BFSGraphRetriever(GraphRetriever):
                     f"""
                     SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.occurred_end,
                            mu.mentioned_at, mu.access_count, mu.embedding, mu.fact_type,
-                           mu.document_id, mu.chunk_id,
+                           mu.document_id, mu.chunk_id, mu.tags,
                            ml.weight, ml.link_type, ml.from_unit_id
                     FROM {fq_table("memory_links")} ml
                     JOIN {fq_table("memory_units")} mu ON ml.to_unit_id = mu.id
@@ -248,5 +256,9 @@ class BFSGraphRetriever(GraphRetriever):
                         if new_activation > self.min_activation:
                             neighbor_result = RetrievalResult.from_db_row(dict(n))
                             queue.append((neighbor_result, new_activation))
+
+        # Apply tags filtering (BFS may traverse into memories that don't match tags criteria)
+        if tags:
+            results = filter_results_by_tags(results, tags, match=tags_match)
 
         return results

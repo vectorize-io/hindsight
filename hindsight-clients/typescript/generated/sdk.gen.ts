@@ -39,6 +39,9 @@ import type {
   GetGraphData,
   GetGraphErrors,
   GetGraphResponses,
+  GetMemoryData,
+  GetMemoryErrors,
+  GetMemoryResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
   ListBanksData,
@@ -56,6 +59,9 @@ import type {
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
+  ListTagsData,
+  ListTagsErrors,
+  ListTagsResponses,
   MetricsEndpointMetricsGetData,
   MetricsEndpointMetricsGetResponses,
   RecallMemoriesData,
@@ -147,6 +153,20 @@ export const listMemories = <ThrowOnError extends boolean = false>(
     ListMemoriesErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/memories/list", ...options });
+
+/**
+ * Get memory unit
+ *
+ * Get a single memory unit by ID with all its metadata including entities and tags.
+ */
+export const getMemory = <ThrowOnError extends boolean = false>(
+  options: Options<GetMemoryData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetMemoryResponses,
+    GetMemoryErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/memories/{memory_id}", ...options });
 
 /**
  * Recall memory
@@ -328,6 +348,20 @@ export const getDocument = <ThrowOnError extends boolean = false>(
     GetDocumentErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}", ...options });
+
+/**
+ * List tags
+ *
+ * List all unique tags in a memory bank with usage counts. Supports prefix search for finding tags matching patterns like 'user:' to expand wildcards.
+ */
+export const listTags = <ThrowOnError extends boolean = false>(
+  options: Options<ListTagsData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListTagsResponses,
+    ListTagsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/tags", ...options });
 
 /**
  * Get chunk details

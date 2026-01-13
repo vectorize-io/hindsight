@@ -249,6 +249,72 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/memories/{memory_id}": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Get memory unit",
+        "description": "Get a single memory unit by ID with all its metadata including entities and tags.",
+        "operationId": "get_memory",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/memories/recall": {
       "post": {
         "tags": [
@@ -927,6 +993,107 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeleteDocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/tags": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "List tags",
+        "description": "List all unique tags in a memory bank with usage counts. Supports prefix search for finding tags matching patterns like 'user:' to expand wildcards.",
+        "operationId": "list_tags",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter tags by prefix (e.g., 'user:' to find user:alice, user:bob)",
+              "title": "Prefix"
+            },
+            "description": "Filter tags by prefix (e.g., 'user:' to find user:alice, user:bob)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of tags to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of tags to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTagsResponse"
                 }
               }
             }
@@ -2219,6 +2386,14 @@
           "memory_unit_count": {
             "type": "integer",
             "title": "Memory Unit Count"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Tags associated with this document"
           }
         },
         "type": "object",
@@ -2240,6 +2415,10 @@
           "id": "session_1",
           "memory_unit_count": 15,
           "original_text": "Full document text here...",
+          "tags": [
+            "user_a",
+            "session_123"
+          ],
           "updated_at": "2024-01-15T10:30:00Z"
         }
       },
@@ -2752,6 +2931,57 @@
           "total": 150
         }
       },
+      "ListTagsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TagItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ListTagsResponse",
+        "description": "Response model for list tags endpoint.",
+        "example": {
+          "items": [
+            {
+              "count": 42,
+              "tag": "user:alice"
+            },
+            {
+              "count": 15,
+              "tag": "user:bob"
+            },
+            {
+              "count": 8,
+              "tag": "session:abc123"
+            }
+          ],
+          "limit": 100,
+          "offset": 0,
+          "total": 25
+        }
+      },
       "MemoryItem": {
         "properties": {
           "content": {
@@ -3038,10 +3268,12 @@
             "type": "string",
             "enum": [
               "any",
-              "all"
+              "all",
+              "any_strict",
+              "all_strict"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' returns memories matching ANY tag (OR), 'all' returns memories matching ALL tags (AND).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
             "default": "any"
           }
         },
@@ -3490,10 +3722,12 @@
             "type": "string",
             "enum": [
               "any",
-              "all"
+              "all",
+              "any_strict",
+              "all_strict"
             ],
             "title": "Tags Match",
-            "description": "How to match tags: 'any' uses memories matching ANY tag (OR), 'all' uses memories matching ALL tags (AND).",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
             "default": "any"
           }
         },
@@ -3728,6 +3962,27 @@
             "total_tokens": 600
           }
         }
+      },
+      "TagItem": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag",
+            "description": "The tag value"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Number of memories with this tag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag",
+          "count"
+        ],
+        "title": "TagItem",
+        "description": "Single tag with usage count."
       },
       "TokenUsage": {
         "properties": {

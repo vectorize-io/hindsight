@@ -108,8 +108,8 @@ class RecallRequest(BaseModel):
     )
     tags_match: TagsMatch = Field(
         default="any",
-        description="How to match tags: 'any' returns memories matching ANY tag (OR), "
-        "'all' returns memories matching ALL tags (AND).",
+        description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
     )
 
 
@@ -478,8 +478,8 @@ class ReflectRequest(BaseModel):
     )
     tags_match: TagsMatch = Field(
         default="any",
-        description="How to match tags: 'any' uses memories matching ANY tag (OR), "
-        "'all' uses memories matching ALL tags (AND).",
+        description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
     )
 
 
@@ -763,6 +763,37 @@ class ListDocumentsResponse(BaseModel):
     offset: int
 
 
+class TagItem(BaseModel):
+    """Single tag with usage count."""
+
+    tag: str = Field(description="The tag value")
+    count: int = Field(description="Number of memories with this tag")
+
+
+class ListTagsResponse(BaseModel):
+    """Response model for list tags endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "items": [
+                    {"tag": "user:alice", "count": 42},
+                    {"tag": "user:bob", "count": 15},
+                    {"tag": "session:abc123", "count": 8},
+                ],
+                "total": 25,
+                "limit": 100,
+                "offset": 0,
+            }
+        }
+    )
+
+    items: list[TagItem]
+    total: int
+    limit: int
+    offset: int
+
+
 class DocumentResponse(BaseModel):
     """Response model for get document endpoint."""
 
@@ -776,6 +807,7 @@ class DocumentResponse(BaseModel):
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:30:00Z",
                 "memory_unit_count": 15,
+                "tags": ["user_a", "session_123"],
             }
         }
     )
@@ -787,6 +819,7 @@ class DocumentResponse(BaseModel):
     created_at: str
     updated_at: str
     memory_unit_count: int
+    tags: list[str] = Field(default_factory=list, description="Tags associated with this document")
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -1214,6 +1247,37 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.get(
+        "/v1/default/banks/{bank_id}/memories/{memory_id}",
+        summary="Get memory unit",
+        description="Get a single memory unit by ID with all its metadata including entities and tags.",
+        operation_id="get_memory",
+        tags=["Memory"],
+    )
+    async def api_get_memory(
+        bank_id: str,
+        memory_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get a single memory unit by ID."""
+        try:
+            data = await app.state.memory.get_memory_unit(
+                bank_id=bank_id,
+                memory_id=memory_id,
+                request_context=request_context,
+            )
+            if data is None:
+                raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            return data
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post(
         "/v1/default/banks/{bank_id}/memories/recall",
         response_model=RecallResponse,
@@ -1295,6 +1359,7 @@ def _register_routes(app: FastAPI):
                     mentioned_at=fact.mentioned_at,
                     document_id=fact.document_id,
                     chunk_id=fact.chunk_id,
+                    tags=fact.tags,
                 )
                 for fact in core_result.results
             ]
@@ -1771,6 +1836,54 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/tags",
+        response_model=ListTagsResponse,
+        summary="List tags",
+        description="List all unique tags in a memory bank with usage counts. "
+        "Supports prefix search for finding tags matching patterns like 'user:' to expand wildcards.",
+        operation_id="list_tags",
+        tags=["Memory"],
+    )
+    async def api_list_tags(
+        bank_id: str,
+        prefix: str | None = Query(
+            default=None, description="Filter tags by prefix (e.g., 'user:' to find user:alice, user:bob)"
+        ),
+        limit: int = Query(default=100, description="Maximum number of tags to return"),
+        offset: int = Query(default=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """
+        List all unique tags in a memory bank.
+
+        Use this endpoint to discover available tags for filtering, or to expand
+        wildcard patterns (e.g., find all tags starting with 'user:' to expand 'user:*').
+
+        Args:
+            bank_id: Memory Bank ID (from path)
+            prefix: Filter tags starting with this prefix (e.g., 'user:')
+            limit: Maximum number of tags to return (default: 100)
+            offset: Offset for pagination (default: 0)
+        """
+        try:
+            data = await app.state.memory.list_tags(
+                bank_id=bank_id,
+                prefix=prefix,
+                limit=limit,
+                offset=offset,
+                request_context=request_context,
+            )
+            return data
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/tags: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(

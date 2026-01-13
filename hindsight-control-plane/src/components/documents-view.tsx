@@ -318,6 +318,25 @@ export function DocumentsView() {
                       </div>
                     )}
 
+                    {/* Tags */}
+                    {selectedDocument.tags && selectedDocument.tags.length > 0 && (
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                          Tags
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedDocument.tags.map((tag: string, i: number) => (
+                            <span
+                              key={i}
+                              className="text-sm px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Delete Button */}
                     <div className="pt-2 border-t border-border">
                       <Button

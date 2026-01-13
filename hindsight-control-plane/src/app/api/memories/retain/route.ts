@@ -10,9 +10,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
     }
 
-    const { items, document_id } = body;
+    const { items, document_id, document_tags } = body;
 
-    const response = await hindsightClient.retainBatch(bankId, items, { documentId: document_id });
+    const response = await hindsightClient.retainBatch(bankId, items, {
+      documentId: document_id,
+      documentTags: document_tags,
+    });
 
     return NextResponse.json(response, { status: 200 });
   } catch (error) {

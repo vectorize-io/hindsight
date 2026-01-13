@@ -39,6 +39,7 @@ hindsight_client_api/models/http_validation_error.py
 hindsight_client_api/models/include_options.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
+hindsight_client_api/models/list_tags_response.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operations_list_response.py
@@ -51,6 +52,7 @@ hindsight_client_api/models/reflect_request.py
 hindsight_client_api/models/reflect_response.py
 hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
+hindsight_client_api/models/tag_item.py
 hindsight_client_api/models/token_usage.py
 hindsight_client_api/models/update_disposition_request.py
 hindsight_client_api/models/validation_error.py

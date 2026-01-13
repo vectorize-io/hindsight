@@ -15,9 +15,11 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Info } from "lucide-react";
+import { Sparkles, Info, Tag } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
+
+type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 
 export function ThinkView() {
   const { currentBank } = useBank();
@@ -28,6 +30,8 @@ export function ThinkView() {
   const [showRawJson, setShowRawJson] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [tags, setTags] = useState("");
+  const [tagsMatch, setTagsMatch] = useState<TagsMatch>("any");
 
   const runReflect = async () => {
     if (!currentBank || !query) return;
@@ -35,12 +39,19 @@ export function ThinkView() {
     setLoading(true);
     setShowRawJson(false);
     try {
+      // Parse tags from comma-separated string
+      const parsedTags = tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
       const data: any = await client.reflect({
         bank_id: currentBank,
         query,
         budget,
         context: context || undefined,
         include_facts: includeFacts,
+        ...(parsedTags.length > 0 && { tags: parsedTags, tags_match: tagsMatch }),
       });
       setResult(data);
     } catch (error) {
@@ -102,6 +113,29 @@ export function ThinkView() {
               placeholder="Additional context for the LLM (not used in search)..."
               rows={3}
             />
+          </div>
+          <div className="flex items-center gap-4 mt-4 pt-4 border-t">
+            <Tag className="h-4 w-4 text-muted-foreground" />
+            <div className="flex-1 max-w-md">
+              <Input
+                type="text"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                placeholder="Filter by tags (comma-separated)"
+                className="h-8"
+              />
+            </div>
+            <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
+              <SelectTrigger className="w-40 h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any (incl. untagged)</SelectItem>
+                <SelectItem value="all">All (incl. untagged)</SelectItem>
+                <SelectItem value="any_strict">Any (strict)</SelectItem>
+                <SelectItem value="all_strict">All (strict)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
