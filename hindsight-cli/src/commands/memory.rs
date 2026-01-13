@@ -9,7 +9,7 @@ use crate::output::{self, OutputFormat};
 use crate::ui;
 
 // Import types from generated client
-use hindsight_client::types::{Budget, ChunkIncludeOptions, IncludeOptions};
+use hindsight_client::types::{Budget, ChunkIncludeOptions, IncludeOptions, TagsMatch};
 use serde_json;
 
 // Helper function to parse budget string to Budget enum
@@ -60,6 +60,8 @@ pub fn recall(
         trace,
         query_timestamp: None,
         include,
+        tags: None,
+        tags_match: TagsMatch::Any,
     };
 
     let response = client.recall(agent_id, &request, verbose);
@@ -116,6 +118,8 @@ pub fn reflect(
         max_tokens: max_tokens.unwrap_or(4096),
         include: None,
         response_schema,
+        tags: None,
+        tags_match: TagsMatch::Any,
     };
 
     let response = client.reflect(agent_id, &request, verbose);
@@ -162,11 +166,13 @@ pub fn retain(
         timestamp: None,
         document_id: Some(doc_id.clone()),
         entities: None,
+        tags: None,
     };
 
     let request = RetainRequest {
         items: vec![item],
         async_: r#async,
+        document_tags: None,
     };
 
     let response = client.retain(agent_id, &request, r#async, verbose);
@@ -272,6 +278,7 @@ pub fn retain_files(
             timestamp: None,
             document_id: Some(doc_id),
             entities: None,
+            tags: None,
         });
 
         pb.inc(1);
@@ -288,6 +295,7 @@ pub fn retain_files(
     let request = RetainRequest {
         items,
         async_: r#async,
+        document_tags: None,
     };
 
     let response = client.retain(agent_id, &request, r#async, verbose);
