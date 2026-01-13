@@ -134,7 +134,7 @@ def recall(
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
     target_bank_id = bank_id or (defaults.bank_id if defaults else None)
     target_fact_types = fact_types or (defaults.fact_types if defaults else None)
-    target_budget = budget or (defaults.recall_budget if defaults else "mid")
+    target_budget = budget or (defaults.budget if defaults else "mid")
     target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
 
     if not api_url or not target_bank_id:
@@ -298,7 +298,7 @@ def reflect(
 
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
     target_bank_id = bank_id or (defaults.bank_id if defaults else None)
-    target_budget = budget or (defaults.recall_budget if defaults else "mid")
+    target_budget = budget or (defaults.budget if defaults else "mid")
 
     if not api_url or not target_bank_id:
         raise RuntimeError(
@@ -311,13 +311,16 @@ def reflect(
         client = _get_client(api_url)
 
         # Call reflect API
-        result = client.reflect(
-            bank_id=target_bank_id,
-            query=query,
-            budget=target_budget,
-            context=context,
-            response_schema=response_schema,
-        )
+        reflect_kwargs = {
+            "bank_id": target_bank_id,
+            "query": query,
+            "budget": target_budget,
+        }
+        if context is not None:
+            reflect_kwargs["context"] = context
+        if response_schema is not None:
+            reflect_kwargs["response_schema"] = response_schema
+        result = client.reflect(**reflect_kwargs)
 
         # Convert to ReflectResult
         text = result.text if hasattr(result, 'text') else str(result)
@@ -654,7 +657,7 @@ class HindsightOpenAI:
         store_conversations: bool = True,
         inject_memories: bool = True,
         max_memories: Optional[int] = None,
-        recall_budget: str = "mid",
+        budget: str = "mid",
         verbose: bool = False,
     ):
         """Initialize the wrapped OpenAI client.
@@ -668,7 +671,7 @@ class HindsightOpenAI:
             store_conversations: Whether to store conversations
             inject_memories: Whether to inject relevant memories
             max_memories: Maximum number of memories to inject (None = no limit)
-            recall_budget: Budget level for memory recall (low, mid, high)
+            budget: Budget level for memory recall (low, mid, high)
             verbose: Enable verbose logging
         """
         self._client = client
@@ -678,7 +681,7 @@ class HindsightOpenAI:
         self._store_conversations = store_conversations
         self._inject_memories = inject_memories
         self._max_memories = max_memories
-        self._recall_budget = recall_budget
+        self._budget = budget
         self._verbose = verbose
         self._hindsight_client = None
 
@@ -705,7 +708,7 @@ class HindsightOpenAI:
             results = client.recall(
                 bank_id=self._bank_id,
                 query=query,
-                budget=self._recall_budget,
+                budget=self._budget,
                 max_tokens=self._max_memories * 200 if self._max_memories else 4096,
             )
 
@@ -858,7 +861,7 @@ class HindsightAnthropic:
         store_conversations: bool = True,
         inject_memories: bool = True,
         max_memories: Optional[int] = None,
-        recall_budget: str = "mid",
+        budget: str = "mid",
         verbose: bool = False,
     ):
         """Initialize the wrapped Anthropic client.
@@ -872,7 +875,7 @@ class HindsightAnthropic:
             store_conversations: Whether to store conversations
             inject_memories: Whether to inject relevant memories
             max_memories: Maximum number of memories to inject (None = no limit)
-            recall_budget: Budget level for memory recall (low, mid, high)
+            budget: Budget level for memory recall (low, mid, high)
             verbose: Enable verbose logging
         """
         self._client = client
@@ -882,7 +885,7 @@ class HindsightAnthropic:
         self._store_conversations = store_conversations
         self._inject_memories = inject_memories
         self._max_memories = max_memories
-        self._recall_budget = recall_budget
+        self._budget = budget
         self._verbose = verbose
         self._hindsight_client = None
 
@@ -909,7 +912,7 @@ class HindsightAnthropic:
             results = client.recall(
                 bank_id=self._bank_id,
                 query=query,
-                budget=self._recall_budget,
+                budget=self._budget,
                 max_tokens=self._max_memories * 200 if self._max_memories else 4096,
             )
 
@@ -1034,7 +1037,7 @@ def wrap_openai(
     store_conversations: bool = True,
     inject_memories: bool = True,
     max_memories: Optional[int] = None,
-    recall_budget: str = "mid",
+    budget: str = "mid",
     verbose: bool = False,
 ) -> HindsightOpenAI:
     """Wrap an OpenAI client with Hindsight memory integration.
@@ -1051,7 +1054,7 @@ def wrap_openai(
         store_conversations: Whether to store conversations
         inject_memories: Whether to inject relevant memories
         max_memories: Maximum number of memories to inject (None = no limit)
-        recall_budget: Budget level for memory recall (low, mid, high)
+        budget: Budget level for memory recall (low, mid, high)
         verbose: Enable verbose logging
 
     Returns:
@@ -1080,7 +1083,7 @@ def wrap_openai(
         store_conversations=store_conversations,
         inject_memories=inject_memories,
         max_memories=max_memories,
-        recall_budget=recall_budget,
+        budget=budget,
         verbose=verbose,
     )
 
@@ -1093,7 +1096,7 @@ def wrap_anthropic(
     store_conversations: bool = True,
     inject_memories: bool = True,
     max_memories: Optional[int] = None,
-    recall_budget: str = "mid",
+    budget: str = "mid",
     verbose: bool = False,
 ) -> HindsightAnthropic:
     """Wrap an Anthropic client with Hindsight memory integration.
@@ -1110,7 +1113,7 @@ def wrap_anthropic(
         store_conversations: Whether to store conversations
         inject_memories: Whether to inject relevant memories
         max_memories: Maximum number of memories to inject (None = no limit)
-        recall_budget: Budget level for memory recall (low, mid, high)
+        budget: Budget level for memory recall (low, mid, high)
         verbose: Enable verbose logging
 
     Returns:
@@ -1140,6 +1143,6 @@ def wrap_anthropic(
         store_conversations=store_conversations,
         inject_memories=inject_memories,
         max_memories=max_memories,
-        recall_budget=recall_budget,
+        budget=budget,
         verbose=verbose,
     )

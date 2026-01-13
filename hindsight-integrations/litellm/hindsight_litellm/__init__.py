@@ -27,12 +27,12 @@ API Structure:
        - injection_mode, excluded_models, store_conversations, inject_memories
 
     2. set_defaults() - Default values for per-call settings (required: bank_id)
-       - bank_id (REQUIRED), document_id, recall_budget, fact_types
+       - bank_id (REQUIRED), document_id, budget, fact_types
        - max_memories, max_memory_tokens, use_reflect, reflect_include_facts
        - include_entities (default True), trace (default False)
 
     3. Per-call kwargs (hindsight_* prefix) - Override any default per-call
-       - hindsight_bank_id, hindsight_document_id, hindsight_recall_budget, etc.
+       - hindsight_bank_id, hindsight_document_id, hindsight_budget, etc.
        - hindsight_include_entities, hindsight_trace
 
     4. set_bank_background() - Set background/instructions for a bank
@@ -233,7 +233,7 @@ def clear_injection_debug() -> None:
     _last_injection_debug = None
 
 
-def _inject_memories(messages: List[dict], custom_query: Optional[str] = None) -> List[dict]:
+def _inject_memories(messages: List[dict], custom_query: Optional[str] = None, custom_reflect_context: Optional[str] = None) -> List[dict]:
     """Inject memories into messages list.
 
     Returns the modified messages list with memories injected into the system message.
@@ -244,6 +244,7 @@ def _inject_memories(messages: List[dict], custom_query: Optional[str] = None) -
     Args:
         messages: List of message dicts to inject memories into
         custom_query: Optional custom query to use for memory lookup instead of user message
+        custom_reflect_context: Optional context to pass to reflect API (overrides defaults.reflect_context)
     """
     global _last_injection_debug
     import logging
@@ -297,10 +298,13 @@ def _inject_memories(messages: List[dict], custom_query: Optional[str] = None) -
             # Build common reflect parameters
             reflect_kwargs = {
                 "query": user_query,
-                "budget": defaults.recall_budget or "mid",
+                "budget": defaults.budget or "mid",
             }
             # Add context if provided (shapes reasoning but not retrieval)
-            if defaults.reflect_context:
+            # Per-call context overrides default context
+            if custom_reflect_context:
+                reflect_kwargs["context"] = custom_reflect_context
+            elif defaults.reflect_context:
                 reflect_kwargs["context"] = defaults.reflect_context
             # Add response_schema for structured output
             if defaults.reflect_response_schema:
@@ -362,7 +366,7 @@ def _inject_memories(messages: List[dict], custom_query: Optional[str] = None) -
             result = client.recall(
                 bank_id=bank_id,
                 query=user_query,
-                budget=defaults.recall_budget or "mid",
+                budget=defaults.budget or "mid",
                 max_tokens=defaults.max_memory_tokens or 4096,
                 types=defaults.fact_types,
             )
@@ -515,6 +519,7 @@ def _wrapped_completion(*args, **kwargs):
 
     # Extract hindsight-specific kwargs
     custom_query = kwargs.pop("hindsight_query", None)
+    custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -528,7 +533,7 @@ def _wrapped_completion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages, custom_query=custom_query)
+            injected_messages = _inject_memories(messages, custom_query=custom_query, custom_reflect_context=custom_reflect_context)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -557,6 +562,7 @@ async def _wrapped_acompletion(*args, **kwargs):
 
     # Extract hindsight-specific kwargs
     custom_query = kwargs.pop("hindsight_query", None)
+    custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -570,7 +576,7 @@ async def _wrapped_acompletion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages, custom_query=custom_query)
+            injected_messages = _inject_memories(messages, custom_query=custom_query, custom_reflect_context=custom_reflect_context)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -947,11 +953,20 @@ def completion(*args, **kwargs):
         ...     messages=[{"role": "user", "content": "Please deliver package to Alice"}],
         ...     hindsight_query="Where is Alice located?",  # Focused query for memory
         ... )
+        >>>
+        >>> # With custom reflect context (conversation history for reflect)
+        >>> response = hindsight_litellm.completion(
+        ...     model="gpt-4o-mini",
+        ...     messages=[...],
+        ...     hindsight_query="What should I do next?",
+        ...     hindsight_reflect_context="Step 1: Checked floor 1. Step 2: Found elevator.",
+        ... )
     """
     config = get_config()
 
     # Extract hindsight-specific kwargs
     custom_query = kwargs.pop("hindsight_query", None)
+    custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -965,7 +980,7 @@ def completion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages, custom_query=custom_query)
+            injected_messages = _inject_memories(messages, custom_query=custom_query, custom_reflect_context=custom_reflect_context)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -1022,6 +1037,7 @@ async def acompletion(*args, **kwargs):
 
     # Extract hindsight-specific kwargs
     custom_query = kwargs.pop("hindsight_query", None)
+    custom_reflect_context = kwargs.pop("hindsight_reflect_context", None)
 
     # Extract messages from kwargs or args
     messages = kwargs.get("messages")
@@ -1035,7 +1051,7 @@ async def acompletion(*args, **kwargs):
     # Step 1: Inject memories (raises HindsightError on failure)
     if config and config.inject_memories and messages:
         try:
-            injected_messages = _inject_memories(messages, custom_query=custom_query)
+            injected_messages = _inject_memories(messages, custom_query=custom_query, custom_reflect_context=custom_reflect_context)
             kwargs["messages"] = injected_messages
         except Exception as e:
             raise HindsightError(f"Failed to inject memories: {e}") from e
@@ -1061,7 +1077,7 @@ def hindsight_memory(
     injection_mode: MemoryInjectionMode = MemoryInjectionMode.SYSTEM_MESSAGE,
     max_memories: Optional[int] = None,
     max_memory_tokens: int = 4096,
-    recall_budget: str = "mid",
+    budget: str = "mid",
     fact_types: Optional[List[str]] = None,
     document_id: Optional[str] = None,
     excluded_models: Optional[List[str]] = None,
@@ -1084,7 +1100,7 @@ def hindsight_memory(
         injection_mode: How to inject memories
         max_memories: Maximum number of memories to inject (None = unlimited)
         max_memory_tokens: Maximum tokens for memory context
-        recall_budget: Budget for memory recall (low, mid, high)
+        budget: Budget for memory recall (low, mid, high)
         fact_types: List of fact types to filter (world, experience, opinion, observation)
         document_id: Optional document ID for grouping conversations
         excluded_models: List of model patterns to exclude
@@ -1119,7 +1135,7 @@ def hindsight_memory(
         set_defaults(
             bank_id=bank_id,
             document_id=document_id,
-            recall_budget=recall_budget,
+            budget=budget,
             fact_types=fact_types,
             max_memories=max_memories,
             max_memory_tokens=max_memory_tokens,
@@ -1145,7 +1161,7 @@ def hindsight_memory(
             set_defaults(
                 bank_id=previous_defaults.bank_id,
                 document_id=previous_defaults.document_id,
-                recall_budget=previous_defaults.recall_budget,
+                budget=previous_defaults.budget,
                 fact_types=previous_defaults.fact_types,
                 max_memories=previous_defaults.max_memories,
                 max_memory_tokens=previous_defaults.max_memory_tokens,

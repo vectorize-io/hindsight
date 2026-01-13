@@ -6,7 +6,7 @@ This module provides a clean API for configuring Hindsight integration:
    - API URL, authentication, logging, injection mode, etc.
 
 2. set_defaults() - Default values for per-call settings
-   - bank_id, document_id, recall_budget, fact_types, etc.
+   - bank_id, document_id, budget, fact_types, etc.
    - These are used when per-call kwargs are not provided
 
 3. Per-call kwargs (hindsight_* prefix) - Override any default per-call
@@ -67,7 +67,7 @@ class HindsightDefaults:
     Attributes:
         bank_id: Memory bank ID for memory operations
         document_id: Optional document ID for grouping stored conversations
-        recall_budget: Budget level for memory recall (low, mid, high)
+        budget: Budget level for memory recall (low, mid, high)
         fact_types: List of fact types to filter recall (world, experience, opinion, observation)
         max_memories: Maximum number of memories to inject (None = no limit)
         max_memory_tokens: Maximum tokens for injected memory context
@@ -85,7 +85,7 @@ class HindsightDefaults:
 
     bank_id: Optional[str] = None
     document_id: Optional[str] = None
-    recall_budget: str = "mid"  # low, mid, high
+    budget: str = "mid"  # low, mid, high
     fact_types: Optional[List[str]] = None  # world, experience, opinion, observation
     max_memories: Optional[int] = None  # None = no limit
     max_memory_tokens: int = 4096
@@ -114,7 +114,7 @@ def configure(
     # Legacy parameters (deprecated, use set_defaults instead)
     bank_id: Optional[str] = None,
     document_id: Optional[str] = None,
-    recall_budget: Optional[str] = None,
+    budget: Optional[str] = None,
     fact_types: Optional[List[str]] = None,
     max_memories: Optional[int] = None,
     max_memory_tokens: Optional[int] = None,
@@ -141,7 +141,7 @@ def configure(
             Use get_pending_storage_errors() to check for async storage failures.
 
         # Legacy parameters (deprecated - will be removed in future version)
-        bank_id, document_id, recall_budget, fact_types, max_memories,
+        bank_id, document_id, budget, fact_types, max_memories,
         max_memory_tokens, use_reflect, reflect_include_facts:
             Use set_defaults() instead for cleaner separation.
         bank_name, background:
@@ -180,8 +180,8 @@ def configure(
         legacy_defaults["bank_id"] = bank_id
     if document_id is not None:
         legacy_defaults["document_id"] = document_id
-    if recall_budget is not None:
-        legacy_defaults["recall_budget"] = recall_budget
+    if budget is not None:
+        legacy_defaults["budget"] = budget
     if fact_types is not None:
         legacy_defaults["fact_types"] = fact_types
     if max_memories is not None:
@@ -212,7 +212,7 @@ def configure(
 def set_defaults(
     bank_id: Optional[str] = None,
     document_id: Optional[str] = None,
-    recall_budget: Optional[str] = None,
+    budget: Optional[str] = None,
     fact_types: Optional[List[str]] = None,
     max_memories: Optional[int] = None,
     max_memory_tokens: Optional[int] = None,
@@ -232,7 +232,7 @@ def set_defaults(
     Args:
         bank_id: Default memory bank ID for memory operations
         document_id: Default document ID for grouping stored conversations
-        recall_budget: Default budget level for memory recall (low, mid, high)
+        budget: Default budget level for memory recall (low, mid, high)
         fact_types: Default fact types to filter (world, experience, opinion, observation)
         max_memories: Default max number of memories to inject
         max_memory_tokens: Default max tokens for memory context
@@ -254,7 +254,7 @@ def set_defaults(
         >>> from hindsight_litellm import set_defaults
         >>> set_defaults(
         ...     bank_id="my-agent",
-        ...     recall_budget="high",
+        ...     budget="high",
         ...     fact_types=["world", "opinion"],
         ...     reflect_context="I am a delivery agent finding package recipients.",
         ... )
@@ -275,7 +275,7 @@ def set_defaults(
     _global_defaults = HindsightDefaults(
         bank_id=bank_id if bank_id is not None else current.bank_id,
         document_id=document_id if document_id is not None else current.document_id,
-        recall_budget=recall_budget if recall_budget is not None else current.recall_budget,
+        budget=budget if budget is not None else current.budget,
         fact_types=fact_types if fact_types is not None else current.fact_types,
         max_memories=max_memories if max_memories is not None else current.max_memories,
         max_memory_tokens=max_memory_tokens if max_memory_tokens is not None else current.max_memory_tokens,
@@ -402,7 +402,7 @@ def set_document_id(document_id: str | None) -> None:
         _global_defaults = HindsightDefaults(
             bank_id=_global_defaults.bank_id,
             document_id=document_id,
-            recall_budget=_global_defaults.recall_budget,
+            budget=_global_defaults.budget,
             fact_types=_global_defaults.fact_types,
             max_memories=_global_defaults.max_memories,
             max_memory_tokens=_global_defaults.max_memory_tokens,

@@ -99,7 +99,7 @@ class HindsightCallback(CustomLogger):
         Per-call kwargs (hindsight_*) override defaults. Supported kwargs:
         - hindsight_bank_id: Override bank_id
         - hindsight_document_id: Override document_id
-        - hindsight_recall_budget: Override recall_budget
+        - hindsight_budget: Override budget
         - hindsight_fact_types: Override fact_types
         - hindsight_max_memories: Override max_memories
         - hindsight_max_memory_tokens: Override max_memory_tokens
@@ -118,7 +118,7 @@ class HindsightCallback(CustomLogger):
         return HindsightDefaults(
             bank_id=kwargs.get("hindsight_bank_id", defaults.bank_id),
             document_id=kwargs.get("hindsight_document_id", defaults.document_id),
-            recall_budget=kwargs.get("hindsight_recall_budget", defaults.recall_budget),
+            budget=kwargs.get("hindsight_budget", defaults.budget),
             fact_types=kwargs.get("hindsight_fact_types", defaults.fact_types),
             max_memories=kwargs.get("hindsight_max_memories", defaults.max_memories),
             max_memory_tokens=kwargs.get("hindsight_max_memory_tokens", defaults.max_memory_tokens),
@@ -347,7 +347,7 @@ class HindsightCallback(CustomLogger):
 
         request_data = {
             "query": query,
-            "budget": settings.recall_budget or "mid",
+            "budget": settings.budget or "mid",
             "max_tokens": settings.max_memory_tokens or 4096,
         }
         if settings.fact_types:
@@ -421,7 +421,7 @@ class HindsightCallback(CustomLogger):
 
         request_data: Dict[str, Any] = {
             "query": query,
-            "budget": settings.recall_budget or "mid",
+            "budget": settings.budget or "mid",
             "max_tokens": settings.max_memory_tokens or 4096,
         }
 
