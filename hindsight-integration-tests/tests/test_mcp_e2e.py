@@ -90,7 +90,7 @@ async def test_create_bank_and_list_banks():
                 arguments={
                     "bank_id": bank_id,
                     "name": "Test Bank",
-                    "background": "A bank for testing MCP integration",
+                    "mission": "A bank for testing MCP integration",
                 },
             )
             print(f"Create bank result: {create_result}")
@@ -104,7 +104,7 @@ async def test_create_bank_and_list_banks():
             # Check fields match BankProfileResponse schema
             assert result_data.get("bank_id") == bank_id
             assert result_data.get("name") == "Test Bank"
-            assert result_data.get("background") == "A bank for testing MCP integration"
+            assert result_data.get("mission") == "A bank for testing MCP integration"
             assert "disposition" in result_data  # DispositionTraits object
 
             # Test 2: List banks and verify our bank is there

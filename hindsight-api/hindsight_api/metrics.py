@@ -28,6 +28,15 @@ from opentelemetry.sdk.resources import Resource
 if TYPE_CHECKING:
     import asyncpg
 
+
+def _get_tenant() -> str:
+    """Get current tenant (schema) from context for metrics labeling."""
+    # Import here to avoid circular imports
+    from hindsight_api.engine.memory_engine import get_current_schema
+
+    return get_current_schema()
+
+
 # Custom bucket boundaries for operation duration (in seconds)
 # Fine granularity in 0-30s range where most operations complete
 DURATION_BUCKETS = (0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0)
@@ -323,6 +332,7 @@ class MetricsCollector(MetricsCollectorBase):
             "operation": operation,
             "bank_id": bank_id,
             "source": source,
+            "tenant": _get_tenant(),
         }
         if budget:
             attributes["budget"] = budget
@@ -373,6 +383,7 @@ class MetricsCollector(MetricsCollectorBase):
             "model": model,
             "scope": scope,
             "success": str(success).lower(),
+            "tenant": _get_tenant(),
         }
 
         # Record duration
@@ -425,10 +436,14 @@ class MetricsCollector(MetricsCollectorBase):
             status_code = status_code_getter()
             status_class = f"{status_code // 100}xx"
 
+            # Get tenant from context (may be set during request processing)
+            tenant = _get_tenant()
+
             attributes = {
                 **base_attributes,
                 "status_code": str(status_code),
                 "status_class": status_class,
+                "tenant": tenant,
             }
 
             # Record duration and count

@@ -95,28 +95,70 @@ Converts text into dense vector representations for semantic similarity search.
 
 **Default:** `BAAI/bge-small-en-v1.5` (384 dimensions, ~130MB)
 
-**Alternatives:**
+### Supported Providers
 
-| Model | Use Case |
-|-------|----------|
-| `BAAI/bge-small-en-v1.5` | Default, fast, good quality |
-| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Multilingual (50+ languages) |
+| Provider | Description | Best For |
+|----------|-------------|----------|
+| `local` | SentenceTransformers (default) | Development, low latency |
+| `openai` | OpenAI embeddings API | Production, high quality |
+| `cohere` | Cohere embeddings API | Production, multilingual |
+| `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
+| `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
 
-:::warning
-All embedding models must produce **384-dimensional vectors** to match the database schema.
+### Local Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `BAAI/bge-small-en-v1.5` | 384 | Default, fast, good quality |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | Multilingual (50+ languages) |
+
+### OpenAI Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `text-embedding-3-small` | 1536 | Default OpenAI, cost-effective |
+| `text-embedding-3-large` | 3072 | Higher quality, more expensive |
+| `text-embedding-ada-002` | 1536 | Legacy model |
+
+### Cohere Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `embed-english-v3.0` | 1024 | English text |
+| `embed-multilingual-v3.0` | 1024 | 100+ languages |
+
+:::warning Embedding Dimensions
+Hindsight automatically detects the embedding dimension at startup and adjusts the database schema. Once memories are stored, you cannot change dimensions without losing data.
 :::
 
-**Configuration:**
+**Configuration Examples:**
 
 ```bash
 # Local provider (default)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
 export HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5
 
-# TEI provider (remote)
+# OpenAI
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+export HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=sk-xxxxxxxxxxxx
+export HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-small
+
+# Cohere
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere
+export HINDSIGHT_API_COHERE_API_KEY=your-api-key
+export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0
+
+# TEI (self-hosted)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei
 export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
+
+# LiteLLM proxy
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
+export HINDSIGHT_API_LITELLM_API_BASE=http://localhost:4000
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small
 ```
+
+See [Configuration](./configuration#embeddings) for all options including Azure OpenAI and custom endpoints.
 
 ---
 
@@ -126,7 +168,18 @@ Reranks initial search results to improve precision.
 
 **Default:** `cross-encoder/ms-marco-MiniLM-L-6-v2` (~85MB)
 
-**Alternatives:**
+### Supported Providers
+
+| Provider | Description | Best For |
+|----------|-------------|----------|
+| `local` | SentenceTransformers CrossEncoder (default) | Development, low latency |
+| `cohere` | Cohere rerank API | Production, high quality |
+| `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
+| `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
+| `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
+| `rrf` | RRF-only (no neural reranking) | Testing, minimal resources |
+
+### Local Models
 
 | Model | Use Case |
 |-------|----------|
@@ -134,14 +187,51 @@ Reranks initial search results to improve precision.
 | `cross-encoder/ms-marco-MiniLM-L-12-v2` | Higher accuracy |
 | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | Multilingual |
 
-**Configuration:**
+### Cohere Models
+
+| Model | Use Case |
+|-------|----------|
+| `rerank-english-v3.0` | English text |
+| `rerank-multilingual-v3.0` | 100+ languages |
+
+### LiteLLM Supported Providers
+
+LiteLLM supports multiple reranking providers via the `/rerank` endpoint:
+
+| Provider | Model Example |
+|----------|---------------|
+| Cohere | `cohere/rerank-english-v3.0` |
+| Together AI | `together_ai/...` |
+| Voyage AI | `voyage/rerank-2` |
+| Jina AI | `jina_ai/...` |
+| AWS Bedrock | `bedrock/...` |
+
+**Configuration Examples:**
 
 ```bash
 # Local provider (default)
 export HINDSIGHT_API_RERANKER_PROVIDER=local
 export HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 
-# TEI provider (remote)
+# Cohere
+export HINDSIGHT_API_RERANKER_PROVIDER=cohere
+export HINDSIGHT_API_COHERE_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
+
+# TEI (self-hosted)
 export HINDSIGHT_API_RERANKER_PROVIDER=tei
 export HINDSIGHT_API_RERANKER_TEI_URL=http://localhost:8081
+
+# FlashRank (lightweight)
+export HINDSIGHT_API_RERANKER_PROVIDER=flashrank
+
+# LiteLLM proxy
+export HINDSIGHT_API_RERANKER_PROVIDER=litellm
+export HINDSIGHT_API_LITELLM_API_BASE=http://localhost:4000
+export HINDSIGHT_API_RERANKER_LITELLM_MODEL=cohere/rerank-english-v3.0
+
+# RRF-only (no neural reranking)
+export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 ```
+
+See [Configuration](./configuration#reranker) for all options including Azure-hosted endpoints and batch settings.

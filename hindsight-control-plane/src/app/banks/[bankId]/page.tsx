@@ -9,9 +9,10 @@ import { EntitiesView } from "@/components/entities-view";
 import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
+import { MentalModelsView } from "@/components/mental-models-view";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
-type DataSubTab = "world" | "experience" | "opinion";
+type DataSubTab = "world" | "experience" | "models";
 
 export default function BankPage() {
   const params = useParams();
@@ -54,7 +55,7 @@ export default function BankPage() {
             {/* Recall Tab */}
             {view === "recall" && (
               <div>
-                <h1 className="text-3xl font-bold mb-2 text-foreground">Recall Analyzer</h1>
+                <h1 className="text-3xl font-bold mb-2 text-foreground">Recall</h1>
                 <p className="text-muted-foreground mb-6">
                   Analyze memory recall with detailed trace information and retrieval methods.
                 </p>
@@ -67,7 +68,8 @@ export default function BankPage() {
               <div>
                 <h1 className="text-3xl font-bold mb-2 text-foreground">Reflect</h1>
                 <p className="text-muted-foreground mb-6">
-                  Ask questions and get AI-powered answers based on stored memories.
+                  Query the memory bank and generate a response with optional disposition-aware
+                  reasoning.
                 </p>
                 <ThinkView />
               </div>
@@ -110,15 +112,15 @@ export default function BankPage() {
                       )}
                     </button>
                     <button
-                      onClick={() => handleDataSubTabChange("opinion")}
+                      onClick={() => handleDataSubTabChange("models")}
                       className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "opinion"
+                        subTab === "models"
                           ? "text-primary"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      Opinions
-                      {subTab === "opinion" && (
+                      Mental Models
+                      {subTab === "models" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
                     </button>
@@ -128,7 +130,7 @@ export default function BankPage() {
                 <div>
                   {subTab === "world" && <DataView key="world" factType="world" />}
                   {subTab === "experience" && <DataView key="experience" factType="experience" />}
-                  {subTab === "opinion" && <DataView key="opinion" factType="opinion" />}
+                  {subTab === "models" && <MentalModelsView key="models" />}
                 </div>
               </div>
             )}

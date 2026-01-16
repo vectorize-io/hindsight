@@ -25,11 +25,12 @@ from typing_extensions import Self
 
 class BackgroundResponse(BaseModel):
     """
-    Response model for background update.
+    Response model for background update. Deprecated: use MissionResponse instead.
     """ # noqa: E501
-    background: StrictStr
+    mission: StrictStr
+    background: Optional[StrictStr] = None
     disposition: Optional[DispositionTraits] = None
-    __properties: ClassVar[List[str]] = ["background", "disposition"]
+    __properties: ClassVar[List[str]] = ["mission", "background", "disposition"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,6 +74,11 @@ class BackgroundResponse(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of disposition
         if self.disposition:
             _dict['disposition'] = self.disposition.to_dict()
+        # set to None if background (nullable) is None
+        # and model_fields_set contains the field
+        if self.background is None and "background" in self.model_fields_set:
+            _dict['background'] = None
+
         # set to None if disposition (nullable) is None
         # and model_fields_set contains the field
         if self.disposition is None and "disposition" in self.model_fields_set:
@@ -90,6 +96,7 @@ class BackgroundResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "mission": obj.get("mission"),
             "background": obj.get("background"),
             "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None
         })

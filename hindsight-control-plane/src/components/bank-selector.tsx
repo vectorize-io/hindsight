@@ -23,7 +23,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Check, ChevronsUpDown, Plus, FileText, Moon, Sun, Github } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, FileText, Moon, Sun, Github, Tag } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +47,7 @@ function BankSelectorInner() {
   const [docContext, setDocContext] = React.useState("");
   const [docEventDate, setDocEventDate] = React.useState("");
   const [docDocumentId, setDocDocumentId] = React.useState("");
+  const [docTags, setDocTags] = React.useState("");
   const [docAsync, setDocAsync] = React.useState(false);
   const [isCreatingDoc, setIsCreatingDoc] = React.useState(false);
   const [docError, setDocError] = React.useState<string | null>(null);
@@ -83,10 +84,17 @@ function BankSelectorInner() {
     setDocError(null);
 
     try {
+      // Parse tags from comma-separated string
+      const parsedTags = docTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
       const item: any = { content: docContent };
       if (docContext) item.context = docContext;
       // datetime-local gives "2024-01-15T10:30", add seconds for proper ISO format
       if (docEventDate) item.timestamp = docEventDate + ":00";
+      if (parsedTags.length > 0) item.tags = parsedTags;
 
       const params: any = {
         bank_id: currentBank,
@@ -94,6 +102,7 @@ function BankSelectorInner() {
       };
 
       if (docDocumentId) params.document_id = docDocumentId;
+      if (parsedTags.length > 0) params.document_tags = parsedTags;
 
       if (docAsync) {
         await client.retain({ ...params, async: true });
@@ -107,6 +116,7 @@ function BankSelectorInner() {
       setDocContext("");
       setDocEventDate("");
       setDocDocumentId("");
+      setDocTags("");
       setDocAsync(false);
 
       // Navigate to documents view to see the new document
@@ -335,6 +345,22 @@ function BankSelectorInner() {
                 </div>
               </div>
 
+              <div>
+                <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
+                  <Tag className="h-4 w-4" />
+                  Tags
+                </label>
+                <Input
+                  type="text"
+                  value={docTags}
+                  onChange={(e) => setDocTags(e.target.value)}
+                  placeholder="user_alice, session_123, project_x"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Comma-separated tags for filtering during recall/reflect
+                </p>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="async-doc"
@@ -357,6 +383,7 @@ function BankSelectorInner() {
                   setDocContext("");
                   setDocEventDate("");
                   setDocDocumentId("");
+                  setDocTags("");
                   setDocAsync(false);
                   setDocError(null);
                 }}

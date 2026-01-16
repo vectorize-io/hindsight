@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import get_config
 from ..metrics import get_metrics_collector
+from .db_budget import budgeted_operation
 
 # Context variable for current schema (async-safe, per-task isolation)
 _current_schema: contextvars.ContextVar[str] = contextvars.ContextVar("current_schema", default="public")
@@ -133,23 +134,31 @@ if TYPE_CHECKING:
 
 from enum import Enum
 
+from ..metrics import get_metrics_collector
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig
 from .query_analyzer import QueryAnalyzer
+from .reflect import run_reflect_agent
+from .reflect.models import MentalModelInput
+from .reflect.tools import tool_expand, tool_learn, tool_lookup, tool_recall
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     EntityObservation,
     EntityState,
+    LLMCallTrace,
     MemoryFact,
+    MentalModelRef,
     ReflectResult,
     TokenUsage,
+    ToolCallTrace,
 )
 from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
-from .search import observation_utils, think_utils
+from .search import think_utils
 from .search.reranking import CrossEncoderReranker
+from .search.tags import TagsMatch
 from .task_backend import AsyncIOQueueBackend, NoopTaskBackend, TaskBackend
 
 
@@ -257,8 +266,8 @@ class MemoryEngine(MemoryEngineInterface):
             db_command_timeout: PostgreSQL command timeout in seconds. Defaults to HINDSIGHT_API_DB_COMMAND_TIMEOUT.
             db_acquire_timeout: Connection acquisition timeout in seconds. Defaults to HINDSIGHT_API_DB_ACQUIRE_TIMEOUT.
             task_backend: Custom task backend. If not provided, uses AsyncIOQueueBackend.
-            task_batch_size: Background task batch size. Defaults to HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_SIZE.
-            task_batch_interval: Background task batch interval in seconds. Defaults to HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_INTERVAL.
+            task_batch_size: Background task batch size. Defaults to HINDSIGHT_API_TASK_BATCH_SIZE.
+            task_batch_interval: Background task batch interval in seconds. Defaults to HINDSIGHT_API_TASK_BATCH_INTERVAL.
             run_migrations: Whether to run database migrations during initialize(). Default: True
             operation_validator: Optional extension to validate operations before execution.
                                 If provided, retain/recall/reflect operations will be validated.
@@ -396,17 +405,13 @@ class MemoryEngine(MemoryEngineInterface):
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
 
         # Initialize task backend
-        if task_backend:
-            self._task_backend = task_backend
-        elif config.task_backend == "noop":
-            self._task_backend = NoopTaskBackend()
-        else:
-            # Default to memory (AsyncIOQueueBackend)
-            _task_batch_size = task_batch_size if task_batch_size is not None else config.task_backend_memory_batch_size
-            _task_batch_interval = (
-                task_batch_interval if task_batch_interval is not None else config.task_backend_memory_batch_interval
-            )
-            self._task_backend = AsyncIOQueueBackend(batch_size=_task_batch_size, batch_interval=_task_batch_interval)
+        _task_batch_size = task_batch_size if task_batch_size is not None else config.task_backend_memory_batch_size
+        _task_batch_interval = (
+            task_batch_interval if task_batch_interval is not None else config.task_backend_memory_batch_interval
+        )
+        self._task_backend = task_backend or AsyncIOQueueBackend(
+            batch_size=_task_batch_size, batch_interval=_task_batch_interval
+        )
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -527,6 +532,266 @@ class MemoryEngine(MemoryEngineInterface):
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
 
+    async def _handle_refresh_mental_models(self, task_dict: dict[str, Any]):
+        """
+        Handler for refresh mental models tasks.
+
+        This is the main background job that:
+        1. Identifies mental models (structural from mission + emergent from entities)
+        2. Generates summaries for each mental model
+
+        Args:
+            task_dict: Dict with 'bank_id', 'operation_id', optional 'tags', optional 'subtype'
+        """
+        import time
+
+        bank_id = task_dict.get("bank_id")
+        operation_id = task_dict.get("operation_id")
+        tags = task_dict.get("tags")  # Tags to apply to created mental models
+        subtype = task_dict.get("subtype")  # Optional filter: "structural", "emergent", "pinned", or "learned"
+        if not bank_id:
+            raise ValueError("bank_id is required for refresh mental models task")
+
+        refresh_structural = subtype is None or subtype == "structural"
+        refresh_emergent = subtype is None or subtype == "emergent"
+        refresh_pinned = subtype is None or subtype == "pinned"
+        refresh_learned = subtype is None or subtype == "learned"
+        subtype_desc = f" (subtype={subtype})" if subtype else " (all)"
+
+        from hindsight_api.models import RequestContext
+
+        internal_context = RequestContext()
+        pool = await self._get_pool()
+
+        from .mental_models.emergent import (
+            detect_entity_candidates,
+            evaluate_emergent_models,
+            filter_candidates_by_mission,
+        )
+
+        # ===== Phase 1: Identify mental models (with buffered logging) =====
+        phase1_start = time.perf_counter()
+        id_log: list[str] = []  # Log buffer for identification phase
+
+        # Step 1: Get the bank's mission (required - should have been validated before scheduling)
+        profile = await self.get_bank_profile(bank_id, request_context=internal_context)
+        mission = profile.get("mission") or ""
+        if not mission:
+            raise ValueError(f"Cannot refresh mental models: no mission is set for bank '{bank_id}'")
+
+        structural_removed: list[str] = []
+        emergent_removed: list[str] = []
+        emergent_promoted: list[str] = []
+
+        # Step 2: Derive structural models (LLM sees existing ones and decides what to keep)
+        if refresh_structural:
+            existing_structural = await self.list_mental_models(
+                bank_id, subtype="structural", request_context=internal_context
+            )
+            id_log.append(f"structural: {len(existing_structural) if existing_structural else 0} existing")
+            models_to_remove = await self._derive_structural_models_internal(
+                bank_id, mission, pool, existing_models=existing_structural, tags=tags
+            )
+            for model_id in models_to_remove:
+                structural_removed.append(model_id)
+                await self.delete_mental_model(bank_id, model_id, request_context=internal_context)
+            if structural_removed:
+                id_log.append(f"structural removed: {structural_removed}")
+        else:
+            id_log.append("structural: skipped (subtype filter)")
+
+        # Step 3: Evaluate existing emergent models
+        removed_entity_ids: set[str] = set()  # Track entity_ids we removed (to prevent re-promotion)
+        if refresh_emergent:
+            existing_emergent = await self.list_mental_models(
+                bank_id, subtype="emergent", request_context=internal_context
+            )
+            if existing_emergent:
+                id_log.append(f"emergent: {len(existing_emergent)} existing")
+                # Build model_id -> entity_id mapping for tracking
+                model_to_entity = {m["id"]: m.get("entity_id") for m in existing_emergent}
+                models_to_remove = await evaluate_emergent_models(self._llm_config, existing_emergent)
+                for model_id in models_to_remove:
+                    emergent_removed.append(model_id)
+                    # Track the entity_id so we don't re-promote it
+                    entity_id = model_to_entity.get(model_id)
+                    if entity_id:
+                        removed_entity_ids.add(str(entity_id))
+                    await self.delete_mental_model(bank_id, model_id, request_context=internal_context)
+                if emergent_removed:
+                    id_log.append(f"emergent removed: {emergent_removed}")
+            else:
+                id_log.append("emergent: 0 existing")
+
+            # Step 4: Detect emergent candidates (entities worth promoting)
+            candidates = await detect_entity_candidates(pool, bank_id)
+            id_log.append(f"emergent candidates detected: {len(candidates)}")
+
+            # Step 5: Filter candidates by mission relevance
+            if candidates and mission:
+                candidates = await filter_candidates_by_mission(self._llm_config, mission, candidates)
+                id_log.append(f"emergent candidates after mission filter: {len(candidates)}")
+
+            # Step 6: Filter out candidates whose entity was just removed (they failed evaluation)
+            if removed_entity_ids:
+                original_count = len(candidates)
+                candidates = [c for c in candidates if c.entity_id not in removed_entity_ids]
+                if len(candidates) < original_count:
+                    id_log.append(f"emergent excluded (failed evaluation): {original_count - len(candidates)}")
+
+            # Step 7: Promote filtered candidates to mental models (with tags if provided)
+            for candidate in candidates:
+                if candidate.entity_id:
+                    emergent_promoted.append(candidate.name)
+                    await self._promote_entity_internal(bank_id, candidate.entity_id, pool, tags=tags)
+            if emergent_promoted:
+                id_log.append(f"emergent promoted: {emergent_promoted}")
+        else:
+            id_log.append("emergent: skipped (subtype filter)")
+
+        phase1_duration_ms = int((time.perf_counter() - phase1_start) * 1000)
+
+        # Output single log for Phase 1
+        logger.info(
+            f"[MENTAL_MODELS] Identification complete for bank={bank_id}{subtype_desc} "
+            f"in {phase1_duration_ms}ms: {', '.join(id_log)}"
+        )
+
+        # ===== Phase 2: Generate summaries in parallel =====
+        models = await self.list_mental_models(bank_id, request_context=internal_context)
+
+        # Filter models to only those being refreshed based on subtype
+        models_to_refresh = []
+        for m in models:
+            model_subtype = m["subtype"]
+            if model_subtype == "structural" and refresh_structural:
+                models_to_refresh.append(m)
+            elif model_subtype == "emergent" and refresh_emergent:
+                models_to_refresh.append(m)
+            elif model_subtype == "pinned" and refresh_pinned:
+                models_to_refresh.append(m)
+            elif model_subtype == "learned" and refresh_learned:
+                models_to_refresh.append(m)
+
+        # Get concurrency limit from config
+        from ..config import get_config
+
+        config = get_config()
+        concurrency = config.mental_model_refresh_concurrency
+
+        # Use semaphore to limit concurrent refreshes
+        semaphore = asyncio.Semaphore(concurrency)
+        # Track results with timing: model_id -> {status, duration_ms, iterations, tool_calls, observations}
+        refresh_results: dict[str, dict[str, Any]] = {}
+
+        async def refresh_with_semaphore(model: dict) -> None:
+            """Refresh a single model with semaphore-controlled concurrency."""
+            async with semaphore:
+                model_id = model["id"]
+                model_name = model["name"]
+                start_time = time.perf_counter()
+                try:
+                    result = await self.refresh_mental_model(
+                        bank_id=bank_id,
+                        model_id=model_id,
+                        request_context=internal_context,
+                        _return_agent_result=True,  # Get agent stats for logging
+                    )
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    if result and isinstance(result, tuple):
+                        _, agent_result = result
+                        refresh_results[model_id] = {
+                            "status": "success",
+                            "name": model_name,
+                            "duration_ms": duration_ms,
+                            "iterations": agent_result.iterations if agent_result else 0,
+                            "tool_calls": agent_result.tools_called if agent_result else 0,
+                            "observations": len(agent_result.observations) if agent_result else 0,
+                        }
+                    else:
+                        refresh_results[model_id] = {
+                            "status": "success",
+                            "name": model_name,
+                            "duration_ms": duration_ms,
+                        }
+                except Exception as e:
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    refresh_results[model_id] = {
+                        "status": "failed",
+                        "name": model_name,
+                        "duration_ms": duration_ms,
+                        "error": str(e),
+                    }
+
+        # Run all refreshes in parallel (bounded by semaphore)
+        phase2_start = time.perf_counter()
+        await asyncio.gather(*[refresh_with_semaphore(m) for m in models_to_refresh])
+        phase2_duration_ms = int((time.perf_counter() - phase2_start) * 1000)
+
+        # Build summary for each model
+        model_summaries: list[str] = []
+        for model_id, info in refresh_results.items():
+            if info["status"] == "success":
+                parts = [f"{info['name']}"]
+                if "iterations" in info:
+                    parts.append(f"iter={info['iterations']}")
+                if "tool_calls" in info:
+                    parts.append(f"tools={info['tool_calls']}")
+                if "observations" in info:
+                    parts.append(f"obs={info['observations']}")
+                parts.append(f"{info['duration_ms']}ms")
+                model_summaries.append(f"[{' '.join(parts)}]")
+            else:
+                model_summaries.append(
+                    f"[{info['name']} FAILED: {info.get('error', 'unknown')} {info['duration_ms']}ms]"
+                )
+
+        success_count = sum(1 for r in refresh_results.values() if r["status"] == "success")
+        failed_count = len(refresh_results) - success_count
+
+        # Output single log for Phase 2
+        logger.info(
+            f"[MENTAL_MODELS] Refresh complete for bank={bank_id}, operation={operation_id}: "
+            f"{success_count}/{len(models_to_refresh)} succeeded in {phase2_duration_ms}ms (concurrency={concurrency}). "
+            f"Models: {' '.join(model_summaries)}"
+        )
+
+    async def _handle_generate_mental_model(self, task_dict: dict[str, Any]):
+        """
+        Handler for single mental model generation tasks.
+
+        Generates/refreshes content for a specific mental model.
+
+        Args:
+            task_dict: Dict with 'bank_id', 'model_id', 'operation_id'
+        """
+        bank_id = task_dict.get("bank_id")
+        model_id = task_dict.get("model_id")
+        operation_id = task_dict.get("operation_id")
+
+        if not bank_id or not model_id:
+            raise ValueError("bank_id and model_id are required for generate mental model task")
+
+        logger.info(
+            f"[MENTAL_MODEL_TASK] Starting generation for model_id={model_id}, bank_id={bank_id}, operation_id={operation_id}"
+        )
+
+        from hindsight_api.models import RequestContext
+
+        internal_context = RequestContext()
+
+        # Generate content for the model (reuses the same logic as refresh)
+        result = await self.refresh_mental_model(
+            bank_id=bank_id,
+            model_id=model_id,
+            request_context=internal_context,
+        )
+
+        if result:
+            logger.info(f"[MENTAL_MODEL_TASK] Completed generation for model_id={model_id}, bank_id={bank_id}")
+        else:
+            logger.warning(f"[MENTAL_MODEL_TASK] Model not found: model_id={model_id}, bank_id={bank_id}")
+
     async def execute_task(self, task_dict: dict[str, Any]):
         """
         Execute a task by routing it to the appropriate handler.
@@ -563,14 +828,12 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             if task_type == "access_count_update":
                 await self._handle_access_count_update(task_dict)
-            elif task_type == "reinforce_opinion":
-                await self._handle_reinforce_opinion(task_dict)
-            elif task_type == "form_opinion":
-                await self._handle_form_opinion(task_dict)
             elif task_type == "batch_retain":
                 await self._handle_batch_retain(task_dict)
-            elif task_type == "regenerate_observations":
-                await self._handle_regenerate_observations(task_dict)
+            elif task_type == "refresh_mental_models":
+                await self._handle_refresh_mental_models(task_dict)
+            elif task_type == "generate_mental_model":
+                await self._handle_generate_mental_model(task_dict)
             else:
                 logger.error(f"Unknown task type: {task_type}")
                 # Don't retry unknown task types
@@ -578,9 +841,9 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._delete_operation_record(operation_id)
                 return
 
-            # Task succeeded - delete operation record
+            # Task succeeded - mark operation as completed
             if operation_id:
-                await self._delete_operation_record(operation_id)
+                await self._mark_operation_completed(operation_id)
 
         except Exception as e:
             # Task failed - check if we should retry
@@ -626,7 +889,7 @@ class MemoryEngine(MemoryEngineInterface):
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
-                    SET status = 'failed', error_message = $2
+                    SET status = 'failed', error_message = $2, updated_at = NOW()
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(operation_id),
@@ -635,6 +898,23 @@ class MemoryEngine(MemoryEngineInterface):
             logger.info(f"Marked async operation as failed: {operation_id}")
         except Exception as e:
             logger.error(f"Failed to mark operation as failed {operation_id}: {e}")
+
+    async def _mark_operation_completed(self, operation_id: str):
+        """Helper to mark an operation as completed in the database."""
+        try:
+            pool = await self._get_pool()
+            async with acquire_with_retry(pool) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                    WHERE operation_id = $1
+                    """,
+                    uuid.UUID(operation_id),
+                )
+            logger.info(f"Marked async operation as completed: {operation_id}")
+        except Exception as e:
+            logger.error(f"Failed to mark operation as completed {operation_id}: {e}")
 
     async def initialize(self):
         """Initialize the connection pool, models, and background workers.
@@ -834,8 +1114,7 @@ class MemoryEngine(MemoryEngineInterface):
         """
         Wait for all pending background tasks to complete.
 
-        This is useful in tests to ensure background tasks (like opinion reinforcement)
-        complete before making assertions.
+        This is useful in tests to ensure background tasks complete before making assertions.
         """
         if hasattr(self._task_backend, "wait_for_pending_tasks"):
             await self._task_backend.wait_for_pending_tasks()
@@ -1058,6 +1337,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_id: str | None = None,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
+        document_tags: list[str] | None = None,
         return_usage: bool = False,
     ):
         """
@@ -1175,7 +1455,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             logger.info(f"Split into {len(sub_batches)} sub-batches: {[len(b) for b in sub_batches]} items each")
 
-            # Process each sub-batch using internal method (skip chunking check)
+            # Process each sub-batch
             all_results = []
             for i, sub_batch in enumerate(sub_batches, 1):
                 sub_batch_chars = sum(len(item.get("content", "")) for item in sub_batch)
@@ -1190,6 +1470,7 @@ class MemoryEngine(MemoryEngineInterface):
                     is_first_batch=i == 1,  # Only upsert on first batch
                     fact_type_override=fact_type_override,
                     confidence_score=confidence_score,
+                    document_tags=document_tags,
                 )
                 all_results.extend(sub_results)
                 total_usage = total_usage + sub_usage
@@ -1208,6 +1489,7 @@ class MemoryEngine(MemoryEngineInterface):
                 is_first_batch=True,
                 fact_type_override=fact_type_override,
                 confidence_score=confidence_score,
+                document_tags=document_tags,
             )
 
         # Call post-operation hook if validator is configured
@@ -1242,6 +1524,7 @@ class MemoryEngine(MemoryEngineInterface):
         is_first_batch: bool = True,
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
+        document_tags: list[str] | None = None,
     ) -> tuple[list[list[str]], "TokenUsage"]:
         """
         Internal method for batch processing without chunking logic.
@@ -1258,6 +1541,7 @@ class MemoryEngine(MemoryEngineInterface):
             is_first_batch: Whether this is the first batch (for chunked operations, only delete on first batch)
             fact_type_override: Override fact type for all facts
             confidence_score: Confidence score for opinions
+            document_tags: Tags applied to all items in this batch
 
         Returns:
             Tuple of (unit ID lists, token usage for fact extraction)
@@ -1273,7 +1557,6 @@ class MemoryEngine(MemoryEngineInterface):
                 embeddings_model=self.embeddings,
                 llm_config=self._retain_llm_config,
                 entity_resolver=self.entity_resolver,
-                task_backend=self._task_backend,
                 format_date_fn=self._format_readable_date,
                 duplicate_checker_fn=self._find_duplicate_facts_batch,
                 bank_id=bank_id,
@@ -1282,6 +1565,7 @@ class MemoryEngine(MemoryEngineInterface):
                 is_first_batch=is_first_batch,
                 fact_type_override=fact_type_override,
                 confidence_score=confidence_score,
+                document_tags=document_tags,
             )
 
     def recall(
@@ -1340,6 +1624,9 @@ class MemoryEngine(MemoryEngineInterface):
         include_chunks: bool = False,
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext",
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        _connection_budget: int | None = None,
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -1365,6 +1652,8 @@ class MemoryEngine(MemoryEngineInterface):
             max_entity_tokens: Maximum tokens for entity observations (default 500)
             include_chunks: Whether to include raw chunks in the response
             max_chunk_tokens: Maximum tokens for chunks (default 8192)
+            tags: Optional list of tags for visibility filtering (OR matching - returns
+                  memories that have at least one matching tag)
 
         Returns:
             RecallResultModel containing:
@@ -1387,6 +1676,13 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
                 f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
             )
+
+        # Filter out 'opinion' - opinions are no longer returned from recall
+        # (learnings are now stored as mental models instead)
+        fact_type = [ft for ft in fact_type if ft != "opinion"]
+        if not fact_type:
+            # All requested types were opinions - return empty result
+            return RecallResult(results=[], entities={}, chunks={})
 
         # Validate operation if validator is configured
         if self._operation_validator:
@@ -1413,6 +1709,10 @@ class MemoryEngine(MemoryEngineInterface):
         effective_budget = budget if budget is not None else Budget.MID
         thinking_budget = budget_mapping[effective_budget]
 
+        # Log recall start with tags if present
+        tags_info = f", tags={tags} ({tags_match})" if tags else ""
+        logger.info(f"[RECALL {bank_id[:8]}] Starting recall for query: {query[:50]}...{tags_info}")
+
         # Backpressure: limit concurrent recalls to prevent overwhelming the database
         result = None
         error_msg = None
@@ -1437,6 +1737,9 @@ class MemoryEngine(MemoryEngineInterface):
                         max_chunk_tokens,
                         request_context,
                         semaphore_wait=semaphore_wait,
+                        tags=tags,
+                        tags_match=tags_match,
+                        connection_budget=_connection_budget,
                     )
                     break  # Success - exit retry loop
                 except Exception as e:
@@ -1555,6 +1858,9 @@ class MemoryEngine(MemoryEngineInterface):
         max_chunk_tokens: int = 8192,
         request_context: "RequestContext" = None,
         semaphore_wait: float = 0.0,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        connection_budget: int | None = None,
     ) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
@@ -1584,7 +1890,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize tracer if requested
         from .search.tracer import SearchTracer
 
-        tracer = SearchTracer(query, thinking_budget, max_tokens) if enable_trace else None
+        tracer = (
+            SearchTracer(query, thinking_budget, max_tokens, tags=tags, tags_match=tags_match) if enable_trace else None
+        )
         if tracer:
             tracer.start()
 
@@ -1594,8 +1902,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Buffer logs for clean output in concurrent scenarios
         recall_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
         log_buffer = []
+        tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
         log_buffer.append(
-            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens})"
+            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens}{tags_info})"
         )
 
         try:
@@ -1609,38 +1918,45 @@ class MemoryEngine(MemoryEngineInterface):
                 tracer.record_query_embedding(query_embedding)
                 tracer.add_phase_metric("generate_query_embedding", step_duration)
 
-            # Step 2: N*4-Way Parallel Retrieval (N fact types × 4 retrieval methods)
+            # Step 2: Optimized parallel retrieval using batched queries
+            # - Semantic + BM25 combined in 1 CTE query for ALL fact types
+            # - Graph runs per fact type (complex traversal)
+            # - Temporal runs per fact type (if constraint detected)
             step_start = time.time()
             query_embedding_str = str(query_embedding)
 
-            from .search.retrieval import get_default_graph_retriever, retrieve_parallel
+            from .search.retrieval import (
+                get_default_graph_retriever,
+                retrieve_all_fact_types_parallel,
+            )
 
             # Track each retrieval start time
             retrieval_start = time.time()
 
-            # Temporal extraction now runs IN PARALLEL with other retrievals inside retrieve_parallel
-            # This prevents slow dateparser from blocking semantic/BM25/graph retrieval
-            tc_duration = 0.0  # Will be tracked inside temporal retrieval timing
-
-            # Run retrieval for each fact type in parallel
-            # Each retrieve_parallel uses ~4 connections, so 3 fact types = ~12 concurrent connections
-            retrieval_tasks = [
-                retrieve_parallel(
-                    pool,
+            # Run optimized retrieval with connection budget
+            config = get_config()
+            effective_connection_budget = (
+                connection_budget if connection_budget is not None else config.recall_connection_budget
+            )
+            async with budgeted_operation(
+                max_connections=effective_connection_budget,
+                operation_id=f"recall-{recall_id}",
+            ) as op:
+                budgeted_pool = op.wrap_pool(pool)
+                parallel_start = time.time()
+                multi_result = await retrieve_all_fact_types_parallel(
+                    budgeted_pool,
                     query,
                     query_embedding_str,
                     bank_id,
-                    ft,
+                    fact_type,  # Pass all fact types at once
                     thinking_budget,
                     question_date,
                     self.query_analyzer,
-                    temporal_constraint=None,  # Extracted in parallel inside retrieve_parallel
+                    tags=tags,
+                    tags_match=tags_match,
                 )
-                for ft in fact_type
-            ]
-            parallel_start = time.time()
-            all_retrievals = await asyncio.gather(*retrieval_tasks)
-            parallel_duration = time.time() - parallel_start
+                parallel_duration = time.time() - parallel_start
 
             # Combine all results from all fact types and aggregate timings
             semantic_results = []
@@ -1657,12 +1973,15 @@ class MemoryEngine(MemoryEngineInterface):
             all_mpfp_timings = []
 
             detected_temporal_constraint = None
-            max_conn_wait = 0.0
-            for idx, retrieval_result in enumerate(all_retrievals):
+            max_conn_wait = multi_result.max_conn_wait
+            for ft in fact_type:
+                retrieval_result = multi_result.results_by_fact_type.get(ft)
+                if not retrieval_result:
+                    continue
+
                 # Log fact types in this retrieval batch
-                ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
                 logger.debug(
-                    f"[RECALL {recall_id}] Fact type '{ft_name}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}"
+                    f"[RECALL {recall_id}] Fact type '{ft}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}"
                 )
 
                 semantic_results.extend(retrieval_result.semantic)
@@ -1676,10 +1995,6 @@ class MemoryEngine(MemoryEngineInterface):
                 # Capture temporal constraint (same across all fact types)
                 if retrieval_result.temporal_constraint:
                     detected_temporal_constraint = retrieval_result.temporal_constraint
-                # Collect MPFP timings
-                all_mpfp_timings.extend(retrieval_result.mpfp_timings)
-                # Track max connection wait
-                max_conn_wait = max(max_conn_wait, retrieval_result.max_conn_wait)
 
             # If no temporal results from any fact type, set to None
             if not temporal_results:
@@ -1698,7 +2013,8 @@ class MemoryEngine(MemoryEngineInterface):
             retrieval_duration = time.time() - retrieval_start
 
             step_duration = time.time() - step_start
-            # Format per-method timings (these are the actual parallel retrieval times)
+            total_retrievals = len(fact_type) * (4 if temporal_results else 3)
+            # Format per-method timings
             timing_parts = [
                 f"semantic={len(semantic_results)}({aggregated_timings['semantic']:.3f}s)",
                 f"bm25={len(bm25_results)}({aggregated_timings['bm25']:.3f}s)",
@@ -1711,10 +2027,8 @@ class MemoryEngine(MemoryEngineInterface):
                 temporal_count = len(temporal_results) if temporal_results else 0
                 timing_parts.append(f"temporal={temporal_count}({aggregated_timings['temporal']:.3f}s)")
                 temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
-            # Only tc is sequential setup now (adjacency loads in parallel with retrieval)
-            setup_info = f", tc={tc_duration:.3f}s" if tc_duration > 0.01 else ""
             log_buffer.append(
-                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {parallel_duration:.3f}s{setup_info}{temporal_info}"
+                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)} in {parallel_duration:.3f}s{temporal_info}"
             )
 
             # Log graph retriever timing breakdown if available
@@ -1744,6 +2058,11 @@ class MemoryEngine(MemoryEngineInterface):
                             f"edges={hd.get('edges_loaded', 0)}"
                         )
 
+            # Record temporal constraint in tracer if detected
+            if tracer and detected_temporal_constraint:
+                start_dt, end_dt = detected_temporal_constraint
+                tracer.record_temporal_constraint(start_dt, end_dt)
+
             # Record retrieval results for tracer - per fact type
             if tracer:
                 # Convert RetrievalResult to old tuple format for tracer
@@ -1751,8 +2070,10 @@ class MemoryEngine(MemoryEngineInterface):
                     return [(r.id, r.__dict__) for r in results]
 
                 # Add retrieval results per fact type (to show parallel execution in UI)
-                for idx, rr in enumerate(all_retrievals):
-                    ft_name = fact_type[idx] if idx < len(fact_type) else "unknown"
+                for ft_name in fact_type:
+                    rr = multi_result.results_by_fact_type.get(ft_name)
+                    if not rr:
+                        continue
 
                     # Add semantic retrieval results for this fact type
                     tracer.add_retrieval_results(
@@ -1784,14 +2105,22 @@ class MemoryEngine(MemoryEngineInterface):
                         fact_type=ft_name,
                     )
 
-                    # Add temporal retrieval results for this fact type (even if empty, to show it ran)
-                    if rr.temporal is not None:
+                    # Add temporal retrieval results for this fact type
+                    # Show temporal even with 0 results if constraint was detected
+                    if rr.temporal is not None or rr.temporal_constraint is not None:
+                        temporal_metadata = {"budget": thinking_budget}
+                        if rr.temporal_constraint:
+                            start_dt, end_dt = rr.temporal_constraint
+                            temporal_metadata["constraint"] = {
+                                "start": start_dt.isoformat() if start_dt else None,
+                                "end": end_dt.isoformat() if end_dt else None,
+                            }
                         tracer.add_retrieval_results(
                             method_name="temporal",
-                            results=to_tuple_format(rr.temporal),
+                            results=to_tuple_format(rr.temporal or []),
                             duration_seconds=rr.timings.get("temporal", 0.0),
                             score_field="temporal_score",
-                            metadata={"budget": thinking_budget},
+                            metadata=temporal_metadata,
                             fact_type=ft_name,
                         )
 
@@ -1908,6 +2237,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Re-sort by combined score
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
+                log_buffer.append(
+                    "  [4.6] Combined scoring: cross_encoder(0.6) + rrf(0.2) + temporal(0.1) + recency(0.1)"
+                )
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             if tracer:
@@ -1926,6 +2258,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 5: Truncate to thinking_budget * 2 for token filtering
             rerank_limit = thinking_budget * 2
             top_scored = scored_results[:rerank_limit]
+            log_buffer.append(f"  [5] Truncated to top {len(top_scored)} results")
 
             # Step 6: Token budget filtering
             step_start = time.time()
@@ -1940,7 +2273,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             step_duration = time.time() - step_start
             log_buffer.append(
-                f"  [5] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens in {step_duration:.3f}s"
+                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens in {step_duration:.3f}s"
             )
 
             if tracer:
@@ -1973,7 +2306,14 @@ class MemoryEngine(MemoryEngineInterface):
             # Step 8: Queue access count updates for visited nodes
             visited_ids = list(set([sr.id for sr in scored_results[:50]]))  # Top 50
             if visited_ids:
-                await self._task_backend.submit_task({"type": "access_count_update", "node_ids": visited_ids})
+                await self._task_backend.submit_task(
+                    {
+                        "type": "access_count_update",
+                        "bank_id": bank_id,
+                        "node_ids": visited_ids,
+                    }
+                )
+                log_buffer.append(f"  [7] Queued access count updates for {len(visited_ids)} nodes")
 
             # Log fact_type distribution in results
             fact_type_counts = {}
@@ -2006,7 +2346,6 @@ class MemoryEngine(MemoryEngineInterface):
                 top_results_dicts.append(result_dict)
 
             # Get entities for each fact if include_entities is requested
-            step_start = time.time()
             fact_entity_map = {}  # unit_id -> list of (entity_id, entity_name)
             if include_entities and top_scored:
                 unit_ids = [uuid.UUID(sr.id) for sr in top_scored]
@@ -2028,7 +2367,6 @@ class MemoryEngine(MemoryEngineInterface):
                             fact_entity_map[unit_id].append(
                                 {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
                             )
-            entity_map_duration = time.time() - step_start
 
             # Convert results to MemoryFact objects
             memory_facts = []
@@ -2051,11 +2389,11 @@ class MemoryEngine(MemoryEngineInterface):
                         mentioned_at=result_dict.get("mentioned_at"),
                         document_id=result_dict.get("document_id"),
                         chunk_id=result_dict.get("chunk_id"),
+                        tags=result_dict.get("tags"),
                     )
                 )
 
             # Fetch entity observations if requested
-            step_start = time.time()
             entities_dict = None
             total_entity_tokens = 0
             total_chunk_tokens = 0
@@ -2076,42 +2414,16 @@ class MemoryEngine(MemoryEngineInterface):
                                 entities_ordered.append((entity_id, entity_name))
                                 seen_entity_ids.add(entity_id)
 
-                # Fetch all observations in a single batched query
-                entity_ids = [eid for eid, _ in entities_ordered]
-                all_observations = await self.get_entity_observations_batch(
-                    bank_id, entity_ids, limit_per_entity=5, request_context=request_context
-                )
-
-                # Build entities_dict respecting token budget, in relevance order
+                # Return entities with empty observations (summaries now live in mental models)
                 entities_dict = {}
-                encoding = _get_tiktoken_encoding()
-
                 for entity_id, entity_name in entities_ordered:
-                    if total_entity_tokens >= max_entity_tokens:
-                        break
-
-                    observations = all_observations.get(entity_id, [])
-
-                    # Calculate tokens for this entity's observations
-                    entity_tokens = 0
-                    included_observations = []
-                    for obs in observations:
-                        obs_tokens = len(encoding.encode(obs.text))
-                        if total_entity_tokens + entity_tokens + obs_tokens <= max_entity_tokens:
-                            included_observations.append(obs)
-                            entity_tokens += obs_tokens
-                        else:
-                            break
-
-                    if included_observations:
-                        entities_dict[entity_name] = EntityState(
-                            entity_id=entity_id, canonical_name=entity_name, observations=included_observations
-                        )
-                        total_entity_tokens += entity_tokens
-            entity_obs_duration = time.time() - step_start
+                    entities_dict[entity_name] = EntityState(
+                        entity_id=entity_id,
+                        canonical_name=entity_name,
+                        observations=[],  # Mental models provide this now
+                    )
 
             # Fetch chunks if requested
-            step_start = time.time()
             chunks_dict = None
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
@@ -2171,12 +2483,6 @@ class MemoryEngine(MemoryEngineInterface):
                                 chunk_text=chunk_text, chunk_index=row["chunk_index"], truncated=False
                             )
                             total_chunk_tokens += chunk_tokens
-            chunks_duration = time.time() - step_start
-
-            # Log entity/chunk fetch timing (only if any enrichment was requested)
-            log_buffer.append(
-                f"  [6] Response enrichment: entity_map={entity_map_duration:.3f}s, entity_obs={entity_obs_duration:.3f}s, chunks={chunks_duration:.3f}s"
-            )
 
             # Finalize trace if enabled
             trace_dict = None
@@ -2266,11 +2572,11 @@ class MemoryEngine(MemoryEngineInterface):
             doc = await conn.fetchrow(
                 f"""
                 SELECT d.id, d.bank_id, d.original_text, d.content_hash,
-                       d.created_at, d.updated_at, COUNT(mu.id) as unit_count
+                       d.created_at, d.updated_at, d.tags, COUNT(mu.id) as unit_count
                 FROM {fq_table("documents")} d
                 LEFT JOIN {fq_table("memory_units")} mu ON mu.document_id = d.id
                 WHERE d.id = $1 AND d.bank_id = $2
-                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at
+                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at, d.tags
                 """,
                 document_id,
                 bank_id,
@@ -2287,6 +2593,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "memory_unit_count": doc["unit_count"],
                 "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
                 "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
+                "tags": list(doc["tags"]) if doc["tags"] else [],
             }
 
     async def delete_document(
@@ -2311,10 +2618,12 @@ class MemoryEngine(MemoryEngineInterface):
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
-                # Count units before deletion
-                units_count = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
+                # Get memory unit IDs before deletion (for mental model invalidation)
+                unit_rows = await conn.fetch(
+                    f"SELECT id FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
                 )
+                unit_ids = [str(row["id"]) for row in unit_rows]
+                units_count = len(unit_ids)
 
                 # Delete document (cascades to memory_units and all their links)
                 deleted = await conn.fetchval(
@@ -2322,6 +2631,10 @@ class MemoryEngine(MemoryEngineInterface):
                     document_id,
                     bank_id,
                 )
+
+                # Invalidate deleted fact IDs from mental models
+                if deleted and unit_ids:
+                    await self._invalidate_facts_from_mental_models(conn, bank_id, unit_ids)
 
                 return {"document_deleted": 1 if deleted else 0, "memory_units_deleted": units_count if deleted else 0}
 
@@ -2350,10 +2663,17 @@ class MemoryEngine(MemoryEngineInterface):
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
+                # Get bank_id before deletion (for mental model invalidation)
+                bank_id = await conn.fetchval(f"SELECT bank_id FROM {fq_table('memory_units')} WHERE id = $1", unit_id)
+
                 # Delete the memory unit (cascades to links and associations)
                 deleted = await conn.fetchval(
                     f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
                 )
+
+                # Invalidate deleted fact ID from mental models
+                if deleted and bank_id:
+                    await self._invalidate_facts_from_mental_models(conn, bank_id, [str(deleted)])
 
                 return {
                     "success": deleted is not None,
@@ -2392,10 +2712,9 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
+            # Ensure connection is not in read-only mode (can happen with connection poolers)
+            await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
             async with conn.transaction():
-                # Ensure transaction is not in read-only mode (can happen with connection poolers)
-                # Using SET LOCAL so it only affects this transaction, not the session
-                await conn.execute("SET LOCAL transaction_read_only TO off")
                 try:
                     if fact_type:
                         # Delete only memories of a specific fact type
@@ -2775,6 +3094,68 @@ class MemoryEngine(MemoryEngineInterface):
 
             return {"items": items, "total": total, "limit": limit, "offset": offset}
 
+    async def get_memory_unit(
+        self,
+        bank_id: str,
+        memory_id: str,
+        request_context: "RequestContext",
+    ):
+        """
+        Get a single memory unit by ID.
+
+        Args:
+            bank_id: Bank ID
+            memory_id: Memory unit ID
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with memory unit data or None if not found
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Get the memory unit
+            row = await conn.fetchrow(
+                f"""
+                SELECT id, text, context, event_date, occurred_start, occurred_end,
+                       mentioned_at, fact_type, document_id, chunk_id, tags
+                FROM {fq_table("memory_units")}
+                WHERE id = $1 AND bank_id = $2
+                """,
+                memory_id,
+                bank_id,
+            )
+
+            if not row:
+                return None
+
+            # Get entity information
+            entities_rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON ue.entity_id = e.id
+                WHERE ue.unit_id = $1
+                """,
+                row["id"],
+            )
+            entities = [r["canonical_name"] for r in entities_rows]
+
+            return {
+                "id": str(row["id"]),
+                "text": row["text"],
+                "context": row["context"] if row["context"] else "",
+                "date": row["event_date"].isoformat() if row["event_date"] else "",
+                "type": row["fact_type"],
+                "mentioned_at": row["mentioned_at"].isoformat() if row["mentioned_at"] else None,
+                "occurred_start": row["occurred_start"].isoformat() if row["occurred_start"] else None,
+                "occurred_end": row["occurred_end"].isoformat() if row["occurred_end"] else None,
+                "entities": entities,
+                "document_id": row["document_id"] if row["document_id"] else None,
+                "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
+                "tags": row["tags"] if row["tags"] else [],
+            }
+
     async def list_documents(
         self,
         bank_id: str,
@@ -2951,246 +3332,6 @@ class MemoryEngine(MemoryEngineInterface):
                 "created_at": chunk["created_at"].isoformat() if chunk["created_at"] else "",
             }
 
-    async def _evaluate_opinion_update_async(
-        self,
-        opinion_text: str,
-        opinion_confidence: float,
-        new_event_text: str,
-        entity_name: str,
-    ) -> dict[str, Any] | None:
-        """
-        Evaluate if an opinion should be updated based on a new event.
-
-        Args:
-            opinion_text: Current opinion text (includes reasons)
-            opinion_confidence: Current confidence score (0.0-1.0)
-            new_event_text: Text of the new event
-            entity_name: Name of the entity this opinion is about
-
-        Returns:
-            Dict with 'action' ('keep'|'update'), 'new_confidence', 'new_text' (if action=='update')
-            or None if no changes needed
-        """
-
-        class OpinionEvaluation(BaseModel):
-            """Evaluation of whether an opinion should be updated."""
-
-            action: str = Field(description="Action to take: 'keep' (no change) or 'update' (modify opinion)")
-            reasoning: str = Field(description="Brief explanation of why this action was chosen")
-            new_confidence: float = Field(
-                description="New confidence score (0.0-1.0). Can be higher, lower, or same as before."
-            )
-            new_opinion_text: str | None = Field(
-                default=None,
-                description="If action is 'update', the revised opinion text that acknowledges the previous view. Otherwise None.",
-            )
-
-        evaluation_prompt = f"""You are evaluating whether an existing opinion should be updated based on new information.
-
-ENTITY: {entity_name}
-
-EXISTING OPINION:
-{opinion_text}
-Current confidence: {opinion_confidence:.2f}
-
-NEW EVENT:
-{new_event_text}
-
-Evaluate whether this new event:
-1. REINFORCES the opinion (increase confidence, keep text)
-2. WEAKENS the opinion (decrease confidence, keep text)
-3. CHANGES the opinion (update both text and confidence, noting "Previously I thought X, but now Y...")
-4. IRRELEVANT (keep everything as is)
-
-Guidelines:
-- Only suggest 'update' action if the new event genuinely contradicts or significantly modifies the opinion
-- If updating the text, acknowledge the previous opinion and explain the change
-- Confidence should reflect accumulated evidence (0.0 = no confidence, 1.0 = very confident)
-- Small changes in confidence are normal; large jumps should be rare"""
-
-        try:
-            result = await self._reflect_llm_config.call(
-                messages=[
-                    {"role": "system", "content": "You evaluate and update opinions based on new information."},
-                    {"role": "user", "content": evaluation_prompt},
-                ],
-                response_format=OpinionEvaluation,
-                scope="memory_evaluate_opinion",
-                temperature=0.3,  # Lower temperature for more consistent evaluation
-            )
-
-            # Only return updates if something actually changed
-            if result.action == "keep" and abs(result.new_confidence - opinion_confidence) < 0.01:
-                return None
-
-            return {
-                "action": result.action,
-                "reasoning": result.reasoning,
-                "new_confidence": result.new_confidence,
-                "new_text": result.new_opinion_text if result.action == "update" else None,
-            }
-
-        except Exception as e:
-            logger.warning(f"Failed to evaluate opinion update: {str(e)}")
-            return None
-
-    async def _handle_form_opinion(self, task_dict: dict[str, Any]):
-        """
-        Handler for form opinion tasks.
-
-        Args:
-            task_dict: Dict with keys: 'bank_id', 'answer_text', 'query', 'tenant_id'
-        """
-        bank_id = task_dict["bank_id"]
-        answer_text = task_dict["answer_text"]
-        query = task_dict["query"]
-        tenant_id = task_dict.get("tenant_id")
-
-        await self._extract_and_store_opinions_async(
-            bank_id=bank_id, answer_text=answer_text, query=query, tenant_id=tenant_id
-        )
-
-    async def _handle_reinforce_opinion(self, task_dict: dict[str, Any]):
-        """
-        Handler for reinforce opinion tasks.
-
-        Args:
-            task_dict: Dict with keys: 'bank_id', 'created_unit_ids', 'unit_texts', 'unit_entities'
-        """
-        bank_id = task_dict["bank_id"]
-        created_unit_ids = task_dict["created_unit_ids"]
-        unit_texts = task_dict["unit_texts"]
-        unit_entities = task_dict["unit_entities"]
-
-        await self._reinforce_opinions_async(
-            bank_id=bank_id, created_unit_ids=created_unit_ids, unit_texts=unit_texts, unit_entities=unit_entities
-        )
-
-    async def _reinforce_opinions_async(
-        self,
-        bank_id: str,
-        created_unit_ids: list[str],
-        unit_texts: list[str],
-        unit_entities: list[list[dict[str, str]]],
-    ):
-        """
-        Background task to reinforce opinions based on newly ingested events.
-
-        This runs asynchronously and does not block the put operation.
-
-        Args:
-            bank_id: bank ID
-            created_unit_ids: List of newly created memory unit IDs
-            unit_texts: Texts of the newly created units
-            unit_entities: Entities extracted from each unit
-        """
-        try:
-            # Extract all unique entity names from the new units
-            entity_names = set()
-            for entities_list in unit_entities:
-                for entity in entities_list:
-                    # Handle both Entity objects and dicts
-                    if hasattr(entity, "text"):
-                        entity_names.add(entity.text)
-                    elif isinstance(entity, dict):
-                        entity_names.add(entity["text"])
-
-            if not entity_names:
-                return
-
-            pool = await self._get_pool()
-            async with acquire_with_retry(pool) as conn:
-                # Find all opinions related to these entities
-                opinions = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT mu.id, mu.text, mu.confidence_score, e.canonical_name
-                    FROM {fq_table("memory_units")} mu
-                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE mu.bank_id = $1
-                      AND mu.fact_type = 'opinion'
-                      AND e.canonical_name = ANY($2::text[])
-                    """,
-                    bank_id,
-                    list(entity_names),
-                )
-
-                if not opinions:
-                    return
-
-                # Use cached LLM config
-                if self._reflect_llm_config is None:
-                    logger.error("[REINFORCE] LLM config not available, skipping opinion reinforcement")
-                    return
-
-                # Evaluate each opinion against the new events
-                updates_to_apply = []
-                for opinion in opinions:
-                    opinion_id = str(opinion["id"])
-                    opinion_text = opinion["text"]
-                    opinion_confidence = opinion["confidence_score"]
-                    entity_name = opinion["canonical_name"]
-
-                    # Find all new events mentioning this entity
-                    relevant_events = []
-                    for unit_text, entities_list in zip(unit_texts, unit_entities):
-                        if any(e["text"] == entity_name for e in entities_list):
-                            relevant_events.append(unit_text)
-
-                    if not relevant_events:
-                        continue
-
-                    # Combine all relevant events
-                    combined_events = "\n".join(relevant_events)
-
-                    # Evaluate if opinion should be updated
-                    evaluation = await self._evaluate_opinion_update_async(
-                        opinion_text, opinion_confidence, combined_events, entity_name
-                    )
-
-                    if evaluation:
-                        updates_to_apply.append({"opinion_id": opinion_id, "evaluation": evaluation})
-
-                # Apply all updates in a single transaction
-                if updates_to_apply:
-                    async with conn.transaction():
-                        for update in updates_to_apply:
-                            opinion_id = update["opinion_id"]
-                            evaluation = update["evaluation"]
-
-                            if evaluation["action"] == "update" and evaluation["new_text"]:
-                                # Update both text and confidence
-                                await conn.execute(
-                                    f"""
-                                    UPDATE {fq_table("memory_units")}
-                                    SET text = $1, confidence_score = $2, updated_at = NOW()
-                                    WHERE id = $3
-                                    """,
-                                    evaluation["new_text"],
-                                    evaluation["new_confidence"],
-                                    uuid.UUID(opinion_id),
-                                )
-                            else:
-                                # Only update confidence
-                                await conn.execute(
-                                    f"""
-                                    UPDATE {fq_table("memory_units")}
-                                    SET confidence_score = $1, updated_at = NOW()
-                                    WHERE id = $2
-                                    """,
-                                    evaluation["new_confidence"],
-                                    uuid.UUID(opinion_id),
-                                )
-
-                else:
-                    pass  # No opinions to update
-
-        except Exception as e:
-            logger.error(f"[REINFORCE] Error during opinion reinforcement: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
-
     # ==================== bank profile Methods ====================
 
     async def get_bank_profile(
@@ -3200,7 +3341,7 @@ Guidelines:
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Get bank profile (name, disposition + background).
+        Get bank profile (name, disposition + mission).
         Auto-creates agent with default values if not exists.
 
         Args:
@@ -3208,7 +3349,7 @@ Guidelines:
             request_context: Request context for authentication.
 
         Returns:
-            Dict with name, disposition traits, and background
+            Dict with name, disposition traits, and mission
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -3218,7 +3359,7 @@ Guidelines:
             "bank_id": bank_id,
             "name": profile["name"],
             "disposition": disposition,
-            "background": profile["background"],
+            "mission": profile["mission"],
         }
 
     async def update_bank_disposition(
@@ -3240,33 +3381,51 @@ Guidelines:
         pool = await self._get_pool()
         await bank_utils.update_bank_disposition(pool, bank_id, disposition)
 
-    async def merge_bank_background(
+    async def set_bank_mission(
+        self,
+        bank_id: str,
+        mission: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Set the mission for a bank.
+
+        Args:
+            bank_id: bank IDentifier
+            mission: The mission text
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with bank_id and mission.
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+        await bank_utils.set_bank_mission(pool, bank_id, mission)
+        return {"bank_id": bank_id, "mission": mission}
+
+    async def merge_bank_mission(
         self,
         bank_id: str,
         new_info: str,
         *,
-        update_disposition: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Merge new background information with existing background using LLM.
+        Merge new mission information with existing mission using LLM.
         Normalizes to first person ("I") and resolves conflicts.
-        Optionally infers disposition traits from the merged background.
 
         Args:
             bank_id: bank IDentifier
-            new_info: New background information to add/merge
-            update_disposition: If True, infer Big Five traits from background (default: True)
+            new_info: New mission information to add/merge
             request_context: Request context for authentication.
 
         Returns:
-            Dict with 'background' (str) and optionally 'disposition' (dict) keys
+            Dict with 'mission' (str) key
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
-        return await bank_utils.merge_bank_background(
-            pool, self._reflect_llm_config, bank_id, new_info, update_disposition
-        )
+        return await bank_utils.merge_bank_mission(pool, self._reflect_llm_config, bank_id, new_info)
 
     async def list_banks(
         self,
@@ -3280,7 +3439,7 @@ Guidelines:
             request_context: Request context for authentication.
 
         Returns:
-            List of dicts with bank_id, name, disposition, background, created_at, updated_at
+            List of dicts with bank_id, name, disposition, mission, created_at, updated_at
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -3295,39 +3454,39 @@ Guidelines:
         *,
         budget: Budget | None = None,
         context: str | None = None,
-        search_context: str | None = None,
         max_tokens: int = 4096,
         response_schema: dict | None = None,
         request_context: "RequestContext",
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
     ) -> ReflectResult:
         """
-        Reflect and formulate an answer using bank identity, world facts, and opinions.
+        Reflect and formulate an answer using an agentic loop with tools.
 
-        This method:
-        1. Retrieves experience (conversations and events)
-        2. Retrieves world facts (general knowledge)
-        3. Retrieves existing opinions (bank's formed perspectives)
-        4. Uses LLM to formulate an answer
-        5. Extracts and stores any new opinions formed during reflection
-        6. Optionally generates structured output based on response_schema
-        7. Returns plain text answer and the facts used
+        The reflect agent iteratively uses tools to:
+        1. lookup: Get mental models (synthesized knowledge)
+        2. recall: Search facts (semantic + temporal retrieval)
+        3. learn: Create/update mental models with new insights
+        4. expand: Get chunk/document context for memories
+
+        The agent starts with empty context and must call tools to gather
+        information. On the last iteration, tools are removed to force a
+        final text response.
 
         Args:
             bank_id: bank identifier
             query: Question to answer
-            budget: Budget level for memory exploration (low=100, mid=300, high=600 units)
-            context: Additional context string to include in LLM prompt
-            search_context: Additional keywords to include in memory search. If not provided,
-                           falls back to using `context` for search. Set to empty string ""
-                           to explicitly disable context-based search enhancement.
-            response_schema: Optional JSON Schema for structured output
+            budget: Budget level (currently unused, reserved for future)
+            context: Additional context string to include in agent prompt
+            max_tokens: Max tokens (currently unused, reserved for future)
+            response_schema: Optional JSON Schema for structured output (not yet supported)
 
         Returns:
             ReflectResult containing:
-                - text: Plain text answer (no markdown)
-                - based_on: Dict with 'world', 'experience', and 'opinion' fact lists (MemoryFact objects)
-                - new_opinions: List of newly formed opinions
-                - structured_output: Optional dict if response_schema was provided
+                - text: Plain text answer
+                - based_on: Empty dict (agent retrieves facts dynamically)
+                - new_opinions: Empty list (learnings stored as mental models)
+                - structured_output: None (not yet supported for agentic reflect)
         """
         # Use cached LLM config
         if self._reflect_llm_config is None:
@@ -3351,146 +3510,174 @@ Guidelines:
 
         reflect_start = time.time()
         reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
-        log_buffer = []
-        log_buffer.append(f"[REFLECT {reflect_id}] Query: '{query[:50]}...'")
+        tags_info = f", tags={tags} ({tags_match})" if tags else ""
+        logger.info(f"[REFLECT {reflect_id}] Starting agentic reflect for query: {query[:50]}...{tags_info}")
 
-        # Build search query: enhance with search_context or fall back to context
-        # This ensures relevant memories are found even when the query itself is abstract
-        # (e.g., "Was that a good solution?" + context="Auth bug fix" → searches for auth bug memories)
-        # Limit auto-added context to 256 chars to avoid embedding token limit issues
-        _MAX_AUTO_CONTEXT_CHARS = 256
-        if search_context is not None:
-            # Explicit search_context provided (empty string "" = no enhancement)
-            search_query = f"{query} {search_context}".strip() if search_context else query
-        elif context:
-            # Fallback: use truncated context for search enhancement
-            truncated_context = context[:_MAX_AUTO_CONTEXT_CHARS]
-            search_query = f"{query} {truncated_context}"
-        else:
-            # No context at all
-            search_query = query
-
-        if search_query != query:
-            log_buffer.append(f"[REFLECT {reflect_id}] Search query enhanced: '{search_query[:80]}...'")
-
-        # Steps 1-3: Run multi-fact-type search (12-way retrieval: 4 methods × 3 fact types)
-        recall_start = time.time()
-        metrics = get_metrics_collector()
-        with metrics.record_operation(
-            "recall", bank_id=bank_id, source="reflect", budget=budget.value if budget else None
-        ):
-            search_result = await self.recall_async(
-                bank_id=bank_id,
-                query=search_query,
-                budget=budget,
-                max_tokens=4096,
-                enable_trace=False,
-                fact_type=["experience", "world", "opinion"],
-                include_entities=True,
-                request_context=request_context,
-            )
-        recall_time = time.time() - recall_start
-
-        all_results = search_result.results
-
-        # Split results by fact type for structured response
-        agent_results = [r for r in all_results if r.fact_type == "experience"]
-        world_results = [r for r in all_results if r.fact_type == "world"]
-        opinion_results = [r for r in all_results if r.fact_type == "opinion"]
-
-        log_buffer.append(
-            f"[REFLECT {reflect_id}] Recall: {len(all_results)} facts (experience={len(agent_results)}, world={len(world_results)}, opinion={len(opinion_results)}) in {recall_time:.3f}s"
-        )
-
-        # Format facts for LLM
-        agent_facts_text = think_utils.format_facts_for_prompt(agent_results)
-        world_facts_text = think_utils.format_facts_for_prompt(world_results)
-        opinion_facts_text = think_utils.format_facts_for_prompt(opinion_results)
-
-        # Get bank profile (name, disposition + background)
+        # Get bank profile for agent identity
         profile = await self.get_bank_profile(bank_id, request_context=request_context)
-        name = profile["name"]
-        disposition = profile["disposition"]  # Typed as DispositionTraits
-        background = profile["background"]
 
-        # Build the prompt
-        prompt = think_utils.build_think_prompt(
-            agent_facts_text=agent_facts_text,
-            world_facts_text=world_facts_text,
-            opinion_facts_text=opinion_facts_text,
+        # NOTE: Mental models are NOT pre-loaded to keep the initial prompt small.
+        # The agent can call lookup() to list available models if needed.
+        # This is critical for banks with many mental models to avoid huge prompts.
+
+        # Compute max iterations based on budget
+        config = get_config()
+        base_max_iterations = config.reflect_max_iterations
+        # Budget multipliers: low=0.5x, mid=1x, high=2x
+        budget_multipliers = {Budget.LOW: 0.5, Budget.MID: 1.0, Budget.HIGH: 2.0}
+        effective_budget = budget or Budget.LOW
+        max_iterations = max(1, int(base_max_iterations * budget_multipliers.get(effective_budget, 1.0)))
+
+        # Run agentic loop - acquire connections only when needed for DB operations
+        # (not held during LLM calls which can be slow)
+        pool = await self._get_pool()
+
+        # Create tool callbacks that acquire connections only when needed
+        async def lookup_fn(model_id: str | None = None) -> dict[str, Any]:
+            async with pool.acquire() as conn:
+                return await tool_lookup(conn, bank_id, model_id, tags=tags, tags_match=tags_match)
+
+        async def recall_fn(q: str, max_tokens: int = 4096) -> dict[str, Any]:
+            return await tool_recall(
+                self, bank_id, q, request_context, max_tokens=max_tokens, tags=tags, tags_match=tags_match
+            )
+
+        async def learn_fn(input: MentalModelInput) -> dict[str, Any]:
+            async with pool.acquire() as conn:
+                result = await tool_learn(conn, bank_id, input, tags=tags)
+            # If a new model was created, trigger background generation
+            if result.get("status") == "created" and result.get("model_id"):
+                try:
+                    await self.generate_mental_model_async(
+                        bank_id=bank_id,
+                        model_id=result["model_id"],
+                        request_context=request_context,
+                    )
+                    logger.info(f"[REFLECT] Triggered background generation for learned model: {result['model_id']}")
+                except Exception as e:
+                    logger.warning(f"[REFLECT] Failed to trigger generation for {result['model_id']}: {e}")
+            return result
+
+        async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:
+            async with pool.acquire() as conn:
+                return await tool_expand(conn, bank_id, memory_ids, depth)
+
+        # Run the agent
+        agent_result = await run_reflect_agent(
+            llm_config=self._reflect_llm_config,
+            bank_id=bank_id,
             query=query,
-            name=name,
-            disposition=disposition,
-            background=background,
+            bank_profile=profile,
+            lookup_fn=lookup_fn,
+            recall_fn=recall_fn,
+            learn_fn=learn_fn,
+            expand_fn=expand_fn,
             context=context,
-        )
-
-        log_buffer.append(f"[REFLECT {reflect_id}] Prompt: {len(prompt)} chars")
-
-        system_message = think_utils.get_system_message(disposition)
-        messages = [{"role": "system", "content": system_message}, {"role": "user", "content": prompt}]
-
-        # Prepare response_format if schema provided
-        response_format = None
-        if response_schema is not None:
-            # Wrapper class to provide Pydantic-like interface for raw JSON schemas
-            class JsonSchemaWrapper:
-                def __init__(self, schema: dict):
-                    self._schema = schema
-
-                def model_json_schema(self):
-                    return self._schema
-
-            response_format = JsonSchemaWrapper(response_schema)
-
-        llm_start = time.time()
-        llm_result, usage = await self._reflect_llm_config.call(
-            messages=messages,
-            scope="memory_reflect",
-            max_completion_tokens=max_tokens,
-            response_format=response_format,
-            skip_validation=True if response_format else False,
-            # Don't enforce strict_schema - not all providers support it and may retry forever
-            # Soft enforcement (schema in prompt + json_object mode) is sufficient
-            strict_schema=False,
-            return_usage=True,
-        )
-        llm_time = time.time() - llm_start
-
-        # Handle response based on whether structured output was requested
-        if response_schema is not None:
-            structured_output = llm_result
-            answer_text = ""  # Empty for backward compatibility
-            log_buffer.append(f"[REFLECT {reflect_id}] Structured output generated")
-        else:
-            structured_output = None
-            answer_text = llm_result.strip()
-
-        # Submit form_opinion task for background processing
-        # Pass tenant_id from request context for internal authentication in background task
-        await self._task_backend.submit_task(
-            {
-                "type": "form_opinion",
-                "bank_id": bank_id,
-                "answer_text": answer_text,
-                "query": query,
-                "tenant_id": getattr(request_context, "tenant_id", None) if request_context else None,
-            }
+            max_iterations=max_iterations,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
         )
 
         total_time = time.time() - reflect_start
-        log_buffer.append(
-            f"[REFLECT {reflect_id}] Complete: {len(answer_text)} chars response, LLM {llm_time:.3f}s, total {total_time:.3f}s"
+        logger.info(
+            f"[REFLECT {reflect_id}] Complete: {len(agent_result.text)} chars, "
+            f"{agent_result.iterations} iterations, {agent_result.tools_called} tool calls | {total_time:.3f}s"
         )
-        logger.info("\n" + "\n".join(log_buffer))
 
-        # Return response with facts split by type
+        # Convert agent tool trace to ToolCallTrace objects
+        tool_trace_result = [
+            ToolCallTrace(
+                tool=tc.tool,
+                input=tc.input,
+                output=tc.output,
+                duration_ms=tc.duration_ms,
+                iteration=tc.iteration,
+            )
+            for tc in agent_result.tool_trace
+        ]
+
+        # Convert agent LLM trace to LLMCallTrace objects
+        llm_trace_result = [LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace]
+
+        # Extract memories from recall tool outputs - only include memories the agent actually used
+        # agent_result.used_memory_ids contains validated IDs from the done action
+        used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
+        based_on: dict[str, list[MemoryFact]] = {"world": [], "experience": [], "opinion": []}
+        seen_memory_ids: set[str] = set()
+        for tc in agent_result.tool_trace:
+            if tc.tool == "recall" and "memories" in tc.output:
+                for memory_data in tc.output["memories"]:
+                    memory_id = memory_data.get("id")
+                    # Only include memories that the agent declared as used (or all if none specified)
+                    if memory_id and memory_id not in seen_memory_ids:
+                        if used_memory_ids_set and memory_id not in used_memory_ids_set:
+                            continue  # Skip memories not actually used by the agent
+                        seen_memory_ids.add(memory_id)
+                        fact_type = memory_data.get("type", "world")
+                        if fact_type in based_on:
+                            based_on[fact_type].append(
+                                MemoryFact(
+                                    id=memory_id,
+                                    text=memory_data.get("text", ""),
+                                    fact_type=fact_type,
+                                    context=None,
+                                    occurred_start=memory_data.get("occurred"),
+                                    occurred_end=memory_data.get("occurred"),
+                                )
+                            )
+
+        # Extract mental models from lookup tool outputs - only include models the agent actually used
+        # agent_result.used_model_ids contains validated IDs from the done action
+        used_model_ids_set = set(agent_result.used_model_ids) if agent_result.used_model_ids else set()
+        based_on["mental_model"] = []
+        mental_models_result: list[MentalModelRef] = []
+        seen_model_ids: set[str] = set()
+        for tc in agent_result.tool_trace:
+            if tc.tool == "get_mental_model":
+                # Single model lookup (with full details)
+                if tc.output.get("found") and "model" in tc.output:
+                    model = tc.output["model"]
+                    model_id = model.get("id")
+                    if model_id and model_id not in seen_model_ids:
+                        # Only include models that the agent declared as used (or all if none specified)
+                        if used_model_ids_set and model_id not in used_model_ids_set:
+                            continue  # Skip models not actually used by the agent
+                        seen_model_ids.add(model_id)
+                        # Add to based_on as MemoryFact with type "mental_model"
+                        model_name = model.get("name", "")
+                        model_summary = model.get("summary") or model.get("description", "")
+                        based_on["mental_model"].append(
+                            MemoryFact(
+                                id=model_id,
+                                text=f"{model_name}: {model_summary}",
+                                fact_type="mental_model",
+                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
+                                occurred_start=None,
+                                occurred_end=None,
+                            )
+                        )
+                        mental_models_result.append(
+                            MentalModelRef(
+                                id=model_id,
+                                name=model_name,
+                                type=model.get("type", "concept"),
+                                subtype=model.get("subtype", "structural"),
+                                description=model.get("description", ""),
+                                summary=model.get("summary"),
+                            )
+                        )
+                # List all models lookup - don't add to based_on (too verbose, just a listing)
+
+        # Return response (compatible with existing API)
         result = ReflectResult(
-            text=answer_text,
-            based_on={"world": world_results, "experience": agent_results, "opinion": opinion_results},
-            new_opinions=[],  # Opinions are being extracted asynchronously
-            structured_output=structured_output,
-            usage=usage,
+            text=agent_result.text,
+            based_on=based_on,
+            new_opinions=[],  # Learnings stored as mental models
+            structured_output=agent_result.structured_output,
+            usage=None,  # Token tracking not yet implemented for agentic loop
+            tool_trace=tool_trace_result,
+            llm_trace=llm_trace_result,
+            mental_models=mental_models_result,
         )
 
         # Call post-operation hook if validator is configured
@@ -3514,50 +3701,6 @@ Guidelines:
 
         return result
 
-    async def _extract_and_store_opinions_async(
-        self, bank_id: str, answer_text: str, query: str, tenant_id: str | None = None
-    ):
-        """
-        Background task to extract and store opinions from think response.
-
-        This runs asynchronously and does not block the think response.
-
-        Args:
-            bank_id: bank IDentifier
-            answer_text: The generated answer text
-            query: The original query
-            tenant_id: Tenant identifier for internal authentication
-        """
-        try:
-            # Extract opinions from the answer
-            new_opinions = await think_utils.extract_opinions_from_text(
-                self._reflect_llm_config, text=answer_text, query=query
-            )
-
-            # Store new opinions
-            if new_opinions:
-                from datetime import datetime
-
-                current_time = datetime.now(UTC)
-                # Use internal context with tenant_id for background authentication
-                # Extension can check internal=True to bypass normal auth
-                from hindsight_api.models import RequestContext
-
-                internal_context = RequestContext(tenant_id=tenant_id, internal=True)
-                for opinion in new_opinions:
-                    await self.retain_async(
-                        bank_id=bank_id,
-                        content=opinion.opinion,
-                        context=f"formed during thinking about: {query}",
-                        event_date=current_time,
-                        fact_type_override="opinion",
-                        confidence_score=opinion.confidence,
-                        request_context=internal_context,
-                    )
-
-        except Exception as e:
-            logger.warning(f"[REFLECT] Failed to extract/store opinions: {str(e)}")
-
     async def get_entity_observations(
         self,
         bank_id: str,
@@ -3567,99 +3710,22 @@ Guidelines:
         request_context: "RequestContext",
     ) -> list[Any]:
         """
-        Get observations linked to an entity.
+        Get observations for an entity.
+
+        NOTE: Entity observations/summaries have been moved to mental models.
+        This method returns an empty list. Use mental models for entity summaries.
 
         Args:
             bank_id: bank IDentifier
             entity_id: Entity UUID to get observations for
-            limit: Maximum number of observations to return
+            limit: Ignored (kept for backwards compatibility)
             request_context: Request context for authentication.
 
         Returns:
-            List of EntityObservation objects
+            Empty list (observations now in mental models)
         """
         await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT mu.text, mu.mentioned_at
-                FROM {fq_table("memory_units")} mu
-                JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-                WHERE mu.bank_id = $1
-                  AND mu.fact_type = 'observation'
-                  AND ue.entity_id = $2
-                ORDER BY mu.mentioned_at DESC
-                LIMIT $3
-                """,
-                bank_id,
-                uuid.UUID(entity_id),
-                limit,
-            )
-
-            observations = []
-            for row in rows:
-                mentioned_at = row["mentioned_at"].isoformat() if row["mentioned_at"] else None
-                observations.append(EntityObservation(text=row["text"], mentioned_at=mentioned_at))
-            return observations
-
-    async def get_entity_observations_batch(
-        self,
-        bank_id: str,
-        entity_ids: list[str],
-        *,
-        limit_per_entity: int = 5,
-        request_context: "RequestContext",
-    ) -> dict[str, list[Any]]:
-        """
-        Get observations for multiple entities in a single query.
-
-        Args:
-            bank_id: bank IDentifier
-            entity_ids: List of entity UUIDs to get observations for
-            limit_per_entity: Maximum observations per entity
-            request_context: Request context for authentication.
-
-        Returns:
-            Dict mapping entity_id -> list of EntityObservation objects
-        """
-        if not entity_ids:
-            return {}
-
-        await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
-            # Use window function to limit observations per entity
-            rows = await conn.fetch(
-                f"""
-                WITH ranked AS (
-                    SELECT
-                        ue.entity_id,
-                        mu.text,
-                        mu.mentioned_at,
-                        ROW_NUMBER() OVER (PARTITION BY ue.entity_id ORDER BY mu.mentioned_at DESC) as rn
-                    FROM {fq_table("memory_units")} mu
-                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-                    WHERE mu.bank_id = $1
-                      AND mu.fact_type = 'observation'
-                      AND ue.entity_id = ANY($2::uuid[])
-                )
-                SELECT entity_id, text, mentioned_at
-                FROM ranked
-                WHERE rn <= $3
-                ORDER BY entity_id, rn
-                """,
-                bank_id,
-                [uuid.UUID(eid) for eid in entity_ids],
-                limit_per_entity,
-            )
-
-            result: dict[str, list[Any]] = {eid: [] for eid in entity_ids}
-            for row in rows:
-                entity_id = str(row["entity_id"])
-                mentioned_at = row["mentioned_at"].isoformat() if row["mentioned_at"] else None
-                result[entity_id].append(EntityObservation(text=row["text"], mentioned_at=mentioned_at))
-            return result
+        return []
 
     async def list_entities(
         self,
@@ -3701,7 +3767,7 @@ Guidelines:
                 SELECT id, canonical_name, mention_count, first_seen, last_seen, metadata
                 FROM {fq_table("entities")}
                 WHERE bank_id = $1
-                ORDER BY mention_count DESC, last_seen DESC
+                ORDER BY mention_count DESC, last_seen DESC, id ASC
                 LIMIT $2 OFFSET $3
                 """,
                 bank_id,
@@ -3740,6 +3806,85 @@ Guidelines:
                 "offset": offset,
             }
 
+    async def list_tags(
+        self,
+        bank_id: str,
+        *,
+        pattern: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        List all unique tags for a bank with usage counts.
+
+        Use this to discover available tags or expand wildcard patterns.
+        Supports '*' as wildcard for flexible matching (case-insensitive):
+        - 'user:*' matches user:alice, user:bob
+        - '*-admin' matches role-admin, super-admin
+        - 'env*-prod' matches env-prod, environment-prod
+
+        Args:
+            bank_id: Bank identifier
+            pattern: Wildcard pattern to filter tags (use '*' as wildcard, case-insensitive)
+            limit: Maximum number of tags to return
+            offset: Offset for pagination
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with items (list of {tag, count}), total, limit, offset
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            # Build pattern filter if provided (convert * to % for ILIKE)
+            pattern_clause = ""
+            params: list[Any] = [bank_id]
+            if pattern:
+                # Convert wildcard pattern: * -> % for SQL ILIKE
+                sql_pattern = pattern.replace("*", "%")
+                pattern_clause = "AND tag ILIKE $2"
+                params.append(sql_pattern)
+
+            # Get total count of distinct tags matching pattern
+            total_row = await conn.fetchrow(
+                f"""
+                SELECT COUNT(DISTINCT tag) as total
+                FROM {fq_table("memory_units")}, unnest(tags) AS tag
+                WHERE bank_id = $1 AND tags IS NOT NULL AND tags != '{{}}'
+                {pattern_clause}
+                """,
+                *params,
+            )
+            total = total_row["total"] if total_row else 0
+
+            # Get paginated tags with counts, ordered by frequency
+            limit_param = len(params) + 1
+            offset_param = len(params) + 2
+            params.extend([limit, offset])
+
+            rows = await conn.fetch(
+                f"""
+                SELECT tag, COUNT(*) as count
+                FROM {fq_table("memory_units")}, unnest(tags) AS tag
+                WHERE bank_id = $1 AND tags IS NOT NULL AND tags != '{{}}'
+                {pattern_clause}
+                GROUP BY tag
+                ORDER BY count DESC, tag ASC
+                LIMIT ${limit_param} OFFSET ${offset_param}
+                """,
+                *params,
+            )
+
+            items = [{"tag": row["tag"], "count": row["count"]} for row in rows]
+
+            return {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+
     async def get_entity_state(
         self,
         bank_id: str,
@@ -3750,22 +3895,23 @@ Guidelines:
         request_context: "RequestContext",
     ) -> EntityState:
         """
-        Get the current state (mental model) of an entity.
+        Get the current state of an entity.
+
+        NOTE: Entity observations/summaries have been moved to mental models.
+        This method returns an entity with empty observations.
 
         Args:
             bank_id: bank IDentifier
             entity_id: Entity UUID
             entity_name: Canonical name of the entity
-            limit: Maximum number of observations to include
+            limit: Maximum number of observations to include (kept for backwards compat)
             request_context: Request context for authentication.
 
         Returns:
-            EntityState with observations
+            EntityState with empty observations (summaries now in mental models)
         """
-        observations = await self.get_entity_observations(
-            bank_id, entity_id, limit=limit, request_context=request_context
-        )
-        return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=observations)
+        await self._authenticate_tenant(request_context)
+        return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=[])
 
     async def regenerate_entity_observations(
         self,
@@ -3776,369 +3922,26 @@ Guidelines:
         version: str | None = None,
         conn=None,
         request_context: "RequestContext",
-    ) -> None:
+    ) -> list[str]:
         """
-        Regenerate observations for an entity by:
-        1. Checking version for deduplication (if provided)
-        2. Searching all facts mentioning the entity
-        3. Using LLM to synthesize observations (no personality)
-        4. Deleting old observations for this entity
-        5. Storing new observations linked to the entity
+        Regenerate observations for an entity.
+
+        NOTE: Entity observations/summaries have been moved to mental models.
+        This method is now a no-op and returns an empty list.
 
         Args:
             bank_id: bank IDentifier
             entity_id: Entity UUID
             entity_name: Canonical name of the entity
             version: Entity's last_seen timestamp when task was created (for deduplication)
-            conn: Optional database connection (for transactional atomicity with caller)
+            conn: Optional database connection (ignored)
             request_context: Request context for authentication.
+
+        Returns:
+            Empty list (observations now in mental models)
         """
         await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
-        entity_uuid = uuid.UUID(entity_id)
-
-        # Helper to run a query with provided conn or acquire one
-        async def fetch_with_conn(query, *args):
-            if conn is not None:
-                return await conn.fetch(query, *args)
-            else:
-                async with acquire_with_retry(pool) as acquired_conn:
-                    return await acquired_conn.fetch(query, *args)
-
-        async def fetchval_with_conn(query, *args):
-            if conn is not None:
-                return await conn.fetchval(query, *args)
-            else:
-                async with acquire_with_retry(pool) as acquired_conn:
-                    return await acquired_conn.fetchval(query, *args)
-
-        # Step 1: Check version for deduplication
-        if version:
-            current_last_seen = await fetchval_with_conn(
-                f"""
-                SELECT last_seen
-                FROM {fq_table("entities")}
-                WHERE id = $1 AND bank_id = $2
-                """,
-                entity_uuid,
-                bank_id,
-            )
-
-            if current_last_seen and current_last_seen.isoformat() != version:
-                return []
-
-        # Step 2: Get all facts mentioning this entity (exclude observations themselves)
-        rows = await fetch_with_conn(
-            f"""
-            SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.fact_type
-            FROM {fq_table("memory_units")} mu
-            JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-            WHERE mu.bank_id = $1
-              AND ue.entity_id = $2
-              AND mu.fact_type IN ('world', 'experience')
-            ORDER BY mu.occurred_start DESC
-            LIMIT 50
-            """,
-            bank_id,
-            entity_uuid,
-        )
-
-        if not rows:
-            return []
-
-        # Convert to MemoryFact objects for the observation extraction
-        facts = []
-        for row in rows:
-            occurred_start = row["occurred_start"].isoformat() if row["occurred_start"] else None
-            facts.append(
-                MemoryFact(
-                    id=str(row["id"]),
-                    text=row["text"],
-                    fact_type=row["fact_type"],
-                    context=row["context"],
-                    occurred_start=occurred_start,
-                )
-            )
-
-        # Step 3: Extract observations using LLM (no personality)
-        observations = await observation_utils.extract_observations_from_facts(
-            self._reflect_llm_config, entity_name, facts
-        )
-
-        if not observations:
-            return []
-
-        # Step 4: Delete old observations and insert new ones
-        # If conn provided, we're already in a transaction - don't start another
-        # If conn is None, acquire one and start a transaction
-        async def do_db_operations(db_conn):
-            # Delete old observations for this entity
-            await db_conn.execute(
-                f"""
-                DELETE FROM {fq_table("memory_units")}
-                WHERE id IN (
-                    SELECT mu.id
-                    FROM {fq_table("memory_units")} mu
-                    JOIN {fq_table("unit_entities")} ue ON mu.id = ue.unit_id
-                    WHERE mu.bank_id = $1
-                      AND mu.fact_type = 'observation'
-                      AND ue.entity_id = $2
-                )
-                """,
-                bank_id,
-                entity_uuid,
-            )
-
-            # Generate embeddings for new observations
-            embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, observations)
-
-            # Insert new observations
-            current_time = utcnow()
-            created_ids = []
-
-            for obs_text, embedding in zip(observations, embeddings):
-                result = await db_conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("memory_units")} (
-                        bank_id, text, embedding, context, event_date,
-                        occurred_start, occurred_end, mentioned_at,
-                        fact_type, access_count
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'observation', 0)
-                    RETURNING id
-                    """,
-                    bank_id,
-                    obs_text,
-                    str(embedding),
-                    f"observation about {entity_name}",
-                    current_time,
-                    current_time,
-                    current_time,
-                    current_time,
-                )
-                obs_id = str(result["id"])
-                created_ids.append(obs_id)
-
-                # Link observation to entity
-                await db_conn.execute(
-                    f"""
-                    INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
-                    VALUES ($1, $2)
-                    """,
-                    uuid.UUID(obs_id),
-                    entity_uuid,
-                )
-
-            return created_ids
-
-        if conn is not None:
-            # Use provided connection (already in a transaction)
-            return await do_db_operations(conn)
-        else:
-            # Acquire connection and start our own transaction
-            async with acquire_with_retry(pool) as acquired_conn:
-                async with acquired_conn.transaction():
-                    return await do_db_operations(acquired_conn)
-
-    async def _regenerate_observations_sync(
-        self,
-        bank_id: str,
-        entity_ids: list[str],
-        min_facts: int | None = None,
-        conn=None,
-        request_context: "RequestContext | None" = None,
-    ) -> None:
-        """
-        Regenerate observations for entities synchronously (called during retain).
-
-        Processes entities in PARALLEL for faster execution.
-
-        Args:
-            bank_id: Bank identifier
-            entity_ids: List of entity IDs to process
-            min_facts: Minimum facts required to regenerate observations (uses config default if None)
-            conn: Optional database connection (for transactional atomicity)
-        """
-        if not bank_id or not entity_ids:
-            return
-
-        # Use config default if min_facts not specified
-        if min_facts is None:
-            min_facts = get_config().observation_min_facts
-
-        # Convert to UUIDs
-        entity_uuids = [uuid.UUID(eid) if isinstance(eid, str) else eid for eid in entity_ids]
-
-        # Use provided connection or acquire a new one
-        if conn is not None:
-            # Use the provided connection (transactional with caller)
-            entity_rows = await conn.fetch(
-                f"""
-                SELECT id, canonical_name FROM {fq_table("entities")}
-                WHERE id = ANY($1) AND bank_id = $2
-                """,
-                entity_uuids,
-                bank_id,
-            )
-            entity_names = {row["id"]: row["canonical_name"] for row in entity_rows}
-
-            fact_counts = await conn.fetch(
-                f"""
-                SELECT ue.entity_id, COUNT(*) as cnt
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("memory_units")} mu ON ue.unit_id = mu.id
-                WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
-                GROUP BY ue.entity_id
-                """,
-                entity_uuids,
-                bank_id,
-            )
-            entity_fact_counts = {row["entity_id"]: row["cnt"] for row in fact_counts}
-        else:
-            # Acquire a new connection (standalone call)
-            pool = await self._get_pool()
-            async with pool.acquire() as acquired_conn:
-                entity_rows = await acquired_conn.fetch(
-                    f"""
-                    SELECT id, canonical_name FROM {fq_table("entities")}
-                    WHERE id = ANY($1) AND bank_id = $2
-                    """,
-                    entity_uuids,
-                    bank_id,
-                )
-                entity_names = {row["id"]: row["canonical_name"] for row in entity_rows}
-
-                fact_counts = await acquired_conn.fetch(
-                    f"""
-                    SELECT ue.entity_id, COUNT(*) as cnt
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("memory_units")} mu ON ue.unit_id = mu.id
-                    WHERE ue.entity_id = ANY($1) AND mu.bank_id = $2
-                    GROUP BY ue.entity_id
-                    """,
-                    entity_uuids,
-                    bank_id,
-                )
-                entity_fact_counts = {row["entity_id"]: row["cnt"] for row in fact_counts}
-
-        # Filter entities that meet the threshold
-        entities_to_process = []
-        for entity_id in entity_ids:
-            entity_uuid = uuid.UUID(entity_id) if isinstance(entity_id, str) else entity_id
-            if entity_uuid not in entity_names:
-                continue
-            fact_count = entity_fact_counts.get(entity_uuid, 0)
-            if fact_count >= min_facts:
-                entities_to_process.append((entity_id, entity_names[entity_uuid]))
-
-        if not entities_to_process:
-            return
-
-        # Use internal context if not provided (for internal/background calls)
-        from hindsight_api.models import RequestContext as RC
-
-        ctx = request_context if request_context is not None else RC()
-
-        # Process all entities in PARALLEL (LLM calls are the bottleneck)
-        async def process_entity(entity_id: str, entity_name: str):
-            try:
-                await self.regenerate_entity_observations(
-                    bank_id, entity_id, entity_name, version=None, conn=conn, request_context=ctx
-                )
-            except Exception as e:
-                logger.error(f"[OBSERVATIONS] Error processing entity {entity_id}: {e}")
-
-        await asyncio.gather(*[process_entity(eid, name) for eid, name in entities_to_process])
-
-    async def _handle_regenerate_observations(self, task_dict: dict[str, Any]):
-        """
-        Handler for regenerate_observations tasks.
-
-        Args:
-            task_dict: Dict with 'bank_id' and either:
-                       - 'entity_ids' (list): Process multiple entities
-                       - 'entity_id', 'entity_name': Process single entity (legacy)
-
-        Raises:
-            ValueError: If required fields are missing
-            Exception: Any exception from regenerate_entity_observations (propagates to execute_task for retry)
-        """
-        bank_id = task_dict.get("bank_id")
-        # Use internal request context for background tasks
-        from hindsight_api.models import RequestContext
-
-        internal_context = RequestContext()
-
-        # New format: multiple entity_ids
-        if "entity_ids" in task_dict:
-            entity_ids = task_dict.get("entity_ids", [])
-            min_facts = task_dict.get("min_facts", 5)
-
-            if not bank_id or not entity_ids:
-                raise ValueError(f"[OBSERVATIONS] Missing required fields in task: {task_dict}")
-
-            # Process each entity
-            pool = await self._get_pool()
-            async with pool.acquire() as conn:
-                for entity_id in entity_ids:
-                    try:
-                        # Fetch entity name and check fact count
-                        import uuid as uuid_module
-
-                        entity_uuid = uuid_module.UUID(entity_id) if isinstance(entity_id, str) else entity_id
-
-                        # First check if entity exists
-                        entity_exists = await conn.fetchrow(
-                            f"SELECT canonical_name FROM {fq_table('entities')} WHERE id = $1 AND bank_id = $2",
-                            entity_uuid,
-                            bank_id,
-                        )
-
-                        if not entity_exists:
-                            logger.debug(f"[OBSERVATIONS] Entity {entity_id} not yet in bank {bank_id}, skipping")
-                            continue
-
-                        entity_name = entity_exists["canonical_name"]
-
-                        # Count facts linked to this entity
-                        fact_count = (
-                            await conn.fetchval(
-                                f"SELECT COUNT(*) FROM {fq_table('unit_entities')} WHERE entity_id = $1",
-                                entity_uuid,
-                            )
-                            or 0
-                        )
-
-                        # Only regenerate if entity has enough facts
-                        if fact_count >= min_facts:
-                            await self.regenerate_entity_observations(
-                                bank_id, entity_id, entity_name, version=None, request_context=internal_context
-                            )
-                        else:
-                            logger.debug(
-                                f"[OBSERVATIONS] Skipping {entity_name} ({fact_count} facts < {min_facts} threshold)"
-                            )
-
-                    except Exception as e:
-                        # Log but continue processing other entities - individual entity failures
-                        # shouldn't fail the whole batch
-                        logger.error(f"[OBSERVATIONS] Error processing entity {entity_id}: {e}")
-                        continue
-
-        # Legacy format: single entity
-        else:
-            entity_id = task_dict.get("entity_id")
-            entity_name = task_dict.get("entity_name")
-            version = task_dict.get("version")
-
-            if not all([bank_id, entity_id, entity_name]):
-                raise ValueError(f"[OBSERVATIONS] Missing required fields in task: {task_dict}")
-
-            # Type assertions after validation
-            assert isinstance(bank_id, str) and isinstance(entity_id, str) and isinstance(entity_name, str)
-            await self.regenerate_entity_observations(
-                bank_id, entity_id, entity_name, version=version, request_context=internal_context
-            )
+        return []
 
     # =========================================================================
     # Statistics & Operations (for HTTP API layer)
@@ -4263,6 +4066,655 @@ Guidelines:
             "observations": observations,
         }
 
+    # =========================================================================
+    # Mental Models
+    # =========================================================================
+
+    async def list_mental_models(
+        self,
+        bank_id: str,
+        *,
+        subtype: str | None = None,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        request_context: "RequestContext",
+    ) -> list[dict[str, Any]]:
+        """List mental models for a bank, optionally filtered by subtype or tags.
+
+        Args:
+            bank_id: Bank identifier
+            subtype: Filter by subtype (structural, emergent, pinned)
+            tags: Filter by tags - returns models that match according to tags_match
+            tags_match: How to match tags - "any" (OR), "all" (AND), or "exact"
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        query = f"""
+            SELECT id, bank_id, subtype, name, description, observations,
+                   entity_id, links, tags, last_updated, created_at
+            FROM {fq_table("mental_models")}
+            WHERE bank_id = $1
+        """
+        params: list[Any] = [bank_id]
+
+        if subtype:
+            query += f" AND subtype = ${len(params) + 1}"
+            params.append(subtype)
+
+        # Tags filtering: include untagged models OR models with matching tags
+        if tags:
+            if tags_match == "any":
+                # OR match: model has no tags OR model has at least one matching tag
+                query += f" AND (tags = '{{}}' OR tags && ${len(params) + 1})"
+            elif tags_match == "all":
+                # AND match: model has no tags OR model has all specified tags
+                query += f" AND (tags = '{{}}' OR tags @> ${len(params) + 1})"
+            else:  # exact
+                # Exact match: model has no tags OR model has exactly the specified tags
+                query += f" AND (tags = '{{}}' OR tags = ${len(params) + 1})"
+            params.append(tags)
+
+        query += " ORDER BY created_at ASC"
+
+        async with acquire_with_retry(pool) as conn:
+            rows = await conn.fetch(query, *params)
+
+        return [self._row_to_mental_model(row) for row in rows]
+
+    async def get_mental_model(
+        self,
+        bank_id: str,
+        model_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any] | None:
+        """Get a mental model by ID."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT id, bank_id, subtype, name, description, observations,
+                       entity_id, links, tags, last_updated, created_at
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1 AND id = $2
+                """,
+                bank_id,
+                model_id,
+            )
+
+        return self._row_to_mental_model(row) if row else None
+
+    async def refresh_mental_model(
+        self,
+        bank_id: str,
+        model_id: str,
+        *,
+        request_context: "RequestContext",
+        _return_agent_result: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any] | None, Any] | None:
+        """Refresh the summary for a mental model using the reflect agent.
+
+        Uses the model's stored tags to filter recall results.
+
+        Args:
+            bank_id: Bank identifier
+            model_id: Mental model ID
+            request_context: Request context for authentication
+            _return_agent_result: Internal flag to return (model, agent_result) tuple for logging
+
+        Returns:
+            Updated mental model dict, or (model, agent_result) tuple if _return_agent_result=True
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        # Get the mental model
+        model = await self.get_mental_model(bank_id, model_id, request_context=request_context)
+        if not model:
+            return None
+
+        # Use the model's stored tags for filtering recall
+        model_tags = model.get("tags") or None
+
+        # Import reflect agent and tools
+        from .reflect.agent import run_reflect_agent
+        from .reflect.tools import tool_expand, tool_lookup, tool_recall
+
+        # Get bank profile for agent context
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+        bank_profile = {
+            "name": profile.get("name", "Assistant"),
+            "mission": profile.get("mission", ""),
+        }
+
+        # Build query for the agent - instruct to generate multiple structured observations
+        query = f"""Generate comprehensive observations about '{model["name"]}': {model["description"]}
+
+To create thorough observations:
+1. Use multiple recall queries to explore different aspects and facets of this topic
+2. Search for related events, relationships, preferences, patterns, and historical context
+3. Use expand to get full context when a fact seems important but incomplete
+4. Create multiple distinct observations, each covering a different dimension or aspect
+
+Each observation should be self-contained and focus on a specific theme (e.g., preferences, history, relationships, patterns)."""
+
+        # Run the reflect agent with tools (no learn tool for summary generation)
+        # Use observations mode to get structured observations instead of a single text answer
+        config = get_config()
+        metrics = get_metrics_collector()
+        # Use 2x iterations for observations mode - needs more iterations for:
+        # multiple recall queries + expand verification + observations creation
+        observations_max_iterations = config.reflect_max_iterations * 2
+        with metrics.record_operation("mental_model_refresh", bank_id=bank_id, source="api"):
+            async with acquire_with_retry(pool) as conn:
+                result = await run_reflect_agent(
+                    llm_config=self._reflect_llm_config,
+                    bank_id=bank_id,
+                    query=query,
+                    bank_profile=bank_profile,
+                    lookup_fn=lambda mid=None: tool_lookup(conn, bank_id, mid),
+                    recall_fn=lambda q, mt=4096: tool_recall(
+                        self,
+                        bank_id,
+                        q,
+                        request_context,
+                        max_tokens=mt,
+                        tags=model_tags,
+                        tags_match="any",
+                    ),
+                    expand_fn=lambda mem_ids, depth: tool_expand(conn, bank_id, mem_ids, depth),
+                    learn_fn=None,  # Disable learn tool for summary generation
+                    max_iterations=observations_max_iterations,
+                    output_mode="observations",  # Get structured observations
+                )
+
+        # Update the model with the structured observations from the agent
+        import json
+
+        # Use observations from the agent result directly, or fall back to single observation from text
+        if result.observations:
+            observations_list = [
+                {"title": obs.title, "text": obs.text, "memory_ids": obs.memory_ids} for obs in result.observations
+            ]
+        else:
+            # Fallback if no structured observations returned
+            observations_list = [{"title": "", "text": result.text, "memory_ids": result.used_memory_ids or []}]
+
+        observations_json = {"observations": observations_list}
+        async with acquire_with_retry(pool) as conn:
+            updated_row = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("mental_models")}
+                SET observations = $1::jsonb, last_updated = NOW()
+                WHERE bank_id = $2 AND id = $3
+                RETURNING id, bank_id, subtype, name, description, observations,
+                          entity_id, links, tags, last_updated, created_at
+                """,
+                json.dumps(observations_json),
+                bank_id,
+                model_id,
+            )
+
+        model_result = self._row_to_mental_model(updated_row) if updated_row else None
+        if _return_agent_result:
+            return (model_result, result)
+        return model_result
+
+    async def generate_mental_model_async(
+        self,
+        bank_id: str,
+        model_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Submit a background job to generate/refresh a specific mental model.
+
+        This is useful for:
+        - Generating content for newly created learned models
+        - Re-generating content for pinned models after description changes
+        - Manual refresh of a specific model without touching others
+
+        Args:
+            bank_id: Bank identifier
+            model_id: Mental model ID to generate
+
+        Returns:
+            Dict with operation_id to track progress
+        """
+        await self._authenticate_tenant(request_context)
+
+        # Verify the model exists
+        model = await self.get_mental_model(bank_id, model_id, request_context=request_context)
+        if not model:
+            raise ValueError(f"Mental model '{model_id}' not found in bank '{bank_id}'")
+
+        pool = await self._get_pool()
+
+        import json
+
+        operation_id = uuid.uuid4()
+
+        # Insert operation record into database
+        async with acquire_with_retry(pool) as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
+                VALUES ($1, $2, $3, $4)
+                """,
+                operation_id,
+                bank_id,
+                "generate_mental_model",
+                json.dumps({"model_id": model_id}),
+            )
+
+        # Submit task to background queue
+        task_payload = {
+            "type": "generate_mental_model",
+            "operation_id": str(operation_id),
+            "bank_id": bank_id,
+            "model_id": model_id,
+        }
+
+        await self._task_backend.submit_task(task_payload)
+
+        logger.info(
+            f"[MENTAL_MODEL] Generation task queued for model_id={model_id}, bank_id={bank_id}, operation_id={operation_id}"
+        )
+
+        return {
+            "operation_id": str(operation_id),
+            "model_id": model_id,
+            "status": "queued",
+        }
+
+    async def refresh_mental_models(
+        self,
+        bank_id: str,
+        *,
+        tags: list[str] | None = None,
+        subtype: str | None = None,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Submit a background job to refresh mental models for a bank.
+
+        The background job will (depending on subtype filter):
+        1. Derive structural models from the bank's mission (if subtype is None or "structural")
+        2. Detect emergent candidates (entities worth promoting) (if subtype is None or "emergent")
+        3. Filter candidates by mission relevance
+        4. Create/update mental models with specified tags
+        5. Generate summaries for refreshed mental models
+
+        Args:
+            bank_id: Bank identifier
+            tags: Tags to apply to newly created mental models
+            subtype: Only refresh models of this subtype ("structural" or "emergent").
+                     If None, refreshes all subtypes.
+
+        Raises:
+            ValueError: If no mission is set for the bank
+
+        Returns:
+            Dict with operation_id to track progress
+        """
+        await self._authenticate_tenant(request_context)
+
+        # Check that mission is set before scheduling the task
+        profile = await self.get_bank_profile(bank_id, request_context=request_context)
+        mission = profile.get("mission") or ""
+        if not mission:
+            raise ValueError(
+                f"Cannot refresh mental models: no mission is set for bank '{bank_id}'. Set a mission first."
+            )
+
+        pool = await self._get_pool()
+
+        import json
+
+        operation_id = uuid.uuid4()
+
+        # Insert operation record into database
+        async with acquire_with_retry(pool) as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
+                VALUES ($1, $2, $3, $4)
+                """,
+                operation_id,
+                bank_id,
+                "refresh_mental_models",
+                json.dumps({}),
+            )
+
+        # Submit task to background queue
+        task_payload = {
+            "type": "refresh_mental_models",
+            "operation_id": str(operation_id),
+            "bank_id": bank_id,
+        }
+        if tags:
+            task_payload["tags"] = tags
+        if subtype:
+            task_payload["subtype"] = subtype
+
+        await self._task_backend.submit_task(task_payload)
+
+        logger.info(f"[MENTAL_MODELS] Refresh task queued for bank_id={bank_id}, operation_id={operation_id}")
+
+        return {
+            "operation_id": str(operation_id),
+            "status": "queued",
+        }
+
+    async def _derive_structural_models_internal(
+        self,
+        bank_id: str,
+        mission: str,
+        pool,
+        existing_models: list[dict[str, Any]] | None = None,
+        tags: list[str] | None = None,
+    ) -> list[str]:
+        """
+        Internal method to derive structural models without auth check.
+
+        Args:
+            bank_id: Bank identifier
+            mission: The bank's mission
+            pool: Database connection pool
+            existing_models: Optional list of existing structural models
+            tags: Tags to apply to created mental models
+
+        Returns:
+            List of model IDs to remove (existing models not in LLM output)
+        """
+        from .mental_models.models import MentalModelSubtype
+        from .mental_models.structural import derive_structural_models
+
+        templates, models_to_remove = await derive_structural_models(
+            self._llm_config, mission, existing_models=existing_models
+        )
+
+        model_tags = tags or []
+        created_count = 0
+        async with acquire_with_retry(pool) as conn:
+            for template in templates:
+                try:
+                    await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (id, bank_id, subtype, name, description, tags)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        ON CONFLICT (id, bank_id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            description = EXCLUDED.description,
+                            tags = EXCLUDED.tags
+                        RETURNING id
+                        """,
+                        template.id,
+                        bank_id,
+                        MentalModelSubtype.STRUCTURAL.value,
+                        template.name,
+                        template.description,
+                        model_tags,
+                    )
+                    created_count += 1
+                except Exception as e:
+                    logger.warning(f"[MENTAL_MODELS] Failed to create structural model {template.id}: {e}")
+
+        logger.info(f"[MENTAL_MODELS] Created/updated {created_count} structural models for bank {bank_id}")
+        return models_to_remove
+
+    async def _promote_entity_internal(
+        self, bank_id: str, entity_id: str, pool, tags: list[str] | None = None
+    ) -> dict[str, Any] | None:
+        """Internal method to promote entity to mental model without auth check.
+
+        Args:
+            bank_id: Bank identifier
+            entity_id: Entity ID to promote
+            pool: Database connection pool
+            tags: Tags to apply to the created mental model
+        """
+        from .mental_models.models import MentalModelSubtype
+
+        async with acquire_with_retry(pool) as conn:
+            # Get entity info
+            entity = await conn.fetchrow(
+                f"SELECT id, canonical_name FROM {fq_table('entities')} WHERE id = $1 AND bank_id = $2",
+                uuid.UUID(entity_id),
+                bank_id,
+            )
+
+            if not entity:
+                return None
+
+            # Create mental model from entity
+            model_id = f"entity-{entity['canonical_name'].lower().replace(' ', '-')}"
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO {fq_table("mental_models")}
+                (id, bank_id, subtype, name, description, entity_id, tags)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (id, bank_id) DO NOTHING
+                RETURNING id, bank_id, subtype, name, description, observations,
+                          entity_id, links, tags, last_updated, created_at
+                """,
+                model_id,
+                bank_id,
+                MentalModelSubtype.EMERGENT.value,
+                entity["canonical_name"],
+                f"Mental model for {entity['canonical_name']}",
+                entity["id"],
+                tags or [],  # Apply tags from refresh operation
+            )
+
+        return self._row_to_mental_model(row) if row else None
+
+    async def create_mental_model(
+        self,
+        bank_id: str,
+        name: str,
+        description: str,
+        *,
+        tags: list[str] | None = None,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Create a pinned mental model.
+
+        Pinned mental models are user-defined and persist across refreshes.
+        They are not automatically removed when mental models are regenerated.
+
+        Args:
+            bank_id: Bank identifier
+            name: Human-readable name for the mental model
+            description: One-liner description for quick scanning
+            tags: Tags for scoped visibility
+
+        Returns:
+            The created mental model
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        from .mental_models.models import MentalModelSubtype
+
+        # Generate stable ID from name
+        model_id = f"pinned-{name.lower().replace(' ', '-').replace('/', '-')}"
+
+        async with acquire_with_retry(pool) as conn:
+            # Check if model already exists
+            existing = await conn.fetchrow(
+                f"SELECT id FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                model_id,
+            )
+            if existing:
+                raise ValueError(f"Mental model with name '{name}' already exists")
+
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO {fq_table("mental_models")}
+                (id, bank_id, subtype, name, description, tags)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, bank_id, subtype, name, description, observations,
+                          entity_id, links, tags, last_updated, created_at
+                """,
+                model_id,
+                bank_id,
+                MentalModelSubtype.PINNED.value,
+                name,
+                description,
+                tags or [],
+            )
+
+        logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' (id={model_id}) for bank {bank_id}")
+        return self._row_to_mental_model(row)
+
+    async def delete_mental_model(
+        self,
+        bank_id: str,
+        model_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> bool:
+        """Delete a mental model."""
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        async with acquire_with_retry(pool) as conn:
+            result = await conn.execute(
+                f"DELETE FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
+                bank_id,
+                model_id,
+            )
+
+        return result == "DELETE 1"
+
+    def _row_to_mental_model(self, row) -> dict[str, Any]:
+        """Convert a database row to a mental model dict."""
+        import json
+
+        # Parse observations JSON - can be a dict {"observations": [...]} or a list []
+        observations_data = row.get("observations")
+        if observations_data is None:
+            observations_raw = []
+        elif isinstance(observations_data, str):
+            observations_data = json.loads(observations_data)
+            observations_raw = (
+                observations_data.get("observations", []) if isinstance(observations_data, dict) else observations_data
+            )
+        elif isinstance(observations_data, list):
+            observations_raw = observations_data
+        elif isinstance(observations_data, dict):
+            observations_raw = observations_data.get("observations", [])
+        else:
+            observations_raw = []
+
+        # Normalize observation format: map memory_ids/fact_ids to based_on
+        observations = []
+        for obs in observations_raw:
+            if isinstance(obs, dict):
+                # Get memory IDs from either memory_ids (new) or fact_ids (legacy)
+                based_on = obs.get("memory_ids") or obs.get("fact_ids") or []
+                observations.append(
+                    {
+                        "title": obs.get("title", ""),
+                        "text": obs.get("text", ""),
+                        "based_on": based_on,
+                    }
+                )
+
+        return {
+            "id": row["id"],
+            "bank_id": row["bank_id"],
+            "subtype": row["subtype"],
+            "name": row["name"],
+            "description": row["description"],
+            "observations": observations,
+            "entity_id": str(row["entity_id"]) if row["entity_id"] else None,
+            "links": row["links"] or [],
+            "tags": list(row["tags"]) if row.get("tags") else [],
+            "last_updated": row["last_updated"].isoformat() if row["last_updated"] else None,
+            "created_at": row["created_at"].isoformat(),
+        }
+
+    async def _invalidate_facts_from_mental_models(
+        self,
+        conn,
+        bank_id: str,
+        fact_ids: list[str],
+    ) -> int:
+        """
+        Remove fact IDs from mental model observations when memories are deleted.
+
+        Uses JSONB path operations to find and update mental models that reference
+        the deleted fact IDs in their observations.
+
+        Args:
+            conn: Database connection
+            bank_id: Bank identifier
+            fact_ids: List of fact IDs to remove from mental models
+
+        Returns:
+            Number of mental models updated
+        """
+        if not fact_ids:
+            return 0
+
+        # Convert fact_ids to a jsonb array for efficient comparison
+        import json
+
+        fact_ids_json = json.dumps(fact_ids)
+
+        # Update mental models by removing the deleted fact IDs from all observations
+        # This uses jsonb_set to update each observation's fact_ids array
+        result = await conn.execute(
+            f"""
+            UPDATE {fq_table("mental_models")}
+            SET observations = jsonb_set(
+                observations,
+                '{{observations}}',
+                (
+                    SELECT COALESCE(jsonb_agg(
+                        jsonb_set(
+                            observation,
+                            '{{fact_ids}}',
+                            (
+                                SELECT COALESCE(jsonb_agg(fid), '[]'::jsonb)
+                                FROM jsonb_array_elements_text(observation->'fact_ids') AS fid
+                                WHERE NOT (fid::text = ANY($2::text[]))
+                            )
+                        )
+                    ), '[]'::jsonb)
+                    FROM jsonb_array_elements(observations->'observations') AS observation
+                )
+            ),
+            last_updated = NOW()
+            WHERE bank_id = $1
+            AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(observations->'observations') AS observation,
+                     jsonb_array_elements_text(observation->'fact_ids') AS fid
+                WHERE fid::text = ANY($2::text[])
+            )
+            """,
+            bank_id,
+            fact_ids,
+        )
+
+        # Parse the result to get number of updated rows
+        updated_count = int(result.split()[-1]) if result and "UPDATE" in result else 0
+        if updated_count > 0:
+            logger.info(
+                f"[MENTAL_MODELS] Invalidated {len(fact_ids)} fact IDs from {updated_count} mental models in bank {bank_id}"
+            )
+        return updated_count
+
     async def list_operations(
         self,
         bank_id: str,
@@ -4274,37 +4726,95 @@ Guidelines:
         pool = await self._get_pool()
 
         async with acquire_with_retry(pool) as conn:
+            # Get total count
+            total_row = await conn.fetchrow(
+                f"SELECT COUNT(*) as total FROM {fq_table('async_operations')} WHERE bank_id = $1",
+                bank_id,
+            )
+            total = total_row["total"] if total_row else 0
+
+            # Get recent operations
             operations = await conn.fetch(
                 f"""
-                SELECT operation_id, bank_id, operation_type, created_at, status, error_message, result_metadata
+                SELECT operation_id, operation_type, created_at, status, error_message
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 ORDER BY created_at DESC
+                LIMIT 50
                 """,
                 bank_id,
             )
 
-            def parse_metadata(metadata):
-                if metadata is None:
-                    return {}
-                if isinstance(metadata, str):
-                    import json
+            return {
+                "total": total,
+                "operations": [
+                    {
+                        "id": str(row["operation_id"]),
+                        "task_type": row["operation_type"],
+                        "items_count": 0,
+                        "document_id": None,
+                        "created_at": row["created_at"].isoformat(),
+                        "status": row["status"],
+                        "error_message": row["error_message"],
+                    }
+                    for row in operations
+                ],
+            }
 
-                    return json.loads(metadata)
-                return metadata
+    async def get_operation_status(
+        self,
+        bank_id: str,
+        operation_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """Get the status of a specific async operation.
 
-            return [
-                {
-                    "id": str(row["operation_id"]),
-                    "task_type": row["operation_type"],
-                    "items_count": parse_metadata(row["result_metadata"]).get("items_count", 0),
-                    "document_id": parse_metadata(row["result_metadata"]).get("document_id"),
-                    "created_at": row["created_at"].isoformat(),
-                    "status": row["status"],
+        Returns:
+            - status: "pending", "completed", or "failed"
+            - updated_at: last update timestamp
+            - completed_at: completion timestamp (if completed)
+        """
+        await self._authenticate_tenant(request_context)
+        pool = await self._get_pool()
+
+        op_uuid = uuid.UUID(operation_id)
+
+        async with acquire_with_retry(pool) as conn:
+            row = await conn.fetchrow(
+                f"""
+                SELECT operation_id, operation_type, created_at, updated_at, completed_at, status, error_message
+                FROM {fq_table("async_operations")}
+                WHERE operation_id = $1 AND bank_id = $2
+                """,
+                op_uuid,
+                bank_id,
+            )
+
+            if row:
+                # Map DB status to API status (processing -> pending for simplicity)
+                db_status = row["status"]
+                api_status = "pending" if db_status in ("pending", "processing") else db_status
+                return {
+                    "operation_id": operation_id,
+                    "status": api_status,
+                    "operation_type": row["operation_type"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                    "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
                     "error_message": row["error_message"],
                 }
-                for row in operations
-            ]
+            else:
+                # Operation not found
+                return {
+                    "operation_id": operation_id,
+                    "status": "not_found",
+                    "operation_type": None,
+                    "created_at": None,
+                    "updated_at": None,
+                    "completed_at": None,
+                    "error_message": None,
+                }
 
     async def cancel_operation(
         self,
@@ -4345,10 +4855,10 @@ Guidelines:
         bank_id: str,
         *,
         name: str | None = None,
-        background: str | None = None,
+        mission: str | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Update bank name and/or background."""
+        """Update bank name and/or mission."""
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
 
@@ -4364,15 +4874,15 @@ Guidelines:
                     name,
                 )
 
-            if background is not None:
+            if mission is not None:
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("banks")}
-                    SET background = $2, updated_at = NOW()
+                    SET mission = $2, updated_at = NOW()
                     WHERE bank_id = $1
                     """,
                     bank_id,
-                    background,
+                    mission,
                 )
 
         # Return updated profile
@@ -4384,6 +4894,7 @@ Guidelines:
         contents: list[dict[str, Any]],
         *,
         request_context: "RequestContext",
+        document_tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously."""
         await self._authenticate_tenant(request_context)
@@ -4407,14 +4918,16 @@ Guidelines:
             )
 
         # Submit task to background queue
-        await self._task_backend.submit_task(
-            {
-                "type": "batch_retain",
-                "operation_id": str(operation_id),
-                "bank_id": bank_id,
-                "contents": contents,
-            }
-        )
+        task_payload = {
+            "type": "batch_retain",
+            "operation_id": str(operation_id),
+            "bank_id": bank_id,
+            "contents": contents,
+        }
+        if document_tags:
+            task_payload["document_tags"] = document_tags
+
+        await self._task_backend.submit_task(task_payload)
 
         logger.info(f"Retain task queued for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}")
 

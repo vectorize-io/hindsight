@@ -10,8 +10,52 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Valid fact types for recall operations (excludes 'observation' which is internal)
-VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "opinion"])
+# Valid fact types for recall operations (excludes 'observation' which is internal, and 'opinion' which is deprecated)
+VALID_RECALL_FACT_TYPES = frozenset(["world", "experience"])
+
+
+class LLMToolCall(BaseModel):
+    """A tool call requested by the LLM."""
+
+    id: str = Field(description="Unique identifier for this tool call")
+    name: str = Field(description="Name of the tool to call")
+    arguments: dict[str, Any] = Field(description="Arguments to pass to the tool")
+
+
+class LLMToolCallResult(BaseModel):
+    """Result from an LLM call that may include tool calls."""
+
+    content: str | None = Field(default=None, description="Text content if any")
+    tool_calls: list[LLMToolCall] = Field(default_factory=list, description="Tool calls requested by the LLM")
+    finish_reason: str | None = Field(default=None, description="Reason the LLM stopped: 'stop', 'tool_calls', etc.")
+
+
+class ToolCallTrace(BaseModel):
+    """A single tool call made during reflect."""
+
+    tool: str = Field(description="Tool name: lookup, recall, learn, expand")
+    input: dict = Field(description="Tool input parameters")
+    output: dict = Field(description="Tool output/result")
+    duration_ms: int = Field(description="Execution time in milliseconds")
+    iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+
+
+class LLMCallTrace(BaseModel):
+    """A single LLM call made during reflect."""
+
+    scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
+    duration_ms: int = Field(description="Execution time in milliseconds")
+
+
+class MentalModelRef(BaseModel):
+    """Reference to a mental model accessed during reflect."""
+
+    id: str = Field(description="Mental model ID")
+    name: str = Field(description="Mental model name")
+    type: str = Field(description="Mental model type: entity, concept, event")
+    subtype: str = Field(description="Mental model subtype: structural, emergent, learned")
+    description: str = Field(description="Brief description")
+    summary: str | None = Field(default=None, description="Full summary (when looked up in detail)")
 
 
 class TokenUsage(BaseModel):
@@ -85,6 +129,7 @@ class MemoryFact(BaseModel):
                 "metadata": {"source": "slack"},
                 "chunk_id": "bank123_session_abc123_0",
                 "activation": 0.95,
+                "tags": ["user_a", "session_123"],
             }
         }
     )
@@ -102,6 +147,7 @@ class MemoryFact(BaseModel):
     chunk_id: str | None = Field(
         None, description="ID of the chunk this fact was extracted from (format: bank_id_document_id_chunk_index)"
     )
+    tags: list[str] | None = Field(None, description="Visibility scope tags associated with this fact")
 
 
 class ChunkInfo(BaseModel):
@@ -196,6 +242,18 @@ class ReflectResult(BaseModel):
         default=None,
         description="Token usage metrics for the LLM calls made during this reflect operation.",
     )
+    tool_trace: list[ToolCallTrace] = Field(
+        default_factory=list,
+        description="Trace of tool calls made during reflection. Only present when include.tool_calls is enabled.",
+    )
+    llm_trace: list[LLMCallTrace] = Field(
+        default_factory=list,
+        description="Trace of LLM calls made during reflection. Only present when include.tool_calls is enabled.",
+    )
+    mental_models: list[MentalModelRef] = Field(
+        default_factory=list,
+        description="Mental models accessed during reflection. Only present when include.facts is enabled.",
+    )
 
 
 class Opinion(BaseModel):
@@ -259,3 +317,32 @@ class EntityState(BaseModel):
     observations: list[EntityObservation] = Field(
         default_factory=list, description="List of observations about this entity"
     )
+
+
+class MentalModel(BaseModel):
+    """
+    A manually configured mental model for tracking specific topics/areas.
+
+    Mental models are user-defined focus areas that the agent should track
+    and maintain summaries for, unlike auto-extracted entities.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "team-dynamics",
+                "name": "Team Dynamics",
+                "description": "Track how the team collaborates, communication patterns, conflicts, and resolutions",
+                "summary": "The team has strong collaboration...",
+                "summary_updated_at": "2024-01-15T10:30:00Z",
+                "created_at": "2024-01-10T08:00:00Z",
+            }
+        }
+    )
+
+    id: str = Field(description="Unique identifier (alphanumeric lowercase)")
+    name: str = Field(description="Display name for the mental model")
+    description: str = Field(description="Prompt/directions for what to track and summarize")
+    summary: str | None = Field(None, description="Generated summary based on relevant facts")
+    summary_updated_at: str | None = Field(None, description="ISO format date when summary was last updated")
+    created_at: str = Field(description="ISO format date when the mental model was created")

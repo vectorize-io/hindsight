@@ -1268,6 +1268,7 @@ async def extract_facts_from_contents(
                         # mentioned_at: always the event_date (when the conversation/document occurred)
                         mentioned_at=content.event_date,
                         metadata=content.metadata,
+                        tags=content.tags,
                     )
 
                     extracted_facts.append(extracted_fact)

@@ -34,7 +34,8 @@ class MemoryItem(BaseModel):
     metadata: Optional[Dict[str, StrictStr]] = None
     document_id: Optional[StrictStr] = None
     entities: Optional[List[EntityInput]] = None
-    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities"]
+    tags: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "tags"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -107,6 +108,11 @@ class MemoryItem(BaseModel):
         if self.entities is None and "entities" in self.model_fields_set:
             _dict['entities'] = None
 
+        # set to None if tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.tags is None and "tags" in self.model_fields_set:
+            _dict['tags'] = None
+
         return _dict
 
     @classmethod
@@ -124,7 +130,8 @@ class MemoryItem(BaseModel):
             "context": obj.get("context"),
             "metadata": obj.get("metadata"),
             "document_id": obj.get("document_id"),
-            "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None
+            "entities": [EntityInput.from_dict(_item) for _item in obj["entities"]] if obj.get("entities") is not None else None,
+            "tags": obj.get("tags")
         })
         return _obj
 

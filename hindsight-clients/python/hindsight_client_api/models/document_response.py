@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -33,7 +33,8 @@ class DocumentResponse(BaseModel):
     created_at: StrictStr
     updated_at: StrictStr
     memory_unit_count: StrictInt
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count"]
+    tags: Optional[List[StrictStr]] = Field(default=None, description="Tags associated with this document")
+    __properties: ClassVar[List[str]] = ["id", "bank_id", "original_text", "content_hash", "created_at", "updated_at", "memory_unit_count", "tags"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -97,7 +98,8 @@ class DocumentResponse(BaseModel):
             "content_hash": obj.get("content_hash"),
             "created_at": obj.get("created_at"),
             "updated_at": obj.get("updated_at"),
-            "memory_unit_count": obj.get("memory_unit_count")
+            "memory_unit_count": obj.get("memory_unit_count"),
+            "tags": obj.get("tags")
         })
         return _obj
 

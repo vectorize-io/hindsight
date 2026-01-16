@@ -54,7 +54,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_http_requests_total)",
+          "expr": "sum(hindsight_http_requests_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -99,7 +99,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_http_requests_total[1m]))",
+          "expr": "sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -191,7 +191,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\"}[5m])) / sum(rate(hindsight_http_requests_total[5m]))",
+          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\", tenant=~\"$tenant\"}[5m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[5m]))",
           "refId": "A"
         }
       ],
@@ -236,7 +236,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "refId": "A"
         }
       ],
@@ -313,7 +313,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (endpoint) (rate(hindsight_http_requests_total[1m]))",
+          "expr": "sum by (endpoint) (rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
@@ -404,17 +404,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(hindsight_http_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(hindsight_http_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(hindsight_http_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -505,12 +505,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\"}[1m])) / sum(rate(hindsight_http_requests_total[1m]))",
+          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"5xx\", tenant=~\"$tenant\"}[1m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "5xx Error Rate",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"4xx\"}[1m])) / sum(rate(hindsight_http_requests_total[1m]))",
+          "expr": "sum(rate(hindsight_http_requests_total{status_class=\"4xx\", tenant=~\"$tenant\"}[1m])) / sum(rate(hindsight_http_requests_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "4xx Error Rate",
           "refId": "B"
         }
@@ -1276,7 +1276,36 @@
   "schemaVersion": 38,
   "tags": ["hindsight", "api", "service"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hindsight_http_requests_total, tenant)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": false,
+        "name": "tenant",
+        "options": [],
+        "query": {
+          "query": "label_values(hindsight_http_requests_total, tenant)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",

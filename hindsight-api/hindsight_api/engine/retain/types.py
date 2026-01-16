@@ -21,6 +21,7 @@ class RetainContentDict(TypedDict, total=False):
         metadata: Custom key-value metadata (optional)
         document_id: Document ID for this content item (optional)
         entities: User-provided entities to merge with extracted entities (optional)
+        tags: Visibility scope tags for this content item (optional)
     """
 
     content: str  # Required
@@ -29,6 +30,7 @@ class RetainContentDict(TypedDict, total=False):
     metadata: dict[str, str]
     document_id: str
     entities: list[dict[str, str]]  # [{"text": "...", "type": "..."}]
+    tags: list[str]  # Visibility scope tags
 
 
 def _now_utc() -> datetime:
@@ -49,6 +51,7 @@ class RetainContent:
     event_date: datetime = field(default_factory=_now_utc)
     metadata: dict[str, str] = field(default_factory=dict)
     entities: list[dict[str, str]] = field(default_factory=list)  # User-provided entities
+    tags: list[str] = field(default_factory=list)  # Visibility scope tags
 
 
 @dataclass
@@ -113,6 +116,7 @@ class ExtractedFact:
     context: str = ""
     mentioned_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)  # Visibility scope tags
 
 
 @dataclass
@@ -158,6 +162,9 @@ class ProcessedFact:
     # Track which content this fact came from (for user entity merging)
     content_index: int = 0
 
+    # Visibility scope tags
+    tags: list[str] = field(default_factory=list)
+
     @property
     def is_duplicate(self) -> bool:
         """Check if this fact was marked as a duplicate."""
@@ -201,6 +208,7 @@ class ProcessedFact:
             causal_relations=extracted_fact.causal_relations,
             chunk_id=chunk_id,
             content_index=extracted_fact.content_index,
+            tags=extracted_fact.tags,
         )
 
 
@@ -232,6 +240,7 @@ class RetainBatch:
     document_id: str | None = None
     fact_type_override: str | None = None
     confidence_score: float | None = None
+    document_tags: list[str] = field(default_factory=list)  # Tags applied to all items
 
     # Extracted data (populated during processing)
     extracted_facts: list[ExtractedFact] = field(default_factory=list)

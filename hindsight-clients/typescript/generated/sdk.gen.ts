@@ -12,6 +12,9 @@ import type {
   ClearBankMemoriesData,
   ClearBankMemoriesErrors,
   ClearBankMemoriesResponses,
+  CreateMentalModelData,
+  CreateMentalModelErrors,
+  CreateMentalModelResponses,
   CreateOrUpdateBankData,
   CreateOrUpdateBankErrors,
   CreateOrUpdateBankResponses,
@@ -21,6 +24,12 @@ import type {
   DeleteDocumentData,
   DeleteDocumentErrors,
   DeleteDocumentResponses,
+  DeleteMentalModelData,
+  DeleteMentalModelErrors,
+  DeleteMentalModelResponses,
+  GenerateMentalModelData,
+  GenerateMentalModelErrors,
+  GenerateMentalModelResponses,
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
@@ -39,6 +48,15 @@ import type {
   GetGraphData,
   GetGraphErrors,
   GetGraphResponses,
+  GetMemoryData,
+  GetMemoryErrors,
+  GetMemoryResponses,
+  GetMentalModelData,
+  GetMentalModelErrors,
+  GetMentalModelResponses,
+  GetOperationStatusData,
+  GetOperationStatusErrors,
+  GetOperationStatusResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
   ListBanksData,
@@ -53,9 +71,15 @@ import type {
   ListMemoriesData,
   ListMemoriesErrors,
   ListMemoriesResponses,
+  ListMentalModelsData,
+  ListMentalModelsErrors,
+  ListMentalModelsResponses,
   ListOperationsData,
   ListOperationsErrors,
   ListOperationsResponses,
+  ListTagsData,
+  ListTagsErrors,
+  ListTagsResponses,
   MetricsEndpointMetricsGetData,
   MetricsEndpointMetricsGetResponses,
   RecallMemoriesData,
@@ -64,15 +88,21 @@ import type {
   ReflectData,
   ReflectErrors,
   ReflectResponses,
+  RefreshMentalModelsData,
+  RefreshMentalModelsErrors,
+  RefreshMentalModelsResponses,
   RegenerateEntityObservationsData,
   RegenerateEntityObservationsErrors,
   RegenerateEntityObservationsResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
+  UpdateBankData,
   UpdateBankDispositionData,
   UpdateBankDispositionErrors,
   UpdateBankDispositionResponses,
+  UpdateBankErrors,
+  UpdateBankResponses,
 } from "./types.gen";
 
 export type Options<
@@ -147,6 +177,20 @@ export const listMemories = <ThrowOnError extends boolean = false>(
     ListMemoriesErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/memories/list", ...options });
+
+/**
+ * Get memory unit
+ *
+ * Get a single memory unit by ID with all its metadata including entities and tags.
+ */
+export const getMemory = <ThrowOnError extends boolean = false>(
+  options: Options<GetMemoryData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetMemoryResponses,
+    GetMemoryErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/memories/{memory_id}", ...options });
 
 /**
  * Recall memory
@@ -262,9 +306,11 @@ export const getEntity = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/entities/{entity_id}", ...options });
 
 /**
- * Regenerate entity observations
+ * Regenerate entity observations (deprecated)
  *
- * Regenerate observations for an entity based on all facts mentioning it.
+ * This endpoint is deprecated. Entity observations have been replaced by mental models.
+ *
+ * @deprecated
  */
 export const regenerateEntityObservations = <
   ThrowOnError extends boolean = false,
@@ -277,6 +323,113 @@ export const regenerateEntityObservations = <
     ThrowOnError
   >({
     url: "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate",
+    ...options,
+  });
+
+/**
+ * List mental models
+ *
+ * List all mental models for a bank, optionally filtered by subtype or tags.
+ */
+export const listMentalModels = <ThrowOnError extends boolean = false>(
+  options: Options<ListMentalModelsData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListMentalModelsResponses,
+    ListMentalModelsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/mental-models", ...options });
+
+/**
+ * Create mental model
+ *
+ * Create a pinned mental model. Pinned models are user-defined and persist across refreshes.
+ */
+export const createMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<CreateMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    CreateMentalModelResponses,
+    CreateMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Delete mental model
+ *
+ * Delete a mental model.
+ */
+export const deleteMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).delete<
+    DeleteMentalModelResponses,
+    DeleteMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+    ...options,
+  });
+
+/**
+ * Get mental model
+ *
+ * Get a specific mental model by ID.
+ */
+export const getMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<GetMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetMentalModelResponses,
+    GetMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+    ...options,
+  });
+
+/**
+ * Refresh mental models (async)
+ *
+ * Submit a background job to refresh mental models for a bank. By default refreshes all subtypes. Optionally specify 'subtype' to only refresh 'structural' (from mission) or 'emergent' (from entities) models. Optionally pass tags to apply to newly created models. Use GET /banks/{bank_id}/operations to check progress.
+ */
+export const refreshMentalModels = <ThrowOnError extends boolean = false>(
+  options: Options<RefreshMentalModelsData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    RefreshMentalModelsResponses,
+    RefreshMentalModelsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/refresh",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Generate mental model content (async)
+ *
+ * Submit a background job to generate/refresh content for a specific mental model. This is useful for newly created learned models or to regenerate content for any model.
+ */
+export const generateMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<GenerateMentalModelData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    GenerateMentalModelResponses,
+    GenerateMentalModelErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate",
     ...options,
   });
 
@@ -330,6 +483,20 @@ export const getDocument = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/documents/{document_id}", ...options });
 
 /**
+ * List tags
+ *
+ * List all unique tags in a memory bank with usage counts. Supports wildcard search using '*' (e.g., 'user:*', '*-fred', 'tag*-2'). Case-insensitive.
+ */
+export const listTags = <ThrowOnError extends boolean = false>(
+  options: Options<ListTagsData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListTagsResponses,
+    ListTagsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/tags", ...options });
+
+/**
  * Get chunk details
  *
  * Get a specific chunk by its ID
@@ -375,9 +542,26 @@ export const cancelOperation = <ThrowOnError extends boolean = false>(
   });
 
 /**
+ * Get operation status
+ *
+ * Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. Completed operations are removed from storage, so 'completed' means the operation finished successfully.
+ */
+export const getOperationStatus = <ThrowOnError extends boolean = false>(
+  options: Options<GetOperationStatusData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetOperationStatusResponses,
+    GetOperationStatusErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/operations/{operation_id}",
+    ...options,
+  });
+
+/**
  * Get memory bank profile
  *
- * Get disposition traits and background for a memory bank. Auto-creates agent with defaults if not exists.
+ * Get disposition traits and mission for a memory bank. Auto-creates agent with defaults if not exists.
  */
 export const getBankProfile = <ThrowOnError extends boolean = false>(
   options: Options<GetBankProfileData, ThrowOnError>,
@@ -410,9 +594,11 @@ export const updateBankDisposition = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Add/merge memory bank background
+ * Add/merge memory bank background (deprecated)
  *
- * Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers disposition traits.
+ * Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.
+ *
+ * @deprecated
  */
 export const addBankBackground = <ThrowOnError extends boolean = false>(
   options: Options<AddBankBackgroundData, ThrowOnError>,
@@ -445,9 +631,30 @@ export const deleteBank = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}", ...options });
 
 /**
+ * Partial update memory bank
+ *
+ * Partially update an agent's profile. Only provided fields will be updated.
+ */
+export const updateBank = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateBankData, ThrowOnError>,
+) =>
+  (options.client ?? client).patch<
+    UpdateBankResponses,
+    UpdateBankErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
  * Create or update memory bank
  *
- * Create a new agent or update existing agent with disposition and background. Auto-fills missing fields with defaults.
+ * Create a new agent or update existing agent with disposition and mission. Auto-fills missing fields with defaults.
  */
 export const createOrUpdateBank = <ThrowOnError extends boolean = false>(
   options: Options<CreateOrUpdateBankData, ThrowOnError>,

@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
@@ -34,7 +34,19 @@ class ReflectRequest(BaseModel):
     max_tokens: Optional[StrictInt] = Field(default=4096, description="Maximum tokens for the response")
     include: Optional[ReflectIncludeOptions] = Field(default=None, description="Options for including additional data (disabled by default)")
     response_schema: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema"]
+    tags: Optional[List[StrictStr]] = None
+    tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
+    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match"]
+
+    @field_validator('tags_match')
+    def tags_match_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['any', 'all', 'any_strict', 'all_strict']):
+            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -88,6 +100,11 @@ class ReflectRequest(BaseModel):
         if self.response_schema is None and "response_schema" in self.model_fields_set:
             _dict['response_schema'] = None
 
+        # set to None if tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.tags is None and "tags" in self.model_fields_set:
+            _dict['tags'] = None
+
         return _dict
 
     @classmethod
@@ -105,7 +122,9 @@ class ReflectRequest(BaseModel):
             "context": obj.get("context"),
             "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 4096,
             "include": ReflectIncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None,
-            "response_schema": obj.get("response_schema")
+            "response_schema": obj.get("response_schema"),
+            "tags": obj.get("tags"),
+            "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any'
         })
         return _obj
 

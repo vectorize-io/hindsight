@@ -55,6 +55,7 @@ pub struct MemoryPutResult {
     pub items_count: i64,
     pub message: String,
     pub is_async: bool,
+    pub operation_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -116,6 +117,7 @@ impl ApiClient {
         self.runtime.block_on(async {
             let request = types::CreateBankRequest {
                 name: Some(name.to_string()),
+                mission: None,
                 background: None,
                 disposition: None,
             };
@@ -161,7 +163,51 @@ impl ApiClient {
                 items_count: result.items_count,
                 message: format!("Stored {} memory units", result.items_count),
                 is_async: result.async_,
+                operation_id: result.operation_id,
             })
+        })
+    }
+
+    /// Poll an operation until it completes or fails.
+    /// Returns Ok(true) if completed successfully, Ok(false) if failed, Err if polling error.
+    pub fn poll_operation(&self, agent_id: &str, operation_id: &str, verbose: bool) -> Result<(bool, Option<String>)> {
+        self.runtime.block_on(async {
+            loop {
+                let response = self.client.list_operations(agent_id, None).await?;
+                let ops = response.into_inner();
+
+                // Find our operation
+                let op = ops.operations.iter().find(|o| o.id == operation_id);
+
+                match op {
+                    Some(operation) => {
+                        if verbose {
+                            eprintln!("Operation {} status: {}", operation_id, operation.status);
+                        }
+                        match operation.status.as_str() {
+                            "pending" => {
+                                // Still running, wait and poll again
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            }
+                            "completed" => {
+                                // Operation completed successfully
+                                return Ok((true, None));
+                            }
+                            "failed" => {
+                                return Ok((false, operation.error_message.clone()));
+                            }
+                            _ => {
+                                // Unknown status, treat as failed
+                                return Ok((false, Some(format!("Unknown status: {}", operation.status))));
+                            }
+                        }
+                    }
+                    None => {
+                        // Operation not in list means it completed successfully (removed from pending/failed)
+                        return Ok((true, None));
+                    }
+                }
+            }
         })
     }
 
@@ -281,3 +327,105 @@ pub use types::{
     ReflectResponse,
     RetainRequest,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_operation_deserialize() {
+        let json = r#"{
+            "id": "test-op-123",
+            "task_type": "retain",
+            "items_count": 5,
+            "document_id": "doc-456",
+            "created_at": "2024-01-15T10:00:00Z",
+            "status": "pending",
+            "error_message": null
+        }"#;
+        let op: Operation = serde_json::from_str(json).unwrap();
+        assert_eq!(op.id, "test-op-123");
+        assert_eq!(op.task_type, "retain");
+        assert_eq!(op.items_count, 5);
+        assert_eq!(op.document_id, Some("doc-456".to_string()));
+        assert_eq!(op.status, "pending");
+        assert!(op.error_message.is_none());
+    }
+
+    #[test]
+    fn test_operation_deserialize_with_error() {
+        let json = r#"{
+            "id": "test-op-456",
+            "task_type": "retain",
+            "items_count": 3,
+            "document_id": null,
+            "created_at": "2024-01-15T10:00:00Z",
+            "status": "failed",
+            "error_message": "Something went wrong"
+        }"#;
+        let op: Operation = serde_json::from_str(json).unwrap();
+        assert_eq!(op.status, "failed");
+        assert_eq!(op.error_message, Some("Something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_memory_put_result_serialize() {
+        let result = MemoryPutResult {
+            success: true,
+            items_count: 10,
+            message: "Stored 10 memory units".to_string(),
+            is_async: true,
+            operation_id: Some("op-789".to_string()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"items_count\":10"));
+        assert!(json.contains("\"is_async\":true"));
+        assert!(json.contains("\"operation_id\":\"op-789\""));
+    }
+
+    #[test]
+    fn test_memory_put_result_without_operation_id() {
+        let result = MemoryPutResult {
+            success: true,
+            items_count: 5,
+            message: "Stored 5 memory units".to_string(),
+            is_async: false,
+            operation_id: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"operation_id\":null"));
+    }
+
+    #[test]
+    fn test_operations_response_deserialize() {
+        let json = r#"{
+            "bank_id": "test-bank",
+            "operations": [
+                {
+                    "id": "op-1",
+                    "task_type": "retain",
+                    "items_count": 2,
+                    "document_id": null,
+                    "created_at": "2024-01-15T10:00:00Z",
+                    "status": "pending",
+                    "error_message": null
+                },
+                {
+                    "id": "op-2",
+                    "task_type": "retain",
+                    "items_count": 3,
+                    "document_id": "doc-123",
+                    "created_at": "2024-01-15T11:00:00Z",
+                    "status": "completed",
+                    "error_message": null
+                }
+            ]
+        }"#;
+        let ops: OperationsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(ops.bank_id, "test-bank");
+        assert_eq!(ops.operations.len(), 2);
+        assert_eq!(ops.operations[0].status, "pending");
+        assert_eq!(ops.operations[1].status, "completed");
+    }
+}

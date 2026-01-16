@@ -5,7 +5,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use hindsight_client::types::{BankListItem, RecallResult, EntityListItem, Budget};
+use hindsight_client::types::{BankListItem, RecallResult, EntityListItem, Budget, TagsMatch};
 use serde_json::{Map, Value};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
@@ -341,6 +341,8 @@ impl App {
                             trace: false,
                             query_timestamp: None,
                             include: None,
+                            tags: None,
+                            tags_match: TagsMatch::Any,
                         };
 
                         let result = client.recall(&bank_id, &request, false)
@@ -357,6 +359,8 @@ impl App {
                             max_tokens: 4096,
                             include: None,
                             response_schema: None,
+                            tags: None,
+                            tags_match: TagsMatch::Any,
                         };
 
                         let result = client.reflect(&bank_id, &request, false)

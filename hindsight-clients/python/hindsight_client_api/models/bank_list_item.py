@@ -30,10 +30,10 @@ class BankListItem(BaseModel):
     bank_id: StrictStr
     name: Optional[StrictStr] = None
     disposition: DispositionTraits
-    background: Optional[StrictStr] = None
+    mission: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
     updated_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "background", "created_at", "updated_at"]
+    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "mission", "created_at", "updated_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,10 +82,10 @@ class BankListItem(BaseModel):
         if self.name is None and "name" in self.model_fields_set:
             _dict['name'] = None
 
-        # set to None if background (nullable) is None
+        # set to None if mission (nullable) is None
         # and model_fields_set contains the field
-        if self.background is None and "background" in self.model_fields_set:
-            _dict['background'] = None
+        if self.mission is None and "mission" in self.model_fields_set:
+            _dict['mission'] = None
 
         # set to None if created_at (nullable) is None
         # and model_fields_set contains the field
@@ -112,7 +112,7 @@ class BankListItem(BaseModel):
             "bank_id": obj.get("bank_id"),
             "name": obj.get("name"),
             "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
-            "background": obj.get("background"),
+            "mission": obj.get("mission"),
             "created_at": obj.get("created_at"),
             "updated_at": obj.get("updated_at")
         })

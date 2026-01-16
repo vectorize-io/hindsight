@@ -81,6 +81,17 @@ for fact in response.based_on or []:
 # [/docs:reflect-sources]
 
 
+# [docs:reflect-with-tags]
+# Filter reflection to only consider memories for a specific user
+response = client.reflect(
+    bank_id="my-bank",
+    query="What does this user think about our product?",
+    tags=["user:alice"],
+    tags_match="any_strict"  # Only use memories tagged for this user
+)
+# [/docs:reflect-with-tags]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

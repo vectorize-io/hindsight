@@ -64,6 +64,7 @@ mod tests {
                     metadata: None,
                     timestamp: None,
                     entities: None,
+                    tags: None,
                 },
                 types::MemoryItem {
                     content: "Bob works with Alice on the search team".to_string(),
@@ -72,8 +73,10 @@ mod tests {
                     metadata: None,
                     timestamp: None,
                     entities: None,
+                    tags: None,
                 },
             ],
+            document_tags: None,
         };
         let retain_response = client
             .retain_memories(&bank_id, None, &retain_request)
@@ -90,6 +93,8 @@ mod tests {
             include: None,
             query_timestamp: None,
             types: None,
+            tags: None,
+            tags_match: types::TagsMatch::Any,
         };
         let recall_response = client
             .recall_memories(&bank_id, None, &recall_request)
@@ -106,6 +111,8 @@ mod tests {
             max_tokens: 4096,
             include: None,
             response_schema: None,
+            tags: None,
+            tags_match: types::TagsMatch::Any,
         };
         let reflect_response = client
             .reflect(&bank_id, None, &reflect_request)

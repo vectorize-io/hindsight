@@ -664,9 +664,9 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> EntityDetailResponse:
-        """Regenerate entity observations
+        """(Deprecated) Regenerate entity observations (deprecated)
 
-        Regenerate observations for an entity based on all facts mentioning it.
+        This endpoint is deprecated. Entity observations have been replaced by mental models.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -695,6 +695,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/entities/{entity_id}/regenerate is deprecated.", DeprecationWarning)
 
         _param = self._regenerate_entity_observations_serialize(
             bank_id=bank_id,
@@ -740,9 +741,9 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[EntityDetailResponse]:
-        """Regenerate entity observations
+        """(Deprecated) Regenerate entity observations (deprecated)
 
-        Regenerate observations for an entity based on all facts mentioning it.
+        This endpoint is deprecated. Entity observations have been replaced by mental models.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -771,6 +772,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/entities/{entity_id}/regenerate is deprecated.", DeprecationWarning)
 
         _param = self._regenerate_entity_observations_serialize(
             bank_id=bank_id,
@@ -816,9 +818,9 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Regenerate entity observations
+        """(Deprecated) Regenerate entity observations (deprecated)
 
-        Regenerate observations for an entity based on all facts mentioning it.
+        This endpoint is deprecated. Entity observations have been replaced by mental models.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -847,6 +849,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/entities/{entity_id}/regenerate is deprecated.", DeprecationWarning)
 
         _param = self._regenerate_entity_observations_serialize(
             bank_id=bank_id,

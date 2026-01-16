@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
+from .tags import TagsMatch, filter_results_by_tags
 from .types import MPFPTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ class GraphRetriever(ABC):
         semantic_seeds: list[RetrievalResult] | None = None,
         temporal_seeds: list[RetrievalResult] | None = None,
         adjacency=None,  # TypedAdjacency, optional pre-loaded graph
+        tags: list[str] | None = None,  # Visibility scope tags for filtering
+        tags_match: TagsMatch = "any",  # How to match tags: 'any' (OR) or 'all' (AND)
     ) -> tuple[list[RetrievalResult], MPFPTimings | None]:
         """
         Retrieve relevant facts via graph traversal.
@@ -57,6 +60,7 @@ class GraphRetriever(ABC):
             semantic_seeds: Pre-computed semantic entry points (from semantic retrieval)
             temporal_seeds: Pre-computed temporal entry points (from temporal retrieval)
             adjacency: Pre-loaded typed adjacency graph (optional, for MPFP)
+            tags: Optional list of tags for visibility filtering (OR matching)
 
         Returns:
             Tuple of (List of RetrievalResult with activation scores, optional timing info)
@@ -114,6 +118,8 @@ class BFSGraphRetriever(GraphRetriever):
         semantic_seeds: list[RetrievalResult] | None = None,
         temporal_seeds: list[RetrievalResult] | None = None,
         adjacency=None,  # Not used by BFS
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
     ) -> tuple[list[RetrievalResult], MPFPTimings | None]:
         """
         Retrieve facts using BFS spreading activation.
@@ -129,7 +135,9 @@ class BFSGraphRetriever(GraphRetriever):
         for interface compatibility but not used.
         """
         async with acquire_with_retry(pool) as conn:
-            results = await self._retrieve_with_conn(conn, query_embedding_str, bank_id, fact_type, budget)
+            results = await self._retrieve_with_conn(
+                conn, query_embedding_str, bank_id, fact_type, budget, tags=tags, tags_match=tags_match
+            )
             return results, None
 
     async def _retrieve_with_conn(
@@ -139,32 +147,45 @@ class BFSGraphRetriever(GraphRetriever):
         bank_id: str,
         fact_type: str,
         budget: int,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
     ) -> list[RetrievalResult]:
         """Internal implementation with connection."""
+        from .tags import build_tags_where_clause_simple
+
+        tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+        params = [query_embedding_str, bank_id, fact_type, self.entry_point_threshold, self.entry_point_limit]
+        if tags:
+            params.append(tags)
 
         # Step 1: Find entry points
         entry_points = await conn.fetch(
             f"""
             SELECT id, text, context, event_date, occurred_start, occurred_end,
-                   mentioned_at, access_count, embedding, fact_type, document_id, chunk_id,
+                   mentioned_at, access_count, embedding, fact_type, document_id, chunk_id, tags,
                    1 - (embedding <=> $1::vector) AS similarity
             FROM {fq_table("memory_units")}
             WHERE bank_id = $2
               AND embedding IS NOT NULL
               AND fact_type = $3
               AND (1 - (embedding <=> $1::vector)) >= $4
+              {tags_clause}
             ORDER BY embedding <=> $1::vector
             LIMIT $5
             """,
-            query_embedding_str,
-            bank_id,
-            fact_type,
-            self.entry_point_threshold,
-            self.entry_point_limit,
+            *params,
         )
 
         if not entry_points:
+            logger.debug(
+                f"[BFS] No entry points found for fact_type={fact_type} (tags={tags}, tags_match={tags_match})"
+            )
             return []
+
+        logger.debug(
+            f"[BFS] Found {len(entry_points)} entry points for fact_type={fact_type} "
+            f"(tags={tags}, tags_match={tags_match})"
+        )
 
         # Step 2: BFS spreading activation
         visited = set()
@@ -196,7 +217,7 @@ class BFSGraphRetriever(GraphRetriever):
                     f"""
                     SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.occurred_end,
                            mu.mentioned_at, mu.access_count, mu.embedding, mu.fact_type,
-                           mu.document_id, mu.chunk_id,
+                           mu.document_id, mu.chunk_id, mu.tags,
                            ml.weight, ml.link_type, ml.from_unit_id
                     FROM {fq_table("memory_links")} ml
                     JOIN {fq_table("memory_units")} mu ON ml.to_unit_id = mu.id
@@ -235,5 +256,9 @@ class BFSGraphRetriever(GraphRetriever):
                         if new_activation > self.min_activation:
                             neighbor_result = RetrievalResult.from_db_row(dict(n))
                             queue.append((neighbor_result, new_activation))
+
+        # Apply tags filtering (BFS may traverse into memories that don't match tags criteria)
+        if tags:
+            results = filter_results_by_tags(results, tags, match=tags_match)
 
         return results

@@ -46,7 +46,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_operation_operations_total)",
+          "expr": "sum(hindsight_operation_operations_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -91,7 +91,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_operation_operations_total[1m]))",
+          "expr": "sum(rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -137,7 +137,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"retain\"}[1m]))",
+          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"retain\", tenant=~\"$tenant\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -183,7 +183,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"recall\"}[1m]))",
+          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"recall\", tenant=~\"$tenant\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -229,7 +229,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"reflect\"}[1m]))",
+          "expr": "sum(rate(hindsight_operation_operations_total{operation=\"reflect\", tenant=~\"$tenant\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -319,7 +319,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (operation) (rate(hindsight_operation_operations_total[1m]))",
+          "expr": "sum by (operation) (rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{operation}}",
           "refId": "A"
         }
@@ -410,17 +410,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\"}[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\", tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\", tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(hindsight_operation_duration_seconds_bucket{operation=\"recall\", tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -498,7 +498,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (operation, le) (rate(hindsight_operation_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (operation, le) (rate(hindsight_operation_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "{{operation}}",
           "refId": "A"
         }
@@ -576,7 +576,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (bank_id) (rate(hindsight_operation_operations_total[1m]))",
+          "expr": "sum by (bank_id) (rate(hindsight_operation_operations_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{bank_id}}",
           "refId": "A"
         }
@@ -589,7 +589,36 @@
   "schemaVersion": 38,
   "tags": ["hindsight"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hindsight_operation_operations_total, tenant)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": false,
+        "name": "tenant",
+        "options": [],
+        "query": {
+          "query": "label_values(hindsight_operation_operations_total, tenant)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",

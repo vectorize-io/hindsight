@@ -164,14 +164,14 @@ class MemoryEngineInterface(ABC):
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Get bank profile including disposition and background.
+        Get bank profile including disposition and mission.
 
         Args:
             bank_id: The memory bank ID.
             request_context: Request context for authentication.
 
         Returns:
-            Bank profile dict.
+            Bank profile dict with bank_id, name, disposition, and mission.
         """
         ...
 
@@ -194,25 +194,44 @@ class MemoryEngineInterface(ABC):
         ...
 
     @abstractmethod
-    async def merge_bank_background(
+    async def merge_bank_mission(
         self,
         bank_id: str,
         new_info: str,
         *,
-        update_disposition: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Merge new background information into bank profile.
+        Merge new mission information into bank profile.
 
         Args:
             bank_id: The memory bank ID.
-            new_info: New background information to merge.
-            update_disposition: Whether to infer disposition from background.
+            new_info: New mission information to merge.
             request_context: Request context for authentication.
 
         Returns:
-            Updated background info.
+            Updated mission info.
+        """
+        ...
+
+    @abstractmethod
+    async def set_bank_mission(
+        self,
+        bank_id: str,
+        mission: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Set the bank's mission (replaces existing).
+
+        Args:
+            bank_id: The memory bank ID.
+            mission: The mission text.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with bank_id and mission.
         """
         ...
 
@@ -522,7 +541,7 @@ class MemoryEngineInterface(ABC):
         bank_id: str,
         *,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """
         List async operations for a bank.
 
@@ -531,7 +550,7 @@ class MemoryEngineInterface(ABC):
             request_context: Request context for authentication.
 
         Returns:
-            List of operation dicts with id, task_type, status, etc.
+            Dict with 'total' (int) and 'operations' (list of operation dicts).
         """
         ...
 
@@ -565,16 +584,16 @@ class MemoryEngineInterface(ABC):
         bank_id: str,
         *,
         name: str | None = None,
-        background: str | None = None,
+        mission: str | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
-        Update bank name and/or background.
+        Update bank name and/or mission.
 
         Args:
             bank_id: The memory bank ID.
             name: New bank name (optional).
-            background: New background text (optional, replaces existing).
+            mission: New mission text (optional, replaces existing).
             request_context: Request context for authentication.
 
         Returns:

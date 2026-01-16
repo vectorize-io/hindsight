@@ -187,12 +187,15 @@ def main():
             embeddings_provider=config.embeddings_provider,
             embeddings_local_model=config.embeddings_local_model,
             embeddings_tei_url=config.embeddings_tei_url,
+            embeddings_openai_base_url=config.embeddings_openai_base_url,
+            embeddings_cohere_base_url=config.embeddings_cohere_base_url,
             reranker_provider=config.reranker_provider,
             reranker_local_model=config.reranker_local_model,
             reranker_tei_url=config.reranker_tei_url,
             reranker_tei_batch_size=config.reranker_tei_batch_size,
             reranker_tei_max_concurrent=config.reranker_tei_max_concurrent,
             reranker_max_candidates=config.reranker_max_candidates,
+            reranker_cohere_base_url=config.reranker_cohere_base_url,
             host=args.host,
             port=args.port,
             log_level=args.log_level,
@@ -200,6 +203,7 @@ def main():
             graph_retriever=config.graph_retriever,
             mpfp_top_k_neighbors=config.mpfp_top_k_neighbors,
             recall_max_concurrent=config.recall_max_concurrent,
+            recall_connection_budget=config.recall_connection_budget,
             observation_min_facts=config.observation_min_facts,
             observation_top_entities=config.observation_top_entities,
             retain_max_completion_tokens=config.retain_max_completion_tokens,
@@ -217,6 +221,8 @@ def main():
             task_backend=config.task_backend,
             task_backend_memory_batch_size=config.task_backend_memory_batch_size,
             task_backend_memory_batch_interval=config.task_backend_memory_batch_interval,
+            reflect_max_iterations=config.reflect_max_iterations,
+            mental_model_refresh_concurrency=config.mental_model_refresh_concurrency,
         )
     config.configure_logging()
     if not args.daemon:

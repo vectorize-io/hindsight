@@ -53,6 +53,8 @@ export class ControlPlaneClient {
       chunks?: { max_tokens: number } | null;
     };
     query_timestamp?: string;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict";
   }) {
     return this.fetchApi("/api/recall", {
       method: "POST",
@@ -67,8 +69,11 @@ export class ControlPlaneClient {
     query: string;
     bank_id: string;
     budget?: string;
-    context?: string;
+    max_tokens?: number;
     include_facts?: boolean;
+    include_tool_calls?: boolean;
+    tags?: string[];
+    tags_match?: "any" | "all" | "any_strict" | "all_strict";
   }) {
     return this.fetchApi("/api/reflect", {
       method: "POST",
@@ -210,6 +215,26 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Get a single memory by ID
+   */
+  async getMemory(memoryId: string, bankId: string) {
+    return this.fetchApi<{
+      id: string;
+      text: string;
+      context: string;
+      date: string;
+      type: string;
+      mentioned_at: string | null;
+      occurred_start: string | null;
+      occurred_end: string | null;
+      entities: string[];
+      document_id: string | null;
+      chunk_id: string | null;
+      tags: string[];
+    }>(`/api/memories/${memoryId}?bank_id=${bankId}`);
+  }
+
+  /**
    * Get bank profile
    */
   async getBankProfile(bankId: string) {
@@ -221,8 +246,122 @@ export class ControlPlaneClient {
         literalism: number;
         empathy: number;
       };
-      background: string;
+      mission: string;
+      background?: string; // Deprecated, kept for backwards compatibility
     }>(`/api/profile/${bankId}`);
+  }
+
+  /**
+   * Set bank mission
+   */
+  async setBankMission(bankId: string, mission: string) {
+    return this.fetchApi(`/api/banks/${bankId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ mission }),
+    });
+  }
+
+  /**
+   * List mental models for a bank
+   */
+  async listMentalModels(bankId: string) {
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        subtype: string;
+        name: string;
+        description: string;
+        observations?: Array<{ title: string; text: string; based_on: string[] }>;
+        entity_id: string | null;
+        links: string[];
+        tags?: string[];
+        last_updated: string | null;
+        created_at: string;
+      }>;
+    }>(`/api/banks/${bankId}/mental-models`);
+  }
+
+  /**
+   * Refresh mental models for a bank (async)
+   * @param subtype - Optional subtype to refresh. If not specified, refreshes all.
+   */
+  async refreshMentalModels(
+    bankId: string,
+    subtype?: "structural" | "emergent" | "pinned" | "learned"
+  ) {
+    return this.fetchApi<{ operation_id: string; message: string }>(
+      `/api/banks/${bankId}/mental-models/refresh`,
+      {
+        method: "POST",
+        body: JSON.stringify(subtype ? { subtype } : {}),
+      }
+    );
+  }
+
+  /**
+   * Delete a mental model
+   */
+  async deleteMentalModel(bankId: string, modelId: string) {
+    return this.fetchApi(`/api/banks/${bankId}/mental-models/${modelId}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Get operation status
+   */
+  async getOperationStatus(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      operation_id: string;
+      status: "pending" | "completed" | "failed" | "not_found";
+      operation_type: string | null;
+      created_at: string | null;
+      updated_at: string | null;
+      completed_at: string | null;
+      error_message: string | null;
+    }>(`/api/banks/${bankId}/operations/${operationId}`);
+  }
+
+  /**
+   * Generate/refresh content for a specific mental model (async)
+   */
+  async generateMentalModel(bankId: string, modelId: string) {
+    return this.fetchApi<{ operation_id: string; message: string }>(
+      `/api/banks/${bankId}/mental-models/${modelId}/generate`,
+      {
+        method: "POST",
+      }
+    );
+  }
+
+  /**
+   * Create a pinned mental model
+   */
+  async createMentalModel(
+    bankId: string,
+    params: {
+      name: string;
+      description: string;
+      tags?: string[];
+    }
+  ) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      subtype: string;
+      name: string;
+      description: string;
+      observations?: Array<{ title: string; text: string; based_on: string[] }>;
+      entity_id: string | null;
+      links: string[];
+      tags?: string[];
+      last_updated: string | null;
+      created_at: string;
+    }>(`/api/banks/${bankId}/mental-models`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
   }
 
   /**
@@ -237,7 +376,7 @@ export class ControlPlaneClient {
         literalism: number;
         empathy: number;
       };
-      background?: string;
+      mission?: string;
     }
   ) {
     return this.fetchApi(`/api/profile/${bankId}`, {

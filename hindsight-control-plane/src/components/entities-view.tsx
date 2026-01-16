@@ -23,12 +23,9 @@ interface Entity {
   metadata?: Record<string, any>;
 }
 
-interface EntityDetail extends Entity {
-  observations: Array<{
-    text: string;
-    mentioned_at?: string;
-  }>;
-}
+type EntityDetail = Entity;
+
+const ITEMS_PER_PAGE = 50;
 
 const ITEMS_PER_PAGE = 50;
 
@@ -38,7 +35,6 @@ export function EntitiesView() {
   const [loading, setLoading] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -83,20 +79,10 @@ export function EntitiesView() {
     }
   };
 
-  const regenerateObservations = async () => {
-    if (!currentBank || !selectedEntity) return;
-
-    setRegenerating(true);
-    try {
-      await client.regenerateEntityObservations(selectedEntity.id, currentBank);
-      // Reload entity detail to show new observations
-      await loadEntityDetail(selectedEntity.id);
-    } catch (error) {
-      console.error("Error regenerating observations:", error);
-      alert("Error regenerating observations: " + (error as Error).message);
-    } finally {
-      setRegenerating(false);
-    }
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    loadEntities(newPage);
   };
 
   // Handle page change
@@ -283,45 +269,6 @@ export function EntitiesView() {
                 <code className="text-xs font-mono break-all text-muted-foreground">
                   {selectedEntity.id}
                 </code>
-              </div>
-
-              {/* Observations */}
-              <div>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="text-xs font-bold text-muted-foreground uppercase">
-                    Observations
-                  </div>
-                  <Button
-                    onClick={regenerateObservations}
-                    disabled={regenerating}
-                    variant="outline"
-                    size="sm"
-                  >
-                    {regenerating ? "Regenerating..." : "Regenerate"}
-                  </Button>
-                </div>
-
-                {loadingDetail ? (
-                  <div className="text-muted-foreground text-sm">Loading observations...</div>
-                ) : selectedEntity.observations && selectedEntity.observations.length > 0 ? (
-                  <ul className="space-y-2">
-                    {selectedEntity.observations.map((obs, idx) => (
-                      <li key={idx} className="p-3 bg-muted/50 rounded-lg">
-                        <div className="text-sm text-card-foreground">{obs.text}</div>
-                        {obs.mentioned_at && (
-                          <div className="text-xs text-muted-foreground mt-2">
-                            {formatDate(obs.mentioned_at)}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="text-muted-foreground text-sm p-4 bg-muted/50 rounded-lg">
-                    No observations yet. Click &quot;Regenerate&quot; to generate observations from
-                    facts.
-                  </div>
-                )}
               </div>
             </div>
           </div>

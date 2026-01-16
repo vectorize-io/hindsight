@@ -7,7 +7,7 @@ export type ClientOptions = {
 /**
  * AddBackgroundRequest
  *
- * Request model for adding/merging background information.
+ * Request model for adding/merging background information. Deprecated: use SetMissionRequest instead.
  */
 export type AddBackgroundRequest = {
   /**
@@ -19,21 +19,43 @@ export type AddBackgroundRequest = {
   /**
    * Update Disposition
    *
-   * If true, infer disposition traits from the merged background (default: true)
+   * Deprecated - disposition is no longer auto-inferred from mission
    */
   update_disposition?: boolean;
 };
 
 /**
+ * AsyncOperationSubmitResponse
+ *
+ * Response model for submitting an async operation.
+ */
+export type AsyncOperationSubmitResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: string;
+};
+
+/**
  * BackgroundResponse
  *
- * Response model for background update.
+ * Response model for background update. Deprecated: use MissionResponse instead.
  */
 export type BackgroundResponse = {
   /**
-   * Background
+   * Mission
    */
-  background: string;
+  mission: string;
+  /**
+   * Background
+   *
+   * Deprecated: same as mission
+   */
+  background?: string | null;
   disposition?: DispositionTraits | null;
 };
 
@@ -53,9 +75,9 @@ export type BankListItem = {
   name?: string | null;
   disposition: DispositionTraits;
   /**
-   * Background
+   * Mission
    */
-  background?: string | null;
+  mission?: string | null;
   /**
    * Created At
    */
@@ -94,9 +116,17 @@ export type BankProfileResponse = {
   name: string;
   disposition: DispositionTraits;
   /**
-   * Background
+   * Mission
+   *
+   * The agent's mission - who they are and what they're trying to accomplish
    */
-  background: string;
+  mission: string;
+  /**
+   * Background
+   *
+   * Deprecated: use mission instead
+   */
+  background?: string | null;
 };
 
 /**
@@ -268,9 +298,69 @@ export type CreateBankRequest = {
   name?: string | null;
   disposition?: DispositionTraits | null;
   /**
+   * Mission
+   *
+   * The agent's mission
+   */
+  mission?: string | null;
+  /**
    * Background
+   *
+   * Deprecated: use mission instead
    */
   background?: string | null;
+};
+
+/**
+ * CreateMentalModelRequest
+ *
+ * Request model for creating a pinned mental model.
+ */
+export type CreateMentalModelRequest = {
+  /**
+   * Name
+   *
+   * Human-readable name for the mental model
+   */
+  name: string;
+  /**
+   * Description
+   *
+   * One-liner description for quick scanning
+   */
+  description: string;
+  /**
+   * Tags
+   *
+   * Tags for scoped visibility
+   */
+  tags?: Array<string>;
+};
+
+/**
+ * CreatedMentalModel
+ *
+ * A mental model created during reflection.
+ */
+export type CreatedMentalModel = {
+  /**
+   * Id
+   *
+   * Mental model ID
+   */
+  id: string;
+  /**
+   * Name
+   *
+   * Human-readable name
+   */
+  name: string;
+  /**
+   * Description
+   *
+   * What this model tracks
+   */
+  description: string;
 };
 
 /**
@@ -377,6 +467,12 @@ export type DocumentResponse = {
    * Memory Unit Count
    */
   memory_unit_count: number;
+  /**
+   * Tags
+   *
+   * Tags associated with this document
+   */
+  tags?: Array<string>;
 };
 
 /**
@@ -667,6 +763,30 @@ export type ListMemoryUnitsResponse = {
 };
 
 /**
+ * ListTagsResponse
+ *
+ * Response model for list tags endpoint.
+ */
+export type ListTagsResponse = {
+  /**
+   * Items
+   */
+  items: Array<TagItem>;
+  /**
+   * Total
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
  * MemoryItem
  *
  * Single memory item for retain.
@@ -702,6 +822,104 @@ export type MemoryItem = {
    * Optional entities to combine with auto-extracted entities.
    */
   entities?: Array<EntityInput> | null;
+  /**
+   * Tags
+   *
+   * Optional tags for visibility scoping. Memories with tags can be filtered during recall.
+   */
+  tags?: Array<string> | null;
+};
+
+/**
+ * MentalModelListResponse
+ *
+ * Response model for listing mental models.
+ */
+export type MentalModelListResponse = {
+  /**
+   * Items
+   */
+  items: Array<MentalModelResponse>;
+};
+
+/**
+ * MentalModelObservationResponse
+ *
+ * An observation within a mental model with its supporting memories.
+ */
+export type MentalModelObservationResponse = {
+  /**
+   * Title
+   *
+   * Observation header (empty for intro)
+   */
+  title: string;
+  /**
+   * Text
+   *
+   * Observation content
+   */
+  text: string;
+  /**
+   * Based On
+   *
+   * Memory IDs supporting this observation
+   */
+  based_on?: Array<string>;
+};
+
+/**
+ * MentalModelResponse
+ *
+ * Response model for a mental model.
+ */
+export type MentalModelResponse = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Subtype
+   */
+  subtype: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Description
+   */
+  description: string;
+  /**
+   * Observations
+   *
+   * Structured observations with per-observation fact attribution
+   */
+  observations?: Array<MentalModelObservationResponse>;
+  /**
+   * Entity Id
+   */
+  entity_id?: string | null;
+  /**
+   * Links
+   */
+  links?: Array<string>;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Last Updated
+   */
+  last_updated?: string | null;
+  /**
+   * Created At
+   */
+  created_at: string;
 };
 
 /**
@@ -725,7 +943,7 @@ export type OperationResponse = {
   /**
    * Document Id
    */
-  document_id: string | null;
+  document_id?: string | null;
   /**
    * Created At
    */
@@ -741,6 +959,42 @@ export type OperationResponse = {
 };
 
 /**
+ * OperationStatusResponse
+ *
+ * Response model for getting a single operation status.
+ */
+export type OperationStatusResponse = {
+  /**
+   * Operation Id
+   */
+  operation_id: string;
+  /**
+   * Status
+   */
+  status: "pending" | "completed" | "failed" | "not_found";
+  /**
+   * Operation Type
+   */
+  operation_type?: string | null;
+  /**
+   * Created At
+   */
+  created_at?: string | null;
+  /**
+   * Updated At
+   */
+  updated_at?: string | null;
+  /**
+   * Completed At
+   */
+  completed_at?: string | null;
+  /**
+   * Error Message
+   */
+  error_message?: string | null;
+};
+
+/**
  * OperationsListResponse
  *
  * Response model for list operations endpoint.
@@ -750,6 +1004,10 @@ export type OperationsListResponse = {
    * Bank Id
    */
   bank_id: string;
+  /**
+   * Total
+   */
+  total: number;
   /**
    * Operations
    */
@@ -769,7 +1027,7 @@ export type RecallRequest = {
   /**
    * Types
    *
-   * List of fact types to recall (defaults to all if not specified)
+   * List of fact types to recall: 'world', 'experience'. Defaults to both if not specified. Note: 'opinion' is accepted but ignored (opinions are excluded from recall).
    */
   types?: Array<string> | null;
   budget?: Budget;
@@ -791,6 +1049,18 @@ export type RecallRequest = {
    * Options for including additional data (entities are included by default)
    */
   include?: IncludeOptions;
+  /**
+   * Tags
+   *
+   * Filter memories by tags. If not specified, all memories are returned.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict";
 };
 
 /**
@@ -879,6 +1149,30 @@ export type RecallResult = {
    * Chunk Id
    */
   chunk_id?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string> | null;
+};
+
+/**
+ * ReflectBasedOn
+ *
+ * Evidence the response is based on: memories and mental models.
+ */
+export type ReflectBasedOn = {
+  /**
+   * Memories
+   *
+   * Memory facts used to generate the response
+   */
+  memories?: Array<ReflectFact>;
+  /**
+   * Mental Models
+   *
+   * Mental models accessed during reflection
+   */
+  mental_models?: Array<ReflectMentalModel>;
 };
 
 /**
@@ -923,6 +1217,74 @@ export type ReflectIncludeOptions = {
    * Include facts that the answer is based on. Set to {} to enable, null to disable (default: disabled).
    */
   facts?: FactsIncludeOptions | null;
+  /**
+   * Include tool calls trace. Set to {} for full trace (input+output), {output: false} for inputs only.
+   */
+  tool_calls?: ToolCallsIncludeOptions | null;
+};
+
+/**
+ * ReflectLLMCall
+ *
+ * An LLM call made during reflect agent execution.
+ */
+export type ReflectLlmCall = {
+  /**
+   * Scope
+   *
+   * Call scope: agent_1, agent_2, final, etc.
+   */
+  scope: string;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds
+   */
+  duration_ms: number;
+};
+
+/**
+ * ReflectMentalModel
+ *
+ * A mental model accessed during reflect.
+ */
+export type ReflectMentalModel = {
+  /**
+   * Id
+   *
+   * Mental model ID
+   */
+  id: string;
+  /**
+   * Name
+   *
+   * Mental model name
+   */
+  name: string;
+  /**
+   * Type
+   *
+   * Mental model type: entity, concept, event
+   */
+  type: string;
+  /**
+   * Subtype
+   *
+   * Mental model subtype: structural, emergent, learned
+   */
+  subtype: string;
+  /**
+   * Description
+   *
+   * Brief description
+   */
+  description: string;
+  /**
+   * Summary
+   *
+   * Full summary (when looked up in detail)
+   */
+  summary?: string | null;
 };
 
 /**
@@ -938,6 +1300,10 @@ export type ReflectRequest = {
   budget?: Budget;
   /**
    * Context
+   *
+   * DEPRECATED: Additional context is now concatenated with the query. Pass context directly in the query field instead. If provided, it will be appended to the query for backward compatibility.
+   *
+   * @deprecated
    */
   context?: string | null;
   /**
@@ -958,6 +1324,18 @@ export type ReflectRequest = {
   response_schema?: {
     [key: string]: unknown;
   } | null;
+  /**
+   * Tags
+   *
+   * Filter memories by tags during reflection. If not specified, all memories are considered.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict";
 };
 
 /**
@@ -971,9 +1349,9 @@ export type ReflectResponse = {
    */
   text: string;
   /**
-   * Based On
+   * Evidence used to generate the response. Only present when include.facts is set.
    */
-  based_on?: Array<ReflectFact>;
+  based_on?: ReflectBasedOn | null;
   /**
    * Structured Output
    *
@@ -986,6 +1364,98 @@ export type ReflectResponse = {
    * Token usage metrics for LLM calls during reflection.
    */
   usage?: TokenUsage | null;
+  /**
+   * Execution trace of tool and LLM calls. Only present when include.tool_calls is set.
+   */
+  trace?: ReflectTrace | null;
+  /**
+   * Mental Models Created
+   *
+   * Mental models created during this reflection (via the learn tool).
+   */
+  mental_models_created?: Array<CreatedMentalModel>;
+};
+
+/**
+ * ReflectToolCall
+ *
+ * A tool call made during reflect agent execution.
+ */
+export type ReflectToolCall = {
+  /**
+   * Tool
+   *
+   * Tool name: lookup, recall, learn, expand
+   */
+  tool: string;
+  /**
+   * Input
+   *
+   * Tool input parameters
+   */
+  input: {
+    [key: string]: unknown;
+  };
+  /**
+   * Output
+   *
+   * Tool output (only included when include.tool_calls.output is true)
+   */
+  output?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Duration Ms
+   *
+   * Execution time in milliseconds
+   */
+  duration_ms: number;
+  /**
+   * Iteration
+   *
+   * Iteration number (1-based) when this tool was called
+   */
+  iteration?: number;
+};
+
+/**
+ * ReflectTrace
+ *
+ * Execution trace of LLM and tool calls during reflection.
+ */
+export type ReflectTrace = {
+  /**
+   * Tool Calls
+   *
+   * Tool calls made during reflection
+   */
+  tool_calls?: Array<ReflectToolCall>;
+  /**
+   * Llm Calls
+   *
+   * LLM calls made during reflection
+   */
+  llm_calls?: Array<ReflectLlmCall>;
+};
+
+/**
+ * RefreshMentalModelsRequest
+ *
+ * Request model for refresh mental models endpoint.
+ */
+export type RefreshMentalModelsRequest = {
+  /**
+   * Tags
+   *
+   * Tags to apply to newly created mental models
+   */
+  tags?: Array<string> | null;
+  /**
+   * Subtype
+   *
+   * Only refresh models of this subtype. If not specified, refreshes all subtypes.
+   */
+  subtype?: "structural" | "emergent" | "pinned" | "learned" | null;
 };
 
 /**
@@ -1004,6 +1474,12 @@ export type RetainRequest = {
    * If true, process asynchronously in background. If false, wait for completion (default: false)
    */
   async?: boolean;
+  /**
+   * Document Tags
+   *
+   * Tags applied to all items in this request. These are merged with any item-level tags.
+   */
+  document_tags?: Array<string> | null;
 };
 
 /**
@@ -1043,6 +1519,26 @@ export type RetainResponse = {
 };
 
 /**
+ * TagItem
+ *
+ * Single tag with usage count.
+ */
+export type TagItem = {
+  /**
+   * Tag
+   *
+   * The tag value
+   */
+  tag: string;
+  /**
+   * Count
+   *
+   * Number of memories with this tag
+   */
+  count: number;
+};
+
+/**
  * TokenUsage
  *
  * Token usage metrics for LLM calls.
@@ -1069,6 +1565,20 @@ export type TokenUsage = {
    * Total tokens (input + output)
    */
   total_tokens?: number;
+};
+
+/**
+ * ToolCallsIncludeOptions
+ *
+ * Options for including tool calls in reflect results.
+ */
+export type ToolCallsIncludeOptions = {
+  /**
+   * Output
+   *
+   * Include tool outputs in the trace. Set to false to only include inputs (smaller payload).
+   */
+  output?: boolean;
 };
 
 /**
@@ -1224,6 +1734,44 @@ export type ListMemoriesResponses = {
 
 export type ListMemoriesResponse =
   ListMemoriesResponses[keyof ListMemoriesResponses];
+
+export type GetMemoryData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Memory Id
+     */
+    memory_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memories/{memory_id}";
+};
+
+export type GetMemoryErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
+
+export type GetMemoryResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
 
 export type RecallMemoriesData = {
   body: RecallRequest;
@@ -1499,6 +2047,268 @@ export type RegenerateEntityObservationsResponses = {
 export type RegenerateEntityObservationsResponse =
   RegenerateEntityObservationsResponses[keyof RegenerateEntityObservationsResponses];
 
+export type ListMentalModelsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Subtype
+     *
+     * Filter by subtype: structural, emergent, or pinned
+     */
+    subtype?: string | null;
+    /**
+     * Tags
+     *
+     * Filter by tags (includes untagged models)
+     */
+    tags?: Array<string> | null;
+    /**
+     * Tags Match
+     *
+     * How to match tags: 'any' (OR), 'all' (AND), or 'exact'
+     */
+    tags_match?: "any" | "all" | "exact";
+  };
+  url: "/v1/default/banks/{bank_id}/mental-models";
+};
+
+export type ListMentalModelsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListMentalModelsError =
+  ListMentalModelsErrors[keyof ListMentalModelsErrors];
+
+export type ListMentalModelsResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelListResponse;
+};
+
+export type ListMentalModelsResponse =
+  ListMentalModelsResponses[keyof ListMentalModelsResponses];
+
+export type CreateMentalModelData = {
+  body: CreateMentalModelRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models";
+};
+
+export type CreateMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CreateMentalModelError =
+  CreateMentalModelErrors[keyof CreateMentalModelErrors];
+
+export type CreateMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelResponse;
+};
+
+export type CreateMentalModelResponse =
+  CreateMentalModelResponses[keyof CreateMentalModelResponses];
+
+export type DeleteMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Model Id
+     */
+    model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}";
+};
+
+export type DeleteMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteMentalModelError =
+  DeleteMentalModelErrors[keyof DeleteMentalModelErrors];
+
+export type DeleteMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteResponse;
+};
+
+export type DeleteMentalModelResponse =
+  DeleteMentalModelResponses[keyof DeleteMentalModelResponses];
+
+export type GetMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Model Id
+     */
+    model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}";
+};
+
+export type GetMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetMentalModelError =
+  GetMentalModelErrors[keyof GetMentalModelErrors];
+
+export type GetMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: MentalModelResponse;
+};
+
+export type GetMentalModelResponse =
+  GetMentalModelResponses[keyof GetMentalModelResponses];
+
+export type RefreshMentalModelsData = {
+  /**
+   * Body
+   */
+  body?: RefreshMentalModelsRequest | null;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/refresh";
+};
+
+export type RefreshMentalModelsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type RefreshMentalModelsError =
+  RefreshMentalModelsErrors[keyof RefreshMentalModelsErrors];
+
+export type RefreshMentalModelsResponses = {
+  /**
+   * Successful Response
+   */
+  200: AsyncOperationSubmitResponse;
+};
+
+export type RefreshMentalModelsResponse =
+  RefreshMentalModelsResponses[keyof RefreshMentalModelsResponses];
+
+export type GenerateMentalModelData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Model Id
+     */
+    model_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate";
+};
+
+export type GenerateMentalModelErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GenerateMentalModelError =
+  GenerateMentalModelErrors[keyof GenerateMentalModelErrors];
+
+export type GenerateMentalModelResponses = {
+  /**
+   * Successful Response
+   */
+  200: AsyncOperationSubmitResponse;
+};
+
+export type GenerateMentalModelResponse =
+  GenerateMentalModelResponses[keyof GenerateMentalModelResponses];
+
 export type ListDocumentsData = {
   body?: never;
   headers?: {
@@ -1632,6 +2442,61 @@ export type GetDocumentResponses = {
 export type GetDocumentResponse =
   GetDocumentResponses[keyof GetDocumentResponses];
 
+export type ListTagsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Q
+     *
+     * Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.
+     */
+    q?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of tags to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Offset for pagination
+     */
+    offset?: number;
+  };
+  url: "/v1/default/banks/{bank_id}/tags";
+};
+
+export type ListTagsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListTagsError = ListTagsErrors[keyof ListTagsErrors];
+
+export type ListTagsResponses = {
+  /**
+   * Successful Response
+   */
+  200: ListTagsResponse;
+};
+
+export type ListTagsResponse2 = ListTagsResponses[keyof ListTagsResponses];
+
 export type GetChunkData = {
   body?: never;
   headers?: {
@@ -1747,6 +2612,48 @@ export type CancelOperationResponses = {
 
 export type CancelOperationResponse2 =
   CancelOperationResponses[keyof CancelOperationResponses];
+
+export type GetOperationStatusData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/operations/{operation_id}";
+};
+
+export type GetOperationStatusErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetOperationStatusError =
+  GetOperationStatusErrors[keyof GetOperationStatusErrors];
+
+export type GetOperationStatusResponses = {
+  /**
+   * Successful Response
+   */
+  200: OperationStatusResponse;
+};
+
+export type GetOperationStatusResponse =
+  GetOperationStatusResponses[keyof GetOperationStatusResponses];
 
 export type GetBankProfileData = {
   body?: never;
@@ -1897,6 +2804,42 @@ export type DeleteBankResponses = {
 };
 
 export type DeleteBankResponse = DeleteBankResponses[keyof DeleteBankResponses];
+
+export type UpdateBankData = {
+  body: CreateBankRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}";
+};
+
+export type UpdateBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateBankError = UpdateBankErrors[keyof UpdateBankErrors];
+
+export type UpdateBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankProfileResponse;
+};
+
+export type UpdateBankResponse = UpdateBankResponses[keyof UpdateBankResponses];
 
 export type CreateOrUpdateBankData = {
   body: CreateBankRequest;

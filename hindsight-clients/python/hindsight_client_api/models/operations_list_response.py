@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List
 from hindsight_client_api.models.operation_response import OperationResponse
 from typing import Optional, Set
@@ -28,8 +28,9 @@ class OperationsListResponse(BaseModel):
     Response model for list operations endpoint.
     """ # noqa: E501
     bank_id: StrictStr
+    total: StrictInt
     operations: List[OperationResponse]
-    __properties: ClassVar[List[str]] = ["bank_id", "operations"]
+    __properties: ClassVar[List[str]] = ["bank_id", "total", "operations"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -90,6 +91,7 @@ class OperationsListResponse(BaseModel):
 
         _obj = cls.model_validate({
             "bank_id": obj.get("bank_id"),
+            "total": obj.get("total"),
             "operations": [OperationResponse.from_dict(_item) for _item in obj["operations"]] if obj.get("operations") is not None else None
         })
         return _obj

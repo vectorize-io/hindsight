@@ -116,6 +116,39 @@ results = client.recall(bank_id="my-bank", query="How are Alice and Bob connecte
 # [/docs:recall-budget-levels]
 
 
+# [docs:recall-with-tags]
+# Filter recall to only memories tagged for a specific user
+response = client.recall(
+    bank_id="my-bank",
+    query="What feedback did the user give?",
+    tags=["user:alice"],
+    tags_match="any"  # OR matching, includes untagged (default)
+)
+# [/docs:recall-with-tags]
+
+
+# [docs:recall-tags-strict]
+# Strict mode: only return memories that have matching tags (exclude untagged)
+response = client.recall(
+    bank_id="my-bank",
+    query="What did the user say?",
+    tags=["user:alice"],
+    tags_match="any_strict"  # OR matching, excludes untagged memories
+)
+# [/docs:recall-tags-strict]
+
+
+# [docs:recall-tags-all]
+# AND matching: require ALL specified tags to be present
+response = client.recall(
+    bank_id="my-bank",
+    query="What bugs were reported?",
+    tags=["user:alice", "bug-report"],
+    tags_match="all_strict"  # Memory must have BOTH tags
+)
+# [/docs:recall-tags-all]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

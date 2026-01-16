@@ -10,7 +10,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
@@ -37,6 +37,7 @@ from hindsight_api import MemoryEngine
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memory_engine import Budget, fq_table
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, TokenUsage
+from hindsight_api.engine.search.tags import TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
 from hindsight_api.metrics import create_metrics_collector, get_metrics_collector, initialize_metrics
 from hindsight_api.models import RequestContext
@@ -81,13 +82,17 @@ class RecallRequest(BaseModel):
                 "trace": True,
                 "query_timestamp": "2023-05-30T23:40:00",
                 "include": {"entities": {"max_tokens": 500}},
+                "tags": ["user_a"],
+                "tags_match": "any",
             }
         }
     )
 
     query: str
     types: list[str] | None = Field(
-        default=None, description="List of fact types to recall (defaults to all if not specified)"
+        default=None,
+        description="List of fact types to recall: 'world', 'experience'. Defaults to both if not specified. "
+        "Note: 'opinion' is accepted but ignored (opinions are excluded from recall).",
     )
     budget: Budget = Budget.MID
     max_tokens: int = 4096
@@ -98,6 +103,15 @@ class RecallRequest(BaseModel):
     include: IncludeOptions = Field(
         default_factory=IncludeOptions,
         description="Options for including additional data (entities are included by default)",
+    )
+    tags: list[str] | None = Field(
+        default=None,
+        description="Filter memories by tags. If not specified, all memories are returned.",
+    )
+    tags_match: TagsMatch = Field(
+        default="any",
+        description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
     )
 
 
@@ -119,6 +133,7 @@ class RecallResult(BaseModel):
                 "document_id": "session_abc123",
                 "metadata": {"source": "slack"},
                 "chunk_id": "456e7890-e12b-34d5-a678-901234567890",
+                "tags": ["user_a", "user_b"],
             }
         },
     }
@@ -134,6 +149,7 @@ class RecallResult(BaseModel):
     document_id: str | None = None  # Document this memory belongs to
     metadata: dict[str, str] | None = None  # User-defined metadata
     chunk_id: str | None = None  # Chunk this fact was extracted from
+    tags: list[str] | None = None  # Visibility scope tags
 
 
 class EntityObservationResponse(BaseModel):
@@ -306,6 +322,7 @@ class MemoryItem(BaseModel):
                 "metadata": {"source": "slack", "channel": "engineering"},
                 "document_id": "meeting_notes_2024_01_15",
                 "entities": [{"text": "Alice"}, {"text": "ML model", "type": "CONCEPT"}],
+                "tags": ["user_a", "user_b"],
             }
         },
     )
@@ -318,6 +335,10 @@ class MemoryItem(BaseModel):
     entities: list[EntityInput] | None = Field(
         default=None,
         description="Optional entities to combine with auto-extracted entities.",
+    )
+    tags: list[str] | None = Field(
+        default=None,
+        description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
 
     @field_validator("timestamp", mode="before")
@@ -353,6 +374,7 @@ class RetainRequest(BaseModel):
                     },
                 ],
                 "async": False,
+                "document_tags": ["user_a", "user_b"],
             }
         }
     )
@@ -362,6 +384,10 @@ class RetainRequest(BaseModel):
         default=False,
         alias="async",
         description="If true, process asynchronously in background. If false, wait for completion (default: false)",
+    )
+    document_tags: list[str] | None = Field(
+        default=None,
+        description="Tags applied to all items in this request. These are merged with any item-level tags.",
     )
 
 
@@ -403,12 +429,25 @@ class FactsIncludeOptions(BaseModel):
     pass  # No additional options needed, just enable/disable
 
 
+class ToolCallsIncludeOptions(BaseModel):
+    """Options for including tool calls in reflect results."""
+
+    output: bool = Field(
+        default=True,
+        description="Include tool outputs in the trace. Set to false to only include inputs (smaller payload).",
+    )
+
+
 class ReflectIncludeOptions(BaseModel):
     """Options for including additional data in reflect results."""
 
     facts: FactsIncludeOptions | None = Field(
         default=None,
         description="Include facts that the answer is based on. Set to {} to enable, null to disable (default: disabled).",
+    )
+    tool_calls: ToolCallsIncludeOptions | None = Field(
+        default=None,
+        description="Include tool calls trace. Set to {} for full trace (input+output), {output: false} for inputs only.",
     )
 
 
@@ -420,7 +459,6 @@ class ReflectRequest(BaseModel):
             "example": {
                 "query": "What do you think about artificial intelligence?",
                 "budget": "low",
-                "context": "This is for a research paper on AI ethics",
                 "max_tokens": 4096,
                 "include": {"facts": {}},
                 "response_schema": {
@@ -431,18 +469,20 @@ class ReflectRequest(BaseModel):
                     },
                     "required": ["summary", "key_points"],
                 },
+                "tags": ["user_a"],
+                "tags_match": "any",
             }
         }
     )
 
     query: str
     budget: Budget = Budget.LOW
-    context: str | None = None
-    search_context: str | None = Field(
+    context: str | None = Field(
         default=None,
-        description="Additional keywords to include in memory search. If not provided, "
-        "falls back to using `context` for search. Set to empty string to explicitly "
-        "disable context-based search enhancement.",
+        description="DEPRECATED: Additional context is now concatenated with the query. "
+        "Pass context directly in the query field instead. "
+        "If provided, it will be appended to the query for backward compatibility.",
+        deprecated=True,
     )
     max_tokens: int = Field(default=4096, description="Maximum tokens for the response")
     include: ReflectIncludeOptions = Field(
@@ -451,6 +491,15 @@ class ReflectRequest(BaseModel):
     response_schema: dict | None = Field(
         default=None,
         description="Optional JSON Schema for structured output. When provided, the response will include a 'structured_output' field with the LLM response parsed according to this schema.",
+    )
+    tags: list[str] | None = Field(
+        default=None,
+        description="Filter memories by tags during reflection. If not specified, all memories are considered.",
+    )
+    tags_match: TagsMatch = Field(
+        default="any",
+        description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
     )
 
 
@@ -485,6 +534,60 @@ class ReflectFact(BaseModel):
     occurred_end: str | None = None
 
 
+class ReflectToolCall(BaseModel):
+    """A tool call made during reflect agent execution."""
+
+    tool: str = Field(description="Tool name: lookup, recall, learn, expand")
+    input: dict = Field(description="Tool input parameters")
+    output: dict | None = Field(
+        default=None, description="Tool output (only included when include.tool_calls.output is true)"
+    )
+    duration_ms: int = Field(description="Execution time in milliseconds")
+    iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+
+
+class ReflectLLMCall(BaseModel):
+    """An LLM call made during reflect agent execution."""
+
+    scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
+    duration_ms: int = Field(description="Execution time in milliseconds")
+
+
+class ReflectMentalModel(BaseModel):
+    """A mental model accessed during reflect."""
+
+    id: str = Field(description="Mental model ID")
+    name: str = Field(description="Mental model name")
+    type: str = Field(description="Mental model type: entity, concept, event")
+    subtype: str = Field(description="Mental model subtype: structural, emergent, learned")
+    description: str = Field(description="Brief description")
+    summary: str | None = Field(default=None, description="Full summary (when looked up in detail)")
+
+
+class ReflectBasedOn(BaseModel):
+    """Evidence the response is based on: memories and mental models."""
+
+    memories: list[ReflectFact] = Field(default_factory=list, description="Memory facts used to generate the response")
+    mental_models: list[ReflectMentalModel] = Field(
+        default_factory=list, description="Mental models accessed during reflection"
+    )
+
+
+class ReflectTrace(BaseModel):
+    """Execution trace of LLM and tool calls during reflection."""
+
+    tool_calls: list[ReflectToolCall] = Field(default_factory=list, description="Tool calls made during reflection")
+    llm_calls: list[ReflectLLMCall] = Field(default_factory=list, description="LLM calls made during reflection")
+
+
+class CreatedMentalModel(BaseModel):
+    """A mental model created during reflection."""
+
+    id: str = Field(description="Mental model ID")
+    name: str = Field(description="Human-readable name")
+    description: str = Field(description="What this model tracks")
+
+
 class ReflectResponse(BaseModel):
     """Response model for think endpoint."""
 
@@ -492,21 +595,42 @@ class ReflectResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "text": "Based on my understanding, AI is a transformative technology...",
-                "based_on": [
-                    {"id": "123", "text": "AI is used in healthcare", "type": "world"},
-                    {"id": "456", "text": "I discussed AI applications last week", "type": "experience"},
-                ],
+                "based_on": {
+                    "memories": [
+                        {"id": "123", "text": "AI is used in healthcare", "type": "world"},
+                        {"id": "456", "text": "I discussed AI applications last week", "type": "experience"},
+                    ],
+                    "mental_models": [
+                        {
+                            "id": "mm-1",
+                            "name": "AI Technology",
+                            "type": "concept",
+                            "subtype": "structural",
+                            "description": "Understanding of AI capabilities",
+                        }
+                    ],
+                },
                 "structured_output": {
                     "summary": "AI is transformative",
                     "key_points": ["Used in healthcare", "Discussed recently"],
                 },
                 "usage": {"input_tokens": 1500, "output_tokens": 500, "total_tokens": 2000},
+                "trace": {
+                    "tool_calls": [{"tool": "recall", "input": {"query": "AI"}, "duration_ms": 150}],
+                    "llm_calls": [{"scope": "agent_1", "duration_ms": 1200}],
+                },
+                "mental_models_created": [
+                    {"id": "mm-new-1", "name": "AI Strategy", "description": "Track AI-related decisions and plans"}
+                ],
             }
         }
     )
 
     text: str
-    based_on: list[ReflectFact] = []  # Facts used to generate the response
+    based_on: ReflectBasedOn | None = Field(
+        default=None,
+        description="Evidence used to generate the response. Only present when include.facts is set.",
+    )
     structured_output: dict | None = Field(
         default=None,
         description="Structured output parsed according to the request's response_schema. Only present when response_schema was provided in the request.",
@@ -514,6 +638,14 @@ class ReflectResponse(BaseModel):
     usage: TokenUsage | None = Field(
         default=None,
         description="Token usage metrics for LLM calls during reflection.",
+    )
+    trace: ReflectTrace | None = Field(
+        default=None,
+        description="Execution trace of tool and LLM calls. Only present when include.tool_calls is set.",
+    )
+    mental_models_created: list[CreatedMentalModel] = Field(
+        default_factory=list,
+        description="Mental models created during this reflection (via the learn tool).",
     )
 
 
@@ -544,7 +676,7 @@ class BankProfileResponse(BaseModel):
                 "bank_id": "user123",
                 "name": "Alice",
                 "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
-                "background": "I am a software engineer with 10 years of experience in startups",
+                "mission": "I am a software engineer helping my team stay organized and ship quality code",
             }
         }
     )
@@ -552,7 +684,9 @@ class BankProfileResponse(BaseModel):
     bank_id: str
     name: str
     disposition: DispositionTraits
-    background: str
+    mission: str = Field(description="The agent's mission - who they are and what they're trying to accomplish")
+    # Deprecated: use mission instead. Kept for backwards compatibility.
+    background: str | None = Field(default=None, description="Deprecated: use mission instead")
 
 
 class UpdateDispositionRequest(BaseModel):
@@ -561,8 +695,32 @@ class UpdateDispositionRequest(BaseModel):
     disposition: DispositionTraits
 
 
+class SetMissionRequest(BaseModel):
+    """Request model for setting/updating the agent's mission."""
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"content": "I am a PM helping my engineering team stay organized"}}
+    )
+
+    content: str = Field(description="The mission content - who you are and what you're trying to accomplish")
+
+
+class MissionResponse(BaseModel):
+    """Response model for mission update."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "mission": "I am a PM helping my engineering team stay organized and ship quality code.",
+            }
+        }
+    )
+
+    mission: str
+
+
 class AddBackgroundRequest(BaseModel):
-    """Request model for adding/merging background information."""
+    """Request model for adding/merging background information. Deprecated: use SetMissionRequest instead."""
 
     model_config = ConfigDict(
         json_schema_extra={"example": {"content": "I was born in Texas", "update_disposition": True}}
@@ -570,23 +728,24 @@ class AddBackgroundRequest(BaseModel):
 
     content: str = Field(description="New background information to add or merge")
     update_disposition: bool = Field(
-        default=True, description="If true, infer disposition traits from the merged background (default: true)"
+        default=True, description="Deprecated - disposition is no longer auto-inferred from mission"
     )
 
 
 class BackgroundResponse(BaseModel):
-    """Response model for background update."""
+    """Response model for background update. Deprecated: use MissionResponse instead."""
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "background": "I was born in Texas. I am a software engineer with 10 years of experience.",
-                "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
+                "mission": "I was born in Texas. I am a software engineer with 10 years of experience.",
             }
         }
     )
 
-    background: str
+    mission: str
+    # Deprecated fields kept for backwards compatibility
+    background: str | None = Field(default=None, description="Deprecated: same as mission")
     disposition: DispositionTraits | None = None
 
 
@@ -596,7 +755,7 @@ class BankListItem(BaseModel):
     bank_id: str
     name: str | None = None
     disposition: DispositionTraits
-    background: str | None = None
+    mission: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -612,7 +771,7 @@ class BankListResponse(BaseModel):
                         "bank_id": "user123",
                         "name": "Alice",
                         "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
-                        "background": "I am a software engineer",
+                        "mission": "I am a software engineer helping my team ship quality code",
                         "created_at": "2024-01-15T10:30:00Z",
                         "updated_at": "2024-01-16T14:20:00Z",
                     }
@@ -632,14 +791,16 @@ class CreateBankRequest(BaseModel):
             "example": {
                 "name": "Alice",
                 "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
-                "background": "I am a creative software engineer with 10 years of experience",
+                "mission": "I am a PM helping my engineering team stay organized",
             }
         }
     )
 
     name: str | None = None
     disposition: DispositionTraits | None = None
-    background: str | None = None
+    mission: str | None = Field(default=None, description="The agent's mission")
+    # Deprecated: use mission instead
+    background: str | None = Field(default=None, description="Deprecated: use mission instead")
 
 
 class GraphDataResponse(BaseModel):
@@ -734,6 +895,37 @@ class ListDocumentsResponse(BaseModel):
     offset: int
 
 
+class TagItem(BaseModel):
+    """Single tag with usage count."""
+
+    tag: str = Field(description="The tag value")
+    count: int = Field(description="Number of memories with this tag")
+
+
+class ListTagsResponse(BaseModel):
+    """Response model for list tags endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "items": [
+                    {"tag": "user:alice", "count": 42},
+                    {"tag": "user:bob", "count": 15},
+                    {"tag": "session:abc123", "count": 8},
+                ],
+                "total": 25,
+                "limit": 100,
+                "offset": 0,
+            }
+        }
+    )
+
+    items: list[TagItem]
+    total: int
+    limit: int
+    offset: int
+
+
 class DocumentResponse(BaseModel):
     """Response model for get document endpoint."""
 
@@ -747,6 +939,7 @@ class DocumentResponse(BaseModel):
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:30:00Z",
                 "memory_unit_count": 15,
+                "tags": ["user_a", "session_123"],
             }
         }
     )
@@ -758,6 +951,7 @@ class DocumentResponse(BaseModel):
     created_at: str
     updated_at: str
     memory_unit_count: int
+    tags: list[str] = Field(default_factory=list, description="Tags associated with this document")
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -848,6 +1042,89 @@ class BankStatsResponse(BaseModel):
     failed_operations: int
 
 
+# Mental Model models
+
+
+class MentalModelObservationResponse(BaseModel):
+    """An observation within a mental model with its supporting memories."""
+
+    title: str = Field(description="Observation header (empty for intro)")
+    text: str = Field(description="Observation content")
+    based_on: list[str] = Field(default_factory=list, description="Memory IDs supporting this observation")
+
+
+class MentalModelResponse(BaseModel):
+    """Response model for a mental model."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "team-structure",
+                "bank_id": "test-bank",
+                "subtype": "structural",
+                "name": "Team Structure",
+                "description": "Who's on the team and their roles",
+                "observations": [{"title": "Overview", "text": "The team consists of...", "based_on": ["uuid1"]}],
+                "entity_id": None,
+                "links": [],
+                "tags": ["project-x"],
+                "last_updated": "2024-01-15T10:30:00Z",
+                "created_at": "2024-01-10T08:00:00Z",
+            }
+        }
+    )
+
+    id: str
+    bank_id: str
+    subtype: str
+    name: str
+    description: str
+    observations: list[MentalModelObservationResponse] = Field(
+        default_factory=list, description="Structured observations with per-observation fact attribution"
+    )
+    entity_id: str | None = None
+    links: list[str] = []
+    tags: list[str] = []
+    last_updated: str | None = None
+    created_at: str
+
+
+class MentalModelListResponse(BaseModel):
+    """Response model for listing mental models."""
+
+    items: list[MentalModelResponse]
+
+
+class RefreshMentalModelsRequest(BaseModel):
+    """Request model for refresh mental models endpoint."""
+
+    model_config = ConfigDict(json_schema_extra={"example": {"tags": ["project-x"], "subtype": "structural"}})
+
+    tags: list[str] | None = Field(default=None, description="Tags to apply to newly created mental models")
+    subtype: Literal["structural", "emergent", "pinned", "learned"] | None = Field(
+        default=None,
+        description="Only refresh models of this subtype. If not specified, refreshes all subtypes.",
+    )
+
+
+class CreateMentalModelRequest(BaseModel):
+    """Request model for creating a pinned mental model."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Product Roadmap",
+                "description": "Key product priorities and upcoming features",
+                "tags": ["project-x"],
+            }
+        }
+    )
+
+    name: str = Field(description="Human-readable name for the mental model")
+    description: str = Field(description="One-liner description for quick scanning")
+    tags: list[str] = Field(default_factory=list, description="Tags for scoped visibility")
+
+
 class OperationResponse(BaseModel):
     """Response model for a single async operation."""
 
@@ -857,7 +1134,7 @@ class OperationResponse(BaseModel):
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "task_type": "retain",
                 "items_count": 5,
-                "document_id": "meeting-notes-2024",
+                "document_id": None,
                 "created_at": "2024-01-15T10:30:00Z",
                 "status": "pending",
                 "error_message": None,
@@ -868,7 +1145,7 @@ class OperationResponse(BaseModel):
     id: str
     task_type: str
     items_count: int
-    document_id: str | None
+    document_id: str | None = None
     created_at: str
     status: str
     error_message: str | None
@@ -881,12 +1158,11 @@ class OperationsListResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "bank_id": "user123",
+                "total": 150,
                 "operations": [
                     {
                         "id": "550e8400-e29b-41d4-a716-446655440000",
                         "task_type": "retain",
-                        "items_count": 5,
-                        "document_id": None,
                         "created_at": "2024-01-15T10:30:00Z",
                         "status": "pending",
                         "error_message": None,
@@ -897,6 +1173,7 @@ class OperationsListResponse(BaseModel):
     )
 
     bank_id: str
+    total: int
     operations: list[OperationResponse]
 
 
@@ -916,6 +1193,48 @@ class CancelOperationResponse(BaseModel):
     success: bool
     message: str
     operation_id: str
+
+
+class OperationStatusResponse(BaseModel):
+    """Response model for getting a single operation status."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "completed",
+                "operation_type": "refresh_mental_models",
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:31:30Z",
+                "completed_at": "2024-01-15T10:31:30Z",
+                "error_message": None,
+            }
+        }
+    )
+
+    operation_id: str
+    status: Literal["pending", "completed", "failed", "not_found"]
+    operation_type: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    completed_at: str | None = None
+    error_message: str | None = None
+
+
+class AsyncOperationSubmitResponse(BaseModel):
+    """Response model for submitting an async operation."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "queued",
+            }
+        }
+    )
+
+    operation_id: str
+    status: str
 
 
 def create_app(
@@ -1185,6 +1504,37 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories/list: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.get(
+        "/v1/default/banks/{bank_id}/memories/{memory_id}",
+        summary="Get memory unit",
+        description="Get a single memory unit by ID with all its metadata including entities and tags.",
+        operation_id="get_memory",
+        tags=["Memory"],
+    )
+    async def api_get_memory(
+        bank_id: str,
+        memory_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get a single memory unit by ID."""
+        try:
+            data = await app.state.memory.get_memory_unit(
+                bank_id=bank_id,
+                memory_id=memory_id,
+                request_context=request_context,
+            )
+            if data is None:
+                raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            return data
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/memories/{memory_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post(
         "/v1/default/banks/{bank_id}/memories/recall",
         response_model=RecallResponse,
@@ -1208,8 +1558,10 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
-            # Default to world, experience, opinion if not specified (exclude observation by default)
+            # Default to world and experience if not specified (exclude observation and opinion)
+            # Filter out 'opinion' even if requested - opinions are excluded from recall
             fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
+            fact_types = [ft for ft in fact_types if ft != "opinion"]
 
             # Parse query_timestamp if provided
             question_date = None
@@ -1249,6 +1601,8 @@ def _register_routes(app: FastAPI):
                     include_chunks=include_chunks,
                     max_chunk_tokens=max_chunk_tokens,
                     request_context=request_context,
+                    tags=request.tags,
+                    tags_match=request.tags_match,
                 )
 
             # Convert core MemoryFact objects to API RecallResult objects (excluding internal metrics)
@@ -1264,6 +1618,7 @@ def _register_routes(app: FastAPI):
                     mentioned_at=fact.mentioned_at,
                     document_id=fact.document_id,
                     chunk_id=fact.chunk_id,
+                    tags=fact.tags,
                 )
                 for fact in core_result.results
             ]
@@ -1346,25 +1701,32 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
+            # Handle deprecated context field by concatenating with query
+            query = request.query
+            if request.context:
+                query = f"{request.query}\n\nAdditional context: {request.context}"
+
             # Use the memory system's reflect_async method (record metrics)
             with metrics.record_operation("reflect", bank_id=bank_id, source="api", budget=request.budget.value):
                 core_result = await app.state.memory.reflect_async(
                     bank_id=bank_id,
-                    query=request.query,
+                    query=query,
                     budget=request.budget,
-                    context=request.context,
-                    search_context=request.search_context,
+                    context=None,  # Deprecated, now concatenated with query
                     max_tokens=request.max_tokens,
                     response_schema=request.response_schema,
                     request_context=request_context,
+                    tags=request.tags,
+                    tags_match=request.tags_match,
                 )
 
-            # Convert core MemoryFact objects to API ReflectFact objects if facts are requested
-            based_on_facts = []
+            # Build based_on (memories + mental_models) if facts are requested
+            based_on_result: ReflectBasedOn | None = None
             if request.include.facts is not None:
+                memories = []
                 for fact_type, facts in core_result.based_on.items():
                     for fact in facts:
-                        based_on_facts.append(
+                        memories.append(
                             ReflectFact(
                                 id=fact.id,
                                 text=fact.text,
@@ -1374,12 +1736,55 @@ def _register_routes(app: FastAPI):
                                 occurred_end=fact.occurred_end,
                             )
                         )
+                mental_models = [
+                    ReflectMentalModel(
+                        id=mm.id,
+                        name=mm.name,
+                        type=mm.type,
+                        subtype=mm.subtype,
+                        description=mm.description,
+                        summary=mm.summary,
+                    )
+                    for mm in core_result.mental_models
+                ]
+                based_on_result = ReflectBasedOn(memories=memories, mental_models=mental_models)
+
+            # Build trace (tool_calls + llm_calls) if tool_calls is requested
+            trace_result: ReflectTrace | None = None
+            if request.include.tool_calls is not None:
+                include_output = request.include.tool_calls.output
+                tool_calls = [
+                    ReflectToolCall(
+                        tool=tc.tool,
+                        input=tc.input,
+                        output=tc.output if include_output else None,
+                        duration_ms=tc.duration_ms,
+                        iteration=tc.iteration,
+                    )
+                    for tc in core_result.tool_trace
+                ]
+                llm_calls = [ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms) for lc in core_result.llm_trace]
+                trace_result = ReflectTrace(tool_calls=tool_calls, llm_calls=llm_calls)
+
+            # Build mental_models_created from tool trace (learn tool outputs)
+            created_models: list[CreatedMentalModel] = []
+            for tc in core_result.tool_trace:
+                if tc.tool == "learn" and isinstance(tc.output, dict) and tc.output.get("status") == "created":
+                    created_models.append(
+                        CreatedMentalModel(
+                            id=tc.output.get("model_id", ""),
+                            name=tc.input.get("name", ""),
+                            description=tc.input.get("description", ""),
+                        )
+                    )
 
             return ReflectResponse(
                 text=core_result.text,
-                based_on=based_on_facts,
+                based_on=based_on_result,
                 structured_output=core_result.structured_output,
                 usage=core_result.usage,
+                trace=trace_result,
+                mental_models_created=created_models,
             )
 
         except OperationValidationError as e:
@@ -1621,54 +2026,241 @@ def _register_routes(app: FastAPI):
     @app.post(
         "/v1/default/banks/{bank_id}/entities/{entity_id}/regenerate",
         response_model=EntityDetailResponse,
-        summary="Regenerate entity observations",
-        description="Regenerate observations for an entity based on all facts mentioning it.",
+        summary="Regenerate entity observations (deprecated)",
+        description="This endpoint is deprecated. Entity observations have been replaced by mental models.",
         operation_id="regenerate_entity_observations",
         tags=["Entities"],
+        deprecated=True,
     )
     async def api_regenerate_entity_observations(
         bank_id: str,
         entity_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Regenerate observations for an entity."""
+        """Regenerate observations for an entity. DEPRECATED: Use mental models instead."""
+        raise HTTPException(
+            status_code=410,
+            detail="This endpoint is deprecated. Entity observations have been replaced by mental models. "
+            "Use the /mental-models endpoints instead.",
+        )
+
+    # =========================================================================
+    # Mental Models endpoints
+    # =========================================================================
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/mental-models",
+        response_model=MentalModelListResponse,
+        summary="List mental models",
+        description="List all mental models for a bank, optionally filtered by subtype or tags.",
+        operation_id="list_mental_models",
+        tags=["Mental Models"],
+    )
+    async def api_list_mental_models(
+        bank_id: str,
+        subtype: str | None = Query(None, description="Filter by subtype: structural, emergent, or pinned"),
+        tags_filter: list[str] | None = Query(
+            None, alias="tags", description="Filter by tags (includes untagged models)"
+        ),
+        tags_match: Literal["any", "all", "exact"] = Query(
+            "any", description="How to match tags: 'any' (OR), 'all' (AND), or 'exact'"
+        ),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List mental models for a bank."""
         try:
-            # Get the entity to verify it exists and get canonical_name
-            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
-
-            if entity is None:
-                raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
-
-            # Regenerate observations
-            await app.state.memory.regenerate_entity_observations(
+            models = await app.state.memory.list_mental_models(
                 bank_id=bank_id,
-                entity_id=entity_id,
-                entity_name=entity["canonical_name"],
+                subtype=subtype,
+                tags=tags_filter,
+                tags_match=tags_match,
                 request_context=request_context,
             )
-
-            # Get updated entity with new observations
-            entity = await app.state.memory.get_entity(bank_id, entity_id, request_context=request_context)
-
-            return EntityDetailResponse(
-                id=entity["id"],
-                canonical_name=entity["canonical_name"],
-                mention_count=entity["mention_count"],
-                first_seen=entity["first_seen"],
-                last_seen=entity["last_seen"],
-                metadata=_parse_metadata(entity["metadata"]),
-                observations=[
-                    EntityObservationResponse(text=obs.text, mentioned_at=obs.mentioned_at)
-                    for obs in entity["observations"]
-                ],
-            )
+            return MentalModelListResponse(items=[MentalModelResponse(**m) for m in models])
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in /v1/default/banks/{bank_id}/entities/{entity_id}/regenerate: {error_detail}")
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models",
+        response_model=MentalModelResponse,
+        summary="Create mental model",
+        description="Create a pinned mental model. Pinned models are user-defined and persist across refreshes.",
+        operation_id="create_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_create_mental_model(
+        bank_id: str,
+        body: CreateMentalModelRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Create a pinned mental model."""
+        try:
+            model = await app.state.memory.create_mental_model(
+                bank_id=bank_id,
+                name=body.name,
+                description=body.description,
+                tags=body.tags,
+                request_context=request_context,
+            )
+            return MentalModelResponse(**model)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+        response_model=MentalModelResponse,
+        summary="Get mental model",
+        description="Get a specific mental model by ID.",
+        operation_id="get_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_get_mental_model(
+        bank_id: str,
+        model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Get a mental model by ID."""
+        try:
+            model = await app.state.memory.get_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=request_context,
+            )
+            if model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{model_id}' not found")
+            return MentalModelResponse(**model)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models/{model_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/refresh",
+        response_model=AsyncOperationSubmitResponse,
+        summary="Refresh mental models (async)",
+        description="Submit a background job to refresh mental models for a bank. "
+        "By default refreshes all subtypes. Optionally specify 'subtype' to only refresh "
+        "'structural' (from mission) or 'emergent' (from entities) models. "
+        "Optionally pass tags to apply to newly created models. "
+        "Use GET /banks/{bank_id}/operations to check progress.",
+        operation_id="refresh_mental_models",
+        tags=["Mental Models"],
+    )
+    async def api_refresh_mental_models(
+        bank_id: str,
+        body: RefreshMentalModelsRequest | None = None,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Submit a background job to refresh mental models for a bank.
+
+        Requires a mission to be set for the bank first.
+        Optionally pass tags to apply to newly created mental models.
+        Optionally specify a subtype to only refresh models of that type.
+        """
+        try:
+            result = await app.state.memory.refresh_mental_models(
+                bank_id=bank_id,
+                tags=body.tags if body else None,
+                subtype=body.subtype if body else None,
+                request_context=request_context,
+            )
+            return AsyncOperationSubmitResponse(**result)
+        except ValueError as e:
+            # Mission not set or other validation error
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models/refresh: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/mental-models/{model_id}",
+        response_model=DeleteResponse,
+        summary="Delete mental model",
+        description="Delete a mental model.",
+        operation_id="delete_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_delete_mental_model(
+        bank_id: str,
+        model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Delete a mental model."""
+        try:
+            deleted = await app.state.memory.delete_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=request_context,
+            )
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Mental model '{model_id}' not found")
+            return DeleteResponse(success=True, deleted_count=1)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{model_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate",
+        response_model=AsyncOperationSubmitResponse,
+        summary="Generate mental model content (async)",
+        description="Submit a background job to generate/refresh content for a specific mental model. "
+        "This is useful for newly created learned models or to regenerate content for any model.",
+        operation_id="generate_mental_model",
+        tags=["Mental Models"],
+    )
+    async def api_generate_mental_model(
+        bank_id: str,
+        model_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Generate content for a specific mental model."""
+        try:
+            result = await app.state.memory.generate_mental_model_async(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=request_context,
+            )
+            return AsyncOperationSubmitResponse(
+                operation_id=result["operation_id"],
+                status=result.get("status", "queued"),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models/{model_id}/generate: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -1739,6 +2331,59 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/documents/{document_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/tags",
+        response_model=ListTagsResponse,
+        summary="List tags",
+        description="List all unique tags in a memory bank with usage counts. "
+        "Supports wildcard search using '*' (e.g., 'user:*', '*-fred', 'tag*-2'). Case-insensitive.",
+        operation_id="list_tags",
+        tags=["Memory"],
+    )
+    async def api_list_tags(
+        bank_id: str,
+        q: str | None = Query(
+            default=None,
+            description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). "
+            "Use '*' as wildcard. Case-insensitive.",
+        ),
+        limit: int = Query(default=100, description="Maximum number of tags to return"),
+        offset: int = Query(default=0, description="Offset for pagination"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """
+        List all unique tags in a memory bank.
+
+        Use this endpoint to discover available tags or expand wildcard patterns.
+        Supports '*' wildcards for flexible matching (case-insensitive):
+        - 'user:*' matches user:alice, user:bob
+        - '*-admin' matches role-admin, super-admin
+        - 'env*-prod' matches env-prod, environment-prod
+
+        Args:
+            bank_id: Memory Bank ID (from path)
+            q: Wildcard pattern to filter tags (use '*' as wildcard)
+            limit: Maximum number of tags to return (default: 100)
+            offset: Offset for pagination (default: 0)
+        """
+        try:
+            data = await app.state.memory.list_tags(
+                bank_id=bank_id,
+                pattern=q,
+                limit=limit,
+                offset=offset,
+                request_context=request_context,
+            )
+            return data
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/tags: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -1825,10 +2470,11 @@ def _register_routes(app: FastAPI):
     async def api_list_operations(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """List all async operations (pending and failed) for a memory bank."""
         try:
-            operations = await app.state.memory.list_operations(bank_id, request_context=request_context)
+            result = await app.state.memory.list_operations(bank_id, request_context=request_context)
             return OperationsListResponse(
                 bank_id=bank_id,
-                operations=[OperationResponse(**op) for op in operations],
+                total=result["total"],
+                operations=[OperationResponse(**op) for op in result["operations"]],
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -1837,6 +2483,37 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/operations: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/operations/{operation_id}",
+        response_model=OperationStatusResponse,
+        summary="Get operation status",
+        description="Get the status of a specific async operation. Returns 'pending', 'completed', or 'failed'. "
+        "Completed operations are removed from storage, so 'completed' means the operation finished successfully.",
+        operation_id="get_operation_status",
+        tags=["Operations"],
+    )
+    async def api_get_operation_status(
+        bank_id: str, operation_id: str, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Get the status of an async operation."""
+        try:
+            # Validate UUID format
+            try:
+                uuid.UUID(operation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}")
+
+            result = await app.state.memory.get_operation_status(bank_id, operation_id, request_context=request_context)
+            return OperationStatusResponse(**result)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/operations/{operation_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
@@ -1875,12 +2552,12 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
         summary="Get memory bank profile",
-        description="Get disposition traits and background for a memory bank. Auto-creates agent with defaults if not exists.",
+        description="Get disposition traits and mission for a memory bank. Auto-creates agent with defaults if not exists.",
         operation_id="get_bank_profile",
         tags=["Banks"],
     )
     async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Get memory bank profile (disposition + background)."""
+        """Get memory bank profile (disposition + mission)."""
         try:
             profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
             # Convert DispositionTraits object to dict for Pydantic
@@ -1889,11 +2566,13 @@ def _register_routes(app: FastAPI):
                 if hasattr(profile["disposition"], "model_dump")
                 else dict(profile["disposition"])
             )
+            mission = profile.get("mission") or ""
             return BankProfileResponse(
                 bank_id=bank_id,
                 name=profile["name"],
                 disposition=DispositionTraits(**disposition_dict),
-                background=profile["background"],
+                mission=mission,
+                background=mission,  # Backwards compat
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -1929,11 +2608,13 @@ def _register_routes(app: FastAPI):
                 if hasattr(profile["disposition"], "model_dump")
                 else dict(profile["disposition"])
             )
+            mission = profile.get("mission") or ""
             return BankProfileResponse(
                 bank_id=bank_id,
                 name=profile["name"],
                 disposition=DispositionTraits(**disposition_dict),
-                background=profile["background"],
+                mission=mission,
+                background=mission,  # Backwards compat
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -1947,25 +2628,22 @@ def _register_routes(app: FastAPI):
     @app.post(
         "/v1/default/banks/{bank_id}/background",
         response_model=BackgroundResponse,
-        summary="Add/merge memory bank background",
-        description="Add new background information or merge with existing. LLM intelligently resolves conflicts, normalizes to first person, and optionally infers disposition traits.",
+        summary="Add/merge memory bank background (deprecated)",
+        description="Deprecated: Use PUT /mission instead. This endpoint now updates the mission field.",
         operation_id="add_bank_background",
         tags=["Banks"],
+        deprecated=True,
     )
     async def api_add_bank_background(
         bank_id: str, request: AddBackgroundRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Add or merge bank background information. Optionally infer disposition traits."""
+        """Deprecated: Add or merge bank background. Now updates mission field."""
         try:
-            result = await app.state.memory.merge_bank_background(
-                bank_id, request.content, update_disposition=request.update_disposition, request_context=request_context
+            result = await app.state.memory.merge_bank_mission(
+                bank_id, request.content, request_context=request_context
             )
-
-            response = BackgroundResponse(background=result["background"])
-            if "disposition" in result:
-                response.disposition = DispositionTraits(**result["disposition"])
-
-            return response
+            mission = result.get("mission") or ""
+            return BackgroundResponse(mission=mission, background=mission)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -1979,24 +2657,25 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}",
         response_model=BankProfileResponse,
         summary="Create or update memory bank",
-        description="Create a new agent or update existing agent with disposition and background. Auto-fills missing fields with defaults.",
+        description="Create a new agent or update existing agent with disposition and mission. Auto-fills missing fields with defaults.",
         operation_id="create_or_update_bank",
         tags=["Banks"],
     )
     async def api_create_or_update_bank(
         bank_id: str, request: CreateBankRequest, request_context: RequestContext = Depends(get_request_context)
     ):
-        """Create or update an agent with disposition and background."""
+        """Create or update an agent with disposition and mission."""
         try:
             # Ensure bank exists by getting profile (auto-creates with defaults)
             await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
 
-            # Update name and/or background if provided
-            if request.name is not None or request.background is not None:
+            # Update name and/or mission if provided (support both mission and deprecated background)
+            mission_value = request.mission or request.background
+            if request.name is not None or mission_value is not None:
                 await app.state.memory.update_bank(
                     bank_id,
                     name=request.name,
-                    background=request.background,
+                    mission=mission_value,
                     request_context=request_context,
                 )
 
@@ -2013,11 +2692,13 @@ def _register_routes(app: FastAPI):
                 if hasattr(final_profile["disposition"], "model_dump")
                 else dict(final_profile["disposition"])
             )
+            mission = final_profile.get("mission") or ""
             return BankProfileResponse(
                 bank_id=bank_id,
                 name=final_profile["name"],
                 disposition=DispositionTraits(**disposition_dict),
-                background=final_profile["background"],
+                mission=mission,
+                background=mission,  # Backwards compat
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -2026,6 +2707,62 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.patch(
+        "/v1/default/banks/{bank_id}",
+        response_model=BankProfileResponse,
+        summary="Partial update memory bank",
+        description="Partially update an agent's profile. Only provided fields will be updated.",
+        operation_id="update_bank",
+        tags=["Banks"],
+    )
+    async def api_update_bank(
+        bank_id: str, request: CreateBankRequest, request_context: RequestContext = Depends(get_request_context)
+    ):
+        """Partially update an agent's profile (name, mission, disposition)."""
+        try:
+            # Ensure bank exists
+            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+
+            # Update name and/or mission if provided
+            mission_value = request.mission or request.background
+            if request.name is not None or mission_value is not None:
+                await app.state.memory.update_bank(
+                    bank_id,
+                    name=request.name,
+                    mission=mission_value,
+                    request_context=request_context,
+                )
+
+            # Update disposition if provided
+            if request.disposition is not None:
+                await app.state.memory.update_bank_disposition(
+                    bank_id, request.disposition.model_dump(), request_context=request_context
+                )
+
+            # Get final profile
+            final_profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            disposition_dict = (
+                final_profile["disposition"].model_dump()
+                if hasattr(final_profile["disposition"], "model_dump")
+                else dict(final_profile["disposition"])
+            )
+            mission = final_profile.get("mission") or ""
+            return BankProfileResponse(
+                bank_id=bank_id,
+                name=final_profile["name"],
+                disposition=DispositionTraits(**disposition_dict),
+                mission=mission,
+                background=mission,  # Backwards compat
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
@@ -2103,11 +2840,15 @@ def _register_routes(app: FastAPI):
                     content_dict["document_id"] = item.document_id
                 if item.entities:
                     content_dict["entities"] = [{"text": e.text, "type": e.type or "CONCEPT"} for e in item.entities]
+                if item.tags:
+                    content_dict["tags"] = item.tags
                 contents.append(content_dict)
 
             if request.async_:
                 # Async processing: queue task and return immediately
-                result = await app.state.memory.submit_async_retain(bank_id, contents, request_context=request_context)
+                result = await app.state.memory.submit_async_retain(
+                    bank_id, contents, document_tags=request.document_tags, request_context=request_context
+                )
                 return RetainResponse.model_validate(
                     {
                         "success": True,
@@ -2121,7 +2862,11 @@ def _register_routes(app: FastAPI):
                 # Synchronous processing: wait for completion (record metrics)
                 with metrics.record_operation("retain", bank_id=bank_id, source="api"):
                     result, usage = await app.state.memory.retain_batch_async(
-                        bank_id=bank_id, contents=contents, request_context=request_context, return_usage=True
+                        bank_id=bank_id,
+                        contents=contents,
+                        document_tags=request.document_tags,
+                        request_context=request_context,
+                        return_usage=True,
                     )
 
                 return RetainResponse.model_validate(

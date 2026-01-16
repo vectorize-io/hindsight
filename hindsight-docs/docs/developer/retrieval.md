@@ -133,7 +133,9 @@ Hindsight is built for AI agents, not humans. Traditional search systems return 
 **Parameters you control:**
 - `max_tokens`: How much memory content to return (default: 4096 tokens)
 - `budget`: Search depth level (low, mid, high)
-- `fact_type`: Filter by world, experience, opinion, or all
+- `types`: Filter by world, experience, opinion, or all
+- `tags`: Filter memories by visibility tags
+- `tags_match`: How to match tags (see [Recall API](./api/recall) for all options)
 
 ### Expanding Context: Chunks and Entity Observations
 
@@ -241,3 +243,4 @@ See [Configuration → Retrieval](./configuration#retrieval) for available algor
 
 - [**Retain**](./retain) — How memories are stored with rich context
 - [**Reflect**](./reflect) — How disposition influences reasoning
+- [**Recall API**](./api/recall) — Code examples, parameters, and tag filtering

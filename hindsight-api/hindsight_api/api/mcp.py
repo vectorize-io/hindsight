@@ -205,7 +205,7 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         Each bank is an isolated memory store (like a separate "brain").
 
         Returns:
-            JSON list of banks with their IDs, names, dispositions, and backgrounds.
+            JSON list of banks with their IDs, names, dispositions, and missions.
         """
         try:
             banks = await memory.list_banks(request_context=RequestContext())
@@ -215,7 +215,7 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
             return f'{{"error": "{e}", "banks": []}}'
 
     @mcp.tool()
-    async def create_bank(bank_id: str, name: str | None = None, background: str | None = None) -> str:
+    async def create_bank(bank_id: str, name: str | None = None, mission: str | None = None) -> str:
         """
         Create a new memory bank or get an existing one.
 
@@ -225,18 +225,18 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
         Args:
             bank_id: Unique identifier for the bank (e.g., 'user-123', 'agent-alpha')
             name: Optional human-friendly name for the bank
-            background: Optional background context about the bank's owner/purpose
+            mission: Optional mission describing who the agent is and what they're trying to accomplish
         """
         try:
             # get_bank_profile auto-creates bank if it doesn't exist
             profile = await memory.get_bank_profile(bank_id, request_context=RequestContext())
 
-            # Update name/background if provided
-            if name is not None or background is not None:
+            # Update name/mission if provided
+            if name is not None or mission is not None:
                 await memory.update_bank(
                     bank_id,
                     name=name,
-                    background=background,
+                    mission=mission,
                     request_context=RequestContext(),
                 )
                 # Fetch updated profile

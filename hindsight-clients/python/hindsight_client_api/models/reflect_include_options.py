@@ -19,6 +19,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
+from hindsight_client_api.models.tool_calls_include_options import ToolCallsIncludeOptions
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -27,7 +28,8 @@ class ReflectIncludeOptions(BaseModel):
     Options for including additional data in reflect results.
     """ # noqa: E501
     facts: Optional[Dict[str, Any]] = Field(default=None, description="Options for including facts (based_on) in reflect results.")
-    __properties: ClassVar[List[str]] = ["facts"]
+    tool_calls: Optional[ToolCallsIncludeOptions] = None
+    __properties: ClassVar[List[str]] = ["facts", "tool_calls"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -68,6 +70,14 @@ class ReflectIncludeOptions(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of tool_calls
+        if self.tool_calls:
+            _dict['tool_calls'] = self.tool_calls.to_dict()
+        # set to None if tool_calls (nullable) is None
+        # and model_fields_set contains the field
+        if self.tool_calls is None and "tool_calls" in self.model_fields_set:
+            _dict['tool_calls'] = None
+
         return _dict
 
     @classmethod
@@ -80,7 +90,8 @@ class ReflectIncludeOptions(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "facts": obj.get("facts")
+            "facts": obj.get("facts"),
+            "tool_calls": ToolCallsIncludeOptions.from_dict(obj["tool_calls"]) if obj.get("tool_calls") is not None else None
         })
         return _obj
 

@@ -5,19 +5,35 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const bankId = body.bank_id || body.agent_id || "default";
-    const { query, context, budget, thinking_budget, include_facts } = body;
+    const {
+      query,
+      budget,
+      thinking_budget,
+      include_facts,
+      include_tool_calls,
+      tags,
+      tags_match,
+      max_tokens,
+    } = body;
 
     const requestBody: any = {
       query,
       budget: budget || (thinking_budget ? "mid" : "low"),
-      context: context || undefined,
+      tags,
+      tags_match,
+      max_tokens: max_tokens || undefined,
     };
 
     // Add include options if specified
+    const includeOptions: any = {};
     if (include_facts) {
-      requestBody.include = {
-        facts: {},
-      };
+      includeOptions.facts = {};
+    }
+    if (include_tool_calls) {
+      includeOptions.tool_calls = {};
+    }
+    if (Object.keys(includeOptions).length > 0) {
+      requestBody.include = includeOptions;
     }
 
     const response = await sdk.reflect({

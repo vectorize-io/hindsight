@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.memory_item import MemoryItem
 from typing import Optional, Set
@@ -29,7 +29,8 @@ class RetainRequest(BaseModel):
     """ # noqa: E501
     items: List[MemoryItem]
     var_async: Optional[StrictBool] = Field(default=False, description="If true, process asynchronously in background. If false, wait for completion (default: false)", alias="async")
-    __properties: ClassVar[List[str]] = ["items", "async"]
+    document_tags: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["items", "async", "document_tags"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -77,6 +78,11 @@ class RetainRequest(BaseModel):
                 if _item_items:
                     _items.append(_item_items.to_dict())
             _dict['items'] = _items
+        # set to None if document_tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.document_tags is None and "document_tags" in self.model_fields_set:
+            _dict['document_tags'] = None
+
         return _dict
 
     @classmethod
@@ -90,7 +96,8 @@ class RetainRequest(BaseModel):
 
         _obj = cls.model_validate({
             "items": [MemoryItem.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None,
-            "async": obj.get("async") if obj.get("async") is not None else False
+            "async": obj.get("async") if obj.get("async") is not None else False,
+            "document_tags": obj.get("document_tags")
         })
         return _obj
 

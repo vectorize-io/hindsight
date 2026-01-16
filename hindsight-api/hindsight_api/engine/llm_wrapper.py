@@ -209,10 +209,10 @@ class LLMProvider:
             OutputTooLongError: If output exceeds token limits.
             Exception: Re-raises API errors after retries exhausted.
         """
-        queue_start_time = time.time()
+        semaphore_start = time.time()
         async with _global_llm_semaphore:
+            semaphore_wait_time = time.time() - semaphore_start
             start_time = time.time()
-            semaphore_wait_time = start_time - queue_start_time
 
             # Handle Mock provider (for testing)
             if self.provider == "mock":
@@ -324,43 +324,44 @@ class LLMProvider:
 
             last_exception = None
 
+            # Prepare response format ONCE before the retry loop
+            # (to avoid appending schema to messages on every retry)
+            if response_format is not None:
+                schema = None
+                if hasattr(response_format, "model_json_schema"):
+                    schema = response_format.model_json_schema()
+
+                if strict_schema and schema is not None:
+                    # Use OpenAI's strict JSON schema enforcement
+                    # This guarantees all required fields are returned
+                    call_params["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "response",
+                            "strict": True,
+                            "schema": schema,
+                        },
+                    }
+                else:
+                    # Soft enforcement: add schema to prompt and use json_object mode
+                    if schema is not None:
+                        schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+
+                        if call_params["messages"] and call_params["messages"][0].get("role") == "system":
+                            call_params["messages"][0]["content"] += schema_msg
+                        elif call_params["messages"]:
+                            call_params["messages"][0]["content"] = (
+                                schema_msg + "\n\n" + call_params["messages"][0]["content"]
+                            )
+                    if self.provider not in ("lmstudio", "ollama"):
+                        # LM Studio and Ollama don't support json_object response format reliably
+                        # We rely on the schema in the system message instead
+                        call_params["response_format"] = {"type": "json_object"}
+
             for attempt in range(max_retries + 1):
                 try:
                     if response_format is not None:
-                        schema = None
-                        if hasattr(response_format, "model_json_schema"):
-                            schema = response_format.model_json_schema()
-
-                        if strict_schema and schema is not None:
-                            # Use OpenAI's strict JSON schema enforcement
-                            # This guarantees all required fields are returned
-                            call_params["response_format"] = {
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": "response",
-                                    "strict": True,
-                                    "schema": schema,
-                                },
-                            }
-                        else:
-                            # Soft enforcement: add schema to prompt and use json_object mode
-                            if schema is not None:
-                                schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
-
-                                if call_params["messages"] and call_params["messages"][0].get("role") == "system":
-                                    call_params["messages"][0]["content"] += schema_msg
-                                elif call_params["messages"]:
-                                    call_params["messages"][0]["content"] = (
-                                        schema_msg + "\n\n" + call_params["messages"][0]["content"]
-                                    )
-                            if self.provider not in ("lmstudio", "ollama"):
-                                # LM Studio and Ollama don't support json_object response format reliably
-                                # We rely on the schema in the system message instead
-                                call_params["response_format"] = {"type": "json_object"}
-
-                        logger.debug(f"Sending request to {self.provider}/{self.model} (timeout={self.timeout})")
                         response = await self._client.chat.completions.create(**call_params)
-                        logger.debug(f"Received response from {self.provider}/{self.model}")
 
                         content = response.choices[0].message.content
 
@@ -473,13 +474,11 @@ class LLMProvider:
 
                 except APIConnectionError as e:
                     last_exception = e
+                    status_code = getattr(e, "status_code", None) or getattr(
+                        getattr(e, "response", None), "status_code", None
+                    )
+                    logger.warning(f"APIConnectionError (HTTP {status_code}), attempt {attempt + 1}: {str(e)[:200]}")
                     if attempt < max_retries:
-                        status_code = getattr(e, "status_code", None) or getattr(
-                            getattr(e, "response", None), "status_code", None
-                        )
-                        logger.warning(
-                            f"Connection error, retrying... (attempt {attempt + 1}/{max_retries + 1}) - status_code={status_code}, message={e}"
-                        )
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
                         await asyncio.sleep(backoff)
                         continue
@@ -493,6 +492,45 @@ class LLMProvider:
                         logger.error(f"Auth error (HTTP {e.status_code}), not retrying: {str(e)}")
                         raise
 
+                    # Handle tool_use_failed error - model outputted in tool call format
+                    # Convert to expected JSON format and continue
+                    if e.status_code == 400 and response_format is not None:
+                        try:
+                            error_body = e.body if hasattr(e, "body") else {}
+                            if isinstance(error_body, dict):
+                                error_info: dict[str, Any] = error_body.get("error") or {}
+                                if error_info.get("code") == "tool_use_failed":
+                                    failed_gen = error_info.get("failed_generation", "")
+                                    if failed_gen:
+                                        # Parse the tool call format and convert to actions format
+                                        tool_call = json.loads(failed_gen)
+                                        tool_name = tool_call.get("name", "")
+                                        tool_args = tool_call.get("arguments", {})
+                                        # Convert to actions format: {"actions": [{"tool": "name", ...args}]}
+                                        converted = {"actions": [{"tool": tool_name, **tool_args}]}
+                                        if skip_validation:
+                                            result = converted
+                                        else:
+                                            result = response_format.model_validate(converted)
+
+                                        # Record metrics for this successful recovery
+                                        duration = time.time() - start_time
+                                        metrics = get_metrics_collector()
+                                        metrics.record_llm_call(
+                                            provider=self.provider,
+                                            model=self.model,
+                                            scope=scope,
+                                            duration=duration,
+                                            input_tokens=0,
+                                            output_tokens=0,
+                                            success=True,
+                                        )
+                                        if return_usage:
+                                            return result, TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
+                                        return result
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            pass  # Failed to parse tool_use_failed, continue with normal retry
+
                     last_exception = e
                     if attempt < max_retries:
                         backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -503,13 +541,415 @@ class LLMProvider:
                         logger.error(f"API error after {max_retries + 1} attempts: {str(e)}")
                         raise
 
-                except Exception as e:
-                    logger.error(f"Unexpected error during LLM call: {type(e).__name__}: {str(e)}")
+                except Exception:
                     raise
 
             if last_exception:
                 raise last_exception
             raise RuntimeError("LLM call failed after all retries with no exception captured")
+
+    async def call_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_completion_tokens: int | None = None,
+        temperature: float | None = None,
+        scope: str = "tools",
+        max_retries: int = 5,
+        initial_backoff: float = 1.0,
+        max_backoff: float = 30.0,
+        tool_choice: str | dict[str, Any] = "auto",
+    ) -> "LLMToolCallResult":
+        """
+        Make an LLM API call with tool/function calling support.
+
+        Args:
+            messages: List of message dicts. Can include tool results with role='tool'.
+            tools: List of tool definitions in OpenAI format.
+            max_completion_tokens: Maximum tokens in response.
+            temperature: Sampling temperature (0.0-2.0).
+            scope: Scope identifier for tracking.
+            max_retries: Maximum retry attempts.
+            initial_backoff: Initial backoff time in seconds.
+            max_backoff: Maximum backoff time in seconds.
+            tool_choice: How to choose tools - "auto", "none", "required", or {"type": "function", "function": {"name": "..."}}
+
+        Returns:
+            LLMToolCallResult with content and/or tool_calls.
+        """
+        from .response_models import LLMToolCall, LLMToolCallResult
+
+        async with _global_llm_semaphore:
+            start_time = time.time()
+
+            # Handle Mock provider
+            if self.provider == "mock":
+                return await self._call_with_tools_mock(messages, tools, scope)
+
+            # Handle Anthropic separately (uses different tool format)
+            if self.provider == "anthropic":
+                return await self._call_with_tools_anthropic(
+                    messages, tools, max_completion_tokens, max_retries, initial_backoff, max_backoff, start_time, scope
+                )
+
+            # Handle Gemini (convert to Gemini tool format)
+            if self.provider == "gemini":
+                return await self._call_with_tools_gemini(
+                    messages, tools, max_retries, initial_backoff, max_backoff, start_time, scope
+                )
+
+            # OpenAI-compatible providers (OpenAI, Groq, Ollama, LMStudio)
+            call_params: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
+
+            if max_completion_tokens is not None:
+                call_params["max_completion_tokens"] = max_completion_tokens
+            if temperature is not None:
+                call_params["temperature"] = temperature
+
+            # Provider-specific parameters
+            if self.provider == "groq":
+                call_params["seed"] = DEFAULT_LLM_SEED
+
+            last_exception = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    response = await self._client.chat.completions.create(**call_params)
+
+                    message = response.choices[0].message
+                    finish_reason = response.choices[0].finish_reason
+
+                    # Extract tool calls if present
+                    tool_calls: list[LLMToolCall] = []
+                    if message.tool_calls:
+                        for tc in message.tool_calls:
+                            try:
+                                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                            except json.JSONDecodeError:
+                                args = {"_raw": tc.function.arguments}
+                            tool_calls.append(LLMToolCall(id=tc.id, name=tc.function.name, arguments=args))
+
+                    content = message.content
+
+                    # Record metrics
+                    duration = time.time() - start_time
+                    usage = response.usage
+                    input_tokens = usage.prompt_tokens or 0 if usage else 0
+                    output_tokens = usage.completion_tokens or 0 if usage else 0
+
+                    metrics = get_metrics_collector()
+                    metrics.record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        duration=duration,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        success=True,
+                    )
+
+                    return LLMToolCallResult(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
+
+                except APIConnectionError as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                        continue
+                    raise
+
+                except APIStatusError as e:
+                    if e.status_code in (401, 403):
+                        raise
+                    last_exception = e
+                    if attempt < max_retries:
+                        await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                        continue
+                    raise
+
+                except Exception:
+                    raise
+
+            if last_exception:
+                raise last_exception
+            raise RuntimeError("Tool call failed after all retries")
+
+    async def _call_with_tools_mock(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        scope: str,
+    ) -> "LLMToolCallResult":
+        """Handle mock tool calls for testing."""
+        from .response_models import LLMToolCallResult
+
+        call_record = {
+            "provider": self.provider,
+            "model": self.model,
+            "messages": messages,
+            "tools": [t.get("function", {}).get("name") for t in tools],
+            "scope": scope,
+        }
+        self._mock_calls.append(call_record)
+
+        if self._mock_response is not None:
+            if isinstance(self._mock_response, LLMToolCallResult):
+                return self._mock_response
+            # Allow setting just tool calls as a list
+            if isinstance(self._mock_response, list):
+                from .response_models import LLMToolCall
+
+                return LLMToolCallResult(
+                    tool_calls=[
+                        LLMToolCall(id=f"mock_{i}", name=tc["name"], arguments=tc.get("arguments", {}))
+                        for i, tc in enumerate(self._mock_response)
+                    ],
+                    finish_reason="tool_calls",
+                )
+
+        return LLMToolCallResult(content="mock response", finish_reason="stop")
+
+    async def _call_with_tools_anthropic(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_completion_tokens: int | None,
+        max_retries: int,
+        initial_backoff: float,
+        max_backoff: float,
+        start_time: float,
+        scope: str,
+    ) -> "LLMToolCallResult":
+        """Handle Anthropic tool calling."""
+        from anthropic import APIConnectionError, APIStatusError
+
+        from .response_models import LLMToolCall, LLMToolCallResult
+
+        # Convert OpenAI tool format to Anthropic format
+        anthropic_tools = []
+        for tool in tools:
+            func = tool.get("function", {})
+            anthropic_tools.append(
+                {
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+                }
+            )
+
+        # Convert messages - handle tool results
+        system_prompt = None
+        anthropic_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_prompt = (system_prompt + "\n\n" + content) if system_prompt else content
+            elif role == "tool":
+                # Anthropic uses tool_result blocks
+                anthropic_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": msg.get("tool_call_id", ""), "content": content}
+                        ],
+                    }
+                )
+            elif role == "assistant" and msg.get("tool_calls"):
+                # Convert assistant tool calls
+                tool_use_blocks = []
+                for tc in msg["tool_calls"]:
+                    tool_use_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": tc.get("function", {}).get("name", ""),
+                            "input": json.loads(tc.get("function", {}).get("arguments", "{}")),
+                        }
+                    )
+                anthropic_messages.append({"role": "assistant", "content": tool_use_blocks})
+            else:
+                anthropic_messages.append({"role": role, "content": content})
+
+        call_params: dict[str, Any] = {
+            "model": self.model,
+            "messages": anthropic_messages,
+            "tools": anthropic_tools,
+            "max_tokens": max_completion_tokens or 4096,
+        }
+        if system_prompt:
+            call_params["system"] = system_prompt
+
+        last_exception = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._anthropic_client.messages.create(**call_params)
+
+                # Extract content and tool calls
+                content_parts = []
+                tool_calls: list[LLMToolCall] = []
+
+                for block in response.content:
+                    if block.type == "text":
+                        content_parts.append(block.text)
+                    elif block.type == "tool_use":
+                        tool_calls.append(LLMToolCall(id=block.id, name=block.name, arguments=block.input or {}))
+
+                content = "".join(content_parts) if content_parts else None
+                finish_reason = "tool_calls" if tool_calls else "stop"
+
+                # Record metrics
+                metrics = get_metrics_collector()
+                metrics.record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    duration=time.time() - start_time,
+                    input_tokens=response.usage.input_tokens or 0,
+                    output_tokens=response.usage.output_tokens or 0,
+                    success=True,
+                )
+
+                return LLMToolCallResult(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
+
+            except (APIConnectionError, APIStatusError) as e:
+                if isinstance(e, APIStatusError) and e.status_code in (401, 403):
+                    raise
+                last_exception = e
+                if attempt < max_retries:
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
+                raise
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Anthropic tool call failed")
+
+    async def _call_with_tools_gemini(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_retries: int,
+        initial_backoff: float,
+        max_backoff: float,
+        start_time: float,
+        scope: str,
+    ) -> "LLMToolCallResult":
+        """Handle Gemini tool calling."""
+        from .response_models import LLMToolCall, LLMToolCallResult
+
+        # Convert tools to Gemini format
+        gemini_tools = []
+        for tool in tools:
+            func = tool.get("function", {})
+            gemini_tools.append(
+                genai_types.Tool(
+                    function_declarations=[
+                        genai_types.FunctionDeclaration(
+                            name=func.get("name", ""),
+                            description=func.get("description", ""),
+                            parameters=func.get("parameters"),
+                        )
+                    ]
+                )
+            )
+
+        # Convert messages
+        system_instruction = None
+        gemini_contents = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_instruction = (system_instruction + "\n\n" + content) if system_instruction else content
+            elif role == "tool":
+                # Gemini uses function_response
+                gemini_contents.append(
+                    genai_types.Content(
+                        role="user",
+                        parts=[
+                            genai_types.Part(
+                                function_response=genai_types.FunctionResponse(
+                                    name=msg.get("name", ""),
+                                    response={"result": content},
+                                )
+                            )
+                        ],
+                    )
+                )
+            elif role == "assistant":
+                gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
+            else:
+                gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
+
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            tools=gemini_tools,
+        )
+
+        last_exception = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._gemini_client.aio.models.generate_content(
+                    model=self.model,
+                    contents=gemini_contents,
+                    config=config,
+                )
+
+                # Extract content and tool calls
+                content = None
+                tool_calls: list[LLMToolCall] = []
+
+                if response.candidates and response.candidates[0].content:
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, "text") and part.text:
+                            content = part.text
+                        if hasattr(part, "function_call") and part.function_call:
+                            fc = part.function_call
+                            tool_calls.append(
+                                LLMToolCall(
+                                    id=f"gemini_{len(tool_calls)}",
+                                    name=fc.name,
+                                    arguments=dict(fc.args) if fc.args else {},
+                                )
+                            )
+
+                finish_reason = "tool_calls" if tool_calls else "stop"
+
+                # Record metrics
+                metrics = get_metrics_collector()
+                input_tokens = response.usage_metadata.prompt_token_count if response.usage_metadata else 0
+                output_tokens = response.usage_metadata.candidates_token_count if response.usage_metadata else 0
+                metrics.record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    duration=time.time() - start_time,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    success=True,
+                )
+
+                return LLMToolCallResult(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
+
+            except genai_errors.APIError as e:
+                if e.code in (401, 403):
+                    raise
+                last_exception = e
+                if attempt < max_retries:
+                    await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
+                    continue
+                raise
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Gemini tool call failed")
 
     async def _call_anthropic(
         self,

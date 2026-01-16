@@ -50,10 +50,12 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | required | Question or prompt |
-| `budget` | string | "low" | Budget level: "low", "mid", "high" |
+| `budget` | string | "low" | Budget level: `low`, `mid`, `high` |
 | `context` | string | None | Additional context for the query |
 | `max_tokens` | int | 4096 | Maximum tokens for the response |
 | `response_schema` | object | None | JSON Schema for [structured output](#structured-output) |
+| `tags` | list | None | Filter memories by tags during reflection |
+| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
 
 ### Response Fields
 
@@ -247,3 +249,24 @@ hindsight memory reflect hiring-team \
 - Use `model_validate()` to parse the response back into your Pydantic model
 - Keep schemas focused — extract only what you need
 - Use `Optional` fields for data that may not always be available
+
+## Filter by Tags
+
+Like [recall](./recall#filter-by-tags), reflect supports tag filtering to scope which memories are considered during reasoning. This is essential for multi-user scenarios where reflection should only consider memories relevant to a specific user.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-with-tags" language="python" />
+</TabItem>
+</Tabs>
+
+The `tags_match` parameter works the same as in recall:
+
+| Mode | Behavior |
+|------|----------|
+| `any` | OR matching, includes untagged memories |
+| `all` | AND matching, includes untagged memories |
+| `any_strict` | OR matching, excludes untagged memories |
+| `all_strict` | AND matching, excludes untagged memories |
+
+See [Retain API](./retain#tagging-memories) for how to tag memories and [Recall API](./recall#filter-by-tags) for more details on tag matching modes.

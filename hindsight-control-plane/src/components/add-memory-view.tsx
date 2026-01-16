@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tag } from "lucide-react";
 
 export function AddMemoryView() {
   const { currentBank } = useBank();
@@ -14,6 +15,7 @@ export function AddMemoryView() {
   const [context, setContext] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [documentId, setDocumentId] = useState("");
+  const [tags, setTags] = useState("");
   const [async, setAsync] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -23,6 +25,7 @@ export function AddMemoryView() {
     setContext("");
     setEventDate("");
     setDocumentId("");
+    setTags("");
     setAsync(false);
     setResult(null);
   };
@@ -37,16 +40,24 @@ export function AddMemoryView() {
     setResult(null);
 
     try {
+      // Parse tags from comma-separated string
+      const parsedTags = tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
       const item: any = { content };
       if (context) item.context = context;
       // datetime-local gives "2024-01-15T10:30", add seconds for proper ISO format
       if (eventDate) item.timestamp = eventDate + ":00";
+      if (parsedTags.length > 0) item.tags = parsedTags;
 
       const data: any = await client.retain({
         bank_id: currentBank,
         items: [item],
         document_id: documentId,
         async,
+        ...(parsedTags.length > 0 && { document_tags: parsedTags }),
       });
 
       setResult(data.message as string);
@@ -109,6 +120,22 @@ export function AddMemoryView() {
             <small className="text-muted-foreground text-xs mt-1 block">
               Note: If a document with this ID already exists, it will be automatically replaced
               with the new content.
+            </small>
+          </div>
+
+          <div className="mb-4">
+            <label className="font-bold block mb-1 text-card-foreground flex items-center gap-2">
+              <Tag className="h-4 w-4" />
+              Tags
+            </label>
+            <Input
+              type="text"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="user_alice, session_123, project_x"
+            />
+            <small className="text-muted-foreground text-xs mt-1 block">
+              Comma-separated tags for filtering during recall/reflect. Tags cannot contain commas.
             </small>
           </div>
 

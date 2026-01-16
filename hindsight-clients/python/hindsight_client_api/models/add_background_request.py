@@ -24,10 +24,10 @@ from typing_extensions import Self
 
 class AddBackgroundRequest(BaseModel):
     """
-    Request model for adding/merging background information.
+    Request model for adding/merging background information. Deprecated: use SetMissionRequest instead.
     """ # noqa: E501
     content: StrictStr = Field(description="New background information to add or merge")
-    update_disposition: Optional[StrictBool] = Field(default=True, description="If true, infer disposition traits from the merged background (default: true)")
+    update_disposition: Optional[StrictBool] = Field(default=True, description="Deprecated - disposition is no longer auto-inferred from mission")
     __properties: ClassVar[List[str]] = ["content", "update_disposition"]
 
     model_config = ConfigDict(

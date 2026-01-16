@@ -22,6 +22,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script.revision import ResolutionError
 from sqlalchemy import create_engine, text
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,18 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
         alembic_cfg.set_main_option("target_schema", schema)
 
     # Run migrations
-    command.upgrade(alembic_cfg, "head")
+    try:
+        command.upgrade(alembic_cfg, "head")
+    except ResolutionError as e:
+        # This happens during rolling deployments when a newer version of the code
+        # has already run migrations, and this older replica doesn't have the new
+        # migration files. The database is already at a newer revision than we know.
+        # This is safe to ignore - the newer code has already applied its migrations.
+        logger.warning(
+            f"Database is at a newer migration revision than this code version knows about. "
+            f"This is expected during rolling deployments. Skipping migrations. Error: {e}"
+        )
+        return
 
     logger.info(f"Database migrations completed successfully for schema '{schema_name}'")
 

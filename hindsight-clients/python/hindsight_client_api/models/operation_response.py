@@ -29,7 +29,7 @@ class OperationResponse(BaseModel):
     id: StrictStr
     task_type: StrictStr
     items_count: StrictInt
-    document_id: Optional[StrictStr]
+    document_id: Optional[StrictStr] = None
     created_at: StrictStr
     status: StrictStr
     error_message: Optional[StrictStr]

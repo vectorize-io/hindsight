@@ -67,6 +67,39 @@ print(result.var_async)  # True
 # [/docs:retain-async]
 
 
+# [docs:retain-with-tags]
+# Tag individual items for visibility scoping
+client.retain_batch(
+    bank_id="my-bank",
+    items=[
+        {
+            "content": "User Alice said she loves the new dashboard",
+            "tags": ["user:alice", "feedback"]
+        },
+        {
+            "content": "User Bob reported a bug in the search feature",
+            "tags": ["user:bob", "bug-report"]
+        }
+    ],
+    document_id="user_feedback_001"
+)
+# [/docs:retain-with-tags]
+
+
+# [docs:retain-with-document-tags]
+# Apply tags to all items in a batch
+client.retain_batch(
+    bank_id="my-bank",
+    items=[
+        {"content": "Alice mentioned she prefers dark mode"},
+        {"content": "Bob asked about keyboard shortcuts"}
+    ],
+    document_id="support_session_123",
+    document_tags=["session:123", "support"]  # Applied to all items
+)
+# [/docs:retain-with-document-tags]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

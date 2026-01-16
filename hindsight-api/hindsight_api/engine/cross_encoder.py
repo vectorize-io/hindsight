@@ -15,18 +15,24 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from ..config import (
+    DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
+    DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_PROVIDER,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     ENV_COHERE_API_KEY,
+    ENV_LITELLM_API_BASE,
+    ENV_LITELLM_API_KEY,
+    ENV_RERANKER_COHERE_BASE_URL,
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
+    ENV_RERANKER_LITELLM_MODEL,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
     ENV_RERANKER_PROVIDER,
@@ -392,6 +398,7 @@ class CohereCrossEncoder(CrossEncoderModel):
         self,
         api_key: str,
         model: str = DEFAULT_RERANKER_COHERE_MODEL,
+        base_url: str | None = None,
         timeout: float = 60.0,
     ):
         """
@@ -400,10 +407,12 @@ class CohereCrossEncoder(CrossEncoderModel):
         Args:
             api_key: Cohere API key
             model: Cohere rerank model name (default: rerank-english-v3.0)
+            base_url: Custom base URL for Cohere-compatible API (e.g., Azure-hosted endpoint)
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url
         self.timeout = timeout
         self._client = None
 
@@ -421,8 +430,14 @@ class CohereCrossEncoder(CrossEncoderModel):
         except ImportError:
             raise ImportError("cohere is required for CohereCrossEncoder. Install it with: pip install cohere")
 
-        logger.info(f"Reranker: initializing Cohere provider with model {self.model}")
-        self._client = cohere.Client(api_key=self.api_key, timeout=self.timeout)
+        base_url_msg = f" at {self.base_url}" if self.base_url else ""
+        logger.info(f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg}")
+
+        # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
+        client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        self._client = cohere.Client(**client_kwargs)
         logger.info("Reranker: Cohere provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
@@ -641,6 +656,116 @@ class FlashRankCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(FlashRankCrossEncoder._executor, self._predict_sync, pairs)
 
 
+class LiteLLMCrossEncoder(CrossEncoderModel):
+    """
+    LiteLLM cross-encoder implementation using LiteLLM proxy's /rerank endpoint.
+
+    LiteLLM provides a unified interface for multiple reranking providers via
+    the Cohere-compatible /rerank endpoint.
+    See: https://docs.litellm.ai/docs/rerank
+
+    Supported providers via LiteLLM:
+    - Cohere (rerank-english-v3.0, etc.) - prefix with cohere/
+    - Together AI - prefix with together_ai/
+    - Azure AI - prefix with azure_ai/
+    - Jina AI - prefix with jina_ai/
+    - AWS Bedrock - prefix with bedrock/
+    - Voyage AI - prefix with voyage/
+    """
+
+    def __init__(
+        self,
+        api_base: str = DEFAULT_LITELLM_API_BASE,
+        api_key: str | None = None,
+        model: str = DEFAULT_RERANKER_LITELLM_MODEL,
+        timeout: float = 60.0,
+    ):
+        """
+        Initialize LiteLLM cross-encoder client.
+
+        Args:
+            api_base: Base URL of the LiteLLM proxy (default: http://localhost:4000)
+            api_key: API key for the LiteLLM proxy (optional, depends on proxy config)
+            model: Reranking model name (default: cohere/rerank-english-v3.0)
+                   Use provider prefix (e.g., cohere/, together_ai/, voyage/)
+            timeout: Request timeout in seconds (default: 60.0)
+        """
+        self.api_base = api_base.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self._async_client: httpx.AsyncClient | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "litellm"
+
+    async def initialize(self) -> None:
+        """Initialize the async HTTP client."""
+        if self._async_client is not None:
+            return
+
+        logger.info(f"Reranker: initializing LiteLLM provider at {self.api_base} with model {self.model}")
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        self._async_client = httpx.AsyncClient(timeout=self.timeout, headers=headers)
+        logger.info("Reranker: LiteLLM provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Score query-document pairs using the LiteLLM proxy's /rerank endpoint.
+
+        Args:
+            pairs: List of (query, document) tuples to score
+
+        Returns:
+            List of relevance scores
+        """
+        if self._async_client is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        if not pairs:
+            return []
+
+        # Group pairs by query (LiteLLM rerank expects one query with multiple documents)
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            texts = [text for _, text in indexed_texts]
+            indices = [idx for idx, _ in indexed_texts]
+
+            # LiteLLM /rerank follows Cohere API format
+            response = await self._async_client.post(
+                f"{self.api_base}/rerank",
+                json={
+                    "model": self.model,
+                    "query": query,
+                    "documents": texts,
+                    "top_n": len(texts),  # Return all scores
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Map scores back to original positions
+            # Response format: {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
+            for item in result.get("results", []):
+                original_idx = item["index"]
+                score = item.get("relevance_score", item.get("score", 0.0))
+                all_scores[indices[original_idx]] = score
+
+        return all_scores
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on environment variables.
@@ -671,14 +796,20 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         if not api_key:
             raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
         model = os.environ.get(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL)
-        return CohereCrossEncoder(api_key=api_key, model=model)
+        base_url = os.environ.get(ENV_RERANKER_COHERE_BASE_URL) or None
+        return CohereCrossEncoder(api_key=api_key, model=model, base_url=base_url)
     elif provider == "flashrank":
         model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
         cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)
         return FlashRankCrossEncoder(model_name=model, cache_dir=cache_dir)
+    elif provider == "litellm":
+        api_base = os.environ.get(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE)
+        api_key = os.environ.get(ENV_LITELLM_API_KEY)
+        model = os.environ.get(ENV_RERANKER_LITELLM_MODEL, DEFAULT_RERANKER_LITELLM_MODEL)
+        return LiteLLMCrossEncoder(api_base=api_base, api_key=api_key, model=model)
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'rrf'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'litellm', 'rrf'"
         )

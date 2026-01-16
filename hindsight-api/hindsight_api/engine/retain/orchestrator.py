@@ -9,7 +9,6 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-from ...config import get_config
 from ..db_utils import acquire_with_retry
 from . import bank_utils
 
@@ -28,9 +27,8 @@ from . import (
     fact_extraction,
     fact_storage,
     link_creation,
-    observation_regeneration,
 )
-from .types import ExtractedFact, ProcessedFact, RetainContent, RetainContentDict
+from .types import EntityLink, ExtractedFact, ProcessedFact, RetainContent, RetainContentDict
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +38,6 @@ async def retain_batch(
     embeddings_model,
     llm_config,
     entity_resolver,
-    task_backend,
     format_date_fn,
     duplicate_checker_fn,
     bank_id: str,
@@ -49,6 +46,7 @@ async def retain_batch(
     is_first_batch: bool = True,
     fact_type_override: str | None = None,
     confidence_score: float | None = None,
+    document_tags: list[str] | None = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a batch of content through the retain pipeline.
@@ -58,7 +56,6 @@ async def retain_batch(
         embeddings_model: Embeddings model for generating embeddings
         llm_config: LLM configuration for fact extraction
         entity_resolver: Entity resolver for entity processing
-        task_backend: Task backend for background jobs
         format_date_fn: Function to format datetime to readable string
         duplicate_checker_fn: Function to check for duplicate facts
         bank_id: Bank identifier
@@ -67,6 +64,7 @@ async def retain_batch(
         is_first_batch: Whether this is the first batch
         fact_type_override: Override fact type for all facts
         confidence_score: Confidence score for opinions
+        document_tags: Tags applied to all items in this batch
 
     Returns:
         Tuple of (unit ID lists, token usage for fact extraction)
@@ -88,12 +86,16 @@ async def retain_batch(
     # Convert dicts to RetainContent objects
     contents = []
     for item in contents_dicts:
+        # Merge item-level tags with document-level tags
+        item_tags = item.get("tags", []) or []
+        merged_tags = list(set(item_tags + (document_tags or [])))
         content = RetainContent(
             content=item["content"],
             context=item.get("context", ""),
             event_date=item.get("event_date") or utcnow(),
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
+            tags=merged_tags,
         )
         contents.append(content)
 
@@ -131,7 +133,7 @@ async def retain_batch(
                         if first_item.get("metadata"):
                             retain_params["metadata"] = first_item["metadata"]
                     await fact_storage.handle_document_tracking(
-                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params
+                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
                     )
                 else:
                     # Check for per-item document_ids
@@ -159,7 +161,7 @@ async def retain_batch(
                             if first_item.get("metadata"):
                                 retain_params["metadata"] = first_item["metadata"]
                         await fact_storage.handle_document_tracking(
-                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params
+                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params, document_tags
                         )
 
         total_time = time.time() - start_time
@@ -225,7 +227,7 @@ async def retain_batch(
                         retain_params["metadata"] = first_item["metadata"]
 
                 await fact_storage.handle_document_tracking(
-                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params
+                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
                 )
                 document_ids_added.append(document_id)
                 doc_id_mapping[None] = document_id  # For backwards compatibility
@@ -269,7 +271,13 @@ async def retain_batch(
                                     retain_params["metadata"] = first_item["metadata"]
 
                             await fact_storage.handle_document_tracking(
-                                conn, bank_id, actual_doc_id, combined_content, is_first_batch, retain_params
+                                conn,
+                                bank_id,
+                                actual_doc_id,
+                                combined_content,
+                                is_first_batch,
+                                retain_params,
+                                document_tags,
                             )
                             document_ids_added.append(actual_doc_id)
 
@@ -396,26 +404,8 @@ async def retain_batch(
             causal_link_count = await link_creation.create_causal_links_batch(conn, unit_ids, non_duplicate_facts)
             log_buffer.append(f"[10] Causal links: {causal_link_count} links in {time.time() - step_start:.3f}s")
 
-            # Regenerate observations - sync (in transaction) or async (background task)
-            config = get_config()
-            if config.retain_observations_async:
-                # Queue for async processing after transaction commits
-                entity_ids_for_async = list(set(link.entity_id for link in entity_links)) if entity_links else []
-                log_buffer.append(
-                    f"[11] Observations: queued {len(entity_ids_for_async)} entities for async processing"
-                )
-            else:
-                # Run synchronously inside transaction for atomicity
-                await observation_regeneration.regenerate_observations_batch(
-                    conn, embeddings_model, llm_config, bank_id, entity_links, log_buffer
-                )
-                entity_ids_for_async = []
-
             # Map results back to original content items
             result_unit_ids = _map_results_to_contents(contents, extracted_facts, is_duplicate_flags, unit_ids)
-
-        # Trigger background tasks AFTER transaction commits
-        await _trigger_background_tasks(task_backend, bank_id, unit_ids, non_duplicate_facts, entity_ids_for_async)
 
         # Log final summary
         total_time = time.time() - start_time
@@ -458,35 +448,3 @@ def _map_results_to_contents(
         result_unit_ids.append(content_unit_ids)
 
     return result_unit_ids
-
-
-async def _trigger_background_tasks(
-    task_backend,
-    bank_id: str,
-    unit_ids: list[str],
-    facts: list[ProcessedFact],
-    entity_ids_for_observations: list[str] | None = None,
-) -> None:
-    """Trigger background tasks after transaction commits."""
-    # Trigger opinion reinforcement if there are entities
-    fact_entities = [[e.name for e in fact.entities] for fact in facts]
-    if any(fact_entities):
-        await task_backend.submit_task(
-            {
-                "type": "reinforce_opinion",
-                "bank_id": bank_id,
-                "created_unit_ids": unit_ids,
-                "unit_texts": [fact.fact_text for fact in facts],
-                "unit_entities": fact_entities,
-            }
-        )
-
-    # Trigger observation regeneration if async mode is enabled
-    if entity_ids_for_observations:
-        await task_backend.submit_task(
-            {
-                "type": "regenerate_observations",
-                "bank_id": bank_id,
-                "entity_ids": entity_ids_for_observations,
-            }
-        )

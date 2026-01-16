@@ -29,8 +29,9 @@ class CreateBankRequest(BaseModel):
     """ # noqa: E501
     name: Optional[StrictStr] = None
     disposition: Optional[DispositionTraits] = None
+    mission: Optional[StrictStr] = None
     background: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "disposition", "background"]
+    __properties: ClassVar[List[str]] = ["name", "disposition", "mission", "background"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -84,6 +85,11 @@ class CreateBankRequest(BaseModel):
         if self.disposition is None and "disposition" in self.model_fields_set:
             _dict['disposition'] = None
 
+        # set to None if mission (nullable) is None
+        # and model_fields_set contains the field
+        if self.mission is None and "mission" in self.model_fields_set:
+            _dict['mission'] = None
+
         # set to None if background (nullable) is None
         # and model_fields_set contains the field
         if self.background is None and "background" in self.model_fields_set:
@@ -103,6 +109,7 @@ class CreateBankRequest(BaseModel):
         _obj = cls.model_validate({
             "name": obj.get("name"),
             "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
+            "mission": obj.get("mission"),
             "background": obj.get("background")
         })
         return _obj

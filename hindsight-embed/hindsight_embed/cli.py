@@ -353,8 +353,8 @@ def _do_configure_interactive():
     print(f"  \033[2mConfig:\033[0m {CONFIG_FILE}")
     print()
     print("  \033[2mTest with:\033[0m")
-    print('    \033[36mhindsight-embed retain "Test memory"\033[0m')
-    print('    \033[36mhindsight-embed recall "test"\033[0m')
+    print('    \033[36mhindsight-embed retain "Alice works at Google as a software engineer"\033[0m')
+    print('    \033[36mhindsight-embed recall "Alice"\033[0m')
     print()
 
     return 0

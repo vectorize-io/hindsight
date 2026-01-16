@@ -1,5 +1,5 @@
 """
-Tests for agent management API (profile, disposition, background).
+Tests for agent management API (profile, disposition).
 """
 import pytest
 import uuid
@@ -25,14 +25,11 @@ class TestAgentProfile:
 
         assert profile is not None
         assert "disposition" in profile
-        assert "background" in profile
 
         disposition = profile["disposition"]
         assert disposition.skepticism == 3
         assert disposition.literalism == 3
         assert disposition.empathy == 3
-
-        assert profile["background"] == ""
 
     @pytest.mark.asyncio
     async def test_update_agent_disposition(self, memory: MemoryEngine, request_context):
@@ -76,61 +73,8 @@ class TestAgentProfile:
         for agent in agents:
             assert "bank_id" in agent
             assert "disposition" in agent
-            assert "background" in agent
             assert "created_at" in agent
             assert "updated_at" in agent
-
-
-class TestAgentBackground:
-    """Tests for agent background management."""
-
-    @pytest.mark.asyncio
-    async def test_merge_agent_background(self, memory: MemoryEngine, request_context):
-        """Test merging agent background information."""
-        bank_id = unique_agent_id("test_profile_merge")
-
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
-        assert profile["background"] == ""
-
-        result1 = await memory.merge_bank_background(
-            bank_id,
-            "I was born in Texas",
-            update_disposition=False,
-            request_context=request_context,
-        )
-        assert "Texas" in result1["background"]
-
-        result2 = await memory.merge_bank_background(
-            bank_id,
-            "I have 10 years of startup experience",
-            update_disposition=False,
-            request_context=request_context,
-        )
-        assert "Texas" in result2["background"] or "startup" in result2["background"]
-
-        final_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
-        assert final_profile["background"] != ""
-
-    @pytest.mark.asyncio
-    async def test_merge_background_handles_conflicts(self, memory: MemoryEngine, request_context):
-        """Test that merging background handles conflicts (new overwrites old)."""
-        bank_id = unique_agent_id("test_profile_conflict")
-
-        result1 = await memory.merge_bank_background(
-            bank_id,
-            "I was born in Colorado",
-            update_disposition=False,
-            request_context=request_context,
-        )
-        assert "Colorado" in result1["background"]
-
-        result2 = await memory.merge_bank_background(
-            bank_id,
-            "You were born in Texas",
-            update_disposition=False,
-            request_context=request_context,
-        )
-        assert "Texas" in result2["background"]
 
 
 class TestAgentEndpoint:
@@ -147,7 +91,6 @@ class TestAgentEndpoint:
                 literalism=5,
                 empathy=2
             ),
-            background="I am a creative software engineer"
         )
 
         profile = await memory.get_bank_profile(bank_id, request_context=request_context)
@@ -159,55 +102,10 @@ class TestAgentEndpoint:
                 request_context=request_context,
             )
 
-        if request.background is not None:
-            pool = await memory._get_pool()
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE banks
-                    SET background = $2,
-                        updated_at = NOW()
-                    WHERE bank_id = $1
-                    """,
-                    bank_id,
-                    request.background
-                )
-
         final_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
         assert final_profile["disposition"].skepticism == 4
         assert final_profile["disposition"].literalism == 5
-        assert final_profile["background"] == "I am a creative software engineer"
-
-    @pytest.mark.asyncio
-    async def test_put_agent_partial_update(self, memory: MemoryEngine, request_context):
-        """Test updating only background."""
-        bank_id = unique_agent_id("test_put_partial")
-
-        request = CreateBankRequest(
-            background="I am a data scientist"
-        )
-
-        profile = await memory.get_bank_profile(bank_id, request_context=request_context)
-
-        if request.background is not None:
-            pool = await memory._get_pool()
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE banks
-                    SET background = $2,
-                        updated_at = NOW()
-                    WHERE bank_id = $1
-                    """,
-                    bank_id,
-                    request.background
-                )
-
-        final_profile = await memory.get_bank_profile(bank_id, request_context=request_context)
-
-        assert final_profile["disposition"].skepticism == 3  # Default
-        assert final_profile["background"] == "I am a data scientist"
 
 
 class TestAgentDispositionIntegration:
@@ -224,13 +122,6 @@ class TestAgentDispositionIntegration:
             "empathy": 2,     # Low empathy
         }
         await memory.update_bank_disposition(bank_id, disposition, request_context=request_context)
-
-        await memory.merge_bank_background(
-            bank_id,
-            "I am a creative artist who values innovation over tradition",
-            update_disposition=False,
-            request_context=request_context,
-        )
 
         await memory.retain_batch_async(
             bank_id=bank_id,

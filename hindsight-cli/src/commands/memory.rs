@@ -9,7 +9,7 @@ use crate::output::{self, OutputFormat};
 use crate::ui;
 
 // Import types from generated client
-use hindsight_client::types::{Budget, ChunkIncludeOptions, IncludeOptions};
+use hindsight_client::types::{Budget, ChunkIncludeOptions, IncludeOptions, TagsMatch};
 use serde_json;
 
 // Helper function to parse budget string to Budget enum
@@ -19,6 +19,17 @@ fn parse_budget(budget: &str) -> Budget {
         "high" => Budget::High,
         _ => Budget::Mid, // Default to mid
     }
+}
+
+// Helper function to check if a file has a text-based extension
+fn is_text_file(path: &std::path::Path) -> bool {
+    const TEXT_EXTENSIONS: &[&str] = &[
+        "txt", "md", "json", "yaml", "yml", "toml", "xml", "csv", "log", "rst", "adoc",
+    ];
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
 }
 
 pub fn recall(
@@ -60,6 +71,8 @@ pub fn recall(
         trace,
         query_timestamp: None,
         include,
+        tags: None,
+        tags_match: TagsMatch::Any,
     };
 
     let response = client.recall(agent_id, &request, verbose);
@@ -116,6 +129,8 @@ pub fn reflect(
         max_tokens: max_tokens.unwrap_or(4096),
         include: None,
         response_schema,
+        tags: None,
+        tags_match: TagsMatch::Any,
     };
 
     let response = client.reflect(agent_id, &request, verbose);
@@ -162,11 +177,13 @@ pub fn retain(
         timestamp: None,
         document_id: Some(doc_id.clone()),
         entities: None,
+        tags: None,
     };
 
     let request = RetainRequest {
         items: vec![item],
         async_: r#async,
+        document_tags: None,
     };
 
     let response = client.retain(agent_id, &request, r#async, verbose);
@@ -223,29 +240,23 @@ pub fn retain_files(
                 .filter(|e| e.file_type().is_file())
             {
                 let path = entry.path();
-                if let Some(ext) = path.extension() {
-                    if ext == "txt" || ext == "md" {
-                        files.push(path.to_path_buf());
-                    }
+                if is_text_file(&path) {
+                    files.push(path.to_path_buf());
                 }
             }
         } else {
             for entry in fs::read_dir(&path)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == "txt" || ext == "md" {
-                            files.push(path);
-                        }
-                    }
+                if path.is_file() && is_text_file(&path) {
+                    files.push(path);
                 }
             }
         }
     }
 
     if files.is_empty() {
-        ui::print_warning("No .txt or .md files found");
+        ui::print_warning("No text files found (supported: txt, md, json, yaml, yml, toml, xml, csv, log, rst, adoc)");
         return Ok(());
     }
 
@@ -272,6 +283,7 @@ pub fn retain_files(
             timestamp: None,
             document_id: Some(doc_id),
             entities: None,
+            tags: None,
         });
 
         pb.inc(1);
@@ -279,18 +291,20 @@ pub fn retain_files(
 
     pb.finish_with_message("Files processed");
 
+    // Always use async mode for the API call
+    let request = RetainRequest {
+        items,
+        async_: true,
+        document_tags: None,
+    };
+
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Retaining memories..."))
+        Some(ui::create_spinner("Submitting retain request..."))
     } else {
         None
     };
 
-    let request = RetainRequest {
-        items,
-        async_: r#async,
-    };
-
-    let response = client.retain(agent_id, &request, r#async, verbose);
+    let response = client.retain(agent_id, &request, true, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -298,16 +312,55 @@ pub fn retain_files(
 
     match response {
         Ok(result) => {
-            if output_format == OutputFormat::Pretty {
-                ui::print_success("Files retained successfully");
-                if result.is_async {
-                    println!("  Status: queued for background processing");
+            if r#async {
+                // User requested async mode - return immediately
+                if output_format == OutputFormat::Pretty {
+                    ui::print_success("Files queued for processing");
                     println!("  Items: {}", result.items_count);
+                    if let Some(op_id) = &result.operation_id {
+                        println!("  Operation ID: {}", op_id);
+                    }
                 } else {
-                    println!("  Total units created: {}", result.items_count);
+                    output::print_output(&result, output_format)?;
                 }
             } else {
-                output::print_output(&result, output_format)?;
+                // Poll until completion
+                if let Some(operation_id) = &result.operation_id {
+                    let poll_spinner = if output_format == OutputFormat::Pretty {
+                        Some(ui::create_spinner("Processing memories..."))
+                    } else {
+                        None
+                    };
+
+                    let (success, error_msg) = client.poll_operation(agent_id, operation_id, verbose)?;
+
+                    if let Some(mut sp) = poll_spinner {
+                        sp.finish();
+                    }
+
+                    if success {
+                        if output_format == OutputFormat::Pretty {
+                            ui::print_success("Files retained successfully");
+                            println!("  Items processed: {}", result.items_count);
+                        } else {
+                            output::print_output(&result, output_format)?;
+                        }
+                    } else {
+                        let msg = error_msg.unwrap_or_else(|| "Unknown error".to_string());
+                        if output_format == OutputFormat::Pretty {
+                            ui::print_error(&format!("Retain operation failed: {}", msg));
+                        }
+                        anyhow::bail!("Retain operation failed: {}", msg);
+                    }
+                } else {
+                    // No operation ID returned, shouldn't happen with async=true
+                    if output_format == OutputFormat::Pretty {
+                        ui::print_success("Files retained successfully");
+                        println!("  Items processed: {}", result.items_count);
+                    } else {
+                        output::print_output(&result, output_format)?;
+                    }
+                }
             }
             Ok(())
         }
@@ -418,5 +471,86 @@ pub fn clear(
             Ok(())
         }
         Err(e) => Err(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_is_text_file_supported_extensions() {
+        let supported = [
+            "file.txt", "file.md", "file.json", "file.yaml", "file.yml",
+            "file.toml", "file.xml", "file.csv", "file.log", "file.rst", "file.adoc",
+        ];
+        for filename in supported {
+            assert!(
+                is_text_file(Path::new(filename)),
+                "{} should be recognized as a text file",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_text_file_case_insensitive() {
+        assert!(is_text_file(Path::new("file.JSON")));
+        assert!(is_text_file(Path::new("file.TXT")));
+        assert!(is_text_file(Path::new("file.Md")));
+        assert!(is_text_file(Path::new("file.YAML")));
+    }
+
+    #[test]
+    fn test_is_text_file_unsupported_extensions() {
+        let unsupported = [
+            "file.pdf", "file.doc", "file.docx", "file.png", "file.jpg",
+            "file.exe", "file.bin", "file.zip", "file.tar", "file.gz",
+        ];
+        for filename in unsupported {
+            assert!(
+                !is_text_file(Path::new(filename)),
+                "{} should NOT be recognized as a text file",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_text_file_no_extension() {
+        assert!(!is_text_file(Path::new("README")));
+        assert!(!is_text_file(Path::new("Makefile")));
+        assert!(!is_text_file(Path::new(".gitignore")));
+    }
+
+    #[test]
+    fn test_is_text_file_with_path() {
+        assert!(is_text_file(Path::new("/some/path/to/file.json")));
+        assert!(is_text_file(Path::new("../relative/path/file.md")));
+        assert!(!is_text_file(Path::new("/path/to/image.png")));
+    }
+
+    #[test]
+    fn test_parse_budget_valid_values() {
+        assert!(matches!(parse_budget("low"), Budget::Low));
+        assert!(matches!(parse_budget("mid"), Budget::Mid));
+        assert!(matches!(parse_budget("high"), Budget::High));
+    }
+
+    #[test]
+    fn test_parse_budget_case_insensitive() {
+        assert!(matches!(parse_budget("LOW"), Budget::Low));
+        assert!(matches!(parse_budget("MID"), Budget::Mid));
+        assert!(matches!(parse_budget("HIGH"), Budget::High));
+        assert!(matches!(parse_budget("Low"), Budget::Low));
+        assert!(matches!(parse_budget("High"), Budget::High));
+    }
+
+    #[test]
+    fn test_parse_budget_defaults_to_mid() {
+        assert!(matches!(parse_budget("invalid"), Budget::Mid));
+        assert!(matches!(parse_budget(""), Budget::Mid));
+        assert!(matches!(parse_budget("unknown"), Budget::Mid));
     }
 }

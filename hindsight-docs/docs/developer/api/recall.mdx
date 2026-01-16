@@ -43,11 +43,13 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 |-----------|------|---------|-------------|
 | `query` | string | required | Natural language query |
 | `types` | list | all | Filter: `world`, `experience`, `opinion` |
-| `budget` | string | "mid" | Budget level: "low", "mid", "high" |
+| `budget` | string | "mid" | Budget level: `low`, `mid`, `high` |
 | `max_tokens` | int | 4096 | Token budget for results |
 | `trace` | bool | false | Enable trace output for debugging |
 | `include_entities` | bool | false | Include entity observations |
 | `max_entity_tokens` | int | 500 | Token budget for entity observations |
+| `tags` | list | None | Filter memories by tags (see [Tag Filtering](#filter-by-tags)) |
+| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -127,3 +129,51 @@ The `budget` parameter controls graph traversal depth:
 <CodeSnippet code={recallMjs} section="recall-budget-levels" language="javascript" />
 </TabItem>
 </Tabs>
+
+## Filter by Tags
+
+Tags enable **visibility scoping**—filter memories based on tags assigned during [retain](./retain#tagging-memories). This is essential for multi-user agents where each user should only see their own memories.
+
+### Basic Tag Filtering
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-with-tags" language="python" />
+</TabItem>
+</Tabs>
+
+### Tag Match Modes
+
+The `tags_match` parameter controls how tags are matched:
+
+| Mode | Behavior | Untagged Memories |
+|------|----------|-------------------|
+| `any` | OR: memory has ANY of the specified tags | **Included** |
+| `all` | AND: memory has ALL of the specified tags | **Included** |
+| `any_strict` | OR: memory has ANY of the specified tags | **Excluded** |
+| `all_strict` | AND: memory has ALL of the specified tags | **Excluded** |
+
+**Strict modes** are useful when you want to ensure only tagged memories are returned:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-strict" language="python" />
+</TabItem>
+</Tabs>
+
+**AND matching** requires all specified tags to be present:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-all" language="python" />
+</TabItem>
+</Tabs>
+
+### Use Cases
+
+| Scenario | Tags | Mode | Result |
+|----------|------|------|--------|
+| User A's memories only | `["user:alice"]` | `any_strict` | Only memories tagged `user:alice` |
+| Support + feedback | `["support", "feedback"]` | `any` | Memories with either tag + untagged |
+| Multi-user room | `["user:alice", "room:general"]` | `all_strict` | Only memories with both tags |
+| Global + user-specific | `["user:alice"]` | `any` | Alice's memories + shared (untagged) |

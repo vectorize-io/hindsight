@@ -46,7 +46,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_llm_calls_total)",
+          "expr": "sum(hindsight_llm_calls_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -91,7 +91,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_llm_tokens_input_tokens_total) + sum(hindsight_llm_tokens_output_tokens_total)",
+          "expr": "sum(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}) + sum(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -137,7 +137,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_llm_tokens_input_tokens_total)",
+          "expr": "sum(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -183,7 +183,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(hindsight_llm_tokens_output_tokens_total)",
+          "expr": "sum(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"})",
           "refId": "A"
         }
       ],
@@ -260,7 +260,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (scope) (rate(hindsight_llm_calls_total[1m]))",
+          "expr": "sum by (scope) (rate(hindsight_llm_calls_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{scope}}",
           "refId": "A"
         }
@@ -347,12 +347,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(hindsight_llm_tokens_input_tokens_total[1m]))",
+          "expr": "sum(rate(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "Input",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(hindsight_llm_tokens_output_tokens_total[1m]))",
+          "expr": "sum(rate(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "Output",
           "refId": "B"
         }
@@ -430,7 +430,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (scope, le) (rate(hindsight_llm_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (scope, le) (rate(hindsight_llm_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])))",
           "legendFormat": "{{scope}}",
           "refId": "A"
         }
@@ -508,12 +508,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (scope) (rate(hindsight_llm_tokens_input_tokens_total[1m]))",
+          "expr": "sum by (scope) (rate(hindsight_llm_tokens_input_tokens_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{scope}} (input)",
           "refId": "A"
         },
         {
-          "expr": "sum by (scope) (rate(hindsight_llm_tokens_output_tokens_total[1m]))",
+          "expr": "sum by (scope) (rate(hindsight_llm_tokens_output_tokens_total{tenant=~\"$tenant\"}[1m]))",
           "legendFormat": "{{scope}} (output)",
           "refId": "B"
         }
@@ -526,7 +526,36 @@
   "schemaVersion": 38,
   "tags": ["hindsight", "llm"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(hindsight_llm_calls_total, tenant)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": false,
+        "name": "tenant",
+        "options": [],
+        "query": {
+          "query": "label_values(hindsight_llm_calls_total, tenant)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",

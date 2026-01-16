@@ -465,7 +465,7 @@ async def test_occurred_dates_not_defaulted(memory, request_context):
             query="Tell me about Alice",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world", "opinion"],
+            fact_type=["world", "experience"],
             request_context=request_context,
         )
 

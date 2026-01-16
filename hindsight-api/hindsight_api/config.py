@@ -41,10 +41,19 @@ ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
+ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 
 ENV_COHERE_API_KEY = "HINDSIGHT_API_COHERE_API_KEY"
 ENV_EMBEDDINGS_COHERE_MODEL = "HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL"
+ENV_EMBEDDINGS_COHERE_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL"
 ENV_RERANKER_COHERE_MODEL = "HINDSIGHT_API_RERANKER_COHERE_MODEL"
+ENV_RERANKER_COHERE_BASE_URL = "HINDSIGHT_API_RERANKER_COHERE_BASE_URL"
+
+# LiteLLM gateway configuration (for embeddings and reranker via LiteLLM proxy)
+ENV_LITELLM_API_BASE = "HINDSIGHT_API_LITELLM_API_BASE"
+ENV_LITELLM_API_KEY = "HINDSIGHT_API_LITELLM_API_KEY"
+ENV_EMBEDDINGS_LITELLM_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL"
+ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
 
 ENV_RERANKER_PROVIDER = "HINDSIGHT_API_RERANKER_PROVIDER"
 ENV_RERANKER_LOCAL_MODEL = "HINDSIGHT_API_RERANKER_LOCAL_MODEL"
@@ -64,8 +73,10 @@ ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_MPFP_TOP_K_NEIGHBORS = "HINDSIGHT_API_MPFP_TOP_K_NEIGHBORS"
 ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
+ENV_RECALL_CONNECTION_BUDGET = "HINDSIGHT_API_RECALL_CONNECTION_BUDGET"
 ENV_MCP_LOCAL_BANK_ID = "HINDSIGHT_API_MCP_LOCAL_BANK_ID"
 ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
+ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 
 # Observation thresholds
 ENV_OBSERVATION_MIN_FACTS = "HINDSIGHT_API_OBSERVATION_MIN_FACTS"
@@ -96,6 +107,9 @@ ENV_TASK_BACKEND = "HINDSIGHT_API_TASK_BACKEND"
 ENV_TASK_BACKEND_MEMORY_BATCH_SIZE = "HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_SIZE"
 ENV_TASK_BACKEND_MEMORY_BATCH_INTERVAL = "HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_INTERVAL"
 
+# Reflect agent settings
+ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
+
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_LLM_PROVIDER = "openai"
@@ -120,6 +134,11 @@ DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
 DEFAULT_EMBEDDINGS_COHERE_MODEL = "embed-english-v3.0"
 DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 
+# LiteLLM defaults
+DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
+DEFAULT_EMBEDDINGS_LITELLM_MODEL = "text-embedding-3-small"
+DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8888
 DEFAULT_LOG_LEVEL = "info"
@@ -128,7 +147,9 @@ DEFAULT_MCP_ENABLED = True
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"  # Options: "link_expansion", "mpfp", "bfs"
 DEFAULT_MPFP_TOP_K_NEIGHBORS = 20  # Fan-out limit per node in MPFP graph traversal
 DEFAULT_RECALL_MAX_CONCURRENT = 32  # Max concurrent recall operations per worker
+DEFAULT_RECALL_CONNECTION_BUDGET = 4  # Max concurrent DB connections per recall operation
 DEFAULT_MCP_LOCAL_BANK_ID = "mcp"
+DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
 
 # Observation thresholds
 DEFAULT_OBSERVATION_MIN_FACTS = 5  # Min facts required to generate entity observations
@@ -155,6 +176,9 @@ DEFAULT_DB_ACQUIRE_TIMEOUT = 30  # seconds
 DEFAULT_TASK_BACKEND = "memory"  # Options: "memory", "noop"
 DEFAULT_TASK_BACKEND_MEMORY_BATCH_SIZE = 10
 DEFAULT_TASK_BACKEND_MEMORY_BATCH_INTERVAL = 1.0  # seconds
+
+# Reflect agent settings
+DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -222,6 +246,8 @@ class HindsightConfig:
     embeddings_provider: str
     embeddings_local_model: str
     embeddings_tei_url: str | None
+    embeddings_openai_base_url: str | None
+    embeddings_cohere_base_url: str | None
 
     # Reranker
     reranker_provider: str
@@ -230,6 +256,7 @@ class HindsightConfig:
     reranker_tei_batch_size: int
     reranker_tei_max_concurrent: int
     reranker_max_candidates: int
+    reranker_cohere_base_url: str | None
 
     # Server
     host: str
@@ -241,6 +268,8 @@ class HindsightConfig:
     graph_retriever: str
     mpfp_top_k_neighbors: int
     recall_max_concurrent: int
+    recall_connection_budget: int
+    mental_model_refresh_concurrency: int
 
     # Observation thresholds
     observation_min_facts: int
@@ -271,6 +300,9 @@ class HindsightConfig:
     task_backend_memory_batch_size: int
     task_backend_memory_batch_interval: float
 
+    # Reflect agent settings
+    reflect_max_iterations: int
+
     @classmethod
     def from_env(cls) -> "HindsightConfig":
         """Create configuration from environment variables."""
@@ -297,6 +329,8 @@ class HindsightConfig:
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
+            embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
+            embeddings_cohere_base_url=os.getenv(ENV_EMBEDDINGS_COHERE_BASE_URL) or None,
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
@@ -306,6 +340,7 @@ class HindsightConfig:
                 os.getenv(ENV_RERANKER_TEI_MAX_CONCURRENT, str(DEFAULT_RERANKER_TEI_MAX_CONCURRENT))
             ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
+            reranker_cohere_base_url=os.getenv(ENV_RERANKER_COHERE_BASE_URL) or None,
             # Server
             host=os.getenv(ENV_HOST, DEFAULT_HOST),
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -315,6 +350,12 @@ class HindsightConfig:
             graph_retriever=os.getenv(ENV_GRAPH_RETRIEVER, DEFAULT_GRAPH_RETRIEVER),
             mpfp_top_k_neighbors=int(os.getenv(ENV_MPFP_TOP_K_NEIGHBORS, str(DEFAULT_MPFP_TOP_K_NEIGHBORS))),
             recall_max_concurrent=int(os.getenv(ENV_RECALL_MAX_CONCURRENT, str(DEFAULT_RECALL_MAX_CONCURRENT))),
+            recall_connection_budget=int(
+                os.getenv(ENV_RECALL_CONNECTION_BUDGET, str(DEFAULT_RECALL_CONNECTION_BUDGET))
+            ),
+            mental_model_refresh_concurrency=int(
+                os.getenv(ENV_MENTAL_MODEL_REFRESH_CONCURRENCY, str(DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY))
+            ),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
@@ -354,6 +395,8 @@ class HindsightConfig:
             task_backend_memory_batch_interval=float(
                 os.getenv(ENV_TASK_BACKEND_MEMORY_BATCH_INTERVAL, str(DEFAULT_TASK_BACKEND_MEMORY_BATCH_INTERVAL))
             ),
+            # Reflect agent settings
+            reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
         )
 
     def get_llm_base_url(self) -> str:

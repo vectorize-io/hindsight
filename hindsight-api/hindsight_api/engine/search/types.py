@@ -48,6 +48,7 @@ class RetrievalResult:
     chunk_id: str | None = None
     access_count: int = 0
     embedding: list[float] | None = None
+    tags: list[str] | None = None  # Visibility scope tags
 
     # Retrieval-specific scores (only one will be set depending on retrieval method)
     similarity: float | None = None  # Semantic retrieval
@@ -72,6 +73,7 @@ class RetrievalResult:
             chunk_id=row.get("chunk_id"),
             access_count=row.get("access_count", 0),
             embedding=row.get("embedding"),
+            tags=row.get("tags"),
             similarity=row.get("similarity"),
             bm25_score=row.get("bm25_score"),
             activation=row.get("activation"),
@@ -156,6 +158,7 @@ class ScoredResult:
             "chunk_id": self.retrieval.chunk_id,
             "access_count": self.retrieval.access_count,
             "embedding": self.retrieval.embedding,
+            "tags": self.retrieval.tags,
             "semantic_similarity": self.retrieval.similarity,
             "bm25_score": self.retrieval.bm25_score,
         }

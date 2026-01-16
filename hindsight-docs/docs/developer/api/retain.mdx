@@ -129,3 +129,55 @@ For large batches, use async ingestion to avoid blocking:
 <CodeSnippet code={retainMjs} section="retain-async" language="javascript" />
 </TabItem>
 </Tabs>
+
+## Tagging Memories
+
+Tags enable **visibility scoping**—useful when one memory bank serves multiple users but each should only see relevant memories. For example, an agent that chats with multiple users can tag memories by user ID and filter during recall.
+
+### Tag Individual Items
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-with-tags" language="python" />
+</TabItem>
+</Tabs>
+
+### Apply Tags to All Items in a Batch
+
+Use `document_tags` to apply the same tags to all items in a request:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-with-document-tags" language="python" />
+</TabItem>
+</Tabs>
+
+When both `document_tags` and item-level `tags` are provided, they are merged together.
+
+### Tag Naming Conventions
+
+Use consistent naming patterns for tags:
+
+| Pattern | Example | Use Case |
+|---------|---------|----------|
+| `user:<id>` | `user:alice` | Multi-user agent filtering |
+| `session:<id>` | `session:123` | Session-based scoping |
+| `room:<id>` | `room:general` | Chat room isolation |
+| `topic:<name>` | `topic:feedback` | Topic categorization |
+
+### Listing Tags
+
+Use the list tags API to discover existing tags, useful for UI autocomplete or wildcard expansion:
+
+```python
+# List all tags in a bank
+tags = client.list_tags(bank_id="my-bank")
+for tag in tags.items:
+    print(f"{tag.tag}: {tag.count} memories")
+
+# Search with wildcards (* matches any characters)
+user_tags = client.list_tags(bank_id="my-bank", q="user:*")
+admin_tags = client.list_tags(bank_id="my-bank", q="*-admin")
+```
+
+See [Recall API](./recall#filter-by-tags) for filtering memories by tags during retrieval.

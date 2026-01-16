@@ -201,7 +201,7 @@ pub fn update_background(
         Ok(profile) => {
             if output_format == OutputFormat::Pretty {
                 ui::print_success("Background updated successfully");
-                println!("\n{}", profile.background);
+                println!("\n{}", profile.mission);
 
                 if !no_update_disposition {
                     if let (Some(old_p), Some(new_p)) =

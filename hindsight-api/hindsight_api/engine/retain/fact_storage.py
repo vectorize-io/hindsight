@@ -45,6 +45,7 @@ async def insert_facts_batch(
     metadata_jsons = []
     chunk_ids = []
     document_ids = []
+    tags_list = []
 
     for fact in facts:
         fact_texts.append(fact.fact_text)
@@ -65,16 +66,31 @@ async def insert_facts_batch(
         chunk_ids.append(fact.chunk_id)
         # Use per-fact document_id if available, otherwise fallback to batch-level document_id
         document_ids.append(fact.document_id if fact.document_id else document_id)
+        # Convert tags to JSON string for proper batch insertion (PostgreSQL unnest doesn't handle 2D arrays well)
+        tags_list.append(json.dumps(fact.tags if fact.tags else []))
 
     # Batch insert all facts
+    # Note: tags are passed as JSON strings and converted back to varchar[] via jsonb_array_elements_text + array_agg
     results = await conn.fetch(
         f"""
-        INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                 context, fact_type, confidence_score, access_count, metadata, chunk_id, document_id)
-        SELECT $1, * FROM unnest(
-            $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-            $8::text[], $9::text[], $10::float[], $11::int[], $12::jsonb[], $13::text[], $14::text[]
+        WITH input_data AS (
+            SELECT * FROM unnest(
+                $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
+                $8::text[], $9::text[], $10::float[], $11::int[], $12::jsonb[], $13::text[], $14::text[], $15::jsonb[]
+            ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                   context, fact_type, confidence_score, access_count, metadata, chunk_id, document_id, tags_json)
         )
+        INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                                 context, fact_type, confidence_score, access_count, metadata, chunk_id, document_id, tags)
+        SELECT
+            $1,
+            text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+            context, fact_type, confidence_score, access_count, metadata, chunk_id, document_id,
+            COALESCE(
+                (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
+                '{{}}'::varchar[]
+            )
+        FROM input_data
         RETURNING id
         """,
         bank_id,
@@ -91,6 +107,7 @@ async def insert_facts_batch(
         metadata_jsons,
         chunk_ids,
         document_ids,
+        tags_list,
     )
 
     unit_ids = [str(row["id"]) for row in results]
@@ -109,7 +126,7 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
     """
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("banks")} (bank_id, disposition, background)
+        INSERT INTO {fq_table("banks")} (bank_id, disposition, mission)
         VALUES ($1, $2::jsonb, $3)
         ON CONFLICT (bank_id) DO UPDATE
         SET updated_at = NOW()
@@ -121,7 +138,13 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
 
 
 async def handle_document_tracking(
-    conn, bank_id: str, document_id: str, combined_content: str, is_first_batch: bool, retain_params: dict | None = None
+    conn,
+    bank_id: str,
+    document_id: str,
+    combined_content: str,
+    is_first_batch: bool,
+    retain_params: dict | None = None,
+    document_tags: list[str] | None = None,
 ) -> None:
     """
     Handle document tracking in the database.
@@ -133,6 +156,7 @@ async def handle_document_tracking(
         combined_content: Combined content text from all content items
         is_first_batch: Whether this is the first batch (for chunked operations)
         retain_params: Optional parameters passed during retain (context, event_date, etc.)
+        document_tags: Optional list of tags to associate with the document
     """
     import hashlib
 
@@ -149,13 +173,14 @@ async def handle_document_tracking(
     # Insert document (or update if exists from concurrent operations)
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params, tags)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (id, bank_id) DO UPDATE
         SET original_text = EXCLUDED.original_text,
             content_hash = EXCLUDED.content_hash,
             metadata = EXCLUDED.metadata,
             retain_params = EXCLUDED.retain_params,
+            tags = EXCLUDED.tags,
             updated_at = NOW()
         """,
         document_id,
@@ -164,4 +189,5 @@ async def handle_document_tracking(
         content_hash,
         json.dumps({}),  # Empty metadata dict
         json.dumps(retain_params) if retain_params else None,
+        document_tags or [],
     )

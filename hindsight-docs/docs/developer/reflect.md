@@ -183,4 +183,4 @@ Disposition creates **consistent character** across conversations while allowing
 
 - [**Retain**](./retain) — How rich facts are stored
 - [**Recall**](./retrieval) — How multi-strategy search works
-- [API Reference: Reflect](./api/reflect) — Code examples and usage
+- [**Reflect API**](./api/reflect) — Code examples, parameters, and tag filtering

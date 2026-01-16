@@ -33,7 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
 
-type FactType = "world" | "experience" | "opinion";
+type FactType = "world" | "experience";
 type ViewMode = "graph" | "table" | "timeline";
 
 interface DataViewProps {
@@ -362,6 +362,7 @@ export function DataView({ factType }: DataViewProps) {
                       memory={selectedGraphNode}
                       onClose={() => setSelectedGraphNode(null)}
                       inPanel
+                      bankId={currentBank || undefined}
                     />
                   ) : (
                     /* Legend & Controls View */
@@ -738,13 +739,20 @@ export function DataView({ factType }: DataViewProps) {
                     memory={selectedTableMemory}
                     onClose={() => setSelectedTableMemory(null)}
                     inPanel
+                    bankId={currentBank || undefined}
                   />
                 </div>
               )}
             </div>
           )}
 
-          {viewMode === "timeline" && <TimelineView data={data} filteredRows={filteredTableRows} />}
+          {viewMode === "timeline" && (
+            <TimelineView
+              data={data}
+              filteredRows={filteredTableRows}
+              bankId={currentBank || undefined}
+            />
+          )}
         </>
       ) : (
         <div className="flex items-center justify-center py-20">
@@ -761,7 +769,15 @@ export function DataView({ factType }: DataViewProps) {
 // Timeline View Component - Custom compact timeline with zoom and navigation
 type Granularity = "year" | "month" | "week" | "day";
 
-function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }) {
+function TimelineView({
+  data,
+  filteredRows,
+  bankId,
+}: {
+  data: any;
+  filteredRows: any[];
+  bankId?: string;
+}) {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -1114,7 +1130,12 @@ function TimelineView({ data, filteredRows }: { data: any; filteredRows: any[] }
       {/* Detail Panel - Fixed on Right */}
       {selectedItem && (
         <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
-          <MemoryDetailPanel memory={selectedItem} onClose={() => setSelectedItem(null)} inPanel />
+          <MemoryDetailPanel
+            memory={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            inPanel
+            bankId={bankId}
+          />
         </div>
       )}
     </div>

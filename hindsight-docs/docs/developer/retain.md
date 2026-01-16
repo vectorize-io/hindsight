@@ -167,6 +167,18 @@ As facts accumulate about an entity, Hindsight synthesizes **observations** — 
 
 ---
 
+## Tagging Memories
+
+Tags enable visibility scoping—useful when one memory bank serves multiple users but each should only see relevant memories.
+
+- **Item tags**: Tag individual memories with specific scopes
+- **Document tags**: Apply tags to all items in a batch
+- **Tag filtering**: Filter during recall/reflect by tags
+
+See [Retain API](./api/retain) for code examples and [Recall API](./api/recall) for filtering options.
+
+---
+
 ## What You Get
 
 After `retain()` completes:
@@ -176,6 +188,7 @@ After `retain()` completes:
 - **Knowledge graph** with entity, temporal, semantic, and causal links
 - **Temporal grounding** for both historical and recency-based queries
 - **Background processing** that generates entity summaries
+- **Optional tags** for filtering during recall
 
 All stored in your isolated **memory bank**, ready for `recall()` and `reflect()`.
 
@@ -185,4 +198,4 @@ All stored in your isolated **memory bank**, ready for `recall()` and `reflect()
 
 - [**Recall**](./retrieval) — How multi-strategy search retrieves relevant memories
 - [**Reflect**](./reflect) — How disposition influences reasoning and opinion formation
-- [API Reference](./api/retain) — Code examples for retaining memories
+- [**Retain API**](./api/retain) — Code examples and parameters

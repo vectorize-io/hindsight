@@ -6,11 +6,12 @@
 #   curl -fsSL https://hindsight.vectorize.io/get-skill | bash
 #
 # Options:
-#   --app <app>    Target app: claude, opencode, codex
+#   --app <app>      Target app: claude, opencode, codex
+#   --mode <mode>    Mode: local (default) or cloud
 #
 # Examples:
 #   curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app claude
-#   curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app opencode
+#   curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app claude --mode cloud
 #
 
 set -e
@@ -62,8 +63,8 @@ print_banner() {
     echo ""
 }
 
-# Embedded SKILL.md content
-SKILL_CONTENT='---
+# Embedded SKILL.md content for LOCAL mode (uses hindsight-embed with local daemon)
+SKILL_CONTENT_LOCAL='---
 name: hindsight
 description: Store user preferences, learnings from tasks, and procedure outcomes. Use to remember what works and recall context before new tasks.
 ---
@@ -139,6 +140,107 @@ uvx hindsight-embed memory reflect default "How should I approach this task base
 4. **Recall first**: Always check for relevant context before starting work
 '
 
+# Template for CLOUD mode SKILL.md (uses hindsight-cli directly with remote API)
+# The BANK_ID placeholder will be replaced during installation
+SKILL_CONTENT_CLOUD_TEMPLATE='---
+name: hindsight
+description: Store team knowledge, project conventions, and learnings from tasks. Use to remember what works and recall context before new tasks. This is a shared team memory bank.
+---
+
+# Hindsight Memory Skill (Cloud)
+
+You have persistent memory via **Hindsight Cloud**. This memory bank is **shared with the team**, so knowledge stored here benefits everyone working on this codebase.
+
+**Proactively store team knowledge and recall context** to provide better assistance.
+
+## Commands
+
+### Store a memory
+
+Use `memory retain` to store what you learn:
+
+```bash
+hindsight memory retain BANK_ID "Project uses ESLint with Airbnb config and Prettier for formatting"
+hindsight memory retain BANK_ID "Running tests requires NODE_ENV=test" --context procedures
+hindsight memory retain BANK_ID "Build failed when using Node 18, works with Node 20" --context learnings
+hindsight memory retain BANK_ID "Alice prefers verbose commit messages with context" --context preferences
+```
+
+### Recall memories
+
+Use `memory recall` BEFORE starting tasks to get relevant context:
+
+```bash
+hindsight memory recall BANK_ID "project conventions and coding standards"
+hindsight memory recall BANK_ID "Alice preferences for this project"
+hindsight memory recall BANK_ID "what issues have we encountered before"
+hindsight memory recall BANK_ID "how does the auth module work"
+```
+
+### Reflect on memories
+
+Use `memory reflect` to synthesize context:
+
+```bash
+hindsight memory reflect BANK_ID "How should I approach this task based on past experience?"
+```
+
+## IMPORTANT: When to Store Memories
+
+This is a **shared team bank**. Store knowledge that benefits the team. For individual preferences, include the persons name.
+
+### Project/Team Conventions (shared)
+- Coding standards ("Project uses 2-space indentation")
+- Required tools and versions ("Project requires Node 20+, PostgreSQL 15+")
+- Linting and formatting rules ("ESLint with Airbnb config")
+- Testing conventions ("Integration tests require Docker running")
+- Branch naming and PR conventions
+
+### Individual Preferences (attribute to person)
+- Personal coding style ("Alice prefers explicit type annotations")
+- Communication preferences ("Bob prefers detailed PR descriptions")
+- Tool preferences ("Carol uses vim keybindings")
+
+### Procedure Outcomes
+- Steps that successfully completed a task
+- Commands that worked (or failed) and why
+- Workarounds discovered
+- Configuration that resolved issues
+
+### Learnings from Tasks
+- Bugs encountered and their solutions
+- Performance optimizations that worked
+- Architecture decisions and rationale
+- Dependencies or version requirements
+
+### Team Knowledge
+- Onboarding information for new team members
+- Common pitfalls and how to avoid them
+- Architecture decisions and their rationale
+- Integration points with external systems
+- Domain knowledge and business logic explanations
+
+## IMPORTANT: When to Recall Memories
+
+**Always recall** before:
+- Starting any non-trivial task
+- Making decisions about implementation
+- Suggesting tools, libraries, or approaches
+- Writing code in a new area of the project
+- When answering questions about the codebase
+- When a team member asks how something works
+
+## Best Practices
+
+1. **Store immediately**: When you discover something, store it right away
+2. **Be specific**: Store "npm test requires --experimental-vm-modules flag" not "tests need a flag"
+3. **Include outcomes**: Store what worked AND what did not work
+4. **Recall first**: Always check for relevant context before starting work
+5. **Think team-first**: Store knowledge that would help other team members
+6. **Attribute individual preferences**: Store "Alice prefers X" not just "User prefers X"
+7. **Distinguish project vs personal**: Project conventions apply to everyone; personal preferences are per-person
+'
+
 # Get skills directory for app (bash 3.x compatible)
 get_skills_dir() {
     case "$1" in
@@ -161,16 +263,18 @@ get_app_name() {
 
 # Parse arguments
 APP=""
+MODE=""
 
 show_usage() {
-    echo "Usage: $0 [--app <app>]"
+    echo "Usage: $0 [--app <app>] [--mode <mode>]"
     echo ""
     echo "Options:"
-    echo "  --app <app>    Target app: claude, opencode, codex"
+    echo "  --app <app>      Target app: claude, opencode, codex"
+    echo "  --mode <mode>    Mode: local (default) or cloud"
     echo ""
     echo "Examples:"
     echo "  $0 --app claude"
-    echo "  $0 --app opencode"
+    echo "  $0 --app claude --mode cloud"
     exit 1
 }
 
@@ -178,6 +282,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --app)
             APP="$2"
+            shift 2
+            ;;
+        --mode)
+            MODE="$2"
             shift 2
             ;;
         --help|-h)
@@ -233,6 +341,41 @@ fi
 
 print_info "Installing for ${BOLD}$APP_NAME${NC}"
 
+# Select mode (local vs cloud)
+if [ -z "$MODE" ]; then
+    if [ -t 0 ] || [ -e /dev/tty ]; then
+        echo ""
+        echo -e "${DIM}Select deployment mode:${NC}"
+        echo ""
+        echo -e "  ${BOLD}1)${NC} Local ${DIM}- Run Hindsight on your machine (default)${NC}"
+        echo -e "  ${BOLD}2)${NC} Cloud ${DIM}- Connect to Hindsight Cloud (for teams)${NC}"
+        echo ""
+        if [ -t 0 ]; then
+            read -p "Enter choice [1]: " mode_choice
+        else
+            read -p "Enter choice [1]: " mode_choice </dev/tty
+        fi
+        mode_choice=${mode_choice:-1}
+
+        case $mode_choice in
+            1) MODE="local" ;;
+            2) MODE="cloud" ;;
+            *) MODE="local" ;;
+        esac
+        echo ""
+    else
+        MODE="local"
+        print_info "Non-interactive mode detected, defaulting to local"
+    fi
+fi
+
+# Validate mode
+if [ "$MODE" != "local" ] && [ "$MODE" != "cloud" ]; then
+    print_error "Unknown mode '$MODE'. Supported: local, cloud"
+fi
+
+print_info "Mode: ${BOLD}$MODE${NC}"
+
 # Step 1: Check for Python/uvx
 print_step "Checking prerequisites"
 
@@ -241,40 +384,133 @@ if ! command -v python3 &> /dev/null && ! command -v uvx &> /dev/null; then
 fi
 print_success "Python/uvx available"
 
-# Step 2: Configure LLM provider using the CLI
-print_step "Configuring LLM provider"
+# Configuration depends on mode
+if [ "$MODE" = "local" ]; then
+    # LOCAL MODE: Configure LLM provider using hindsight-embed
+    print_step "Configuring LLM provider"
 
-# Install/run hindsight-embed configure
-# Redirect stdin from /dev/tty to avoid "not a terminal" warnings
-if command -v uvx &> /dev/null; then
-    uvx hindsight-embed configure </dev/tty
+    # Install/run hindsight-embed configure
+    # Redirect stdin from /dev/tty to avoid "not a terminal" warnings
+    if command -v uvx &> /dev/null; then
+        uvx hindsight-embed configure </dev/tty
+    else
+        pip install -q hindsight-embed
+        hindsight-embed configure </dev/tty
+    fi
+
+    # Install local skill
+    print_step "Installing skill to $APP_NAME"
+
+    mkdir -p "$SKILLS_DIR/hindsight"
+    echo "$SKILL_CONTENT_LOCAL" > "$SKILLS_DIR/hindsight/SKILL.md"
+    print_success "Installed to $SKILLS_DIR/hindsight/"
+
+    # Done (local)!
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}  ✓ Installation Complete!${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  The Hindsight skill is now available in ${BOLD}$APP_NAME${NC}."
+    echo ""
+    echo -e "  ${DIM}Test the CLI:${NC}"
+    echo -e "    ${CYAN}uvx hindsight-embed memory retain default \"Alice works at Google as a software engineer\"${NC}"
+    echo -e "    ${CYAN}uvx hindsight-embed memory recall default \"Alice\"${NC}"
+    echo ""
+    echo -e "  ${DIM}$APP_NAME will automatically use the skill when relevant.${NC}"
+    echo ""
+    echo -e "  ${DIM}Documentation:${NC} ${BLUE}https://hindsight.vectorize.io${NC}"
+    echo ""
+
 else
-    pip install -q hindsight-embed
-    hindsight-embed configure </dev/tty
+    # CLOUD MODE: Install CLI and configure connection to Hindsight Cloud
+    print_step "Installing Hindsight CLI"
+
+    # Download and install the CLI binary
+    curl -fsSL https://hindsight.vectorize.io/get-cli | bash
+
+    print_step "Configuring Hindsight Cloud connection"
+
+    DEFAULT_CLOUD_URL="https://api.hindsight.vectorize.io"
+
+    echo -e "${DIM}Enter your Hindsight Cloud connection details.${NC}"
+    echo -e "${DIM}Get these from your team admin or https://ui.hindsight.vectorize.io${NC}"
+    echo ""
+
+    # Prompt for cloud URL
+    if [ -t 0 ]; then
+        read -p "Cloud API URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL
+    else
+        read -p "Cloud API URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL </dev/tty
+    fi
+    CLOUD_URL=${CLOUD_URL:-$DEFAULT_CLOUD_URL}
+
+    # Prompt for API key
+    if [ -t 0 ]; then
+        read -p "API Key: " CLOUD_API_KEY
+    else
+        read -p "API Key: " CLOUD_API_KEY </dev/tty
+    fi
+    if [ -z "$CLOUD_API_KEY" ]; then
+        print_error "API Key is required for cloud mode"
+    fi
+
+    # Prompt for bank ID
+    if [ -t 0 ]; then
+        read -p "Bank ID (e.g., team-myproject): " CLOUD_BANK_ID
+    else
+        read -p "Bank ID (e.g., team-myproject): " CLOUD_BANK_ID </dev/tty
+    fi
+    if [ -z "$CLOUD_BANK_ID" ]; then
+        print_error "Bank ID is required for cloud mode"
+    fi
+
+    # Save config to ~/.hindsight/config
+    print_step "Saving configuration"
+
+    HINDSIGHT_CONFIG_DIR="$HOME/.hindsight"
+    HINDSIGHT_CONFIG_FILE="$HINDSIGHT_CONFIG_DIR/config"
+
+    mkdir -p "$HINDSIGHT_CONFIG_DIR"
+
+    # Write config file (TOML format for hindsight-cli)
+    cat > "$HINDSIGHT_CONFIG_FILE" << EOF
+api_url = "$CLOUD_URL"
+api_key = "$CLOUD_API_KEY"
+EOF
+
+    # Set restrictive permissions on config file (contains API key)
+    chmod 600 "$HINDSIGHT_CONFIG_FILE"
+
+    print_success "Saved to $HINDSIGHT_CONFIG_FILE"
+
+    # Install cloud skill with bank ID substituted
+    print_step "Installing skill to $APP_NAME"
+
+    mkdir -p "$SKILLS_DIR/hindsight"
+
+    # Replace BANK_ID placeholder with actual bank ID
+    SKILL_CONTENT_CLOUD=$(echo "$SKILL_CONTENT_CLOUD_TEMPLATE" | sed "s/BANK_ID/$CLOUD_BANK_ID/g")
+    echo "$SKILL_CONTENT_CLOUD" > "$SKILLS_DIR/hindsight/SKILL.md"
+    print_success "Installed to $SKILLS_DIR/hindsight/"
+
+    # Done (cloud)!
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}  ✓ Installation Complete!${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  The Hindsight skill is now available in ${BOLD}$APP_NAME${NC}."
+    echo -e "  Connected to: ${CYAN}$CLOUD_URL${NC}"
+    echo -e "  Memory bank:  ${CYAN}$CLOUD_BANK_ID${NC}"
+    echo ""
+    echo -e "  ${DIM}Test the CLI:${NC}"
+    echo -e "    ${CYAN}hindsight memory retain $CLOUD_BANK_ID \"Alice works at Google as a software engineer\"${NC}"
+    echo -e "    ${CYAN}hindsight memory recall $CLOUD_BANK_ID \"Alice\"${NC}"
+    echo ""
+    echo -e "  ${DIM}Share this bank ID with your team for shared memories.${NC}"
+    echo -e "  ${DIM}$APP_NAME will automatically use the skill when relevant.${NC}"
+    echo ""
+    echo -e "  ${DIM}Documentation:${NC} ${BLUE}https://hindsight.vectorize.io${NC}"
+    echo ""
 fi
-
-# Step 3: Install skill to app's skills directory
-print_step "Installing skill to $APP_NAME"
-
-mkdir -p "$SKILLS_DIR/hindsight"
-
-# Write embedded SKILL.md content
-echo "$SKILL_CONTENT" > "$SKILLS_DIR/hindsight/SKILL.md"
-print_success "Installed to $SKILLS_DIR/hindsight/"
-
-# Done!
-echo ""
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}  ✓ Installation Complete!${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-echo -e "  The Hindsight skill is now available in ${BOLD}$APP_NAME${NC}."
-echo ""
-echo -e "  ${DIM}Test the CLI:${NC}"
-echo -e "    ${CYAN}uvx hindsight-embed memory retain default \"Test memory\"${NC}"
-echo -e "    ${CYAN}uvx hindsight-embed memory recall default \"test\"${NC}"
-echo ""
-echo -e "  ${DIM}$APP_NAME will automatically use the skill when relevant.${NC}"
-echo ""
-echo -e "  ${DIM}Documentation:${NC} ${BLUE}https://hindsight.vectorize.io${NC}"
-echo ""

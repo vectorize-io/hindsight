@@ -17,9 +17,11 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from hindsight_client_api.models.reflect_fact import ReflectFact
+from hindsight_client_api.models.created_mental_model import CreatedMentalModel
+from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
+from hindsight_client_api.models.reflect_trace import ReflectTrace
 from hindsight_client_api.models.token_usage import TokenUsage
 from typing import Optional, Set
 from typing_extensions import Self
@@ -29,10 +31,12 @@ class ReflectResponse(BaseModel):
     Response model for think endpoint.
     """ # noqa: E501
     text: StrictStr
-    based_on: Optional[List[ReflectFact]] = None
+    based_on: Optional[ReflectBasedOn] = None
     structured_output: Optional[Dict[str, Any]] = None
     usage: Optional[TokenUsage] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage"]
+    trace: Optional[ReflectTrace] = None
+    mental_models_created: Optional[List[CreatedMentalModel]] = Field(default=None, description="Mental models created during this reflection (via the learn tool).")
+    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "usage", "trace", "mental_models_created"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -73,16 +77,27 @@ class ReflectResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in based_on (list)
-        _items = []
+        # override the default output from pydantic by calling `to_dict()` of based_on
         if self.based_on:
-            for _item_based_on in self.based_on:
-                if _item_based_on:
-                    _items.append(_item_based_on.to_dict())
-            _dict['based_on'] = _items
+            _dict['based_on'] = self.based_on.to_dict()
         # override the default output from pydantic by calling `to_dict()` of usage
         if self.usage:
             _dict['usage'] = self.usage.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of trace
+        if self.trace:
+            _dict['trace'] = self.trace.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in mental_models_created (list)
+        _items = []
+        if self.mental_models_created:
+            for _item_mental_models_created in self.mental_models_created:
+                if _item_mental_models_created:
+                    _items.append(_item_mental_models_created.to_dict())
+            _dict['mental_models_created'] = _items
+        # set to None if based_on (nullable) is None
+        # and model_fields_set contains the field
+        if self.based_on is None and "based_on" in self.model_fields_set:
+            _dict['based_on'] = None
+
         # set to None if structured_output (nullable) is None
         # and model_fields_set contains the field
         if self.structured_output is None and "structured_output" in self.model_fields_set:
@@ -92,6 +107,11 @@ class ReflectResponse(BaseModel):
         # and model_fields_set contains the field
         if self.usage is None and "usage" in self.model_fields_set:
             _dict['usage'] = None
+
+        # set to None if trace (nullable) is None
+        # and model_fields_set contains the field
+        if self.trace is None and "trace" in self.model_fields_set:
+            _dict['trace'] = None
 
         return _dict
 
@@ -106,9 +126,11 @@ class ReflectResponse(BaseModel):
 
         _obj = cls.model_validate({
             "text": obj.get("text"),
-            "based_on": [ReflectFact.from_dict(_item) for _item in obj["based_on"]] if obj.get("based_on") is not None else None,
+            "based_on": ReflectBasedOn.from_dict(obj["based_on"]) if obj.get("based_on") is not None else None,
             "structured_output": obj.get("structured_output"),
-            "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None
+            "usage": TokenUsage.from_dict(obj["usage"]) if obj.get("usage") is not None else None,
+            "trace": ReflectTrace.from_dict(obj["trace"]) if obj.get("trace") is not None else None,
+            "mental_models_created": [CreatedMentalModel.from_dict(_item) for _item in obj["mental_models_created"]] if obj.get("mental_models_created") is not None else None
         })
         return _obj
 

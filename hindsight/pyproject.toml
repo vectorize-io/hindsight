@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-all"
-version = "0.2.1"
+version = "0.3.0"
 description = "Hindsight: Agent Memory That Works Like Human Memory - All-in-One Bundle"
 readme = "README.md"
 requires-python = ">=3.11"
