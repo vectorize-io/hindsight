@@ -110,6 +110,7 @@ class MemoryEngineInterface(ABC):
         *,
         budget: "Budget | None" = None,
         context: str | None = None,
+        search_context: str | None = None,
         max_tokens: int = 4096,
         response_schema: dict | None = None,
         request_context: "RequestContext",
@@ -121,7 +122,10 @@ class MemoryEngineInterface(ABC):
             bank_id: The memory bank ID.
             query: The question to reflect on.
             budget: Search budget for retrieving context.
-            context: Additional context for the reflection.
+            context: Additional context for the reflection (also used for memory search if search_context not provided).
+            search_context: Additional keywords to include in memory search. If not provided,
+                           falls back to using `context` for search. Set to empty string ""
+                           to explicitly disable context-based search enhancement.
             max_tokens: Maximum tokens for the response.
             response_schema: Optional JSON Schema for structured output.
             request_context: Request context for authentication.

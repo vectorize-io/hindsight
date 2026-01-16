@@ -438,6 +438,12 @@ class ReflectRequest(BaseModel):
     query: str
     budget: Budget = Budget.LOW
     context: str | None = None
+    search_context: str | None = Field(
+        default=None,
+        description="Additional keywords to include in memory search. If not provided, "
+        "falls back to using `context` for search. Set to empty string to explicitly "
+        "disable context-based search enhancement.",
+    )
     max_tokens: int = Field(default=4096, description="Maximum tokens for the response")
     include: ReflectIncludeOptions = Field(
         default_factory=ReflectIncludeOptions, description="Options for including additional data (disabled by default)"
@@ -1347,6 +1353,7 @@ def _register_routes(app: FastAPI):
                     query=request.query,
                     budget=request.budget,
                     context=request.context,
+                    search_context=request.search_context,
                     max_tokens=request.max_tokens,
                     response_schema=request.response_schema,
                     request_context=request_context,

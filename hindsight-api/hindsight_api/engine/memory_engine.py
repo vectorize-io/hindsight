@@ -3295,6 +3295,7 @@ Guidelines:
         *,
         budget: Budget | None = None,
         context: str | None = None,
+        search_context: str | None = None,
         max_tokens: int = 4096,
         response_schema: dict | None = None,
         request_context: "RequestContext",
@@ -3315,7 +3316,10 @@ Guidelines:
             bank_id: bank identifier
             query: Question to answer
             budget: Budget level for memory exploration (low=100, mid=300, high=600 units)
-            context: Additional context string to include in LLM prompt (not used in recall)
+            context: Additional context string to include in LLM prompt
+            search_context: Additional keywords to include in memory search. If not provided,
+                           falls back to using `context` for search. Set to empty string ""
+                           to explicitly disable context-based search enhancement.
             response_schema: Optional JSON Schema for structured output
 
         Returns:
@@ -3350,6 +3354,22 @@ Guidelines:
         log_buffer = []
         log_buffer.append(f"[REFLECT {reflect_id}] Query: '{query[:50]}...'")
 
+        # Build search query: enhance with search_context or fall back to context
+        # This ensures relevant memories are found even when the query itself is abstract
+        # (e.g., "Was that a good solution?" + context="Auth bug fix" → searches for auth bug memories)
+        if search_context is not None:
+            # Explicit search_context provided (empty string "" = no enhancement)
+            search_query = f"{query} {search_context}".strip() if search_context else query
+        elif context:
+            # Fallback: use context for search enhancement
+            search_query = f"{query} {context}"
+        else:
+            # No context at all
+            search_query = query
+
+        if search_query != query:
+            log_buffer.append(f"[REFLECT {reflect_id}] Search query enhanced: '{search_query[:80]}...'")
+
         # Steps 1-3: Run multi-fact-type search (12-way retrieval: 4 methods × 3 fact types)
         recall_start = time.time()
         metrics = get_metrics_collector()
@@ -3358,7 +3378,7 @@ Guidelines:
         ):
             search_result = await self.recall_async(
                 bank_id=bank_id,
-                query=query,
+                query=search_query,
                 budget=budget,
                 max_tokens=4096,
                 enable_trace=False,
