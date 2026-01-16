@@ -318,7 +318,6 @@ class Hindsight:
         self,
         bank_id: str,
         name: Optional[str] = None,
-        background: Optional[str] = None,
         mission: Optional[str] = None,
         disposition: Optional[Dict[str, float]] = None,
     ) -> BankProfileResponse:
@@ -327,7 +326,6 @@ class Hindsight:
         Args:
             bank_id: Unique identifier for the bank
             name: Human-readable display name
-            background: Deprecated - use mission instead
             mission: Instructions guiding what Hindsight should learn and remember (for mental models)
             disposition: Optional disposition traits (skepticism, literalism, empathy)
         """
@@ -340,7 +338,6 @@ class Hindsight:
         request_obj = create_bank_request.CreateBankRequest(
             name=name,
             mission=mission,
-            background=background,
             disposition=disposition_obj,
         )
 

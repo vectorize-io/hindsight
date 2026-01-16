@@ -85,18 +85,6 @@ class TestConfiguration:
         assert defaults.fact_types == ["world", "opinion"]
         assert defaults.document_id == "doc-123"
 
-    def test_configure_with_legacy_bank_id(self):
-        """Test configure with legacy bank_id parameter (backwards compatibility)."""
-        config = configure(
-            hindsight_api_url="http://localhost:8888",
-            bank_id="legacy-agent",  # Legacy parameter
-        )
-
-        # Legacy bank_id should be forwarded to set_defaults
-        defaults = get_defaults()
-        assert defaults is not None
-        assert defaults.bank_id == "legacy-agent"
-
     def test_is_configured_without_bank_id(self):
         """Test is_configured returns False without bank_id."""
         configure(hindsight_api_url="http://localhost:8888")
@@ -529,18 +517,6 @@ class TestFactTypes:
         defaults = set_defaults(bank_id="test-agent")
 
         assert defaults.fact_types is None
-
-    def test_configure_with_legacy_fact_types(self):
-        """Test configure with legacy fact_types parameter (backwards compatibility)."""
-        configure(
-            hindsight_api_url="http://localhost:8888",
-            bank_id="test-agent",
-            fact_types=["world", "opinion"],  # Legacy parameter
-        )
-
-        defaults = get_defaults()
-        assert defaults.fact_types == ["world", "opinion"]
-
 
 class TestSetDefaults:
     """Tests for set_defaults functionality."""

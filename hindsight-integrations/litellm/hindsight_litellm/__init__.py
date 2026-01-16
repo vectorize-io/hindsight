@@ -122,7 +122,6 @@ from .config import (
     configure,
     set_defaults,
     set_bank_mission,
-    set_bank_background,  # Deprecated
     get_config,
     get_defaults,
     is_configured,
@@ -1212,7 +1211,6 @@ __all__ = [
     "reset_config",
     "set_document_id",
     "set_bank_mission",
-    "set_bank_background",  # Deprecated
     "HindsightConfig",
     "HindsightDefaults",
     "MemoryInjectionMode",
