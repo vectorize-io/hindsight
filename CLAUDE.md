@@ -199,6 +199,38 @@ When adding or modifying parameters in the dataplane API (hindsight-api), you mu
 - Pydantic models for request/response
 - Ruff for linting (line-length 120)
 - No Python files at project root - maintain clean directory structure
+- **Never use multi-item tuple return values** - prefer dataclass or Pydantic model for structured returns
+
+### Type Safety with Pydantic Models
+**NEVER use raw `dict` types for structured data.** Always use Pydantic models:
+- Use Pydantic `BaseModel` for all data structures passed between functions
+- Add `@field_validator` for type coercion (e.g., ensuring datetimes are timezone-aware)
+- Avoid `dict.get()` patterns - use typed model attributes instead
+- Parse external data (JSON, API responses) into Pydantic models at the boundary
+- This catches type errors at parse time, not deep in business logic
+
+```python
+# BAD - error-prone dict access
+def process(data: dict) -> str:
+    return data.get("name", "")  # No validation, silent failures
+
+# GOOD - typed and validated
+class UserData(BaseModel):
+    name: str
+    created_at: datetime
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def ensure_tz_aware(cls, v):
+        if isinstance(v, str):
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+def process(data: UserData) -> str:
+    return data.name  # Type-safe, validated at construction
+```
 
 ### TypeScript Style
 - Next.js App Router for control plane

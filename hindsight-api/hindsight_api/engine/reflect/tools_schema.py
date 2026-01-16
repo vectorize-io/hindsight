@@ -4,8 +4,6 @@ Tool schema definitions for the reflect agent.
 These are OpenAI-format tool definitions used with native tool calling.
 """
 
-from typing import Literal
-
 # Tool definitions in OpenAI format
 TOOL_LIST_MENTAL_MODELS = {
     "type": "function",
@@ -134,68 +132,76 @@ TOOL_DONE_ANSWER = {
     },
 }
 
-TOOL_DONE_OBSERVATIONS = {
-    "type": "function",
-    "function": {
-        "name": "done",
-        "description": "Signal completion with MULTIPLE structured observations. Each observation must be a SEPARATE item in the array covering ONE theme. Do NOT combine all content into a single observation.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "observations": {
-                    "type": "array",
-                    "minItems": 3,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": {
-                                "type": "string",
-                                "description": "Short header for this observation's theme (e.g., 'Work Style', 'Technical Skills')",
-                            },
-                            "text": {
-                                "type": "string",
-                                "description": "Observation content about ONE theme. End with 'Key evidence:' containing text citations (summaries of what memories say), NOT memory IDs.",
-                            },
-                            "memory_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Full UUIDs of memories supporting this observation (put IDs here, not in text)",
-                            },
-                        },
-                        "required": ["title", "text", "memory_ids"],
+
+def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
+    """
+    Build the done tool schema with directive compliance field.
+
+    When directives are present, adds a required field that forces the agent
+    to confirm compliance with each directive before submitting.
+
+    Args:
+        directive_rules: List of directive rule strings
+    """
+    from typing import Any, cast
+
+    # Build rules list for description
+    rules_list = "\n".join(f"  {i + 1}. {rule}" for i, rule in enumerate(directive_rules))
+
+    # Build the tool with directive compliance field
+    return {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": (
+                "Signal completion with your final answer. IMPORTANT: You must confirm directive compliance before submitting. "
+                "Your answer will be REJECTED if it violates any directive."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": "Your response as plain text. Do NOT use markdown formatting. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array.",
                     },
-                    "description": "Array of 3-8 observations, each covering a DIFFERENT aspect/theme. Do NOT put everything in one observation.",
+                    "memory_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of memory IDs that support your answer (put IDs here, NOT in answer text)",
+                    },
+                    "model_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of mental model IDs that support your answer",
+                    },
+                    "directive_compliance": {
+                        "type": "string",
+                        "description": f"REQUIRED: Confirm your answer complies with ALL directives. List each directive and how your answer follows it:\n{rules_list}\n\nFormat: 'Directive 1: [how answer complies]. Directive 2: [how answer complies]...'",
+                    },
                 },
+                "required": ["answer", "directive_compliance"],
             },
-            "required": ["observations"],
         },
-    },
-}
+    }
 
 
-def get_reflect_tools(
-    enable_learn: bool = True, output_mode: Literal["answer", "observations"] = "answer"
-) -> list[dict]:
+def get_reflect_tools(enable_learn: bool = True, directive_rules: list[str] | None = None) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
 
     Args:
         enable_learn: Whether to include the learn tool
-        output_mode: "answer" or "observations" - determines done tool format
-                     In observations mode, mental model tools are excluded to avoid
-                     using potentially outdated models during regeneration.
+        directive_rules: Optional list of directive rule strings. If provided,
+                        the done() tool will require directive compliance confirmation.
 
     Returns:
         List of tool definitions in OpenAI format
     """
     tools = []
 
-    # In answer mode, include mental model tools for lookup
-    # In observations mode (mental model generation), exclude them to avoid circular references
-    if output_mode == "answer":
-        tools.append(TOOL_LIST_MENTAL_MODELS)
-        tools.append(TOOL_GET_MENTAL_MODEL)
-
+    # Include mental model tools for lookup
+    tools.append(TOOL_LIST_MENTAL_MODELS)
+    tools.append(TOOL_GET_MENTAL_MODEL)
     tools.append(TOOL_RECALL)
 
     if enable_learn:
@@ -203,9 +209,9 @@ def get_reflect_tools(
 
     tools.append(TOOL_EXPAND)
 
-    # Add appropriate done tool based on output mode
-    if output_mode == "observations":
-        tools.append(TOOL_DONE_OBSERVATIONS)
+    # Use directive-aware done tool if directives are present
+    if directive_rules:
+        tools.append(_build_done_tool_with_directives(directive_rules))
     else:
         tools.append(TOOL_DONE_ANSWER)
 

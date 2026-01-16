@@ -14,7 +14,8 @@ class MentalModelSubtype(str, Enum):
     STRUCTURAL = "structural"  # Derived from mission, created upfront
     EMERGENT = "emergent"  # Discovered from data patterns
     LEARNED = "learned"  # Formed through reflection
-    PINNED = "pinned"  # User-defined, persists across refreshes
+    PINNED = "pinned"  # User-defined topic, observations LLM-generated
+    DIRECTIVE = "directive"  # User-defined hard rules, observations user-provided
 
 
 class MentalModel(BaseModel):

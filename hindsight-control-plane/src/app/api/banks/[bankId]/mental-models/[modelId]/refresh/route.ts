@@ -16,19 +16,19 @@ export async function POST(
       return NextResponse.json({ error: "model_id is required" }, { status: 400 });
     }
 
-    const response = await sdk.generateMentalModel({
+    const response = await sdk.refreshMentalModel({
       client: lowLevelClient,
       path: { bank_id: bankId, model_id: modelId },
     });
 
     if (response.error) {
-      console.error("API error generating mental model:", response.error);
-      return NextResponse.json({ error: "Failed to generate mental model" }, { status: 500 });
+      console.error("API error refreshing mental model:", response.error);
+      return NextResponse.json({ error: "Failed to refresh mental model" }, { status: 500 });
     }
 
     return NextResponse.json(response.data, { status: 200 });
   } catch (error) {
-    console.error("Error generating mental model:", error);
-    return NextResponse.json({ error: "Failed to generate mental model" }, { status: 500 });
+    console.error("Error refreshing mental model:", error);
+    return NextResponse.json({ error: "Failed to refresh mental model" }, { status: 500 });
   }
 }

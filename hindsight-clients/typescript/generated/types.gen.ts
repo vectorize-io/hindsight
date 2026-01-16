@@ -2267,7 +2267,7 @@ export type RefreshMentalModelsResponses = {
 export type RefreshMentalModelsResponse =
   RefreshMentalModelsResponses[keyof RefreshMentalModelsResponses];
 
-export type GenerateMentalModelData = {
+export type RefreshMentalModelData = {
   body?: never;
   headers?: {
     /**
@@ -2286,28 +2286,28 @@ export type GenerateMentalModelData = {
     model_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate";
+  url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/refresh";
 };
 
-export type GenerateMentalModelErrors = {
+export type RefreshMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type GenerateMentalModelError =
-  GenerateMentalModelErrors[keyof GenerateMentalModelErrors];
+export type RefreshMentalModelError =
+  RefreshMentalModelErrors[keyof RefreshMentalModelErrors];
 
-export type GenerateMentalModelResponses = {
+export type RefreshMentalModelResponses = {
   /**
    * Successful Response
    */
   200: AsyncOperationSubmitResponse;
 };
 
-export type GenerateMentalModelResponse =
-  GenerateMentalModelResponses[keyof GenerateMentalModelResponses];
+export type RefreshMentalModelResponse =
+  RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
 
 export type ListDocumentsData = {
   body?: never;

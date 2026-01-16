@@ -97,6 +97,18 @@ class ReflectContext:
     context: str | None = None
 
 
+@dataclass
+class RefreshMentalModelContext:
+    """Context for a refresh mental model operation validation (pre-operation).
+
+    Contains ALL user-provided parameters for the refresh mental model operation.
+    """
+
+    bank_id: str
+    model_id: str
+    request_context: "RequestContext"
+
+
 # =============================================================================
 # Post-operation Contexts (includes results)
 # =============================================================================
@@ -160,6 +172,27 @@ class ReflectResultContext:
     context: str | None
     # Result
     result: "ReflectResult | None" = None
+    success: bool = True
+    error: str | None = None
+
+
+@dataclass
+class RefreshMentalModelResult:
+    """Result context for post-refresh-mental-model hook.
+
+    Contains the operation parameters and the result including token usage.
+    """
+
+    bank_id: str
+    model_id: str
+    request_context: "RequestContext"
+    # Result
+    model_name: str | None = None
+    observations_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    duration_ms: int = 0
     success: bool = True
     error: str | None = None
 
@@ -265,6 +298,25 @@ class OperationValidatorExtension(Extension, ABC):
         """
         ...
 
+    @abstractmethod
+    async def validate_refresh_mental_model(self, ctx: RefreshMentalModelContext) -> ValidationResult:
+        """
+        Validate a refresh mental model operation before execution.
+
+        Called before the refresh mental model operation is processed.
+        Return ValidationResult.reject() to prevent the operation from executing.
+
+        Args:
+            ctx: Context containing all user-provided parameters:
+                - bank_id: Bank identifier
+                - model_id: Mental model ID to refresh
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the operation is allowed.
+        """
+        ...
+
     # =========================================================================
     # Post-operation hooks (optional - override to implement)
     # =========================================================================
@@ -321,6 +373,31 @@ class OperationValidatorExtension(Extension, ABC):
             result: Result context containing:
                 - All original operation parameters
                 - result: ReflectResult (if success)
+                - success: Whether the operation succeeded
+                - error: Error message (if failed)
+        """
+        pass
+
+    async def on_refresh_mental_model_complete(self, result: RefreshMentalModelResult) -> None:
+        """
+        Called after a refresh mental model operation completes (success or failure).
+
+        Override this method to implement post-operation logic such as:
+        - Token usage tracking and billing
+        - Audit logging
+        - Metrics collection
+
+        Args:
+            result: Result context containing:
+                - bank_id: Bank identifier
+                - model_id: Mental model ID
+                - request_context: Request context with auth info
+                - model_name: Name of the mental model (if success)
+                - observations_count: Number of observations generated
+                - input_tokens: Number of input tokens used
+                - output_tokens: Number of output tokens used
+                - total_tokens: Total tokens used (input + output)
+                - duration_ms: Total operation duration in milliseconds
                 - success: Whether the operation succeeded
                 - error: Error message (if failed)
         """
