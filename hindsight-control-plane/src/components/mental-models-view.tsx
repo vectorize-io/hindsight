@@ -946,7 +946,7 @@ export function MentalModelsView() {
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
                     {structuralModels.map((model) => (
-                      <ModelListCard
+                      <MentalModelCard
                         key={model.id}
                         model={model}
                         selected={selectedModel?.id === model.id}
@@ -969,7 +969,7 @@ export function MentalModelsView() {
                 {emergentModels.length > 0 ? (
                   <div className="grid grid-cols-2 gap-3">
                     {emergentModels.map((model) => (
-                      <ModelListCard
+                      <MentalModelCard
                         key={model.id}
                         model={model}
                         selected={selectedModel?.id === model.id}
@@ -1009,14 +1009,12 @@ export function MentalModelsView() {
                 {pinnedModels.length > 0 ? (
                   <div className="grid grid-cols-2 gap-3">
                     {pinnedModels.map((model) => (
-                      <PinnedModelCard
+                      <MentalModelCard
                         key={model.id}
                         model={model}
                         selected={selectedModel?.id === model.id}
                         onClick={() => setSelectedModel(model)}
                         onEdit={() => handleStartEdit(model)}
-                        onDelete={() => handleDeleteModel(model.id)}
-                        deleting={deletingModel === model.id}
                       />
                     ))}
                   </div>
@@ -1042,7 +1040,7 @@ export function MentalModelsView() {
                 {learnedModels.length > 0 ? (
                   <div className="grid grid-cols-2 gap-3">
                     {learnedModels.map((model) => (
-                      <ModelListCard
+                      <MentalModelCard
                         key={model.id}
                         model={model}
                         selected={selectedModel?.id === model.id}
@@ -1082,7 +1080,7 @@ export function MentalModelsView() {
                 {directiveModels.length > 0 ? (
                   <div className="grid grid-cols-2 gap-3">
                     {directiveModels.map((model) => (
-                      <DirectiveCard
+                      <MentalModelCard
                         key={model.id}
                         model={model}
                         selected={selectedModel?.id === model.id}
@@ -1132,127 +1130,93 @@ export function MentalModelsView() {
   );
 }
 
-// Compact card for dashboard view (no subtype chip since already grouped)
-function ModelListCard({
-  model,
-  selected,
-  onClick,
-}: {
-  model: MentalModel;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Card
-      className={`cursor-pointer transition-colors ${
-        selected ? "bg-primary/10 border-primary" : "hover:bg-muted/50"
-      }`}
-      onClick={onClick}
-    >
-      <CardContent className="p-3">
-        <div className="flex-1 min-w-0">
-          <span className="font-medium text-sm text-foreground">{model.name}</span>
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{model.description}</p>
-          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-            <span>
-              <span className="font-medium text-foreground">{model.observations?.length || 0}</span>{" "}
-              obs
-            </span>
-            <span>
-              <span className="font-medium text-foreground">{getTotalMemoryCount(model)}</span>{" "}
-              memories
-            </span>
-            {model.freshness && !model.freshness.is_up_to_date && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                {formatFreshnessReason(model.freshness)}
-              </span>
-            )}
-            {model.last_refresh_at && (
-              <span>
-                {new Date(model.last_refresh_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
-            )}
-          </div>
-          {model.tags && model.tags.length > 0 && (
-            <div className="flex items-center gap-1 mt-2 flex-wrap">
-              <Tag className="w-3 h-3 text-muted-foreground" />
-              {model.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Card for pinned models with edit and delete buttons
-function PinnedModelCard({
+// Unified card component for all mental model types
+function MentalModelCard({
   model,
   selected,
   onClick,
   onEdit,
-  onDelete,
-  deleting,
 }: {
   model: MentalModel;
   selected: boolean;
   onClick: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  deleting: boolean;
+  onEdit?: () => void;
 }) {
-  return (
-    <Card
-      className={`cursor-pointer transition-colors ${
+  const isDirective = model.subtype === "directive";
+  const isPinned = model.subtype === "pinned";
+
+  // Get icon based on subtype
+  const getIcon = () => {
+    switch (model.subtype) {
+      case "pinned":
+        return <Pin className="w-4 h-4 text-amber-500 shrink-0" />;
+      case "directive":
+        return <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />;
+      case "structural":
+        return <Target className="w-4 h-4 text-blue-500 shrink-0" />;
+      case "emergent":
+        return <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />;
+      case "learned":
+        return <Lightbulb className="w-4 h-4 text-violet-500 shrink-0" />;
+      default:
+        return null;
+    }
+  };
+
+  // Card styling based on subtype
+  const cardClassName = isDirective
+    ? `cursor-pointer transition-colors border-rose-500/30 ${
+        selected ? "bg-rose-500/10 border-rose-500" : "hover:bg-rose-500/5"
+      }`
+    : `cursor-pointer transition-colors ${
         selected ? "bg-primary/10 border-primary" : "hover:bg-muted/50"
-      }`}
-      onClick={onClick}
-    >
+      }`;
+
+  return (
+    <Card className={cardClassName} onClick={onClick}>
       <CardContent className="p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
+            {/* Header with icon and name */}
             <div className="flex items-center gap-2">
-              <Pin className="w-4 h-4 text-amber-500 shrink-0" />
+              {getIcon()}
               <span className="font-medium text-sm text-foreground">{model.name}</span>
             </div>
+
+            {/* Description */}
             <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{model.description}</p>
-            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-              <span>
-                <span className="font-medium text-foreground">
-                  {model.observations?.length || 0}
-                </span>{" "}
-                obs
-              </span>
-              <span>
-                <span className="font-medium text-foreground">{getTotalMemoryCount(model)}</span>{" "}
-                memories
-              </span>
-              {model.freshness && !model.freshness.is_up_to_date && (
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  {formatFreshnessReason(model.freshness)}
-                </span>
-              )}
-              {model.last_refresh_at && (
+
+            {/* Stats row - not shown for directives */}
+            {!isDirective && (
+              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                 <span>
-                  {new Date(model.last_refresh_at).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })}
+                  <span className="font-medium text-foreground">
+                    {model.observations?.length || 0}
+                  </span>{" "}
+                  obs
                 </span>
-              )}
-            </div>
+                <span>
+                  <span className="font-medium text-foreground">{getTotalMemoryCount(model)}</span>{" "}
+                  memories
+                </span>
+                {model.freshness && !model.freshness.is_up_to_date && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    {formatFreshnessReason(model.freshness)}
+                  </span>
+                )}
+                {model.last_refresh_at && (
+                  <span>
+                    {new Date(model.last_refresh_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Tags */}
             {model.tags && model.tags.length > 0 && (
               <div className="flex items-center gap-1 mt-2 flex-wrap">
                 <Tag className="w-3 h-3 text-muted-foreground" />
@@ -1267,11 +1231,13 @@ function PinnedModelCard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
+
+          {/* Edit button - only for pinned models */}
+          {isPinned && onEdit && (
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-primary hover:bg-primary/10"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 shrink-0"
               onClick={(e) => {
                 e.stopPropagation();
                 onEdit();
@@ -1280,53 +1246,8 @@ function PinnedModelCard({
             >
               <Pencil className="w-4 h-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              disabled={deleting}
-              title="Delete"
-            >
-              {deleting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Trash2 className="w-4 h-4" />
-              )}
-            </Button>
-          </div>
+          )}
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Card for directives (no action buttons - actions are in the detail panel)
-function DirectiveCard({
-  model,
-  selected,
-  onClick,
-}: {
-  model: MentalModel;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Card
-      className={`cursor-pointer transition-colors border-rose-500/30 ${
-        selected ? "bg-rose-500/10 border-rose-500" : "hover:bg-rose-500/5"
-      }`}
-      onClick={onClick}
-    >
-      <CardContent className="p-3">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-          <span className="font-medium text-sm text-foreground">{model.name}</span>
-        </div>
-        <p className="text-xs text-muted-foreground line-clamp-3 mt-1">{model.description}</p>
       </CardContent>
     </Card>
   );
@@ -1996,7 +1917,10 @@ function MentalModelDetailPanel({
                           {versionObservations.length} observations
                         </span>
                       </div>
-                      <div className="overflow-y-auto space-y-2 pr-2" style={{ maxHeight: "calc(85vh - 220px)" }}>
+                      <div
+                        className="overflow-y-auto space-y-2 pr-2"
+                        style={{ maxHeight: "calc(85vh - 220px)" }}
+                      >
                         {versionObservations.length === 0 ? (
                           <div className="text-center py-4 text-muted-foreground text-sm">
                             No observations
@@ -2081,7 +2005,10 @@ function MentalModelDetailPanel({
                           {model.observations?.length || 0} observations
                         </span>
                       </div>
-                      <div className="overflow-y-auto space-y-2 pr-2" style={{ maxHeight: "calc(85vh - 220px)" }}>
+                      <div
+                        className="overflow-y-auto space-y-2 pr-2"
+                        style={{ maxHeight: "calc(85vh - 220px)" }}
+                      >
                         {!model.observations || model.observations.length === 0 ? (
                           <div className="text-center py-4 text-muted-foreground text-sm">
                             No observations
