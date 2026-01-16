@@ -259,23 +259,11 @@ class TestReflectToolSchemas:
         assert "recall" in tool_names
         assert "done" in tool_names
 
-    def test_get_reflect_tools_observations_mode(self):
-        """Test getting reflect tools with observations output mode."""
-        from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
-
-        tools = get_reflect_tools(output_mode="observations")
-
-        done_tool = next(t for t in tools if t["function"]["name"] == "done")
-        params = done_tool["function"]["parameters"]["properties"]
-
-        assert "observations" in params
-        assert "answer" not in params
-
     def test_get_reflect_tools_answer_mode(self):
         """Test getting reflect tools with answer output mode."""
         from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
 
-        tools = get_reflect_tools(output_mode="answer")
+        tools = get_reflect_tools()
 
         done_tool = next(t for t in tools if t["function"]["name"] == "done")
         params = done_tool["function"]["parameters"]["properties"]

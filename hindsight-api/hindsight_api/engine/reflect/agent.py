@@ -6,11 +6,36 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from .models import LLMCall, MentalModelInput, Observation, ReflectAgentResult, ToolCall
-from .prompts import FINAL_SYSTEM_PROMPT, build_final_prompt, build_system_prompt_for_tools
+from .models import DirectiveInfo, LLMCall, MentalModelInput, ReflectAgentResult, ToolCall
+from .prompts import FINAL_SYSTEM_PROMPT, _extract_directive_rules, build_final_prompt, build_system_prompt_for_tools
 from .tools_schema import get_reflect_tools
+
+
+def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[DirectiveInfo]:
+    """Build list of DirectiveInfo from directive mental models."""
+    if not directives:
+        return []
+
+    result = []
+    for directive in directives:
+        directive_id = directive.get("id", "")
+        directive_name = directive.get("name", "")
+        observations = directive.get("observations", [])
+
+        rules = []
+        for obs in observations:
+            # Support both Pydantic Observation objects and dicts
+            if hasattr(obs, "content"):
+                rules.append(obs.content)
+            elif isinstance(obs, dict) and obs.get("content"):
+                rules.append(obs["content"])
+
+        result.append(DirectiveInfo(id=directive_id, name=directive_name, rules=rules))
+
+    return result
+
 
 if TYPE_CHECKING:
     from ..llm_wrapper import LLMProvider
@@ -136,7 +161,7 @@ async def run_reflect_agent(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     max_tokens: int | None = None,
     response_schema: dict | None = None,
-    output_mode: Literal["answer", "observations"] = "answer",
+    directives: list[dict[str, Any]] | None = None,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -158,7 +183,7 @@ async def run_reflect_agent(
         max_iterations: Maximum number of iterations before forcing response
         max_tokens: Maximum tokens for the final response
         response_schema: Optional JSON Schema for structured output in final response
-        output_mode: "answer" returns final text, "observations" returns structured observations
+        directives: Optional list of directive mental models to inject as hard rules
 
     Returns:
         ReflectAgentResult with final answer and metadata
@@ -167,11 +192,17 @@ async def run_reflect_agent(
     reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
     start_time = time.time()
 
-    # Get tools for this agent
-    tools = get_reflect_tools(enable_learn=enable_learn, output_mode=output_mode)
+    # Build directives_applied for the trace
+    directives_applied = _build_directives_applied(directives)
 
-    # Build initial messages
-    system_prompt = build_system_prompt_for_tools(bank_profile, context, output_mode=output_mode)
+    # Extract directive rules for tool schema (if any)
+    directive_rules = _extract_directive_rules(directives) if directives else None
+
+    # Get tools for this agent (with directive compliance field if directives exist)
+    tools = get_reflect_tools(enable_learn=enable_learn, directive_rules=directive_rules)
+
+    # Build initial messages (directives are injected into system prompt at START and END)
+    system_prompt = build_system_prompt_for_tools(bank_profile, context, directives=directives)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": query},
@@ -189,44 +220,43 @@ async def run_reflect_agent(
     available_memory_ids: set[str] = set()
     available_model_ids: set[str] = set()
 
-    # In answer mode, pre-fetch mental models so the agent always starts with this knowledge
-    if output_mode == "answer":
-        prefetch_start = time.time()
-        models_result = await lookup_fn(None)  # List all mental models
-        prefetch_duration = int((time.time() - prefetch_start) * 1000)
+    # Pre-fetch mental models so the agent always starts with this knowledge
+    prefetch_start = time.time()
+    models_result = await lookup_fn(None)  # List all mental models
+    prefetch_duration = int((time.time() - prefetch_start) * 1000)
 
-        # Track available model IDs
-        if isinstance(models_result, dict) and "models" in models_result:
-            for model in models_result["models"]:
-                if "id" in model:
-                    available_model_ids.add(model["id"])
+    # Track available model IDs
+    if isinstance(models_result, dict) and "models" in models_result:
+        for model in models_result["models"]:
+            if "id" in model:
+                available_model_ids.add(model["id"])
 
-        # Add to context history for the agent
-        context_history.append({"tool": "list_mental_models", "output": models_result})
+    # Add to context history for the agent
+    context_history.append({"tool": "list_mental_models", "output": models_result})
 
-        # Add to tool trace
-        tool_trace.append(
-            ToolCall(
-                tool="list_mental_models",
-                input={"tool": "list_mental_models"},
-                output=models_result,
-                duration_ms=prefetch_duration,
-                iteration=0,
-            )
+    # Add to tool trace
+    tool_trace.append(
+        ToolCall(
+            tool="list_mental_models",
+            input={"tool": "list_mental_models"},
+            output=models_result,
+            duration_ms=prefetch_duration,
+            iteration=0,
         )
-        tool_trace_summary.append(
-            {
-                "tool": "list_mental_models",
-                "input_summary": "(prefetch)",
-                "duration_ms": prefetch_duration,
-                "output_chars": len(json.dumps(models_result, default=str)),
-            }
-        )
-        total_tools_called += 1
+    )
+    tool_trace_summary.append(
+        {
+            "tool": "list_mental_models",
+            "input_summary": "(prefetch)",
+            "duration_ms": prefetch_duration,
+            "output_chars": len(json.dumps(models_result, default=str)),
+        }
+    )
+    total_tools_called += 1
 
-        # Include in the user message so the agent sees it
-        models_info = json.dumps(models_result, indent=2, default=str)
-        messages[1]["content"] = f"{query}\n\n## Available Mental Models (pre-fetched)\n```json\n{models_info}\n```"
+    # Include in the user message so the agent sees it
+    models_info = json.dumps(models_result, indent=2, default=str)
+    messages[1]["content"] = f"{query}\n\n## Available Mental Models (pre-fetched)\n```json\n{models_info}\n```"
 
     def _get_llm_trace() -> list[LLMCall]:
         return [LLMCall(scope=c["scope"], duration_ms=c["duration_ms"]) for c in llm_trace]
@@ -288,6 +318,7 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
         # Call LLM with tools
@@ -338,6 +369,7 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
         # No tool calls - LLM wants to respond with text
@@ -361,6 +393,7 @@ async def run_reflect_agent(
                     mental_models_created=mental_models_created,
                     tool_trace=tool_trace,
                     llm_trace=_get_llm_trace(),
+                    directives_applied=directives_applied,
                 )
             # Empty response, force final
             prompt = build_final_prompt(query, context_history, bank_profile, context)
@@ -390,10 +423,11 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
-        # Check for done tool call
-        done_call = next((tc for tc in result.tool_calls if tc.name == "done"), None)
+        # Check for done tool call (handle both 'done' and 'functions.done')
+        done_call = next((tc for tc in result.tool_calls if tc.name == "done" or tc.name == "functions.done"), None)
         if done_call:
             # Guardrail: Require evidence before done
             has_gathered_evidence = bool(available_memory_ids) or bool(available_model_ids)
@@ -421,7 +455,6 @@ async def run_reflect_agent(
             # Process done tool
             return await _process_done_tool(
                 done_call,
-                output_mode,
                 available_memory_ids,
                 available_model_ids,
                 iteration + 1,
@@ -431,12 +464,13 @@ async def run_reflect_agent(
                 _get_llm_trace(),
                 _log_completion,
                 reflect_id,
+                directives_applied=directives_applied,
                 llm_config=llm_config,
                 response_schema=response_schema,
             )
 
-        # Execute other tools in parallel
-        other_tools = [tc for tc in result.tool_calls if tc.name != "done"]
+        # Execute other tools in parallel (exclude done and functions.done)
+        other_tools = [tc for tc in result.tool_calls if tc.name not in ("done", "functions.done")]
         if other_tools:
             # Add assistant message with tool calls
             messages.append(
@@ -534,6 +568,7 @@ async def run_reflect_agent(
         mental_models_created=mental_models_created,
         tool_trace=tool_trace,
         llm_trace=_get_llm_trace(),
+        directives_applied=directives_applied,
     )
 
 
@@ -551,7 +586,6 @@ def _tool_call_to_dict(tc: "LLMToolCall") -> dict[str, Any]:
 
 async def _process_done_tool(
     done_call: "LLMToolCall",
-    output_mode: str,
     available_memory_ids: set[str],
     available_model_ids: set[str],
     iterations: int,
@@ -561,60 +595,13 @@ async def _process_done_tool(
     llm_trace: list[LLMCall],
     log_completion: Callable,
     reflect_id: str,
+    directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
 
-    if output_mode == "observations" and "observations" in args:
-        # Process observations - handle both list and nested {"observations": [...]} format
-        observations: list[Observation] = []
-        used_memory_ids: list[str] = []
-
-        obs_list = args["observations"]
-        # Handle nested format where LLM outputs {"observations": [...]} instead of just [...]
-        if isinstance(obs_list, dict) and "observations" in obs_list:
-            obs_list = obs_list["observations"]
-
-        for obs_data in obs_list:
-            validated_mids = []
-            for mid in obs_data.get("memory_ids", []):
-                if mid in available_memory_ids:
-                    validated_mids.append(mid)
-                    if mid not in used_memory_ids:
-                        used_memory_ids.append(mid)
-
-            observations.append(
-                Observation(
-                    title=obs_data.get("title", ""),
-                    text=obs_data.get("text", ""),
-                    memory_ids=validated_mids,
-                )
-            )
-
-        # Build text from observations
-        text_parts = []
-        for obs in observations:
-            if obs.title:
-                text_parts.append(f"## {obs.title}\n{obs.text}")
-            else:
-                text_parts.append(obs.text)
-        answer = "\n\n".join(text_parts)
-
-        log_completion(answer, iterations)
-        return ReflectAgentResult(
-            text=answer,
-            observations=observations,
-            iterations=iterations,
-            tools_called=total_tools_called,
-            mental_models_created=mental_models_created,
-            tool_trace=tool_trace,
-            llm_trace=llm_trace,
-            used_memory_ids=used_memory_ids,
-        )
-
-    # Default: answer mode
     answer = args.get("answer", "").strip()
     if not answer:
         answer = "No answer provided."
@@ -639,6 +626,7 @@ async def _process_done_tool(
         llm_trace=llm_trace,
         used_memory_ids=used_memory_ids,
         used_model_ids=used_model_ids,
+        directives_applied=directives_applied,
     )
 
 
@@ -665,6 +653,10 @@ async def _execute_tool(
     learn_fn: Callable[[MentalModelInput], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute a single tool by name."""
+    # Normalize tool name - some LLMs return 'functions.done' instead of 'done'
+    if tool_name.startswith("functions."):
+        tool_name = tool_name[len("functions.") :]
+
     if tool_name == "list_mental_models":
         return await lookup_fn(None)
 

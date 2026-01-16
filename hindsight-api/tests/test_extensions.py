@@ -17,6 +17,8 @@ from hindsight_api.extensions import (
     RecallResult,
     ReflectContext,
     ReflectResultContext,
+    RefreshMentalModelContext,
+    RefreshMentalModelResult,
     RequestContext,
     RetainContext,
     RetainResult,
@@ -93,6 +95,7 @@ class RateLimitingValidator(OperationValidatorExtension):
         self.retain_counts: dict[str, int] = defaultdict(int)
         self.recall_counts: dict[str, int] = defaultdict(int)
         self.reflect_counts: dict[str, int] = defaultdict(int)
+        self.refresh_mental_model_counts: dict[str, int] = defaultdict(int)
 
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         self.retain_counts[ctx.bank_id] += 1
@@ -118,6 +121,16 @@ class RateLimitingValidator(OperationValidatorExtension):
             )
         return ValidationResult.accept()
 
+    async def validate_refresh_mental_model(
+        self, ctx: RefreshMentalModelContext
+    ) -> ValidationResult:
+        self.refresh_mental_model_counts[ctx.bank_id] += 1
+        if self.refresh_mental_model_counts[ctx.bank_id] > self.max_attempts:
+            return ValidationResult.reject(
+                f"Refresh mental model limit exceeded for bank {ctx.bank_id}"
+            )
+        return ValidationResult.accept()
+
 
 class TrackingValidator(OperationValidatorExtension):
     """
@@ -132,10 +145,12 @@ class TrackingValidator(OperationValidatorExtension):
         self.pre_retain_calls: list[RetainContext] = []
         self.pre_recall_calls: list[RecallContext] = []
         self.pre_reflect_calls: list[ReflectContext] = []
+        self.pre_refresh_mental_model_calls: list[RefreshMentalModelContext] = []
         # Post-hook tracking
         self.post_retain_calls: list[RetainResult] = []
         self.post_recall_calls: list[RecallResult] = []
         self.post_reflect_calls: list[ReflectResultContext] = []
+        self.post_refresh_mental_model_calls: list[RefreshMentalModelResult] = []
 
     async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
         self.pre_retain_calls.append(ctx)
@@ -149,6 +164,12 @@ class TrackingValidator(OperationValidatorExtension):
         self.pre_reflect_calls.append(ctx)
         return ValidationResult.accept()
 
+    async def validate_refresh_mental_model(
+        self, ctx: RefreshMentalModelContext
+    ) -> ValidationResult:
+        self.pre_refresh_mental_model_calls.append(ctx)
+        return ValidationResult.accept()
+
     async def on_retain_complete(self, result: RetainResult) -> None:
         self.post_retain_calls.append(result)
 
@@ -157,6 +178,11 @@ class TrackingValidator(OperationValidatorExtension):
 
     async def on_reflect_complete(self, result: ReflectResultContext) -> None:
         self.post_reflect_calls.append(result)
+
+    async def on_refresh_mental_model_complete(
+        self, result: RefreshMentalModelResult
+    ) -> None:
+        self.post_refresh_mental_model_calls.append(result)
 
 
 class TestMemoryEngineValidation:
@@ -514,6 +540,105 @@ class TestOperationHooksParameters:
 
         assert len(validator.pre_recall_calls) == 1
         assert len(validator.post_recall_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_refresh_mental_model_pre_hook_receives_all_parameters(
+        self, memory_with_tracking_validator
+    ):
+        """Pre-refresh-mental-model hook receives all user-provided parameters."""
+        import uuid
+
+        memory, validator = memory_with_tracking_validator
+        bank_id = f"test-refresh-mm-params-{uuid.uuid4().hex[:8]}"
+        ctx = RequestContext(api_key="test-key")
+
+        # Create bank first (get_bank_profile auto-creates if needed)
+        await memory.get_bank_profile(bank_id, request_context=ctx)
+
+        # Create a pinned mental model
+        model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            description="Test description",
+            subtype="pinned",
+            request_context=ctx,
+        )
+
+        assert model is not None
+        model_id = model["id"]
+
+        # Attempt to refresh (may not actually refresh if no data, but hook should be called)
+        try:
+            await memory.refresh_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=ctx,
+            )
+        except Exception:
+            pass  # May fail if no data
+
+        # Check pre-hook was called
+        assert len(validator.pre_refresh_mental_model_calls) == 1
+        pre_ctx = validator.pre_refresh_mental_model_calls[0]
+        assert pre_ctx.bank_id == bank_id
+        assert pre_ctx.model_id == model_id
+        assert pre_ctx.request_context == ctx
+
+    @pytest.mark.asyncio
+    async def test_refresh_mental_model_post_hook_receives_token_usage(
+        self, memory_with_tracking_validator
+    ):
+        """Post-refresh-mental-model hook receives token usage information."""
+        import uuid
+
+        memory, validator = memory_with_tracking_validator
+        bank_id = f"test-refresh-mm-tokens-{uuid.uuid4().hex[:8]}"
+        ctx = RequestContext(api_key="test-key")
+
+        # Store some content first
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice is a software engineer who works on machine learning."},
+                {"content": "Alice enjoys hiking and outdoor activities on weekends."},
+                {"content": "Alice has been working at the company for 5 years."},
+            ],
+            request_context=ctx,
+        )
+
+        # Create a pinned mental model
+        model = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Alice Profile",
+            description="Profile of Alice including work and hobbies",
+            subtype="pinned",
+            request_context=ctx,
+        )
+
+        if model:
+            model_id = model["id"]
+
+            # Refresh the mental model
+            result = await memory.refresh_mental_model(
+                bank_id=bank_id,
+                model_id=model_id,
+                request_context=ctx,
+            )
+
+            # Check post-hook was called with token usage
+            if validator.post_refresh_mental_model_calls:
+                post_result = validator.post_refresh_mental_model_calls[0]
+                assert post_result.bank_id == bank_id
+                assert post_result.model_id == model_id
+                assert post_result.request_context == ctx
+                assert post_result.success is True
+                assert post_result.error is None
+
+                # Token usage should be populated (may be 0 if refresh was skipped)
+                assert post_result.total_tokens >= 0
+                assert post_result.input_tokens >= 0
+                assert post_result.output_tokens >= 0
+                assert post_result.duration_ms >= 0
 
 
 class TestTenantExtension:

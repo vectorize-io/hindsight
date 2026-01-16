@@ -6,11 +6,34 @@ const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://loca
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   try {
     const { bankId } = await params;
+    const { searchParams } = new URL(request.url);
+    const subtype = searchParams.get("subtype");
 
     if (!bankId) {
       return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
     }
 
+    // If subtype is specified, call the dataplane API directly with the query param
+    if (subtype) {
+      const response = await fetch(
+        `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models?subtype=${subtype}`,
+        { method: "GET" }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API error listing mental models:", errorText);
+        return NextResponse.json(
+          { error: "Failed to list mental models" },
+          { status: response.status }
+        );
+      }
+
+      const data = await response.json();
+      return NextResponse.json(data, { status: 200 });
+    }
+
+    // Default: use SDK which excludes directives
     const response = await sdk.listMentalModels({
       client: lowLevelClient,
       path: { bank_id: bankId },

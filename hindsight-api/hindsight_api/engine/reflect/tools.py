@@ -5,9 +5,11 @@ Tool implementations for the reflect agent.
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .models import MentalModelInput
+from .observations import Observation, ObservationEvidence, Trend
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -24,6 +26,37 @@ def generate_model_id(name: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     # Truncate to reasonable length
     return normalized[:50]
+
+
+def _parse_observations(observations_raw: list) -> list[Observation]:
+    """Parse raw observation dicts into typed Observation models."""
+    observations: list[Observation] = []
+    for obs in observations_raw:
+        if not isinstance(obs, dict):
+            continue
+
+        try:
+            parsed = Observation(
+                title=obs.get("title", ""),
+                content=obs.get("content", ""),
+                evidence=[
+                    ObservationEvidence(
+                        memory_id=ev.get("memory_id", ""),
+                        quote=ev.get("quote", ""),
+                        relevance=ev.get("relevance", ""),
+                        timestamp=ev.get("timestamp"),
+                    )
+                    for ev in obs.get("evidence", [])
+                    if isinstance(ev, dict)
+                ],
+                created_at=obs.get("created_at"),
+            )
+            observations.append(parsed)
+        except Exception as e:
+            logger.warning(f"Failed to parse observation: {e}")
+            continue
+
+    return observations
 
 
 async def tool_lookup(
@@ -66,18 +99,8 @@ async def tool_lookup(
                 obs_data = json.loads(obs_data)
             observations_raw = obs_data.get("observations", []) if isinstance(obs_data, dict) else obs_data
 
-            # Normalize observation format: map memory_ids/fact_ids to based_on
-            observations = []
-            for obs in observations_raw:
-                if isinstance(obs, dict):
-                    based_on = obs.get("memory_ids") or obs.get("fact_ids") or []
-                    observations.append(
-                        {
-                            "title": obs.get("title", ""),
-                            "text": obs.get("text", ""),
-                            "based_on": based_on,
-                        }
-                    )
+            # Parse observations into typed models
+            observations = _parse_observations(observations_raw)
 
             return {
                 "found": True,
@@ -86,7 +109,7 @@ async def tool_lookup(
                     "subtype": row["subtype"],
                     "name": row["name"],
                     "description": row["description"],
-                    "observations": observations,  # [{title, text, based_on}, ...]
+                    "observations": observations,
                     "entity_id": str(row["entity_id"]) if row["entity_id"] else None,
                     "last_updated": row["last_updated"].isoformat() if row["last_updated"] else None,
                 },
@@ -95,6 +118,8 @@ async def tool_lookup(
     else:
         # List mental models (compact: id, name, description only)
         # Full observations are retrieved via get_mental_model(model_id)
+        # NOTE: Directives (subtype='directive') are excluded from listing -
+        # they are injected into the system prompt, not discoverable via tools
         # Filter by tags if provided
         if tags:
             if tags_match == "all":
@@ -103,7 +128,7 @@ async def tool_lookup(
                     """
                     SELECT id, subtype, name, description
                     FROM mental_models
-                    WHERE bank_id = $1 AND tags @> $2::varchar[]
+                    WHERE bank_id = $1 AND tags @> $2::varchar[] AND subtype != 'directive'
                     ORDER BY last_updated DESC NULLS LAST, created_at DESC
                     """,
                     bank_id,
@@ -115,7 +140,7 @@ async def tool_lookup(
                     """
                     SELECT id, subtype, name, description
                     FROM mental_models
-                    WHERE bank_id = $1 AND tags && $2::varchar[]
+                    WHERE bank_id = $1 AND tags && $2::varchar[] AND subtype != 'directive'
                     ORDER BY last_updated DESC NULLS LAST, created_at DESC
                     """,
                     bank_id,
@@ -126,7 +151,7 @@ async def tool_lookup(
                 """
                 SELECT id, subtype, name, description
                 FROM mental_models
-                WHERE bank_id = $1
+                WHERE bank_id = $1 AND subtype != 'directive'
                 ORDER BY last_updated DESC NULLS LAST, created_at DESC
                 """,
                 bank_id,

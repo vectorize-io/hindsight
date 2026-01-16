@@ -88,7 +88,19 @@ class TestToolLookup:
             "subtype": "learned",
             "name": "Model 1",
             "description": "First model",
-            "observations": {"observations": [{"title": "Overview", "text": "Full summary of model 1", "memory_ids": ["mem-1", "mem-2"]}]},
+            "observations": {
+                "observations": [
+                    {
+                        "title": "Overview",
+                        "content": "Full summary of model 1",
+                        "evidence": [
+                            {"memory_id": "mem-1", "quote": "quote 1", "relevance": "relevant", "timestamp": "2024-01-01T00:00:00Z"},
+                            {"memory_id": "mem-2", "quote": "quote 2", "relevance": "relevant", "timestamp": "2024-01-01T00:00:00Z"},
+                        ],
+                        "created_at": "2024-01-01T00:00:00Z",
+                    }
+                ]
+            },
             "entity_id": None,
             "last_updated": MagicMock(isoformat=lambda: "2024-01-01T00:00:00"),
         }
@@ -98,9 +110,12 @@ class TestToolLookup:
         assert result["found"] is True
         assert result["model"]["id"] == "model-1"
         assert len(result["model"]["observations"]) == 1
-        assert result["model"]["observations"][0]["text"] == "Full summary of model 1"
-        # Verify memory_ids are mapped to based_on
-        assert result["model"]["observations"][0]["based_on"] == ["mem-1", "mem-2"]
+        # Observations are now Observation objects
+        obs = result["model"]["observations"][0]
+        assert obs.content == "Full summary of model 1"
+        assert obs.title == "Overview"
+        assert len(obs.evidence) == 2
+        assert obs.evidence[0].memory_id == "mem-1"
 
     async def test_model_not_found(self, mock_conn):
         """Test looking up non-existent model."""
@@ -839,6 +854,158 @@ class TestReflectAgent:
         )
 
         assert result.text == "The answer is simple and direct."
+
+    async def test_agent_includes_directives_in_system_prompt(self, mock_llm, bank_profile, mock_tools):
+        """Test that directives are included in the system prompt."""
+        from hindsight_api.engine.reflect.observations import Observation
+
+        # Create directive with Observation objects (new format)
+        directives = [
+            {
+                "id": "response-rules",
+                "name": "Response Rules",
+                "description": "Rules for responses",
+                "subtype": "directive",
+                "observations": [
+                    Observation(
+                        title="No Speculation",
+                        content="Never speculate about information not in the memories.",
+                        evidence=[],
+                    ),
+                    Observation(
+                        title="Be Concise",
+                        content="Always keep responses under 100 words.",
+                        evidence=[],
+                    ),
+                ],
+            },
+        ]
+
+        # Capture the system prompt
+        captured_messages = []
+
+        async def capture_call(*args, **kwargs):
+            if "messages" in kwargs:
+                captured_messages.extend(kwargs["messages"])
+            return self._make_tool_result([{"name": "done", "arguments": {"answer": "Done."}}])
+
+        mock_llm.call_with_tools.side_effect = [
+            # First: gather evidence (guardrail requirement)
+            self._make_tool_result([{"name": "recall", "arguments": {"query": "test"}}]),
+            # Then: done
+            self._make_tool_result([{"name": "done", "arguments": {"answer": "Done."}}]),
+        ]
+
+        # Store original to check messages
+        original_call = mock_llm.call_with_tools
+
+        async def wrapped_call(*args, **kwargs):
+            if "messages" in kwargs:
+                captured_messages.extend(kwargs["messages"])
+            return await original_call(*args, **kwargs)
+
+        mock_llm.call_with_tools = wrapped_call
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do we know?",
+            bank_profile=bank_profile,
+            directives=directives,
+            **mock_tools,
+        )
+
+        # Find the system message
+        system_messages = [m for m in captured_messages if m.get("role") == "system"]
+        assert len(system_messages) > 0, "No system message found"
+
+        system_content = system_messages[0]["content"]
+
+        # Verify directives are in the system prompt
+        assert "DIRECTIVES" in system_content, "Directives section not found in system prompt"
+        assert "No Speculation" in system_content, "Directive title not found"
+        assert "Never speculate" in system_content, "Directive content not found"
+        assert "Be Concise" in system_content, "Second directive title not found"
+        assert "100 words" in system_content, "Second directive content not found"
+        assert "NEVER violate these directives" in system_content, "Directive warning not found"
+
+
+class TestDirectivesSection:
+    """Test the directives section builder."""
+
+    def test_build_directives_section_with_observation_objects(self):
+        """Test building directives section with Observation objects."""
+        from hindsight_api.engine.reflect.observations import Observation
+        from hindsight_api.engine.reflect.prompts import build_directives_section
+
+        directives = [
+            {
+                "name": "Safety Rules",
+                "observations": [
+                    Observation(
+                        title="No Harmful Content",
+                        content="Never generate harmful or dangerous content.",
+                        evidence=[],
+                    ),
+                ],
+            },
+        ]
+
+        result = build_directives_section(directives)
+
+        assert "DIRECTIVES" in result
+        assert "No Harmful Content" in result
+        assert "Never generate harmful" in result
+        assert "NEVER violate" in result
+
+    def test_build_directives_section_with_dicts(self):
+        """Test building directives section with dict observations."""
+        from hindsight_api.engine.reflect.prompts import build_directives_section
+
+        directives = [
+            {
+                "name": "Safety Rules",
+                "observations": [
+                    {
+                        "title": "No Harmful Content",
+                        "content": "Never generate harmful or dangerous content.",
+                    },
+                ],
+            },
+        ]
+
+        result = build_directives_section(directives)
+
+        assert "DIRECTIVES" in result
+        assert "No Harmful Content" in result
+        assert "Never generate harmful" in result
+
+    def test_build_directives_section_fallback_to_description(self):
+        """Test that directives without observations use description."""
+        from hindsight_api.engine.reflect.prompts import build_directives_section
+
+        directives = [
+            {
+                "name": "Simple Rule",
+                "description": "This is a simple rule to follow.",
+                "observations": [],
+            },
+        ]
+
+        result = build_directives_section(directives)
+
+        assert "Simple Rule" in result
+        assert "simple rule to follow" in result
+
+    def test_build_directives_section_empty(self):
+        """Test that empty directives returns empty string."""
+        from hindsight_api.engine.reflect.prompts import build_directives_section
+
+        result = build_directives_section([])
+        assert result == ""
+
+        result = build_directives_section(None)
+        assert result == ""
 
 
 @pytest.mark.integration

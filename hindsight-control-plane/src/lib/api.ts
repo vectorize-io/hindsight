@@ -272,7 +272,7 @@ export class ControlPlaneClient {
         subtype: string;
         name: string;
         description: string;
-        observations?: Array<{ title: string; text: string; based_on: string[] }>;
+        observations?: Array<{ title: string; content: string; based_on: string[] }>;
         entity_id: string | null;
         links: string[];
         tags?: string[];
@@ -309,6 +309,32 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Update a mental model (name and/or description)
+   */
+  async updateMentalModel(
+    bankId: string,
+    modelId: string,
+    params: { name?: string; description?: string }
+  ) {
+    return this.fetchApi<{
+      id: string;
+      bank_id: string;
+      subtype: string;
+      name: string;
+      description: string;
+      observations?: Array<{ title: string; content: string; based_on: string[] }>;
+      entity_id: string | null;
+      links: string[];
+      tags?: string[];
+      last_updated: string | null;
+      created_at: string;
+    }>(`/api/banks/${bankId}/mental-models/${modelId}`, {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
    * Get operation status
    */
   async getOperationStatus(bankId: string, operationId: string) {
@@ -324,11 +350,11 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Generate/refresh content for a specific mental model (async)
+   * Refresh content for a specific mental model (async)
    */
-  async generateMentalModel(bankId: string, modelId: string) {
+  async refreshMentalModel(bankId: string, modelId: string) {
     return this.fetchApi<{ operation_id: string; message: string }>(
-      `/api/banks/${bankId}/mental-models/${modelId}/generate`,
+      `/api/banks/${bankId}/mental-models/${modelId}/refresh`,
       {
         method: "POST",
       }
@@ -336,13 +362,15 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Create a pinned mental model
+   * Create a mental model (pinned or directive)
    */
   async createMentalModel(
     bankId: string,
     params: {
       name: string;
       description: string;
+      subtype?: "pinned" | "directive";
+      observations?: Array<{ title: string; content: string }>;
       tags?: string[];
     }
   ) {
@@ -352,7 +380,7 @@ export class ControlPlaneClient {
       subtype: string;
       name: string;
       description: string;
-      observations?: Array<{ title: string; text: string; based_on: string[] }>;
+      observations?: Array<{ title: string; content: string; based_on: string[] }>;
       entity_id: string | null;
       links: string[];
       tags?: string[];
@@ -383,6 +411,64 @@ export class ControlPlaneClient {
       method: "PUT",
       body: JSON.stringify(profile),
     });
+  }
+
+  /**
+   * List directives for a bank
+   */
+  async listDirectives(bankId: string) {
+    return this.fetchApi<{
+      items: Array<{
+        id: string;
+        bank_id: string;
+        subtype: string;
+        name: string;
+        description: string;
+        observations?: Array<{ title: string; content: string; based_on: string[] }>;
+        entity_id: string | null;
+        links: string[];
+        tags?: string[];
+        last_updated: string | null;
+        created_at: string;
+      }>;
+    }>(`/api/banks/${bankId}/mental-models?subtype=directive`);
+  }
+
+  /**
+   * List version history for a mental model
+   */
+  async listMentalModelVersions(bankId: string, modelId: string) {
+    return this.fetchApi<{
+      versions: Array<{
+        version: number;
+        created_at: string | null;
+        observation_count: number;
+      }>;
+    }>(`/api/banks/${bankId}/mental-models/${modelId}/versions`);
+  }
+
+  /**
+   * Get a specific version of a mental model
+   */
+  async getMentalModelVersion(bankId: string, modelId: string, version: number) {
+    return this.fetchApi<{
+      version: number;
+      observations: Array<{
+        title: string;
+        content: string;
+        evidence: Array<{
+          memory_id: string;
+          quote: string;
+          relevance: string;
+          timestamp: string;
+        }>;
+        created_at: string;
+        trend: string;
+        evidence_count: number;
+        evidence_span: { from: string | null; to: string | null };
+      }>;
+      created_at: string | null;
+    }>(`/api/banks/${bankId}/mental-models/${modelId}/versions/${version}`);
   }
 }
 
