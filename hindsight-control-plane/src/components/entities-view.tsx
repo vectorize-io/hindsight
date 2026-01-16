@@ -27,8 +27,6 @@ type EntityDetail = Entity;
 
 const ITEMS_PER_PAGE = 50;
 
-const ITEMS_PER_PAGE = 50;
-
 export function EntitiesView() {
   const { currentBank } = useBank();
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -77,12 +75,6 @@ export function EntitiesView() {
     } finally {
       setLoadingDetail(false);
     }
-  };
-
-  // Handle page change
-  const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
-    loadEntities(newPage);
   };
 
   // Handle page change
