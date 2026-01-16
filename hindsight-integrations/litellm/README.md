@@ -202,18 +202,20 @@ response = hindsight_litellm.completion(
 )
 ```
 
-### Bank Configuration: background and bank_name
+### Bank Configuration: mission
 
-Use `set_bank_background()` to configure the memory bank:
+Use `set_bank_mission()` to configure what the memory bank should learn and remember (used for mental models):
 
 ```python
-hindsight_litellm.set_bank_background(
-    background="""This agent routes customer support requests to the appropriate team.
+hindsight_litellm.set_bank_mission(
+    mission="""This agent routes customer support requests to the appropriate team.
     Remember which types of issues should go to which teams (billing, technical, sales).
     Track customer preferences for communication channels and past issue resolutions.""",
     name="Customer Support Router",  # Optional display name
 )
 ```
+
+**Note:** `set_bank_background()` is deprecated. Use `set_bank_mission()` instead.
 
 ### Memory Modes: Reflect vs Recall
 
@@ -472,7 +474,8 @@ cleanup()
 | `is_configured()` | Check if Hindsight is configured with a bank_id |
 | `reset_config()` | Reset all configuration to defaults |
 | `set_document_id(id)` | Convenience function to update document_id |
-| `set_bank_background(...)` | Set background/instructions for a memory bank |
+| `set_bank_mission(...)` | Set mission/instructions for a memory bank (for mental models) |
+| `set_bank_background(...)` | **Deprecated** - use `set_bank_mission()` instead |
 
 ### Memory Functions
 

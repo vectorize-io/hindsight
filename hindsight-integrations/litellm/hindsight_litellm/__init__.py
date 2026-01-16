@@ -35,8 +35,9 @@ API Structure:
        - hindsight_bank_id, hindsight_document_id, hindsight_budget, etc.
        - hindsight_include_entities, hindsight_trace
 
-    4. set_bank_background() - Set background/instructions for a bank
+    4. set_bank_mission() - Set mission/instructions for a bank (for mental models)
        - Can be called anytime, bank is auto-created if needed
+       - set_bank_background() is deprecated, use set_bank_mission() instead
 
 Basic usage:
     >>> import hindsight_litellm
@@ -51,9 +52,9 @@ Basic usage:
     >>> # Set defaults (bank_id is required)
     >>> hindsight_litellm.set_defaults(bank_id="user-123")
     >>>
-    >>> # Optionally set bank background
-    >>> hindsight_litellm.set_bank_background(
-    ...     background="This agent helps with customer support."
+    >>> # Optionally set bank mission (for mental models)
+    >>> hindsight_litellm.set_bank_mission(
+    ...     mission="This agent helps with customer support. Remember customer preferences."
     ... )
     >>>
     >>> # Enable memory integration
@@ -120,7 +121,8 @@ import litellm
 from .config import (
     configure,
     set_defaults,
-    set_bank_background,
+    set_bank_mission,
+    set_bank_background,  # Deprecated
     get_config,
     get_defaults,
     is_configured,
@@ -1209,7 +1211,8 @@ __all__ = [
     "is_configured",
     "reset_config",
     "set_document_id",
-    "set_bank_background",
+    "set_bank_mission",
+    "set_bank_background",  # Deprecated
     "HindsightConfig",
     "HindsightDefaults",
     "MemoryInjectionMode",

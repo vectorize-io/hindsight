@@ -295,13 +295,18 @@ def _create_or_update_bank(
     bank_id: str,
     name: Optional[str] = None,
     background: Optional[str] = None,
+    mission: Optional[str] = None,
     verbose: bool = False,
 ) -> None:
     """Create or update a memory bank with the given configuration.
 
-    DEPRECATED: Use hindsight_client.create_bank() directly instead.
-    This is only kept for backward compatibility with configure() calls
-    that include bank_name or background.
+    Args:
+        hindsight_api_url: URL of the Hindsight API server
+        bank_id: The bank ID to create/update
+        name: Optional display name for the bank
+        background: Deprecated - use mission instead
+        mission: Instructions guiding what Hindsight should learn and remember
+        verbose: Enable verbose logging
     """
     try:
         from hindsight_client import Hindsight
@@ -310,18 +315,20 @@ def _create_or_update_bank(
         client.create_bank(
             bank_id=bank_id,
             name=name,
+            mission=mission,
             background=background,
         )
         if verbose:
             import logging
+            field = "mission" if mission else "background"
             logging.getLogger("hindsight_litellm").info(
-                f"Created/updated bank '{bank_id}' with background"
+                f"Created/updated bank '{bank_id}' with {field}"
             )
     except ImportError:
         if verbose:
             import logging
             logging.getLogger("hindsight_litellm").warning(
-                "hindsight_client not installed. Cannot create bank with background. "
+                "hindsight_client not installed. Cannot create bank. "
                 "Install with: pip install hindsight-client"
             )
     except Exception as e:
@@ -418,6 +425,62 @@ def set_document_id(document_id: str | None) -> None:
         _global_defaults = HindsightDefaults(document_id=document_id)
 
 
+def set_bank_mission(
+    bank_id: Optional[str] = None,
+    mission: Optional[str] = None,
+    name: Optional[str] = None,
+) -> None:
+    """Set or update the mission for a memory bank.
+
+    The mission guides Hindsight on what information to learn and remember,
+    and is used for mental model generation. If the bank doesn't exist,
+    it will be auto-created.
+
+    Args:
+        bank_id: The bank ID to update. If not provided, uses the default bank_id.
+        mission: Instructions guiding what Hindsight should learn and remember.
+        name: Optional display name for the bank.
+
+    Raises:
+        ValueError: If no bank_id is provided and no default is set.
+        RuntimeError: If configure() hasn't been called.
+
+    Example:
+        >>> from hindsight_litellm import configure, set_defaults, set_bank_mission
+        >>> configure(hindsight_api_url="http://localhost:8888")
+        >>> set_defaults(bank_id="delivery-agent")
+        >>> set_bank_mission(
+        ...     mission="You are a delivery agent navigating a building. "
+        ...             "Remember employee locations, building layout, and optimal paths."
+        ... )
+    """
+    config = get_config()
+    if not config:
+        raise RuntimeError("Hindsight not configured. Call configure() first.")
+
+    # Determine which bank_id to use
+    effective_bank_id = bank_id
+    if effective_bank_id is None:
+        defaults = get_defaults()
+        if defaults:
+            effective_bank_id = defaults.bank_id
+
+    if not effective_bank_id:
+        raise ValueError(
+            "No bank_id provided and no default bank_id set. "
+            "Either pass bank_id or call set_defaults(bank_id=...) first."
+        )
+
+    # Use the Hindsight API to create/update the bank
+    _create_or_update_bank(
+        hindsight_api_url=config.hindsight_api_url,
+        bank_id=effective_bank_id,
+        name=name,
+        mission=mission,
+        verbose=config.verbose,
+    )
+
+
 def set_bank_background(
     bank_id: Optional[str] = None,
     background: Optional[str] = None,
@@ -425,9 +488,8 @@ def set_bank_background(
 ) -> None:
     """Set or update the background for a memory bank.
 
-    The background helps Hindsight understand what information is important
-    to extract and remember from conversations. If the bank doesn't exist,
-    it will be auto-created.
+    DEPRECATED: Use set_bank_mission() instead. The background field has been
+    deprecated in favor of mission for mental model support.
 
     Args:
         bank_id: The bank ID to update. If not provided, uses the default bank_id.
@@ -437,16 +499,14 @@ def set_bank_background(
     Raises:
         ValueError: If no bank_id is provided and no default is set.
         RuntimeError: If configure() hasn't been called.
-
-    Example:
-        >>> from hindsight_litellm import configure, set_defaults, set_bank_background
-        >>> configure(hindsight_api_url="http://localhost:8888")
-        >>> set_defaults(bank_id="routing-agent")
-        >>> set_bank_background(
-        ...     background="This agent routes customer requests to support channels. "
-        ...                "Remember which types of issues should go to which channels."
-        ... )
     """
+    import warnings
+    warnings.warn(
+        "set_bank_background() is deprecated. Use set_bank_mission() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     config = get_config()
     if not config:
         raise RuntimeError("Hindsight not configured. Call configure() first.")
