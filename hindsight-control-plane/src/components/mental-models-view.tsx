@@ -1121,6 +1121,7 @@ export function MentalModelsView() {
             model={selectedModel}
             onClose={() => setSelectedModel(null)}
             onRegenerated={silentRefreshModels}
+            onEdit={() => handleStartEdit(selectedModel)}
             onDelete={() => handleDeleteModel(selectedModel.id)}
             deleting={deletingModel === selectedModel.id}
           />
@@ -1258,12 +1259,14 @@ function MentalModelDetailPanel({
   model,
   onClose,
   onRegenerated,
+  onEdit,
   onDelete,
   deleting,
 }: {
   model: MentalModel;
   onClose: () => void;
   onRegenerated?: () => void;
+  onEdit?: () => void;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
@@ -1772,22 +1775,30 @@ function MentalModelDetailPanel({
           <code className="text-sm font-mono break-all text-muted-foreground">{model.id}</code>
         </div>
 
-        {/* Delete button for user-managed models */}
-        {(model.subtype === "pinned" || model.subtype === "directive") && onDelete && (
-          <div className="pt-4 border-t border-border">
-            <Button
-              variant="outline"
-              onClick={onDelete}
-              disabled={deleting}
-              className="w-full text-muted-foreground hover:text-rose-500 hover:border-rose-500 hover:bg-rose-500/10"
-            >
-              {deleting ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
-              Delete this {model.subtype === "directive" ? "directive" : "mental model"}
-            </Button>
+        {/* Action buttons for user-managed models */}
+        {(model.subtype === "pinned" || model.subtype === "directive") && (
+          <div className="pt-4 border-t border-border space-y-2">
+            {onEdit && (
+              <Button variant="outline" onClick={onEdit} className="w-full">
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit this {model.subtype === "directive" ? "directive" : "mental model"}
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                variant="outline"
+                onClick={onDelete}
+                disabled={deleting}
+                className="w-full text-muted-foreground hover:text-rose-500 hover:border-rose-500 hover:bg-rose-500/10"
+              >
+                {deleting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete this {model.subtype === "directive" ? "directive" : "mental model"}
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -3718,6 +3718,13 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             )
 
+        # Build directives_applied from agent result
+        from hindsight_api.engine.response_models import DirectiveRef
+
+        directives_applied_result = [
+            DirectiveRef(id=d.id, name=d.name, rules=d.rules) for d in agent_result.directives_applied
+        ]
+
         # Return response (compatible with existing API)
         result = ReflectResult(
             text=agent_result.text,
@@ -3728,6 +3735,7 @@ class MemoryEngine(MemoryEngineInterface):
             tool_trace=tool_trace_result,
             llm_trace=llm_trace_result,
             mental_models=mental_models_result,
+            directives_applied=directives_applied_result,
         )
 
         # Call post-operation hook if validator is configured
@@ -4866,7 +4874,7 @@ class MemoryEngine(MemoryEngineInterface):
                 UPDATE {fq_table("mental_models")}
                 SET {", ".join(updates)}
                 WHERE bank_id = $1 AND id = $2
-                RETURNING id, bank_id, subtype, name, description, observations, entity_id, links, tags, last_updated, created_at
+                RETURNING id, bank_id, subtype, name, description, observations, version, entity_id, links, tags, last_updated, created_at
             """
 
             row = await conn.fetchrow(query, *params)
@@ -4874,19 +4882,7 @@ class MemoryEngine(MemoryEngineInterface):
             if not row:
                 return None
 
-            return {
-                "id": row["id"],
-                "bank_id": row["bank_id"],
-                "subtype": row["subtype"],
-                "name": row["name"],
-                "description": row["description"],
-                "observations": row["observations"],
-                "entity_id": row["entity_id"],
-                "links": row["links"] or [],
-                "tags": row["tags"] or [],
-                "last_updated": row["last_updated"].isoformat() if row["last_updated"] else None,
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-            }
+            return self._row_to_mental_model(row)
 
     async def save_mental_model_version(
         self,

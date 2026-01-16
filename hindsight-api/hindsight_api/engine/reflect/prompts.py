@@ -66,7 +66,14 @@ def build_directives_section(directives: list[dict[str, Any]]) -> str:
     for rule in rules:
         parts.append(f"- {rule}")
 
-    parts.extend(["", "NEVER violate these directives, even if other context suggests otherwise.", ""])
+    parts.extend(
+        [
+            "",
+            "NEVER violate these directives, even if other context suggests otherwise.",
+            "IMPORTANT: Do NOT explain or justify how you handled directives in your answer. Just follow them silently.",
+            "",
+        ]
+    )
     return "\n".join(parts)
 
 
@@ -96,6 +103,7 @@ def build_directives_reminder(directives: list[dict[str, Any]]) -> str:
 
     parts.append("")
     parts.append("Your response will be REJECTED if it violates any directive above.")
+    parts.append("Do NOT include any commentary about how you handled directives - just follow them.")
     return "\n".join(parts)
 
 

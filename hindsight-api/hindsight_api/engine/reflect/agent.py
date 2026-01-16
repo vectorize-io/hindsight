@@ -8,9 +8,34 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from .models import LLMCall, MentalModelInput, ReflectAgentResult, ToolCall
+from .models import DirectiveInfo, LLMCall, MentalModelInput, ReflectAgentResult, ToolCall
 from .prompts import FINAL_SYSTEM_PROMPT, _extract_directive_rules, build_final_prompt, build_system_prompt_for_tools
 from .tools_schema import get_reflect_tools
+
+
+def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[DirectiveInfo]:
+    """Build list of DirectiveInfo from directive mental models."""
+    if not directives:
+        return []
+
+    result = []
+    for directive in directives:
+        directive_id = directive.get("id", "")
+        directive_name = directive.get("name", "")
+        observations = directive.get("observations", [])
+
+        rules = []
+        for obs in observations:
+            # Support both Pydantic Observation objects and dicts
+            if hasattr(obs, "content"):
+                rules.append(obs.content)
+            elif isinstance(obs, dict) and obs.get("content"):
+                rules.append(obs["content"])
+
+        result.append(DirectiveInfo(id=directive_id, name=directive_name, rules=rules))
+
+    return result
+
 
 if TYPE_CHECKING:
     from ..llm_wrapper import LLMProvider
@@ -167,6 +192,9 @@ async def run_reflect_agent(
     reflect_id = f"{bank_id[:8]}-{int(time.time() * 1000) % 100000}"
     start_time = time.time()
 
+    # Build directives_applied for the trace
+    directives_applied = _build_directives_applied(directives)
+
     # Extract directive rules for tool schema (if any)
     directive_rules = _extract_directive_rules(directives) if directives else None
 
@@ -290,6 +318,7 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
         # Call LLM with tools
@@ -340,6 +369,7 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
         # No tool calls - LLM wants to respond with text
@@ -363,6 +393,7 @@ async def run_reflect_agent(
                     mental_models_created=mental_models_created,
                     tool_trace=tool_trace,
                     llm_trace=_get_llm_trace(),
+                    directives_applied=directives_applied,
                 )
             # Empty response, force final
             prompt = build_final_prompt(query, context_history, bank_profile, context)
@@ -392,10 +423,11 @@ async def run_reflect_agent(
                 mental_models_created=mental_models_created,
                 tool_trace=tool_trace,
                 llm_trace=_get_llm_trace(),
+                directives_applied=directives_applied,
             )
 
-        # Check for done tool call
-        done_call = next((tc for tc in result.tool_calls if tc.name == "done"), None)
+        # Check for done tool call (handle both 'done' and 'functions.done')
+        done_call = next((tc for tc in result.tool_calls if tc.name == "done" or tc.name == "functions.done"), None)
         if done_call:
             # Guardrail: Require evidence before done
             has_gathered_evidence = bool(available_memory_ids) or bool(available_model_ids)
@@ -432,12 +464,13 @@ async def run_reflect_agent(
                 _get_llm_trace(),
                 _log_completion,
                 reflect_id,
+                directives_applied=directives_applied,
                 llm_config=llm_config,
                 response_schema=response_schema,
             )
 
-        # Execute other tools in parallel
-        other_tools = [tc for tc in result.tool_calls if tc.name != "done"]
+        # Execute other tools in parallel (exclude done and functions.done)
+        other_tools = [tc for tc in result.tool_calls if tc.name not in ("done", "functions.done")]
         if other_tools:
             # Add assistant message with tool calls
             messages.append(
@@ -535,6 +568,7 @@ async def run_reflect_agent(
         mental_models_created=mental_models_created,
         tool_trace=tool_trace,
         llm_trace=_get_llm_trace(),
+        directives_applied=directives_applied,
     )
 
 
@@ -561,6 +595,7 @@ async def _process_done_tool(
     llm_trace: list[LLMCall],
     log_completion: Callable,
     reflect_id: str,
+    directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
 ) -> ReflectAgentResult:
@@ -591,6 +626,7 @@ async def _process_done_tool(
         llm_trace=llm_trace,
         used_memory_ids=used_memory_ids,
         used_model_ids=used_model_ids,
+        directives_applied=directives_applied,
     )
 
 
@@ -617,6 +653,10 @@ async def _execute_tool(
     learn_fn: Callable[[MentalModelInput], Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute a single tool by name."""
+    # Normalize tool name - some LLMs return 'functions.done' instead of 'done'
+    if tool_name.startswith("functions."):
+        tool_name = tool_name[len("functions.") :]
+
     if tool_name == "list_mental_models":
         return await lookup_fn(None)
 

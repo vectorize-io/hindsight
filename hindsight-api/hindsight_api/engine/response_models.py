@@ -58,6 +58,14 @@ class MentalModelRef(BaseModel):
     summary: str | None = Field(default=None, description="Full summary (when looked up in detail)")
 
 
+class DirectiveRef(BaseModel):
+    """Reference to a directive that was applied during reflect."""
+
+    id: str = Field(description="Directive mental model ID")
+    name: str = Field(description="Directive name")
+    rules: list[str] = Field(default_factory=list, description="Directive rules/observations that were applied")
+
+
 class TokenUsage(BaseModel):
     """
     Token usage metrics for LLM calls.
@@ -253,6 +261,10 @@ class ReflectResult(BaseModel):
     mental_models: list[MentalModelRef] = Field(
         default_factory=list,
         description="Mental models accessed during reflection, including directives (subtype='directive').",
+    )
+    directives_applied: list[DirectiveRef] = Field(
+        default_factory=list,
+        description="Directive mental models that were applied during this reflection.",
     )
 
 

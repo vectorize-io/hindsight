@@ -560,9 +560,10 @@ class ReflectMentalModel(BaseModel):
     id: str = Field(description="Mental model ID")
     name: str = Field(description="Mental model name")
     type: str = Field(description="Mental model type: entity, concept, event")
-    subtype: str = Field(description="Mental model subtype: structural, emergent, learned")
-    description: str = Field(description="Brief description")
-    summary: str | None = Field(default=None, description="Full summary (when looked up in detail)")
+    subtype: str = Field(description="Mental model subtype: structural, emergent, learned, directive")
+    observations: list[str] | None = Field(
+        default=None, description="Observations for directive mental models (subtype='directive')"
+    )
 
 
 class ReflectBasedOn(BaseModel):
@@ -1877,8 +1878,6 @@ def _register_routes(app: FastAPI):
                         name=mm.name,
                         type=mm.type,
                         subtype=mm.subtype,
-                        description=mm.description,
-                        summary=mm.summary,
                     )
                     for mm in core_result.mental_models
                 ]
@@ -1899,6 +1898,8 @@ def _register_routes(app: FastAPI):
                     for tc in core_result.tool_trace
                 ]
                 llm_calls = [ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms) for lc in core_result.llm_trace]
+                # Build map of directive observations by id
+                directive_observations = {d.id: d.rules for d in core_result.directives_applied}
                 # Include all mental models (including directives with subtype='directive')
                 trace_mental_models = [
                     ReflectMentalModel(
@@ -1906,13 +1907,14 @@ def _register_routes(app: FastAPI):
                         name=mm.name,
                         type=mm.type,
                         subtype=mm.subtype,
-                        description=mm.description,
-                        summary=mm.summary,
+                        observations=directive_observations.get(mm.id) if mm.subtype == "directive" else None,
                     )
                     for mm in core_result.mental_models
                 ]
                 trace_result = ReflectTrace(
-                    tool_calls=tool_calls, llm_calls=llm_calls, mental_models=trace_mental_models
+                    tool_calls=tool_calls,
+                    llm_calls=llm_calls,
+                    mental_models=trace_mental_models,
                 )
 
             # Build mental_models_created from tool trace (learn tool outputs)

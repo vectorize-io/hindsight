@@ -87,6 +87,14 @@ class LLMCall(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
 
 
+class DirectiveInfo(BaseModel):
+    """Information about a directive that was applied during reflect."""
+
+    id: str = Field(description="Directive mental model ID")
+    name: str = Field(description="Directive name")
+    rules: list[str] = Field(default_factory=list, description="Directive rules/observations that were applied")
+
+
 class ReflectAgentResult(BaseModel):
     """Result from the reflect agent."""
 
@@ -101,3 +109,6 @@ class ReflectAgentResult(BaseModel):
     llm_trace: list[LLMCall] = Field(default_factory=list, description="Trace of all LLM calls made")
     used_memory_ids: list[str] = Field(default_factory=list, description="Validated memory IDs actually used in answer")
     used_model_ids: list[str] = Field(default_factory=list, description="Validated model IDs actually used in answer")
+    directives_applied: list[DirectiveInfo] = Field(
+        default_factory=list, description="Directive mental models that affected this reflection"
+    )
