@@ -27,9 +27,6 @@ import type {
   DeleteMentalModelData,
   DeleteMentalModelErrors,
   DeleteMentalModelResponses,
-  GenerateMentalModelData,
-  GenerateMentalModelErrors,
-  GenerateMentalModelResponses,
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
@@ -88,6 +85,9 @@ import type {
   ReflectData,
   ReflectErrors,
   ReflectResponses,
+  RefreshMentalModelData,
+  RefreshMentalModelErrors,
+  RefreshMentalModelResponses,
   RefreshMentalModelsData,
   RefreshMentalModelsErrors,
   RefreshMentalModelsResponses,
@@ -417,19 +417,19 @@ export const refreshMentalModels = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Generate mental model content (async)
+ * Refresh mental model content (async)
  *
- * Submit a background job to generate/refresh content for a specific mental model. This is useful for newly created learned models or to regenerate content for any model.
+ * Submit a background job to refresh content for a specific mental model. This is useful for newly created learned models or to refresh content for any model.
  */
-export const generateMentalModel = <ThrowOnError extends boolean = false>(
-  options: Options<GenerateMentalModelData, ThrowOnError>,
+export const refreshMentalModel = <ThrowOnError extends boolean = false>(
+  options: Options<RefreshMentalModelData, ThrowOnError>,
 ) =>
   (options.client ?? client).post<
-    GenerateMentalModelResponses,
-    GenerateMentalModelErrors,
+    RefreshMentalModelResponses,
+    RefreshMentalModelErrors,
     ThrowOnError
   >({
-    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate",
+    url: "/v1/default/banks/{bank_id}/mental-models/{model_id}/refresh",
     ...options,
   });
 

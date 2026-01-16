@@ -19,7 +19,14 @@ import concurrent.futures
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.types.utils import ModelResponse
 
-from .config import get_config, is_configured, HindsightConfig, MemoryInjectionMode
+from .config import (
+    get_config,
+    get_defaults,
+    is_configured,
+    HindsightConfig,
+    HindsightDefaults,
+    MemoryInjectionMode,
+)
 
 # Use requests for sync HTTP calls to avoid async event loop issues
 try:
@@ -36,6 +43,16 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+class HindsightError(Exception):
+    """Exception raised when a Hindsight operation fails.
+
+    This is raised when inject_memories=True and recall fails,
+    or when store_conversations=True and store fails.
+    """
+    pass
+
 
 # Thread pool for running async operations in background
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="hindsight-")
@@ -76,6 +93,43 @@ class HindsightCallback(CustomLogger):
         self._recent_hashes: Set[str] = set()
         self._max_hash_cache = 1000
 
+    def _get_effective_settings(self, kwargs: Dict[str, Any]) -> HindsightDefaults:
+        """Get effective per-call settings from kwargs with fallback to defaults.
+
+        Per-call kwargs (hindsight_*) override defaults. Supported kwargs:
+        - hindsight_bank_id: Override bank_id
+        - hindsight_document_id: Override document_id
+        - hindsight_budget: Override budget
+        - hindsight_fact_types: Override fact_types
+        - hindsight_max_memories: Override max_memories
+        - hindsight_max_memory_tokens: Override max_memory_tokens
+        - hindsight_use_reflect: Override use_reflect
+        - hindsight_reflect_include_facts: Override reflect_include_facts
+        - hindsight_context: Override reflect_context
+        - hindsight_response_schema: Override reflect_response_schema
+        - hindsight_include_entities: Override include_entities
+        - hindsight_trace: Override trace
+
+        Note: hindsight_query is handled separately in log_pre_api_call since it's
+        always per-call (no sensible default for dynamic queries).
+        """
+        defaults = get_defaults() or HindsightDefaults()
+
+        return HindsightDefaults(
+            bank_id=kwargs.get("hindsight_bank_id", defaults.bank_id),
+            document_id=kwargs.get("hindsight_document_id", defaults.document_id),
+            budget=kwargs.get("hindsight_budget", defaults.budget),
+            fact_types=kwargs.get("hindsight_fact_types", defaults.fact_types),
+            max_memories=kwargs.get("hindsight_max_memories", defaults.max_memories),
+            max_memory_tokens=kwargs.get("hindsight_max_memory_tokens", defaults.max_memory_tokens),
+            use_reflect=kwargs.get("hindsight_use_reflect", defaults.use_reflect),
+            reflect_include_facts=kwargs.get("hindsight_reflect_include_facts", defaults.reflect_include_facts),
+            reflect_context=kwargs.get("hindsight_context", defaults.reflect_context),
+            reflect_response_schema=kwargs.get("hindsight_response_schema", defaults.reflect_response_schema),
+            include_entities=kwargs.get("hindsight_include_entities", defaults.include_entities),
+            trace=kwargs.get("hindsight_trace", defaults.trace),
+        )
+
     def _get_http_session(self):
         """Get or create a requests Session (thread-safe)."""
         if self._http_session is None:
@@ -92,14 +146,18 @@ class HindsightCallback(CustomLogger):
                         )
         return self._http_session
 
-    def _http_post(self, url: str, json_data: dict, config: HindsightConfig) -> Optional[dict]:
-        """Make a synchronous HTTP POST request."""
-        try:
-            session = self._get_http_session()
-            headers = {"Content-Type": "application/json"}
-            if config.api_key:
-                headers["Authorization"] = f"Bearer {config.api_key}"
+    def _http_post(self, url: str, json_data: dict, config: HindsightConfig) -> dict:
+        """Make a synchronous HTTP POST request.
 
+        Raises:
+            HindsightError: If the request fails for any reason.
+        """
+        session = self._get_http_session()
+        headers = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+
+        try:
             if HAS_REQUESTS:
                 response = session.post(url, json=json_data, headers=headers, timeout=30)
                 response.raise_for_status()
@@ -108,10 +166,14 @@ class HindsightCallback(CustomLogger):
                 response = session.post(url, json=json_data, headers=headers)
                 response.raise_for_status()
                 return response.json()
+            else:
+                raise HindsightError("No HTTP client available (install requests or httpx)")
+        except HindsightError:
+            raise
         except Exception as e:
             if config.verbose:
-                logger.warning(f"HTTP POST failed: {e}")
-            return None
+                logger.error(f"HTTP POST failed: {e}")
+            raise HindsightError(f"Hindsight API request failed: {e}") from e
 
     def _should_skip_model(self, model: str, config: HindsightConfig) -> bool:
         """Check if this model should be excluded from interception."""
@@ -138,6 +200,20 @@ class HindsightCallback(CustomLogger):
                         return " ".join(text_parts)
         return None
 
+    def _messages_to_query(self, messages: List[Dict[str, Any]]) -> str:
+        """Concatenate all message contents into a single query string."""
+        message_parts = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                message_parts.append(content)
+            elif isinstance(content, list):
+                # Handle structured content (e.g., vision messages)
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        message_parts.append(item.get("text", ""))
+        return "\n".join(message_parts)
+
     def _compute_conversation_hash(
         self,
         user_input: str,
@@ -163,6 +239,7 @@ class HindsightCallback(CustomLogger):
     def _format_memories(
         self,
         results: List[Any],
+        settings: HindsightDefaults,
         config: HindsightConfig
     ) -> str:
         """Format memory recall results into a context string.
@@ -174,7 +251,7 @@ class HindsightCallback(CustomLogger):
             return ""
 
         # Apply limit if set, otherwise use all results
-        results_to_use = results[:config.max_memories] if config.max_memories else results
+        results_to_use = results[:settings.max_memories] if settings.max_memories else results
         memory_lines = []
         for i, result in enumerate(results_to_use, 1):
             # Handle both RecallResult objects and dicts
@@ -248,194 +325,343 @@ class HindsightCallback(CustomLogger):
 
         return updated_messages
 
-    def _get_bank_id(self, config: HindsightConfig) -> str:
-        """Get the bank_id for API calls."""
-        return config.bank_id
-
     def _recall_memories_sync(
         self,
         query: str,
+        settings: HindsightDefaults,
         config: HindsightConfig
     ) -> List[Dict[str, Any]]:
-        """Recall relevant memories from Hindsight (sync) using direct HTTP."""
+        """Recall relevant memories from Hindsight (sync) using direct HTTP.
+
+        Raises:
+            HindsightError: If inject_memories=True and recall fails.
+        """
+        bank_id = settings.bank_id
+        if not bank_id:
+            raise HindsightError(
+                "No bank_id configured. Call set_defaults(bank_id=...) "
+                "or pass hindsight_bank_id=... to the completion call."
+            )
+
+        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories/recall"
+
+        request_data = {
+            "query": query,
+            "budget": settings.budget or "mid",
+            "max_tokens": settings.max_memory_tokens or 4096,
+        }
+        if settings.fact_types:
+            request_data["types"] = settings.fact_types
+
+        # Add trace parameter for debugging
+        if settings.trace:
+            request_data["trace"] = True
+
+        # Add include options for entity observations
+        # include_entities=True -> include: {entities: {}}
+        # include_entities=False -> include: {entities: null}
+        if settings.include_entities:
+            request_data["include"] = {"entities": {}}
+        else:
+            request_data["include"] = {"entities": None}
+
         try:
-            bank_id = self._get_bank_id(config)
-            url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories/recall"
-
-            request_data = {
-                "query": query,
-                "budget": config.recall_budget or "mid",
-                "max_tokens": config.max_memory_tokens or 4096,
-            }
-            if config.fact_types:
-                request_data["types"] = config.fact_types
-
             response = self._http_post(url, request_data, config)
             if response and "results" in response:
                 return response["results"]
             return []
-
-        except Exception as e:
+        except HindsightError as e:
             if config.verbose:
-                logger.warning(f"Failed to recall memories: {e}")
-            return []
+                logger.error(f"Failed to recall memories: {e}")
+            raise HindsightError(f"Memory recall failed: {e}") from e
 
     async def _recall_memories_async(
         self,
         query: str,
+        settings: HindsightDefaults,
         config: HindsightConfig
     ) -> List[Any]:
         """Recall relevant memories from Hindsight (async).
 
         Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+
+        Raises:
+            HindsightError: If inject_memories=True and recall fails.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            results = await loop.run_in_executor(
-                _executor,
-                self._recall_memories_sync,
-                query,
-                config
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            _executor,
+            lambda: self._recall_memories_sync(query, settings, config)
+        )
+
+        return results if isinstance(results, list) else []
+
+    def _reflect_sync(
+        self,
+        query: str,
+        settings: HindsightDefaults,
+        config: HindsightConfig
+    ) -> Optional[str]:
+        """Generate a reflection response from Hindsight (sync) using direct HTTP.
+
+        Returns:
+            The reflect response text, or None if no response.
+
+        Raises:
+            HindsightError: If inject_memories=True and reflect fails.
+        """
+        bank_id = settings.bank_id
+        if not bank_id:
+            raise HindsightError(
+                "No bank_id configured. Call set_defaults(bank_id=...) "
+                "or pass hindsight_bank_id=... to the completion call."
             )
 
-            return results if isinstance(results, list) else []
+        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/reflect"
 
-        except Exception as e:
+        request_data: Dict[str, Any] = {
+            "query": query,
+            "budget": settings.budget or "mid",
+            "max_tokens": settings.max_memory_tokens or 4096,
+        }
+
+        # Add context if provided (shapes reasoning but not retrieval)
+        if settings.reflect_context:
+            request_data["context"] = settings.reflect_context
+
+        # Add response_schema for structured output
+        if settings.reflect_response_schema:
+            request_data["response_schema"] = settings.reflect_response_schema
+
+        # Add include options for facts if requested
+        if settings.reflect_include_facts:
+            request_data["include"] = {"facts": {}}
+
+        try:
+            response = self._http_post(url, request_data, config)
+            if response:
+                # Handle structured output if schema was provided
+                if settings.reflect_response_schema and "structured_output" in response:
+                    # Return structured output as JSON string for injection
+                    import json
+                    return json.dumps(response["structured_output"], indent=2)
+                # Otherwise return text response
+                return response.get("text", "")
+            return None
+        except HindsightError as e:
             if config.verbose:
-                logger.warning(f"Failed to recall memories: {e}")
-            return []
+                logger.error(f"Failed to reflect: {e}")
+            raise HindsightError(f"Reflect failed: {e}") from e
+
+    async def _reflect_async(
+        self,
+        query: str,
+        settings: HindsightDefaults,
+        config: HindsightConfig
+    ) -> Optional[str]:
+        """Generate a reflection response from Hindsight (async).
+
+        Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+
+        Returns:
+            The reflect response text, or None if no response.
+
+        Raises:
+            HindsightError: If inject_memories=True and reflect fails.
+        """
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            _executor,
+            lambda: self._reflect_sync(query, settings, config)
+        )
+        return result
 
     def _store_conversation_sync(
         self,
         messages: List[Dict[str, Any]],
         response: ModelResponse,
         model: str,
+        settings: HindsightDefaults,
         config: HindsightConfig,
     ) -> None:
         """Store the conversation to Hindsight (sync) using direct HTTP.
 
-        By default, stores the full conversation history passed to the LLM.
-        Each message is stored as a separate item, all linked by document_id.
+        IMPORTANT: This intentionally sends the FULL conversation history each call,
+        not just the new messages. This is required because Hindsight's retain API
+        with document_id performs an UPSERT (replace), not an append.
 
-        Hindsight will process the document as a whole for memory extraction.
+        If we only sent deltas (new messages), Hindsight would only have the latest
+        fragment and lose all prior context. By sending the full conversation each
+        time, Hindsight always has the complete context to extract meaningful facts.
+
+        Example with delta-only (WRONG):
+            Call 1: "USER: deliver to Alex\\nASSISTANT_TOOL_CALLS: look_at_business"
+            Call 2: "TOOL_RESULT: TechStart Labs\\nASSISTANT_TOOL_CALLS: go_up"  # Lost context!
+
+        Example with full conversation (CORRECT):
+            Call 1: "USER: deliver to Alex\\nASSISTANT_TOOL_CALLS: look_at_business"
+            Call 2: "USER: deliver to Alex\\nASSISTANT_TOOL_CALLS: look_at_business\\n
+                     TOOL_RESULT: TechStart Labs\\nASSISTANT_TOOL_CALLS: go_up"  # Full context!
+
+        Each upsert replaces the previous, so the final stored document contains
+        the complete conversation for Hindsight to process.
+
+        Raises:
+            HindsightError: If store_conversations=True and store fails.
         """
-        try:
-            # Extract assistant response from the LLM response
-            assistant_output = ""
-            if response.choices and len(response.choices) > 0:
-                choice = response.choices[0]
-                if hasattr(choice, "message") and choice.message:
-                    assistant_output = choice.message.content or ""
+        bank_id = settings.bank_id
+        if not bank_id:
+            raise HindsightError(
+                "No bank_id configured. Call set_defaults(bank_id=...) "
+                "or pass hindsight_bank_id=... to the completion call."
+            )
 
-            if not assistant_output:
-                return
+        # Extract assistant response from the LLM response
+        assistant_output = ""
+        assistant_tool_calls = []
+        if response.choices and len(response.choices) > 0:
+            choice = response.choices[0]
+            if hasattr(choice, "message") and choice.message:
+                assistant_output = choice.message.content or ""
+                # Also capture tool calls
+                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                    for tc in choice.message.tool_calls:
+                        if hasattr(tc, "function"):
+                            assistant_tool_calls.append(f"{tc.function.name}({tc.function.arguments})")
 
-            # Build conversation items - each message becomes a separate item
-            # All linked by document_id for Hindsight to process together
-            items = []
-            for msg in messages:
-                role = msg.get("role", "").upper()
-                content = msg.get("content", "")
+        # Skip if no content AND no tool calls - nothing to store
+        if not assistant_output and not assistant_tool_calls:
+            return
 
-                # Skip system messages - they're instructions, not conversation
-                if role == "SYSTEM":
-                    continue
+        # Build conversation items - each message becomes a separate item
+        # All linked by document_id for Hindsight to process together
+        items = []
+        for msg in messages:
+            role = msg.get("role", "").upper()
+            content = msg.get("content", "")
 
-                # Skip if this looks like our injected memory context
-                if isinstance(content, str) and content.startswith("# Relevant Memories"):
-                    continue
+            # Skip system messages - they're instructions, not conversation
+            if role == "SYSTEM":
+                continue
 
-                # Handle structured content (e.g., vision messages)
-                if isinstance(content, list):
-                    text_parts = []
-                    for item in content:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                    content = " ".join(text_parts)
+            # Skip if this looks like our injected memory context
+            if isinstance(content, str) and content.startswith("# Relevant Memories"):
+                continue
 
+            # Handle tool messages (results from tool calls)
+            if role == "TOOL":
+                tool_call_id = msg.get("tool_call_id", "")
+                items.append(f"TOOL_RESULT: {content}")
+                continue
+
+            # Handle assistant messages with tool calls
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                tc_strs = []
+                for tc in tool_calls:
+                    if hasattr(tc, "function"):
+                        tc_strs.append(f"{tc.function.name}({tc.function.arguments})")
+                    elif isinstance(tc, dict) and "function" in tc:
+                        func = tc["function"]
+                        tc_strs.append(f"{func.get('name', '')}({func.get('arguments', '')})")
+                if tc_strs:
+                    items.append(f"ASSISTANT_TOOL_CALLS: {'; '.join(tc_strs)}")
                 if content:
-                    # Map roles to clearer labels
-                    label = "USER" if role == "USER" else "ASSISTANT"
-                    items.append(f"{label}: {content}")
+                    items.append(f"ASSISTANT: {content}")
+                continue
 
-            # Add the new assistant response
+            # Handle structured content (e.g., vision messages)
+            if isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                content = " ".join(text_parts)
+
+            if content:
+                # Map roles to clearer labels
+                label = "USER" if role == "USER" else "ASSISTANT"
+                items.append(f"{label}: {content}")
+
+        # Add the new assistant response (text or tool calls)
+        if assistant_output:
             items.append(f"ASSISTANT: {assistant_output}")
+        if assistant_tool_calls:
+            items.append(f"ASSISTANT_TOOL_CALLS: {'; '.join(assistant_tool_calls)}")
 
-            if not items:
-                return
+        if not items:
+            return
 
-            # Use last user message for deduplication hash
-            user_input = self._extract_user_query(messages) or ""
+        # Use last user message for deduplication hash
+        user_input = self._extract_user_query(messages) or ""
 
-            # Deduplication check
-            conv_hash = self._compute_conversation_hash(user_input, assistant_output)
-            if self._is_duplicate(conv_hash):
-                if config.verbose:
-                    logger.debug(f"Skipping duplicate conversation: {conv_hash}")
-                return
+        # Deduplication check - include tool calls if no text content
+        dedup_output = assistant_output or ";".join(assistant_tool_calls)
+        conv_hash = self._compute_conversation_hash(user_input, dedup_output)
+        if self._is_duplicate(conv_hash):
+            if config.verbose:
+                logger.debug(f"Skipping duplicate conversation: {conv_hash}")
+            return
 
-            # Build the full conversation as a single item for now
-            # (Future: could store each message as separate item in same document)
-            conversation_text = "\n\n".join(items)
+        # Build the full conversation as a single item for now
+        # (Future: could store each message as separate item in same document)
+        conversation_text = "\n\n".join(items)
 
-            # Build metadata
-            metadata = {
-                "source": "litellm",
-                "model": model,
-            }
+        # Build metadata
+        metadata = {
+            "source": "litellm",
+            "model": model,
+        }
 
-            # Add token usage if available
-            if hasattr(response, "usage") and response.usage:
-                if hasattr(response.usage, "total_tokens"):
-                    metadata["tokens"] = str(response.usage.total_tokens)
+        # Add token usage if available
+        if hasattr(response, "usage") and response.usage:
+            if hasattr(response.usage, "total_tokens"):
+                metadata["tokens"] = str(response.usage.total_tokens)
 
-            bank_id = self._get_bank_id(config)
-            url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories"
+        url = f"{config.hindsight_api_url}/v1/default/banks/{bank_id}/memories"
 
-            request_data = {
-                "items": [
-                    {
-                        "content": conversation_text,
-                        "context": f"conversation:litellm:{model}",
-                        "metadata": metadata,
-                        "document_id": config.document_id,  # Group by document
-                    }
-                ],
-            }
+        request_data = {
+            "items": [
+                {
+                    "content": conversation_text,
+                    "context": f"conversation:litellm:{model}",
+                    "metadata": metadata,
+                    "document_id": settings.document_id,  # Group by document
+                }
+            ],
+        }
 
+        try:
             self._http_post(url, request_data, config)
-
             if config.verbose:
-                logger.info(f"Stored conversation to Hindsight bank: {config.bank_id}")
-
-        except Exception as e:
+                logger.info(f"Stored conversation to Hindsight bank: {bank_id}")
+        except HindsightError as e:
             if config.verbose:
-                logger.warning(f"Failed to store conversation: {e}")
+                logger.error(f"Failed to store conversation: {e}")
+            raise HindsightError(f"Memory storage failed: {e}") from e
 
     async def _store_conversation_async(
         self,
         messages: List[Dict[str, Any]],
         response: ModelResponse,
         model: str,
+        settings: HindsightDefaults,
         config: HindsightConfig,
     ) -> None:
         """Store the conversation to Hindsight (async).
 
         Uses thread pool executor with sync HTTP to avoid event loop conflicts.
+
+        Raises:
+            HindsightError: If store_conversations=True and store fails.
         """
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                _executor,
-                self._store_conversation_sync,
-                messages,
-                response,
-                model,
-                config
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            _executor,
+            lambda: self._store_conversation_sync(
+                messages, response, model, settings, config
             )
-        except Exception as e:
-            if config.verbose:
-                logger.warning(f"Failed to store conversation: {e}")
+        )
 
     # ========== LiteLLM CustomLogger Interface ==========
 
@@ -449,28 +675,53 @@ class HindsightCallback(CustomLogger):
 
         This is where we inject memories into the messages.
         """
-        if not is_configured():
+        config = get_config()
+        if not config or not config.inject_memories:
             return
 
-        config = get_config()
-        if not config or not config.enabled or not config.inject_memories:
-            return
+        # Get effective settings (kwargs override defaults)
+        settings = self._get_effective_settings(kwargs)
+        if not settings.bank_id:
+            raise ValueError(
+                "No bank_id configured. Either call set_defaults(bank_id=...) "
+                "or pass hindsight_bank_id=... to the completion call."
+            )
 
         if self._should_skip_model(model, config):
             return
 
-        # Extract user query
-        user_query = self._extract_user_query(messages)
-        if not user_query:
-            return
+        # hindsight_query is required when inject_memories=True
+        custom_query = kwargs.get("hindsight_query")
+        if not custom_query:
+            raise ValueError(
+                "hindsight_query is required when inject_memories=True. "
+                "Pass hindsight_query='your query' to specify what to search for in memory. "
+                "Example: hindsight_query=recipient_name or hindsight_query='What do I know about Alice?'"
+            )
 
-        # Recall relevant memories
-        memories = self._recall_memories_sync(user_query, config)
-        if not memories:
-            return
+        user_query = custom_query
 
-        # Format and inject memories
-        memory_context = self._format_memories(memories, config)
+        # Use reflect or recall based on settings
+        if settings.use_reflect:
+            # Use reflect API for disposition-aware reasoning
+            reflect_response = self._reflect_sync(user_query, settings, config)
+            if not reflect_response:
+                return
+
+            # Format reflect response as context
+            memory_context = (
+                "# Relevant Context from Memory\n"
+                f"{reflect_response}"
+            )
+        else:
+            # Use recall API for raw fact retrieval
+            memories = self._recall_memories_sync(user_query, settings, config)
+            if not memories:
+                return
+
+            # Format and inject memories
+            memory_context = self._format_memories(memories, settings, config)
+
         updated_messages = self._inject_memories_into_messages(
             messages, memory_context, config
         )
@@ -480,7 +731,8 @@ class HindsightCallback(CustomLogger):
         messages.extend(updated_messages)
 
         if config.verbose:
-            logger.info(f"Injected {len(memories)} memories into prompt")
+            mode = "reflect" if settings.use_reflect else "recall"
+            logger.info(f"Injected memory context via {mode}")
 
     async def async_log_pre_api_call(
         self,
@@ -492,28 +744,53 @@ class HindsightCallback(CustomLogger):
 
         This is where we inject memories into the messages.
         """
-        if not is_configured():
+        config = get_config()
+        if not config or not config.inject_memories:
             return
 
-        config = get_config()
-        if not config or not config.enabled or not config.inject_memories:
-            return
+        # Get effective settings (kwargs override defaults)
+        settings = self._get_effective_settings(kwargs)
+        if not settings.bank_id:
+            raise ValueError(
+                "No bank_id configured. Either call set_defaults(bank_id=...) "
+                "or pass hindsight_bank_id=... to the completion call."
+            )
 
         if self._should_skip_model(model, config):
             return
 
-        # Extract user query
-        user_query = self._extract_user_query(messages)
-        if not user_query:
-            return
+        # hindsight_query is required when inject_memories=True
+        custom_query = kwargs.get("hindsight_query")
+        if not custom_query:
+            raise ValueError(
+                "hindsight_query is required when inject_memories=True. "
+                "Pass hindsight_query='your query' to specify what to search for in memory. "
+                "Example: hindsight_query=recipient_name or hindsight_query='What do I know about Alice?'"
+            )
 
-        # Recall relevant memories
-        memories = await self._recall_memories_async(user_query, config)
-        if not memories:
-            return
+        user_query = custom_query
 
-        # Format and inject memories
-        memory_context = self._format_memories(memories, config)
+        # Use reflect or recall based on settings
+        if settings.use_reflect:
+            # Use reflect API for disposition-aware reasoning
+            reflect_response = await self._reflect_async(user_query, settings, config)
+            if not reflect_response:
+                return
+
+            # Format reflect response as context
+            memory_context = (
+                "# Relevant Context from Memory\n"
+                f"{reflect_response}"
+            )
+        else:
+            # Use recall API for raw fact retrieval
+            memories = await self._recall_memories_async(user_query, settings, config)
+            if not memories:
+                return
+
+            # Format and inject memories
+            memory_context = self._format_memories(memories, settings, config)
+
         updated_messages = self._inject_memories_into_messages(
             messages, memory_context, config
         )
@@ -523,7 +800,8 @@ class HindsightCallback(CustomLogger):
         messages.extend(updated_messages)
 
         if config.verbose:
-            logger.info(f"Injected {len(memories)} memories into prompt")
+            mode = "reflect" if settings.use_reflect else "recall"
+            logger.info(f"Injected memory context via {mode}")
 
     def log_success_event(
         self,
@@ -536,11 +814,14 @@ class HindsightCallback(CustomLogger):
 
         This is where we store the conversation.
         """
-        if not is_configured():
+        config = get_config()
+        if not config or not config.store_conversations:
             return
 
-        config = get_config()
-        if not config or not config.enabled or not config.store_conversations:
+        # Get effective settings (kwargs override defaults)
+        settings = self._get_effective_settings(kwargs)
+        if not settings.bank_id:
+            # bank_id validation already done in log_pre_api_call
             return
 
         model = kwargs.get("model", "unknown")
@@ -552,7 +833,7 @@ class HindsightCallback(CustomLogger):
             return
 
         # Store the conversation
-        self._store_conversation_sync(messages, response_obj, model, config)
+        self._store_conversation_sync(messages, response_obj, model, settings, config)
 
     async def async_log_success_event(
         self,
@@ -565,11 +846,14 @@ class HindsightCallback(CustomLogger):
 
         This is where we store the conversation.
         """
-        if not is_configured():
+        config = get_config()
+        if not config or not config.store_conversations:
             return
 
-        config = get_config()
-        if not config or not config.enabled or not config.store_conversations:
+        # Get effective settings (kwargs override defaults)
+        settings = self._get_effective_settings(kwargs)
+        if not settings.bank_id:
+            # bank_id validation already done in async_log_pre_api_call
             return
 
         model = kwargs.get("model", "unknown")
@@ -581,7 +865,7 @@ class HindsightCallback(CustomLogger):
             return
 
         # Store the conversation
-        await self._store_conversation_async(messages, response_obj, model, config)
+        await self._store_conversation_async(messages, response_obj, model, settings, config)
 
     def log_failure_event(
         self,

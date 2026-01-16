@@ -8,13 +8,34 @@ integration with native client libraries.
 """
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 
-from .config import get_config, is_configured, HindsightConfig
+from .config import get_config, get_defaults, is_configured, HindsightConfig
 
+
+# Background thread support for async retain
+_retain_errors: List[Exception] = []
+_retain_errors_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
+
+
+def _get_client(api_url: str):
+    """Create a fresh Hindsight client for the given URL.
+
+    Note: We create a fresh client each time because the hindsight_client
+    uses aiohttp internally, and reusing clients across different sync
+    calls causes asyncio context issues.
+    """
+    from hindsight_client import Hindsight
+    return Hindsight(base_url=api_url, timeout=30.0)
+
+
+def _close_client():
+    """No-op for compatibility. Clients are now closed after each use."""
+    pass
 
 
 @dataclass
@@ -106,24 +127,25 @@ def recall(
         >>> if memories.debug:
         ...     print(f"Queried bank: {memories.debug.bank_id}")
     """
-    # Get config or use overrides
+    # Get config and defaults, or use overrides
     config = get_config()
+    defaults = get_defaults()
 
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
-    target_bank_id = bank_id or (config.bank_id if config else None)
-    target_fact_types = fact_types or (config.fact_types if config else None)
-    target_budget = budget or (config.recall_budget if config else "mid")
-    target_max_tokens = max_tokens or (config.max_memory_tokens if config else 4096)
+    target_bank_id = bank_id or (defaults.bank_id if defaults else None)
+    target_fact_types = fact_types or (defaults.fact_types if defaults else None)
+    target_budget = budget or (defaults.budget if defaults else "mid")
+    target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
 
     if not api_url or not target_bank_id:
         raise RuntimeError(
             "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
         )
 
+    client = None
     try:
-        from hindsight_client import Hindsight
-
-        client = Hindsight(base_url=api_url, timeout=30.0)
+        # Create fresh client for this operation
+        client = _get_client(api_url)
 
         # Call recall API
         results = client.recall(
@@ -178,6 +200,12 @@ def recall(
         if config and config.verbose:
             logger.warning(f"Failed to recall memories: {e}")
         raise
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 async def arecall(
@@ -233,6 +261,7 @@ def reflect(
     bank_id: Optional[str] = None,
     budget: Optional[str] = None,
     context: Optional[str] = None,
+    response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
 ) -> ReflectResult:
     """Generate a contextual answer based on memories.
@@ -246,10 +275,11 @@ def reflect(
             use different bank_ids per user (e.g., f"user-{user_id}")
         budget: Budget level for reflection (low, mid, high)
         context: Additional context to include in the reflection
+        response_schema: JSON Schema for structured output
         hindsight_api_url: Override the configured API URL
 
     Returns:
-        ReflectResult with synthesized answer text
+        ReflectResult with synthesized answer text (or structured_output if schema provided)
 
     Raises:
         RuntimeError: If Hindsight is not configured and no overrides provided
@@ -264,28 +294,33 @@ def reflect(
         Based on our conversations, you're working on a FastAPI project...
     """
     config = get_config()
+    defaults = get_defaults()
 
     api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
-    target_bank_id = bank_id or (config.bank_id if config else None)
-    target_budget = budget or (config.recall_budget if config else "mid")
+    target_bank_id = bank_id or (defaults.bank_id if defaults else None)
+    target_budget = budget or (defaults.budget if defaults else "mid")
 
     if not api_url or not target_bank_id:
         raise RuntimeError(
             "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
         )
 
+    client = None
     try:
-        from hindsight_client import Hindsight
-
-        client = Hindsight(base_url=api_url, timeout=30.0)
+        # Create fresh client for this operation
+        client = _get_client(api_url)
 
         # Call reflect API
-        result = client.reflect(
-            bank_id=target_bank_id,
-            query=query,
-            budget=target_budget,
-            context=context,
-        )
+        reflect_kwargs = {
+            "bank_id": target_bank_id,
+            "query": query,
+            "budget": target_budget,
+        }
+        if context is not None:
+            reflect_kwargs["context"] = context
+        if response_schema is not None:
+            reflect_kwargs["response_schema"] = response_schema
+        result = client.reflect(**reflect_kwargs)
 
         # Convert to ReflectResult
         text = result.text if hasattr(result, 'text') else str(result)
@@ -310,6 +345,12 @@ def reflect(
         if config and config.verbose:
             logger.warning(f"Failed to reflect: {e}")
         raise
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 async def areflect(
@@ -317,6 +358,7 @@ async def areflect(
     bank_id: Optional[str] = None,
     budget: Optional[str] = None,
     context: Optional[str] = None,
+    response_schema: Optional[dict] = None,
     hindsight_api_url: Optional[str] = None,
 ) -> ReflectResult:
     """Async version of reflect().
@@ -332,6 +374,7 @@ async def areflect(
             bank_id=bank_id,
             budget=budget,
             context=context,
+            response_schema=response_schema,
             hindsight_api_url=hindsight_api_url,
         )
     )
@@ -359,64 +402,20 @@ class RetainResult:
         return self.success
 
 
-def retain(
+def _retain_sync(
     content: str,
-    bank_id: Optional[str] = None,
-    context: Optional[str] = None,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, str]] = None,
-    hindsight_api_url: Optional[str] = None,
+    api_url: str,
+    target_bank_id: str,
+    context: Optional[str],
+    target_document_id: Optional[str],
+    metadata: Optional[Dict[str, str]],
+    verbose: bool,
 ) -> RetainResult:
-    """Store content to Hindsight memory.
-
-    This function allows you to manually store content to memory without
-    making an LLM call. Useful for storing feedback, user preferences,
-    or any other information you want the system to remember.
-
-    Args:
-        content: The text content to store
-        bank_id: Override the configured bank_id. For multi-user support,
-            use different bank_ids per user (e.g., f"user-{user_id}")
-        context: Context description for the memory (e.g., "customer_feedback")
-        document_id: Optional document ID for grouping related memories
-        metadata: Optional key-value metadata to attach to the memory
-        hindsight_api_url: Override the configured API URL
-
-    Returns:
-        RetainResult indicating success
-
-    Raises:
-        RuntimeError: If Hindsight is not configured and no overrides provided
-
-    Example:
-        >>> from hindsight_litellm import configure, retain
-        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
-        >>>
-        >>> # Store feedback
-        >>> retain("User prefers dark mode", context="user_preference")
-        >>>
-        >>> # Store with metadata
-        >>> retain(
-        ...     "Customer reported billing issue resolved",
-        ...     context="support_ticket",
-        ...     metadata={"ticket_id": "12345", "status": "resolved"}
-        ... )
-    """
-    config = get_config()
-
-    api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
-    target_bank_id = bank_id or (config.bank_id if config else None)
-    target_document_id = document_id or (config.document_id if config else None)
-
-    if not api_url or not target_bank_id:
-        raise RuntimeError(
-            "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
-        )
-
+    """Internal synchronous retain implementation."""
+    client = None
     try:
-        from hindsight_client import Hindsight
-
-        client = Hindsight(base_url=api_url, timeout=30.0)
+        # Create fresh client for this operation
+        client = _get_client(api_url)
 
         # Call retain API
         result = client.retain(
@@ -433,7 +432,7 @@ def retain(
 
         # Include debug info if verbose
         debug_info = None
-        if config and config.verbose:
+        if verbose:
             logger.info(f"Stored content to Hindsight bank: {target_bank_id}")
             debug_info = RetainDebugInfo(
                 content=content,
@@ -449,9 +448,158 @@ def retain(
     except ImportError as e:
         raise RuntimeError(f"hindsight-client not installed: {e}")
     except Exception as e:
-        if config and config.verbose:
+        if verbose:
             logger.warning(f"Failed to retain: {e}")
         raise
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+def _retain_background(
+    content: str,
+    api_url: str,
+    target_bank_id: str,
+    context: Optional[str],
+    target_document_id: Optional[str],
+    metadata: Optional[Dict[str, str]],
+    verbose: bool,
+) -> None:
+    """Background thread worker for async retain."""
+    global _retain_errors
+    try:
+        _retain_sync(
+            content=content,
+            api_url=api_url,
+            target_bank_id=target_bank_id,
+            context=context,
+            target_document_id=target_document_id,
+            metadata=metadata,
+            verbose=verbose,
+        )
+    except Exception as e:
+        with _retain_errors_lock:
+            _retain_errors.append(e)
+        logger.warning(f"Background retain failed: {e}")
+
+
+def get_pending_retain_errors() -> List[Exception]:
+    """Get and clear any pending errors from background retain operations.
+
+    When using async retain (sync=False), errors are collected in the background.
+    Call this periodically to check for and handle any failures.
+
+    Returns:
+        List of exceptions from failed background retain operations.
+        The list is cleared after calling this function.
+
+    Example:
+        >>> errors = get_pending_retain_errors()
+        >>> if errors:
+        ...     for e in errors:
+        ...         print(f"Retain failed: {e}")
+    """
+    global _retain_errors
+    with _retain_errors_lock:
+        errors = _retain_errors.copy()
+        _retain_errors.clear()
+    return errors
+
+
+def retain(
+    content: str,
+    bank_id: Optional[str] = None,
+    context: Optional[str] = None,
+    document_id: Optional[str] = None,
+    metadata: Optional[Dict[str, str]] = None,
+    hindsight_api_url: Optional[str] = None,
+    sync: bool = False,
+) -> RetainResult:
+    """Store content to Hindsight memory.
+
+    This function allows you to manually store content to memory without
+    making an LLM call. Useful for storing feedback, user preferences,
+    or any other information you want the system to remember.
+
+    Args:
+        content: The text content to store
+        bank_id: Override the configured bank_id. For multi-user support,
+            use different bank_ids per user (e.g., f"user-{user_id}")
+        context: Context description for the memory (e.g., "customer_feedback")
+        document_id: Optional document ID for grouping related memories
+        metadata: Optional key-value metadata to attach to the memory
+        hindsight_api_url: Override the configured API URL
+        sync: If True, block until storage completes. If False (default),
+            run in background thread for better performance. Use
+            get_pending_retain_errors() to check for async failures.
+
+    Returns:
+        RetainResult indicating success. For async mode (sync=False),
+        always returns success=True immediately; actual errors are
+        collected via get_pending_retain_errors().
+
+    Raises:
+        RuntimeError: If Hindsight is not configured and no overrides provided
+        Exception: Only raised in sync mode if storage fails
+
+    Example:
+        >>> from hindsight_litellm import configure, retain
+        >>> configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+        >>>
+        >>> # Async retain (default) - fast, non-blocking
+        >>> retain("User prefers dark mode", context="user_preference")
+        >>>
+        >>> # Sync retain - blocks until complete
+        >>> retain("Critical data", sync=True)
+        >>>
+        >>> # Check for async errors
+        >>> errors = get_pending_retain_errors()
+    """
+    config = get_config()
+    defaults = get_defaults()
+
+    api_url = hindsight_api_url or (config.hindsight_api_url if config else None)
+    target_bank_id = bank_id or (defaults.bank_id if defaults else None)
+    target_document_id = document_id or (defaults.document_id if defaults else None)
+    verbose = config.verbose if config else False
+
+    if not api_url or not target_bank_id:
+        raise RuntimeError(
+            "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
+        )
+
+    if sync:
+        # Synchronous mode - block and return result
+        return _retain_sync(
+            content=content,
+            api_url=api_url,
+            target_bank_id=target_bank_id,
+            context=context,
+            target_document_id=target_document_id,
+            metadata=metadata,
+            verbose=verbose,
+        )
+    else:
+        # Async mode - run in background thread
+        thread = threading.Thread(
+            target=_retain_background,
+            args=(
+                content,
+                api_url,
+                target_bank_id,
+                context,
+                target_document_id,
+                metadata,
+                verbose,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        # Return immediate success - actual errors collected via get_pending_retain_errors()
+        return RetainResult(success=True, items_count=0)
 
 
 async def aretain(
@@ -509,7 +657,7 @@ class HindsightOpenAI:
         store_conversations: bool = True,
         inject_memories: bool = True,
         max_memories: Optional[int] = None,
-        recall_budget: str = "mid",
+        budget: str = "mid",
         verbose: bool = False,
     ):
         """Initialize the wrapped OpenAI client.
@@ -523,7 +671,7 @@ class HindsightOpenAI:
             store_conversations: Whether to store conversations
             inject_memories: Whether to inject relevant memories
             max_memories: Maximum number of memories to inject (None = no limit)
-            recall_budget: Budget level for memory recall (low, mid, high)
+            budget: Budget level for memory recall (low, mid, high)
             verbose: Enable verbose logging
         """
         self._client = client
@@ -533,7 +681,7 @@ class HindsightOpenAI:
         self._store_conversations = store_conversations
         self._inject_memories = inject_memories
         self._max_memories = max_memories
-        self._recall_budget = recall_budget
+        self._budget = budget
         self._verbose = verbose
         self._hindsight_client = None
 
@@ -560,7 +708,7 @@ class HindsightOpenAI:
             results = client.recall(
                 bank_id=self._bank_id,
                 query=query,
-                budget=self._recall_budget,
+                budget=self._budget,
                 max_tokens=self._max_memories * 200 if self._max_memories else 4096,
             )
 
@@ -713,7 +861,7 @@ class HindsightAnthropic:
         store_conversations: bool = True,
         inject_memories: bool = True,
         max_memories: Optional[int] = None,
-        recall_budget: str = "mid",
+        budget: str = "mid",
         verbose: bool = False,
     ):
         """Initialize the wrapped Anthropic client.
@@ -727,7 +875,7 @@ class HindsightAnthropic:
             store_conversations: Whether to store conversations
             inject_memories: Whether to inject relevant memories
             max_memories: Maximum number of memories to inject (None = no limit)
-            recall_budget: Budget level for memory recall (low, mid, high)
+            budget: Budget level for memory recall (low, mid, high)
             verbose: Enable verbose logging
         """
         self._client = client
@@ -737,7 +885,7 @@ class HindsightAnthropic:
         self._store_conversations = store_conversations
         self._inject_memories = inject_memories
         self._max_memories = max_memories
-        self._recall_budget = recall_budget
+        self._budget = budget
         self._verbose = verbose
         self._hindsight_client = None
 
@@ -764,7 +912,7 @@ class HindsightAnthropic:
             results = client.recall(
                 bank_id=self._bank_id,
                 query=query,
-                budget=self._recall_budget,
+                budget=self._budget,
                 max_tokens=self._max_memories * 200 if self._max_memories else 4096,
             )
 
@@ -889,7 +1037,7 @@ def wrap_openai(
     store_conversations: bool = True,
     inject_memories: bool = True,
     max_memories: Optional[int] = None,
-    recall_budget: str = "mid",
+    budget: str = "mid",
     verbose: bool = False,
 ) -> HindsightOpenAI:
     """Wrap an OpenAI client with Hindsight memory integration.
@@ -906,7 +1054,7 @@ def wrap_openai(
         store_conversations: Whether to store conversations
         inject_memories: Whether to inject relevant memories
         max_memories: Maximum number of memories to inject (None = no limit)
-        recall_budget: Budget level for memory recall (low, mid, high)
+        budget: Budget level for memory recall (low, mid, high)
         verbose: Enable verbose logging
 
     Returns:
@@ -935,7 +1083,7 @@ def wrap_openai(
         store_conversations=store_conversations,
         inject_memories=inject_memories,
         max_memories=max_memories,
-        recall_budget=recall_budget,
+        budget=budget,
         verbose=verbose,
     )
 
@@ -948,7 +1096,7 @@ def wrap_anthropic(
     store_conversations: bool = True,
     inject_memories: bool = True,
     max_memories: Optional[int] = None,
-    recall_budget: str = "mid",
+    budget: str = "mid",
     verbose: bool = False,
 ) -> HindsightAnthropic:
     """Wrap an Anthropic client with Hindsight memory integration.
@@ -965,7 +1113,7 @@ def wrap_anthropic(
         store_conversations: Whether to store conversations
         inject_memories: Whether to inject relevant memories
         max_memories: Maximum number of memories to inject (None = no limit)
-        recall_budget: Budget level for memory recall (low, mid, high)
+        budget: Budget level for memory recall (low, mid, high)
         verbose: Enable verbose logging
 
     Returns:
@@ -995,6 +1143,6 @@ def wrap_anthropic(
         store_conversations=store_conversations,
         inject_memories=inject_memories,
         max_memories=max_memories,
-        recall_budget=recall_budget,
+        budget=budget,
         verbose=verbose,
     )

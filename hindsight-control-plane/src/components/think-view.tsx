@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Info, Tag, Clock, Database, Brain } from "lucide-react";
+import { Sparkles, Info, Tag, Clock, Database, Brain, MessageSquare, Shield } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 
@@ -33,6 +34,49 @@ export function ThinkView() {
   const [loading, setLoading] = useState(false);
   const [tags, setTags] = useState("");
   const [tagsMatch, setTagsMatch] = useState<TagsMatch>("any");
+  const [feedback, setFeedback] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+
+  const FEEDBACK_DIRECTIVE_NAME = "General Feedback";
+
+  const submitFeedback = async () => {
+    if (!currentBank || !feedback.trim()) return;
+
+    setFeedbackSubmitting(true);
+    try {
+      // Find existing "General Feedback" directive
+      const directives = await client.listDirectives(currentBank);
+      const existingDirective = directives.items?.find((d) => d.name === FEEDBACK_DIRECTIVE_NAME);
+
+      if (existingDirective) {
+        // Append to existing directive description
+        const newDescription = existingDirective.description
+          ? `${existingDirective.description}\n${feedback.trim()}`
+          : feedback.trim();
+        await client.updateMentalModel(currentBank, existingDirective.id, {
+          description: newDescription,
+        });
+      } else {
+        // Create new directive with observation
+        await client.createMentalModel(currentBank, {
+          name: FEEDBACK_DIRECTIVE_NAME,
+          description: "User feedback for improving responses",
+          subtype: "directive",
+          observations: [{ title: "Feedback", content: feedback.trim() }],
+        });
+      }
+
+      setFeedback("");
+      setFeedbackSubmitted(true);
+      setTimeout(() => setFeedbackSubmitted(false), 3000);
+    } catch (error) {
+      console.error("Error submitting feedback:", error);
+      alert("Error submitting feedback: " + (error as Error).message);
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   const runReflect = async () => {
     if (!currentBank || !query) return;
@@ -135,7 +179,7 @@ export function ThinkView() {
                   checked={includeFacts}
                   onCheckedChange={(c) => setIncludeFacts(c as boolean)}
                 />
-                <span className="text-sm">Include Facts</span>
+                <span className="text-sm">Include Source</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <Checkbox
@@ -288,6 +332,50 @@ export function ThinkView() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Feedback */}
+              <Card className="border-blue-200 dark:border-blue-800">
+                <CardHeader className="py-4">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <MessageSquare className="w-4 h-4" />
+                    Provide Feedback
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Your feedback will be saved as a directive to improve future responses
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {feedbackSubmitted ? (
+                    <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                      <span className="text-lg">&#10003;</span>
+                      <span className="text-sm font-medium">
+                        Feedback saved to {FEEDBACK_DIRECTIVE_NAME}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex gap-3">
+                      <Textarea
+                        value={feedback}
+                        onChange={(e) => setFeedback(e.target.value)}
+                        placeholder="Enter your feedback here..."
+                        className="flex-1 min-h-[60px] resize-none"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            submitFeedback();
+                          }
+                        }}
+                      />
+                      <Button
+                        onClick={submitFeedback}
+                        disabled={feedbackSubmitting || !feedback.trim()}
+                        className="self-end"
+                      >
+                        {feedbackSubmitting ? "Saving..." : "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
 
@@ -377,7 +465,17 @@ export function ThinkView() {
                           }> = [];
 
                           llmCalls.forEach((lc: any, idx: number) => {
-                            const isFinal = lc.scope.includes("final");
+                            // Add tools for this iteration (using iteration field from tool trace)
+                            const iterTools = toolCalls.filter(
+                              (tc: any) => tc.iteration === idx + 1
+                            );
+                            // Determine if this is the final LLM call:
+                            // - scope includes "final", OR
+                            // - it's the last LLM call AND no tools were called after it
+                            const isLastLLMCall = idx === llmCalls.length - 1;
+                            const isFinal =
+                              lc.scope.includes("final") ||
+                              (isLastLLMCall && iterTools.length === 0);
                             const iterNum = isFinal ? llmCalls.length : idx + 1;
 
                             // Add LLM call
@@ -388,10 +486,6 @@ export function ThinkView() {
                               isFinal,
                             });
 
-                            // Add tools for this iteration (using iteration field from tool trace)
-                            const iterTools = toolCalls.filter(
-                              (tc: any) => tc.iteration === idx + 1
-                            );
                             if (iterTools.length > 0) {
                               timeline.push({
                                 type: "tools",
@@ -517,7 +611,11 @@ export function ThinkView() {
                     <CardTitle className="text-base">Based On</CardTitle>
                     <CardDescription className="text-xs">
                       {(result.based_on?.memories?.length || 0) +
-                        (result.based_on?.mental_models?.length || 0)}{" "}
+                        (result.based_on?.mental_models?.filter(
+                          (m: any) => m.subtype !== "directive"
+                        )?.length || 0) +
+                        (result.trace?.mental_models?.filter((m: any) => m.subtype === "directive")
+                          ?.length || 0)}{" "}
                       items used
                     </CardDescription>
                   </CardHeader>
@@ -528,7 +626,7 @@ export function ThinkView() {
                         <div>
                           <p className="font-medium text-sm text-foreground">Not included</p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            Enable "Include Facts" to see memories.
+                            Enable "Include Source" to see memories.
                           </p>
                         </div>
                       </div>
@@ -543,10 +641,49 @@ export function ThinkView() {
                             (f: any) => f.type === "experience"
                           );
                           const opinionFacts = memories.filter((f: any) => f.type === "opinion");
-                          const mentalModels = result.based_on?.mental_models || [];
+                          const mentalModels = (result.based_on?.mental_models || []).filter(
+                            (m: any) => m.subtype !== "directive"
+                          );
+                          const directives =
+                            result.trace?.mental_models?.filter(
+                              (m: any) => m.subtype === "directive"
+                            ) || [];
 
                           return (
                             <>
+                              {/* Directives */}
+                              {directives.length > 0 && (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                                    <Shield className="w-3 h-3" />
+                                    Directives ({directives.length})
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {directives.map((directive: any, i: number) => (
+                                      <div key={i} className="p-2 bg-muted rounded text-xs">
+                                        <div className="font-medium">{directive.name}</div>
+                                        {directive.observations &&
+                                          directive.observations.length > 0 && (
+                                            <ul className="mt-1 space-y-0.5">
+                                              {directive.observations.map(
+                                                (obs: string, j: number) => (
+                                                  <li
+                                                    key={j}
+                                                    className="text-[10px] text-muted-foreground flex items-start gap-1"
+                                                  >
+                                                    <span>•</span>
+                                                    <span>{obs}</span>
+                                                  </li>
+                                                )
+                                              )}
+                                            </ul>
+                                          )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
                               {/* Mental Models */}
                               {mentalModels.length > 0 && (
                                 <div className="space-y-1.5">
@@ -558,11 +695,6 @@ export function ThinkView() {
                                     {mentalModels.map((model: any, i: number) => (
                                       <div key={i} className="p-2 bg-muted rounded text-xs">
                                         <div className="font-medium">{model.name}</div>
-                                        {model.description && (
-                                          <div className="text-[10px] text-muted-foreground mt-1">
-                                            {model.description}
-                                          </div>
-                                        )}
                                       </div>
                                     ))}
                                   </div>

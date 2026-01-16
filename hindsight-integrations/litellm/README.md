@@ -5,13 +5,14 @@ Universal LLM memory integration via LiteLLM. Add persistent memory to any LLM a
 ## Features
 
 - **Universal LLM Support** - Works with 100+ LLM providers via LiteLLM (OpenAI, Anthropic, Groq, Azure, AWS Bedrock, Google Vertex AI, and more)
-- **Simple Integration** - Just configure, enable, and use `hindsight_litellm.completion()`
+- **Simple Integration** - Just configure, set defaults, enable, and use `hindsight_litellm.completion()`
 - **Automatic Memory Injection** - Relevant memories are injected into prompts before LLM calls
-- **Automatic Conversation Storage** - Conversations are stored to Hindsight for future recall
+- **Automatic Conversation Storage** - Conversations are stored to Hindsight for future recall (async by default for performance)
 - **Two Memory Modes** - Choose between `reflect` (synthesized context) or `recall` (raw memory retrieval)
 - **Direct Memory APIs** - Query, synthesize, and store memories manually
 - **Native Client Wrappers** - Alternative wrappers for OpenAI and Anthropic SDKs
 - **Debug Mode** - Inspect exactly what memories are being injected
+- **Async Error Tracking** - Check for background operation failures with `get_pending_retain_errors()`
 
 ## Installation
 
@@ -24,19 +25,30 @@ pip install hindsight-litellm
 ```python
 import hindsight_litellm
 
-# Configure and enable memory integration
+# Step 1: Configure static settings
 hindsight_litellm.configure(
     hindsight_api_url="http://localhost:8888",
-    bank_id="my-agent",
+    verbose=True,
 )
+
+# Step 2: Set defaults (bank_id is required)
+hindsight_litellm.set_defaults(
+    bank_id="my-agent",
+    use_reflect=True,  # Use reflect for synthesized context
+)
+
+# Step 3: Enable memory integration
 hindsight_litellm.enable()
 
-# Use the convenience wrapper - memory is automatically injected and stored
+# Step 4: Use with explicit hindsight_query (required when inject_memories=True)
 response = hindsight_litellm.completion(
     model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "What did we discuss about AI?"}]
+    messages=[{"role": "user", "content": "What did we discuss about AI?"}],
+    hindsight_query="What do I know about AI discussions?",  # Required!
 )
 ```
+
+**Important:** When `inject_memories=True` (default), you must provide `hindsight_query` to specify what to search for in memory. This ensures intentional, focused memory queries.
 
 ## How It Works
 
@@ -121,55 +133,88 @@ The memory injection and storage happen automatically - you just use `completion
 
 ## Configuration Options
 
+The API is split into two functions for clarity:
+
+### 1. `configure()` - Static Settings
+
+Settings that typically don't change during a session:
+
 ```python
 hindsight_litellm.configure(
     # Required
     hindsight_api_url="http://localhost:8888",  # Hindsight API server URL
-    bank_id="my-agent",                          # Memory bank ID
 
-    api_key="your-api-key",        # Optional API key for authentication
+    # Optional - Authentication
+    api_key="your-api-key",        # API key for Hindsight authentication
 
     # Optional - Memory behavior
     store_conversations=True,      # Store conversations after LLM calls
     inject_memories=True,          # Inject relevant memories into prompts
-    use_reflect=False,             # Use reflect API (synthesized) vs recall (raw memories)
-    reflect_include_facts=False,   # Include source facts with reflect responses
-    max_memories=None,             # Maximum memories to inject (None = unlimited)
-    max_memory_tokens=4096,        # Maximum tokens for memory context
-    recall_budget="mid",           # Recall budget: "low", "mid", "high"
-    fact_types=["world", "agent"], # Filter fact types to inject
-
-    # Optional - Bank Configuration
-    bank_name="My Agent",          # Human-readable display name for the memory bank
-    background="This agent...",    # Instructions guiding what Hindsight should remember (see below)
+    sync_storage=False,            # False = async storage (default, better performance)
+                                   # True = sync storage (blocks, raises errors immediately)
 
     # Optional - Advanced
-    injection_mode="system_message",  # or "prepend_user"
-    excluded_models=["gpt-3.5*"],     # Exclude certain models
+    injection_mode="system_message",  # How to inject: "system_message" or "prepend_user"
+    excluded_models=["gpt-3.5*"],     # Exclude certain models from interception
     verbose=True,                     # Enable verbose logging and debug info
 )
 ```
 
-### Bank Configuration: background and bank_name
+### 2. `set_defaults()` - Per-Call Defaults
 
-The `background` and `bank_name` parameters configure the memory bank itself. When provided, `configure()` will automatically create or update the bank with these settings.
-
-- **bank_name**: A human-readable display name for the memory bank. Useful for identifying banks in the Hindsight UI or when managing multiple banks.
-
-- **background**: Instructions that guide Hindsight on what information is important to extract and remember from conversations. This influences memory extraction during the `retain` operation and can affect how the bank's "disposition" (skepticism, literalism, empathy) is calibrated.
+Default values for per-call settings. These can be overridden on individual calls using `hindsight_*` kwargs:
 
 ```python
-# Example: Customer support routing agent
-hindsight_litellm.configure(
-    hindsight_api_url="http://localhost:8888",
-    bank_id="support-router",
-    bank_name="Customer Support Router",
-    background="""This agent routes customer support requests to the appropriate team.
-    Remember which types of issues should go to which teams (billing, technical, sales).
-    Track customer preferences for communication channels and past issue resolutions.
-    Note any escalation patterns or VIP customers who need special handling.""",
+hindsight_litellm.set_defaults(
+    # Required
+    bank_id="my-agent",            # Memory bank ID
+
+    # Optional - Memory retrieval
+    budget="mid",                  # Budget level: "low", "mid", "high"
+    fact_types=["world", "opinion"],  # Filter fact types to retrieve
+    max_memories=10,               # Maximum memories to inject (None = unlimited)
+    max_memory_tokens=4096,        # Maximum tokens for memory context
+    include_entities=True,         # Include entity observations in recall
+
+    # Optional - Reflect mode
+    use_reflect=True,              # Use reflect API (synthesized) vs recall (raw memories)
+    reflect_include_facts=False,   # Include source facts in debug info
+    reflect_context="I am a delivery agent finding recipients.",  # Context for reflect reasoning
+    reflect_response_schema={...}, # JSON Schema for structured reflect output
+
+    # Optional - Debugging
+    trace=False,                   # Enable trace info for debugging
+    document_id="conversation-1",  # Document ID for grouping conversations
 )
 ```
+
+### 3. Per-Call Overrides
+
+Override any default on individual calls using `hindsight_*` kwargs:
+
+```python
+response = hindsight_litellm.completion(
+    model="gpt-4o-mini",
+    messages=[...],
+    hindsight_query="Where is Alice located?",      # REQUIRED when inject_memories=True
+    hindsight_reflect_context="Currently on floor 3",  # Per-call reflect context override
+    # hindsight_bank_id="other-bank",               # Override bank_id for this call
+)
+```
+
+### Bank Configuration: mission
+
+Use `set_bank_mission()` to configure what the memory bank should learn and remember (used for mental models):
+
+```python
+hindsight_litellm.set_bank_mission(
+    mission="""This agent routes customer support requests to the appropriate team.
+    Remember which types of issues should go to which teams (billing, technical, sales).
+    Track customer preferences for communication channels and past issue resolutions.""",
+    name="Customer Support Router",  # Optional display name
+)
+```
+
 
 ### Memory Modes: Reflect vs Recall
 
@@ -178,18 +223,19 @@ hindsight_litellm.configure(
 
 ```python
 # Recall mode - raw memories
-hindsight_litellm.configure(
-    bank_id="my-agent",
-    use_reflect=False,  # Default
-)
+hindsight_litellm.set_defaults(bank_id="my-agent", use_reflect=False)
 # Injects: "1. [WORLD] User prefers Python\n2. [OPINION] User dislikes Java..."
 
 # Reflect mode - synthesized context
-hindsight_litellm.configure(
+hindsight_litellm.set_defaults(bank_id="my-agent", use_reflect=True)
+# Injects: "Based on previous conversations, the user is a Python developer who..."
+
+# Reflect with context - shapes LLM reasoning (not retrieval)
+hindsight_litellm.set_defaults(
     bank_id="my-agent",
     use_reflect=True,
+    reflect_context="I am a delivery agent looking for package recipients.",
 )
-# Injects: "Based on previous conversations, the user is a Python developer who..."
 ```
 
 ## Multi-Provider Support
@@ -199,29 +245,29 @@ Works with any LiteLLM-supported provider:
 ```python
 import hindsight_litellm
 
-hindsight_litellm.configure(
-    hindsight_api_url="http://localhost:8888",
-    bank_id="my-agent",
-)
+hindsight_litellm.configure(hindsight_api_url="http://localhost:8888")
+hindsight_litellm.set_defaults(bank_id="my-agent")
 hindsight_litellm.enable()
 
+messages = [{"role": "user", "content": "Hello!"}]
+
 # OpenAI
-hindsight_litellm.completion(model="gpt-4o", messages=[...])
+hindsight_litellm.completion(model="gpt-4o", messages=messages, hindsight_query="greeting")
 
 # Anthropic
-hindsight_litellm.completion(model="claude-3-5-sonnet-20241022", messages=[...])
+hindsight_litellm.completion(model="claude-3-5-sonnet-20241022", messages=messages, hindsight_query="greeting")
 
 # Groq
-hindsight_litellm.completion(model="groq/llama-3.1-70b-versatile", messages=[...])
+hindsight_litellm.completion(model="groq/llama-3.1-70b-versatile", messages=messages, hindsight_query="greeting")
 
 # Azure OpenAI
-hindsight_litellm.completion(model="azure/gpt-4", messages=[...])
+hindsight_litellm.completion(model="azure/gpt-4", messages=messages, hindsight_query="greeting")
 
 # AWS Bedrock
-hindsight_litellm.completion(model="bedrock/anthropic.claude-3", messages=[...])
+hindsight_litellm.completion(model="bedrock/anthropic.claude-3", messages=messages, hindsight_query="greeting")
 
 # Google Vertex AI
-hindsight_litellm.completion(model="vertex_ai/gemini-pro", messages=[...])
+hindsight_litellm.completion(model="vertex_ai/gemini-pro", messages=messages, hindsight_query="greeting")
 ```
 
 ## Direct Memory APIs
@@ -229,9 +275,10 @@ hindsight_litellm.completion(model="vertex_ai/gemini-pro", messages=[...])
 ### Recall - Query raw memories
 
 ```python
-from hindsight_litellm import configure, recall
+from hindsight_litellm import configure, set_defaults, recall
 
-configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+configure(hindsight_api_url="http://localhost:8888")
+set_defaults(bank_id="my-agent")
 
 # Query memories
 memories = recall("what projects am I working on?", budget="mid")
@@ -246,9 +293,10 @@ for m in memories:
 ### Reflect - Get synthesized context
 
 ```python
-from hindsight_litellm import configure, reflect
+from hindsight_litellm import configure, set_defaults, reflect
 
-configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+configure(hindsight_api_url="http://localhost:8888")
+set_defaults(bank_id="my-agent")
 
 # Get synthesized memory context
 result = reflect("what do you know about the user's preferences?")
@@ -256,21 +304,42 @@ print(result.text)
 
 # Output:
 # "Based on our conversations, the user prefers Python for backend development..."
+
+# With context to shape the response (doesn't affect retrieval)
+result = reflect(
+    query="what do I know about Alice?",
+    context="I am a delivery agent looking for package recipients.",
+)
 ```
 
 ### Retain - Store memories
 
 ```python
-from hindsight_litellm import configure, retain
+from hindsight_litellm import configure, set_defaults, retain, get_pending_retain_errors
 
-configure(bank_id="my-agent", hindsight_api_url="http://localhost:8888")
+configure(hindsight_api_url="http://localhost:8888")
+set_defaults(bank_id="my-agent")
 
-# Store a memory
+# Async retain (default) - fast, non-blocking
+# Returns immediately; actual storage happens in background
 result = retain(
     content="User mentioned they're working on a machine learning project",
     context="Discussion about current projects",
 )
-print(f"Retained successfully: {result.success}, items: {result.items_count}")
+# result.success is True immediately (actual errors collected separately)
+
+# Sync retain - blocks until complete, raises errors immediately
+result = retain(
+    content="Critical information that must be stored",
+    context="Important data",
+    sync=True,  # Block until storage completes
+)
+
+# Check for async retain errors (call periodically)
+errors = get_pending_retain_errors()
+if errors:
+    for e in errors:
+        print(f"Background retain failed: {e}")
 ```
 
 ### Async APIs
@@ -332,19 +401,16 @@ response = wrapped.messages.create(
 When `verbose=True`, you can inspect exactly what memories are being injected:
 
 ```python
-from hindsight_litellm import configure, enable, completion, get_last_injection_debug
+from hindsight_litellm import configure, set_defaults, enable, completion, get_last_injection_debug
 
-configure(
-    bank_id="my-agent",
-    hindsight_api_url="http://localhost:8888",
-    verbose=True,
-    use_reflect=True,
-)
+configure(hindsight_api_url="http://localhost:8888", verbose=True)
+set_defaults(bank_id="my-agent", use_reflect=True)
 enable()
 
 response = completion(
     model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "What's my favorite color?"}]
+    messages=[{"role": "user", "content": "What's my favorite color?"}],
+    hindsight_query="What is the user's favorite color?",
 )
 
 # Inspect what was injected
@@ -365,7 +431,11 @@ from hindsight_litellm import hindsight_memory
 import litellm
 
 with hindsight_memory(bank_id="user-123"):
-    response = litellm.completion(model="gpt-4", messages=[...])
+    response = litellm.completion(
+        model="gpt-4",
+        messages=[{"role": "user", "content": "Hello!"}],
+        hindsight_query="greeting context",
+    )
 # Memory integration automatically disabled after context
 ```
 
@@ -387,7 +457,8 @@ cleanup()
 
 | Function | Description |
 |----------|-------------|
-| `configure(...)` | Configure global Hindsight settings |
+| `configure(...)` | Configure static Hindsight settings (API URL, auth, storage options) |
+| `set_defaults(...)` | Set defaults for per-call settings (bank_id, budget, reflect options) |
 | `enable()` | Enable memory integration with LiteLLM |
 | `disable()` | Disable memory integration |
 | `is_enabled()` | Check if memory integration is enabled |
@@ -397,20 +468,30 @@ cleanup()
 
 | Function | Description |
 |----------|-------------|
-| `get_config()` | Get current configuration |
-| `is_configured()` | Check if Hindsight is configured |
-| `reset_config()` | Reset configuration to defaults |
+| `get_config()` | Get current static configuration |
+| `get_defaults()` | Get current per-call defaults |
+| `is_configured()` | Check if Hindsight is configured with a bank_id |
+| `reset_config()` | Reset all configuration to defaults |
+| `set_document_id(id)` | Convenience function to update document_id |
+| `set_bank_mission(...)` | Set mission/instructions for a memory bank (for mental models) |
 
 ### Memory Functions
 
 | Function | Description |
 |----------|-------------|
-| `recall(query, ...)` | Synchronously query raw memories |
-| `arecall(query, ...)` | Asynchronously query raw memories |
-| `reflect(query, ...)` | Synchronously get synthesized memory context |
-| `areflect(query, ...)` | Asynchronously get synthesized memory context |
-| `retain(content, ...)` | Synchronously store a memory |
-| `aretain(content, ...)` | Asynchronously store a memory |
+| `recall(query, ...)` | Query raw memories (sync) |
+| `arecall(query, ...)` | Query raw memories (async) |
+| `reflect(query, ...)` | Get synthesized memory context (sync) |
+| `areflect(query, ...)` | Get synthesized memory context (async) |
+| `retain(content, sync=False, ...)` | Store a memory (async by default, use `sync=True` to block) |
+| `aretain(content, ...)` | Store a memory (async) |
+
+### Error Tracking Functions
+
+| Function | Description |
+|----------|-------------|
+| `get_pending_retain_errors()` | Get and clear errors from background retain operations |
+| `get_pending_storage_errors()` | Get and clear errors from background conversation storage |
 
 ### Debug Functions
 

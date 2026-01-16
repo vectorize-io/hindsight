@@ -1174,14 +1174,14 @@
         }
       }
     },
-    "/v1/default/banks/{bank_id}/mental-models/{model_id}/generate": {
+    "/v1/default/banks/{bank_id}/mental-models/{model_id}/refresh": {
       "post": {
         "tags": [
           "Mental Models"
         ],
-        "summary": "Generate mental model content (async)",
-        "description": "Submit a background job to generate/refresh content for a specific mental model. This is useful for newly created learned models or to regenerate content for any model.",
-        "operationId": "generate_mental_model",
+        "summary": "Refresh mental model content (async)",
+        "description": "Submit a background job to refresh content for a specific mental model. This is useful for newly created learned models or to refresh content for any model.",
+        "operationId": "refresh_mental_model",
         "parameters": [
           {
             "name": "bank_id",
