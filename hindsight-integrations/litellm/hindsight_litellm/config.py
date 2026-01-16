@@ -12,8 +12,7 @@ This module provides a clean API for configuring Hindsight integration:
 3. Per-call kwargs (hindsight_* prefix) - Override any default per-call
    - hindsight_bank_id, hindsight_document_id, etc.
 
-Bank management (bank_name, background) should be done via the Hindsight API
-directly using hindsight_client, not through this module.
+4. set_bank_mission() - Set the mission for a memory bank (for mental models)
 """
 
 from typing import Optional, List, Any, Dict
@@ -111,17 +110,6 @@ def configure(
     excluded_models: Optional[List[str]] = None,
     verbose: bool = False,
     sync_storage: bool = False,
-    # Legacy parameters (deprecated, use set_defaults instead)
-    bank_id: Optional[str] = None,
-    document_id: Optional[str] = None,
-    budget: Optional[str] = None,
-    fact_types: Optional[List[str]] = None,
-    max_memories: Optional[int] = None,
-    max_memory_tokens: Optional[int] = None,
-    use_reflect: Optional[bool] = None,
-    reflect_include_facts: Optional[bool] = None,
-    bank_name: Optional[str] = None,  # Deprecated: use set_bank_background()
-    background: Optional[str] = None,  # Deprecated: use set_bank_background()
 ) -> HindsightConfig:
     """Configure static Hindsight integration settings for LiteLLM.
 
@@ -139,13 +127,6 @@ def configure(
         sync_storage: If True, storage runs synchronously and raises errors immediately.
             If False (default), storage runs in background for better performance.
             Use get_pending_storage_errors() to check for async storage failures.
-
-        # Legacy parameters (deprecated - will be removed in future version)
-        bank_id, document_id, budget, fact_types, max_memories,
-        max_memory_tokens, use_reflect, reflect_include_facts:
-            Use set_defaults() instead for cleaner separation.
-        bank_name, background:
-            Use set_bank_background() instead.
 
     Returns:
         The configured HindsightConfig instance
@@ -172,39 +153,6 @@ def configure(
         verbose=verbose,
         sync_storage=sync_storage,
     )
-
-    # Handle legacy parameters by forwarding to set_defaults
-    # This maintains backward compatibility
-    legacy_defaults = {}
-    if bank_id is not None:
-        legacy_defaults["bank_id"] = bank_id
-    if document_id is not None:
-        legacy_defaults["document_id"] = document_id
-    if budget is not None:
-        legacy_defaults["budget"] = budget
-    if fact_types is not None:
-        legacy_defaults["fact_types"] = fact_types
-    if max_memories is not None:
-        legacy_defaults["max_memories"] = max_memories
-    if max_memory_tokens is not None:
-        legacy_defaults["max_memory_tokens"] = max_memory_tokens
-    if use_reflect is not None:
-        legacy_defaults["use_reflect"] = use_reflect
-    if reflect_include_facts is not None:
-        legacy_defaults["reflect_include_facts"] = reflect_include_facts
-
-    if legacy_defaults:
-        set_defaults(**legacy_defaults)
-
-    # Handle deprecated bank_name/background (for backward compatibility)
-    if bank_id and (background or bank_name):
-        _create_or_update_bank(
-            hindsight_api_url=hindsight_api_url,
-            bank_id=bank_id,
-            name=bank_name,
-            background=background,
-            verbose=verbose,
-        )
 
     return _global_config
 
@@ -294,7 +242,6 @@ def _create_or_update_bank(
     hindsight_api_url: str,
     bank_id: str,
     name: Optional[str] = None,
-    background: Optional[str] = None,
     mission: Optional[str] = None,
     verbose: bool = False,
 ) -> None:
@@ -304,7 +251,6 @@ def _create_or_update_bank(
         hindsight_api_url: URL of the Hindsight API server
         bank_id: The bank ID to create/update
         name: Optional display name for the bank
-        background: Deprecated - use mission instead
         mission: Instructions guiding what Hindsight should learn and remember
         verbose: Enable verbose logging
     """
@@ -316,13 +262,11 @@ def _create_or_update_bank(
             bank_id=bank_id,
             name=name,
             mission=mission,
-            background=background,
         )
         if verbose:
             import logging
-            field = "mission" if mission else "background"
             logging.getLogger("hindsight_litellm").info(
-                f"Created/updated bank '{bank_id}' with {field}"
+                f"Created/updated bank '{bank_id}' with mission"
             )
     except ImportError:
         if verbose:
@@ -481,54 +425,3 @@ def set_bank_mission(
     )
 
 
-def set_bank_background(
-    bank_id: Optional[str] = None,
-    background: Optional[str] = None,
-    name: Optional[str] = None,
-) -> None:
-    """Set or update the background for a memory bank.
-
-    DEPRECATED: Use set_bank_mission() instead. The background field has been
-    deprecated in favor of mission for mental model support.
-
-    Args:
-        bank_id: The bank ID to update. If not provided, uses the default bank_id.
-        background: Background/instructions for memory extraction.
-        name: Optional display name for the bank.
-
-    Raises:
-        ValueError: If no bank_id is provided and no default is set.
-        RuntimeError: If configure() hasn't been called.
-    """
-    import warnings
-    warnings.warn(
-        "set_bank_background() is deprecated. Use set_bank_mission() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    config = get_config()
-    if not config:
-        raise RuntimeError("Hindsight not configured. Call configure() first.")
-
-    # Determine which bank_id to use
-    effective_bank_id = bank_id
-    if effective_bank_id is None:
-        defaults = get_defaults()
-        if defaults:
-            effective_bank_id = defaults.bank_id
-
-    if not effective_bank_id:
-        raise ValueError(
-            "No bank_id provided and no default bank_id set. "
-            "Either pass bank_id or call set_defaults(bank_id=...) first."
-        )
-
-    # Use the Hindsight API to create/update the bank
-    _create_or_update_bank(
-        hindsight_api_url=config.hindsight_api_url,
-        bank_id=effective_bank_id,
-        name=name,
-        background=background,
-        verbose=config.verbose,
-    )

@@ -215,7 +215,6 @@ hindsight_litellm.set_bank_mission(
 )
 ```
 
-**Note:** `set_bank_background()` is deprecated. Use `set_bank_mission()` instead.
 
 ### Memory Modes: Reflect vs Recall
 
@@ -475,7 +474,6 @@ cleanup()
 | `reset_config()` | Reset all configuration to defaults |
 | `set_document_id(id)` | Convenience function to update document_id |
 | `set_bank_mission(...)` | Set mission/instructions for a memory bank (for mental models) |
-| `set_bank_background(...)` | **Deprecated** - use `set_bank_mission()` instead |
 
 ### Memory Functions
 
