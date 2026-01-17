@@ -284,6 +284,8 @@ class LLMProvider:
             # For GPT-4o models, cap to 16384
             is_gpt4_model = any(x in model_lower for x in ["gpt-4.1", "gpt-4-"])
             is_gpt4o_model = "gpt-4o" in model_lower
+            # Mistral models use max_tokens instead of max_completion_tokens
+            is_mistral_model = "mistral" in model_lower or "mistral" in self.base_url.lower() if self.base_url else False
             if max_completion_tokens is not None:
                 if is_gpt4o_model and max_completion_tokens > 16384:
                     max_completion_tokens = 16384
@@ -293,7 +295,11 @@ class LLMProvider:
                 # Enforce minimum of 16000 to ensure enough space for both
                 if is_reasoning_model and max_completion_tokens < 16000:
                     max_completion_tokens = 16000
-                call_params["max_completion_tokens"] = max_completion_tokens
+                # Mistral doesn't support max_completion_tokens, use max_tokens instead
+                if is_mistral_model:
+                    call_params["max_tokens"] = max_completion_tokens
+                else:
+                    call_params["max_completion_tokens"] = max_completion_tokens
 
             # GPT-5/o1/o3 family doesn't support custom temperature (only default 1)
             if temperature is not None and not is_reasoning_model:

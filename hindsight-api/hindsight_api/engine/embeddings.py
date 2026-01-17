@@ -19,6 +19,7 @@ from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
+    DEFAULT_EMBEDDINGS_MISTRAL_MODEL,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
     DEFAULT_LITELLM_API_BASE,
@@ -27,6 +28,8 @@ from ..config import (
     ENV_EMBEDDINGS_COHERE_MODEL,
     ENV_EMBEDDINGS_LITELLM_MODEL,
     ENV_EMBEDDINGS_LOCAL_MODEL,
+    ENV_EMBEDDINGS_MISTRAL_API_KEY,
+    ENV_EMBEDDINGS_MISTRAL_MODEL,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
     ENV_EMBEDDINGS_OPENAI_MODEL,
@@ -554,6 +557,123 @@ class CohereEmbeddings(Embeddings):
         return all_embeddings
 
 
+class MistralEmbeddings(Embeddings):
+    """
+    Mistral AI embeddings implementation using the Mistral API.
+
+    Mistral's embeddings API is OpenAI-compatible but uses a dedicated endpoint.
+    The mistral-embed model produces 1024-dimensional embeddings.
+
+    Call initialize() during startup to create the client and detect dimension.
+    """
+
+    # Known model dimensions for Mistral
+    MODEL_DIMENSIONS = {
+        "mistral-embed": 1024,
+    }
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_EMBEDDINGS_MISTRAL_MODEL,
+        batch_size: int = 100,
+        max_retries: int = 3,
+    ):
+        """
+        Initialize Mistral embeddings client.
+
+        Args:
+            api_key: Mistral API key
+            model: Mistral embedding model name (default: mistral-embed)
+            batch_size: Maximum batch size for embedding requests (default: 100)
+            max_retries: Maximum number of retries for failed requests (default: 3)
+        """
+        self.api_key = api_key
+        self.model = model
+        self.batch_size = batch_size
+        self.max_retries = max_retries
+        self._client = None
+        self._dimension: int | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "mistral"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        """Initialize the Mistral client and detect dimension."""
+        if self._client is not None:
+            return
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("openai is required for MistralEmbeddings. Install it with: pip install openai")
+
+        logger.info(f"Embeddings: initializing Mistral provider with model {self.model}")
+
+        # Use OpenAI client with Mistral's base URL (API-compatible)
+        self._client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.mistral.ai/v1",
+            max_retries=self.max_retries,
+        )
+
+        # Try to get dimension from known models, otherwise do a test embedding
+        if self.model in self.MODEL_DIMENSIONS:
+            self._dimension = self.MODEL_DIMENSIONS[self.model]
+        else:
+            # Do a test embedding to detect dimension
+            response = self._client.embeddings.create(
+                model=self.model,
+                input=["test"],
+            )
+            if response.data:
+                self._dimension = len(response.data[0].embedding)
+
+        logger.info(f"Embeddings: Mistral provider initialized (model: {self.model}, dim: {self._dimension})")
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings using the Mistral API.
+
+        Args:
+            texts: List of text strings to encode
+
+        Returns:
+            List of embedding vectors
+        """
+        if self._client is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+
+        if not texts:
+            return []
+
+        all_embeddings = []
+
+        # Process in batches
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+
+            response = self._client.embeddings.create(
+                model=self.model,
+                input=batch,
+            )
+
+            # Extract embeddings in order
+            batch_embeddings = [None] * len(batch)
+            for item in response.data:
+                batch_embeddings[item.index] = item.embedding
+            all_embeddings.extend(batch_embeddings)
+
+        return all_embeddings
+
+
 class LiteLLMEmbeddings(Embeddings):
     """
     LiteLLM embeddings implementation using LiteLLM proxy's /embeddings endpoint.
@@ -709,6 +829,16 @@ def create_embeddings_from_env() -> Embeddings:
         model = os.environ.get(ENV_EMBEDDINGS_COHERE_MODEL, DEFAULT_EMBEDDINGS_COHERE_MODEL)
         base_url = os.environ.get(ENV_EMBEDDINGS_COHERE_BASE_URL) or None
         return CohereEmbeddings(api_key=api_key, model=model, base_url=base_url)
+    elif provider == "mistral":
+        # Use dedicated Mistral embeddings API key, or fall back to LLM API key
+        api_key = os.environ.get(ENV_EMBEDDINGS_MISTRAL_API_KEY) or os.environ.get(ENV_LLM_API_KEY)
+        if not api_key:
+            raise ValueError(
+                f"{ENV_EMBEDDINGS_MISTRAL_API_KEY} or {ENV_LLM_API_KEY} is required "
+                f"when {ENV_EMBEDDINGS_PROVIDER} is 'mistral'"
+            )
+        model = os.environ.get(ENV_EMBEDDINGS_MISTRAL_MODEL, DEFAULT_EMBEDDINGS_MISTRAL_MODEL)
+        return MistralEmbeddings(api_key=api_key, model=model)
     elif provider == "litellm":
         api_base = os.environ.get(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE)
         api_key = os.environ.get(ENV_LITELLM_API_KEY)
@@ -716,5 +846,5 @@ def create_embeddings_from_env() -> Embeddings:
         return LiteLLMEmbeddings(api_base=api_base, api_key=api_key, model=model)
     else:
         raise ValueError(
-            f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei', 'openai', 'cohere', 'litellm'"
+            f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei', 'openai', 'cohere', 'mistral', 'litellm'"
         )

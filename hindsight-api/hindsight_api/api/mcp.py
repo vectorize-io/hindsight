@@ -138,7 +138,13 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
             return f'{{"error": "{e}", "results": []}}'
 
     @mcp.tool()
-    async def reflect(query: str, context: str | None = None, budget: str = "low", bank_id: str | None = None) -> str:
+    async def reflect(
+        query: str,
+        context: str | None = None,
+        search_context: str | None = None,
+        budget: str = "low",
+        bank_id: str | None = None,
+    ) -> str:
         """
         Generate thoughtful analysis by synthesizing stored memories with the bank's personality.
 
@@ -160,7 +166,9 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
 
         Args:
             query: The question or topic to reflect on
-            context: Optional context about why this reflection is needed
+            context: Optional context about why this reflection is needed (also used for memory search if search_context not provided)
+            search_context: Optional keywords to enhance memory search. If not provided, context is used.
+                           Set to empty string "" to explicitly disable context-based search enhancement.
             budget: Search budget - 'low', 'mid', or 'high' (default: 'low')
             bank_id: Optional bank to reflect in (defaults to session bank). Use for cross-bank operations.
         """
@@ -179,6 +187,7 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
                 query=query,
                 budget=budget_enum,
                 context=context,
+                search_context=search_context,
                 request_context=RequestContext(),
             )
 

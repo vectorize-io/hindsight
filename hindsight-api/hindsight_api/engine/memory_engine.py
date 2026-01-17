@@ -1083,7 +1083,12 @@ class MemoryEngine(MemoryEngineInterface):
             async with pool.acquire() as conn:
                 result = await conn.fetchval("SELECT 1")
                 if result == 1:
-                    return {"status": "healthy", "database": "connected"}
+                    from importlib.metadata import version
+                    try:
+                        api_version = version("hindsight-api")
+                    except Exception:
+                        api_version = "unknown"
+                    return {"status": "healthy", "database": "connected", "version": api_version}
                 else:
                     return {"status": "unhealthy", "database": "unexpected response"}
         except Exception as e:
