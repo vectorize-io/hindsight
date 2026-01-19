@@ -4,9 +4,12 @@ Centralized configuration for Hindsight API.
 All environment variables and their defaults are defined here.
 """
 
+import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -68,6 +71,7 @@ ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 ENV_HOST = "HINDSIGHT_API_HOST"
 ENV_PORT = "HINDSIGHT_API_PORT"
 ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
+ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
@@ -142,6 +146,7 @@ DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8888
 DEFAULT_LOG_LEVEL = "info"
+DEFAULT_LOG_FORMAT = "text"  # Options: "text", "json"
 DEFAULT_WORKERS = 1
 DEFAULT_MCP_ENABLED = True
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"  # Options: "link_expansion", "mpfp", "bfs"
@@ -204,6 +209,36 @@ Use this tool PROACTIVELY to:
 EMBEDDING_DIMENSION = DEFAULT_EMBEDDING_DIMENSION
 
 
+class JsonFormatter(logging.Formatter):
+    """JSON formatter for structured logging.
+
+    Outputs logs in JSON format with a 'severity' field that cloud logging
+    systems (GCP, AWS CloudWatch, etc.) can parse to correctly categorize log levels.
+    """
+
+    SEVERITY_MAP = {
+        logging.DEBUG: "DEBUG",
+        logging.INFO: "INFO",
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry = {
+            "severity": self.SEVERITY_MAP.get(record.levelno, "DEFAULT"),
+            "message": record.getMessage(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "logger": record.name,
+        }
+
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(log_entry)
+
+
 def _validate_extraction_mode(mode: str) -> str:
     """Validate and normalize extraction mode."""
     mode_lower = mode.lower()
@@ -262,6 +297,7 @@ class HindsightConfig:
     host: str
     port: int
     log_level: str
+    log_format: str
     mcp_enabled: bool
 
     # Recall
@@ -345,6 +381,7 @@ class HindsightConfig:
             host=os.getenv(ENV_HOST, DEFAULT_HOST),
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
             log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
+            log_format=os.getenv(ENV_LOG_FORMAT, DEFAULT_LOG_FORMAT).lower(),
             mcp_enabled=os.getenv(ENV_MCP_ENABLED, str(DEFAULT_MCP_ENABLED)).lower() == "true",
             # Recall
             graph_retriever=os.getenv(ENV_GRAPH_RETRIEVER, DEFAULT_GRAPH_RETRIEVER),
@@ -427,12 +464,28 @@ class HindsightConfig:
         return log_level_map.get(self.log_level.lower(), logging.INFO)
 
     def configure_logging(self) -> None:
-        """Configure Python logging based on the log level."""
-        logging.basicConfig(
-            level=self.get_python_log_level(),
-            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            force=True,  # Override any existing configuration
-        )
+        """Configure Python logging based on the log level and format.
+
+        When log_format is "json", outputs structured JSON logs with a severity
+        field that GCP Cloud Logging can parse for proper log level categorization.
+        """
+        root_logger = logging.getLogger()
+        root_logger.setLevel(self.get_python_log_level())
+
+        # Remove existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Create handler writing to stdout (GCP treats stderr as ERROR)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(self.get_python_log_level())
+
+        if self.log_format == "json":
+            handler.setFormatter(JsonFormatter())
+        else:
+            handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+
+        root_logger.addHandler(handler)
 
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""

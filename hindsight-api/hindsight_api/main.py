@@ -199,6 +199,7 @@ def main():
             host=args.host,
             port=args.port,
             log_level=args.log_level,
+            log_format=config.log_format,
             mcp_enabled=config.mcp_enabled,
             graph_retriever=config.graph_retriever,
             mpfp_top_k_neighbors=config.mpfp_top_k_neighbors,
