@@ -344,15 +344,78 @@ Configuration for the local MCP server (`hindsight-local-mcp` command).
 export HINDSIGHT_API_MCP_INSTRUCTIONS="Also store every action you take, including tool calls and decisions made."
 ```
 
-### Background Tasks
+### Distributed Workers
 
-Controls background task processing for async operations like opinion formation and entity observations.
+Hindsight uses PostgreSQL as a task broker for background operations like opinion formation and entity observations. By default, the API processes tasks internally. For high-throughput deployments, you can run dedicated worker processes that scale independently.
+
+#### Worker Mode Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_TASK_BACKEND` | Task backend implementation: `memory` (in-process queue) or `noop` (discard tasks, useful for tests) | `memory` |
-| `HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_SIZE` | Max tasks to process in one batch (memory backend only) | `10` |
-| `HINDSIGHT_API_TASK_BACKEND_MEMORY_BATCH_INTERVAL` | Interval between batch processing in seconds (memory backend only) | `1.0` |
+| `HINDSIGHT_API_WORKER_ENABLED` | Enable internal worker in API process | `true` |
+| `HINDSIGHT_API_WORKER_ID` | Unique worker identifier | hostname |
+| `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
+| `HINDSIGHT_API_WORKER_BATCH_SIZE` | Tasks to claim per poll cycle | `10` |
+| `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
+| `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
+
+#### Deployment Modes
+
+**Standalone Mode** (default):
+```bash
+# API handles requests AND processes tasks (worker_enabled=true by default)
+hindsight-api
+```
+
+**Distributed Mode** (for scaling):
+```bash
+# API only handles requests (disable internal worker)
+HINDSIGHT_API_WORKER_ENABLED=false hindsight-api
+
+# Dedicated workers process tasks (run multiple instances)
+hindsight-worker --worker-id worker-1
+hindsight-worker --worker-id worker-2
+```
+
+#### Worker CLI Options
+
+```bash
+hindsight-worker --help
+
+# Common options:
+--worker-id         Worker identifier (default: hostname)
+--poll-interval     Polling interval in ms (default: 500)
+--batch-size        Tasks to claim per poll (default: 10)
+--max-retries       Max retries before failing (default: 3)
+--http-port         Metrics/health HTTP port (default: 8889)
+--log-level         Log level (default: info)
+```
+
+#### Worker Endpoints
+
+Each worker exposes HTTP endpoints for monitoring:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/health` | Health check with DB connectivity and worker status |
+| `/metrics` | Prometheus metrics for scraping |
+| `/` | Basic worker info |
+
+#### Crash Recovery
+
+Workers claim tasks using `FOR UPDATE SKIP LOCKED` to prevent duplicates. If a worker crashes while processing, tasks remain in "processing" status. Use the admin CLI to release them:
+
+```bash
+# Release all tasks owned by a crashed worker
+hindsight-admin decommission-worker <worker-id>
+
+# Example: release tasks from worker-2
+hindsight-admin decommission-worker worker-2
+```
+
+:::tip Kubernetes Deployments
+In Kubernetes, use a StatefulSet for workers. Pod names (e.g., `hindsight-worker-0`) make ideal worker IDs. See the [Helm chart documentation](./installation.md#distributed-workers) for configuration.
+:::
 
 ### Performance Optimization
 
