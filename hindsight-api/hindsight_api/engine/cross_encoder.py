@@ -133,7 +133,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         logger.info(f"Reranker: initializing local provider with model {self.model_name}")
 
         # Determine device and device_map based on hardware and installed packages.
-        # When accelerate is installed but no GPU is available, transformers can
+        # When accelerate is installed but no GPU/MPS is available, transformers can
         # incorrectly use lazy loading (meta tensors) which fails on .to(device).
         # We use device_map="cpu" in that case to force direct CPU loading.
         import torch
@@ -145,8 +145,11 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         except ImportError:
             accelerate_available = False
 
-        if torch.cuda.is_available():
-            device = None  # Let sentence-transformers auto-detect GPU
+        # Check for GPU (CUDA) or Apple Silicon (MPS)
+        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+
+        if has_gpu:
+            device = None  # Let sentence-transformers auto-detect GPU/MPS
             device_map = None
         elif accelerate_available:
             device = "cpu"
