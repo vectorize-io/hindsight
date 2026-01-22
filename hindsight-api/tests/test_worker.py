@@ -329,6 +329,241 @@ class TestWorkerPoller:
         assert row["status"] == "failed"
         assert "Max retries" in row["error_message"]
 
+    @pytest.mark.asyncio
+    async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, clean_operations):
+        """Test that pending consolidation is skipped if same bank has one processing."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+
+        # Create a processing consolidation for bank
+        processing_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'other-worker')
+            """,
+            processing_op_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id}),
+        )
+
+        # Create a pending consolidation for same bank (should be skipped)
+        pending_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            pending_op_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id}),
+        )
+
+        # Create a pending consolidation for different bank (should be claimed)
+        other_bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        other_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            other_op_id,
+            other_bank_id,
+            json.dumps({"type": "consolidation", "bank_id": other_bank_id}),
+        )
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=lambda x: None,
+            batch_size=10,
+        )
+
+        claimed = await poller.claim_batch()
+
+        # Should only claim the consolidation for the other bank
+        assert len(claimed) == 1
+        claimed_op_id, claimed_payload = claimed[0]
+        assert claimed_op_id == str(other_op_id)
+        assert claimed_payload["bank_id"] == other_bank_id
+
+        # Verify the pending consolidation for first bank is still pending
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            pending_op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(self, pool, clean_operations):
+        """Test that non-consolidation tasks are still claimed even if consolidation is processing."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+
+        # Create a processing consolidation for bank
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'other-worker')
+            """,
+            uuid.uuid4(),
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id}),
+        )
+
+        # Create a pending retain task for same bank (should be claimed)
+        retain_op_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'retain', 'pending', $3::jsonb)
+            """,
+            retain_op_id,
+            bank_id,
+            json.dumps({"type": "batch_retain", "bank_id": bank_id}),
+        )
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=lambda x: None,
+            batch_size=10,
+        )
+
+        claimed = await poller.claim_batch()
+
+        # Should claim the retain task (non-consolidation tasks are unaffected)
+        assert len(claimed) == 1
+        claimed_op_id, _ = claimed[0]
+        assert claimed_op_id == str(retain_op_id)
+
+
+class TestWorkerRecovery:
+    """Tests for worker task recovery on startup."""
+
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_resets_processing_to_pending(self, pool, clean_operations):
+        """Test that recover_own_tasks resets processing tasks back to pending."""
+        from hindsight_api.worker import WorkerPoller
+
+        # Create tasks that were being processed by this worker (simulating a crash)
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        worker_id = "crashed-worker"
+        task_ids = []
+
+        for i in range(3):
+            op_id = uuid.uuid4()
+            task_ids.append(op_id)
+            payload = json.dumps({"type": "test_task", "index": i, "bank_id": bank_id})
+            await pool.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+                VALUES ($1, $2, 'test', 'processing', $3::jsonb, $4, now())
+                """,
+                op_id,
+                bank_id,
+                payload,
+                worker_id,
+            )
+
+        # Create poller with same worker_id and call recover
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id=worker_id,
+            executor=lambda x: None,
+        )
+
+        recovered_count = await poller.recover_own_tasks()
+        assert recovered_count == 3
+
+        # Verify all tasks are back to pending with no worker assigned
+        rows = await pool.fetch(
+            "SELECT status, worker_id, claimed_at FROM async_operations WHERE bank_id = $1",
+            bank_id,
+        )
+        for row in rows:
+            assert row["status"] == "pending"
+            assert row["worker_id"] is None
+            assert row["claimed_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_does_not_affect_other_workers(self, pool, clean_operations):
+        """Test that recover_own_tasks only affects tasks from the same worker_id."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+
+        # Create tasks for worker-1 (the one that will recover)
+        for i in range(2):
+            op_id = uuid.uuid4()
+            payload = json.dumps({"type": "test_task", "index": i, "bank_id": bank_id})
+            await pool.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+                VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'worker-1')
+                """,
+                op_id,
+                bank_id,
+                payload,
+            )
+
+        # Create tasks for worker-2 (should not be affected)
+        for i in range(2):
+            op_id = uuid.uuid4()
+            payload = json.dumps({"type": "test_task", "index": i + 10, "bank_id": bank_id})
+            await pool.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+                VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'worker-2')
+                """,
+                op_id,
+                bank_id,
+                payload,
+            )
+
+        # Worker-1 recovers its tasks
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="worker-1",
+            executor=lambda x: None,
+        )
+
+        recovered_count = await poller.recover_own_tasks()
+        assert recovered_count == 2
+
+        # Verify worker-1 tasks are released
+        worker1_rows = await pool.fetch(
+            "SELECT status, worker_id FROM async_operations WHERE bank_id = $1 AND worker_id IS NULL",
+            bank_id,
+        )
+        assert len(worker1_rows) == 2
+
+        # Verify worker-2 tasks are unaffected
+        worker2_rows = await pool.fetch(
+            "SELECT status, worker_id FROM async_operations WHERE bank_id = $1 AND worker_id = 'worker-2'",
+            bank_id,
+        )
+        assert len(worker2_rows) == 2
+        for row in worker2_rows:
+            assert row["status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, clean_operations):
+        """Test that recover_own_tasks returns 0 when there are no stale tasks."""
+        from hindsight_api.worker import WorkerPoller
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="fresh-worker",
+            executor=lambda x: None,
+        )
+
+        recovered_count = await poller.recover_own_tasks()
+        assert recovered_count == 0
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""

@@ -2047,7 +2047,7 @@
           "Operations"
         ],
         "summary": "List async operations",
-        "description": "Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
+        "description": "Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.",
         "operationId": "list_operations",
         "parameters": [
           {
@@ -2058,6 +2058,51 @@
               "type": "string",
               "title": "Bank Id"
             }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by status: pending, completed, or failed",
+              "title": "Status"
+            },
+            "description": "Filter by status: pending, completed, or failed"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Maximum number of operations to return",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Maximum number of operations to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of operations to skip",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Number of operations to skip"
           },
           {
             "name": "authorization",
@@ -4668,6 +4713,14 @@
             "type": "integer",
             "title": "Total"
           },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
           "operations": {
             "items": {
               "$ref": "#/components/schemas/OperationResponse"
@@ -4680,12 +4733,16 @@
         "required": [
           "bank_id",
           "total",
+          "limit",
+          "offset",
           "operations"
         ],
         "title": "OperationsListResponse",
         "description": "Response model for list operations endpoint.",
         "example": {
           "bank_id": "user123",
+          "limit": 20,
+          "offset": 0,
           "operations": [
             {
               "created_at": "2024-01-15T10:30:00Z",

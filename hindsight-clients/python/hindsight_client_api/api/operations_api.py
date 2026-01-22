@@ -16,8 +16,9 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import StrictStr
+from pydantic import Field, StrictStr
 from typing import Optional
+from typing_extensions import Annotated
 from hindsight_client_api.models.cancel_operation_response import CancelOperationResponse
 from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
@@ -630,6 +631,9 @@ class OperationsApi:
     async def list_operations(
         self,
         bank_id: StrictStr,
+        status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -646,10 +650,16 @@ class OperationsApi:
     ) -> OperationsListResponse:
         """List async operations
 
-        Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations
+        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param status: Filter by status: pending, completed, or failed
+        :type status: str
+        :param limit: Maximum number of operations to return
+        :type limit: int
+        :param offset: Number of operations to skip
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -676,6 +686,9 @@ class OperationsApi:
 
         _param = self._list_operations_serialize(
             bank_id=bank_id,
+            status=status,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -702,6 +715,9 @@ class OperationsApi:
     async def list_operations_with_http_info(
         self,
         bank_id: StrictStr,
+        status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -718,10 +734,16 @@ class OperationsApi:
     ) -> ApiResponse[OperationsListResponse]:
         """List async operations
 
-        Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations
+        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param status: Filter by status: pending, completed, or failed
+        :type status: str
+        :param limit: Maximum number of operations to return
+        :type limit: int
+        :param offset: Number of operations to skip
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -748,6 +770,9 @@ class OperationsApi:
 
         _param = self._list_operations_serialize(
             bank_id=bank_id,
+            status=status,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -774,6 +799,9 @@ class OperationsApi:
     async def list_operations_without_preload_content(
         self,
         bank_id: StrictStr,
+        status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -790,10 +818,16 @@ class OperationsApi:
     ) -> RESTResponseType:
         """List async operations
 
-        Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations
+        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
+        :param status: Filter by status: pending, completed, or failed
+        :type status: str
+        :param limit: Maximum number of operations to return
+        :type limit: int
+        :param offset: Number of operations to skip
+        :type offset: int
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -820,6 +854,9 @@ class OperationsApi:
 
         _param = self._list_operations_serialize(
             bank_id=bank_id,
+            status=status,
+            limit=limit,
+            offset=offset,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -841,6 +878,9 @@ class OperationsApi:
     def _list_operations_serialize(
         self,
         bank_id,
+        status,
+        limit,
+        offset,
         authorization,
         _request_auth,
         _content_type,
@@ -866,6 +906,18 @@ class OperationsApi:
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
         # process the query parameters
+        if status is not None:
+            
+            _query_params.append(('status', status))
+            
+        if limit is not None:
+            
+            _query_params.append(('limit', limit))
+            
+        if offset is not None:
+            
+            _query_params.append(('offset', offset))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization

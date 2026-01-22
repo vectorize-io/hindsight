@@ -1045,6 +1045,14 @@ export type OperationsListResponse = {
    */
   total: number;
   /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+  /**
    * Operations
    */
   operations: Array<OperationResponse>;
@@ -2887,7 +2895,26 @@ export type ListOperationsData = {
      */
     bank_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Status
+     *
+     * Filter by status: pending, completed, or failed
+     */
+    status?: string | null;
+    /**
+     * Limit
+     *
+     * Maximum number of operations to return
+     */
+    limit?: number;
+    /**
+     * Offset
+     *
+     * Number of operations to skip
+     */
+    offset?: number;
+  };
   url: "/v1/default/banks/{bank_id}/operations";
 };
 

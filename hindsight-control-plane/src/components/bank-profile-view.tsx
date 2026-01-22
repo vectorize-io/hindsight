@@ -36,6 +36,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   RefreshCw,
   Save,
   Brain,
@@ -53,6 +60,8 @@ import {
   Tag,
   Loader2,
   X,
+  MoreVertical,
+  Pencil,
 } from "lucide-react";
 
 interface DispositionTraits {
@@ -236,6 +245,12 @@ export function BankProfileView() {
   // Consolidation state
   const [isConsolidating, setIsConsolidating] = useState(false);
 
+  // Operations filter/pagination state
+  const [opsStatusFilter, setOpsStatusFilter] = useState<string | null>(null);
+  const [opsLimit] = useState(10);
+  const [opsOffset, setOpsOffset] = useState(0);
+  const [cancellingOpId, setCancellingOpId] = useState<string | null>(null);
+
   // Edit state
   const [editMission, setEditMission] = useState("");
   const [editDisposition, setEditDisposition] = useState<DispositionTraits>({
@@ -244,23 +259,38 @@ export function BankProfileView() {
     empathy: 3,
   });
 
+  const loadOperations = async (
+    statusFilter: string | null = opsStatusFilter,
+    offset: number = opsOffset
+  ) => {
+    if (!currentBank) return;
+    try {
+      const opsData = await client.listOperations(currentBank, {
+        status: statusFilter || undefined,
+        limit: opsLimit,
+        offset,
+      });
+      setOperations(opsData.operations || []);
+      setTotalOperations(opsData.total || 0);
+    } catch (error) {
+      console.error("Error loading operations:", error);
+    }
+  };
+
   const loadData = async (isPolling = false) => {
     if (!currentBank) return;
 
-    // Don't overwrite form state during polling when in edit mode
+    // During polling, only refresh stats (not operations to avoid interfering with filters)
     // Use ref to get current value (avoids stale closure in setInterval)
-    if (isPolling && editModeRef.current) {
-      // Only refresh stats and operations during edit mode
+    if (isPolling) {
       try {
-        const [statsData, opsData, directivesData] = await Promise.all([
+        const [statsData, directivesData] = await Promise.all([
           client.getBankStats(currentBank),
-          client.listOperations(currentBank),
           client.listDirectives(currentBank),
         ]);
         setStats(statsData as BankStats);
-        setOperations((opsData as any)?.operations || []);
-        setTotalOperations((opsData as any)?.total || 0);
         setDirectives(directivesData.items || []);
+        // Skip operations refresh during polling to not interfere with filter/pagination state
       } catch (error) {
         console.error("Error refreshing stats:", error);
       }
@@ -269,17 +299,15 @@ export function BankProfileView() {
 
     setLoading(true);
     try {
-      const [profileData, statsData, opsData, directivesData] = await Promise.all([
+      const [profileData, statsData, directivesData] = await Promise.all([
         client.getBankProfile(currentBank),
         client.getBankStats(currentBank),
-        client.listOperations(currentBank),
         client.listDirectives(currentBank),
       ]);
       setProfile(profileData);
       setStats(statsData as BankStats);
-      setOperations((opsData as any)?.operations || []);
-      setTotalOperations((opsData as any)?.total || 0);
       setDirectives(directivesData.items || []);
+      await loadOperations();
 
       // Only initialize edit state when not in edit mode
       if (!editModeRef.current) {
@@ -375,6 +403,32 @@ export function BankProfileView() {
     }
   };
 
+  const handleOpsFilterChange = (newFilter: string | null) => {
+    setOpsStatusFilter(newFilter);
+    setOpsOffset(0); // Reset to first page when filter changes
+    loadOperations(newFilter, 0);
+  };
+
+  const handleOpsPageChange = (newOffset: number) => {
+    setOpsOffset(newOffset);
+    loadOperations(opsStatusFilter, newOffset);
+  };
+
+  const handleCancelOperation = async (operationId: string) => {
+    if (!currentBank) return;
+
+    setCancellingOpId(operationId);
+    try {
+      await client.cancelOperation(currentBank, operationId);
+      await loadOperations();
+    } catch (error) {
+      console.error("Error cancelling operation:", error);
+      alert("Error cancelling operation: " + (error as Error).message);
+    } finally {
+      setCancellingOpId(null);
+    }
+  };
+
   const handleDeleteDirective = async () => {
     if (!currentBank || !directiveDeleteTarget) return;
 
@@ -465,46 +519,44 @@ export function BankProfileView() {
               </Button>
             </>
           ) : (
-            <>
-              <Button onClick={() => loadData()} variant="secondary" size="sm">
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
-              </Button>
-              <Button onClick={() => setEditMode(true)} size="sm">
-                Edit Profile
-              </Button>
-              <Button
-                onClick={handleTriggerConsolidation}
-                variant="outline"
-                size="sm"
-                disabled={isConsolidating}
-              >
-                {isConsolidating ? (
-                  <>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  Actions
+                  <MoreVertical className="w-4 h-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setEditMode(true)}>
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Edit Profile
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleTriggerConsolidation} disabled={isConsolidating}>
+                  {isConsolidating ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Consolidating...
-                  </>
-                ) : (
-                  <>
+                  ) : (
                     <Brain className="w-4 h-4 mr-2" />
-                    Run Consolidation
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={() => setShowClearMentalModelsDialog(true)}
-                variant="outline"
-                size="sm"
-                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-300"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Clear Mental Models
-              </Button>
-              <Button onClick={() => setShowDeleteDialog(true)} variant="destructive" size="sm">
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete Bank
-              </Button>
-            </>
+                  )}
+                  {isConsolidating ? "Consolidating..." : "Run Consolidation"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setShowClearMentalModelsDialog(true)}
+                  className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Clear Mental Models
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Bank
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
@@ -750,87 +802,145 @@ export function BankProfileView() {
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Activity className="w-5 h-5 text-primary" />
                 Background Operations
+                <button
+                  onClick={() => loadOperations()}
+                  className="p-1 rounded hover:bg-muted transition-colors"
+                  title="Refresh operations"
+                >
+                  <RefreshCw className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                </button>
               </CardTitle>
               <CardDescription>
-                {totalOperations} total operation{totalOperations !== 1 ? "s" : ""}
-                {operations.length < totalOperations ? ` (showing last ${operations.length})` : ""}
+                {totalOperations} operation{totalOperations !== 1 ? "s" : ""}
+                {opsStatusFilter ? ` (${opsStatusFilter})` : ""}
               </CardDescription>
             </div>
-            {stats && (stats.pending_operations > 0 || stats.failed_operations > 0) && (
-              <div className="flex gap-3">
-                {stats.pending_operations > 0 && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
-                    <Clock className="w-3.5 h-3.5 text-amber-500" />
-                    <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
-                      {stats.pending_operations} pending
-                    </span>
-                  </div>
-                )}
-                {stats.failed_operations > 0 && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/10 border border-red-500/20">
-                    <AlertCircle className="w-3.5 h-3.5 text-red-500" />
-                    <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-                      {stats.failed_operations} failed
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="flex gap-1 bg-muted p-1 rounded-lg">
+              {[
+                { value: null, label: "All" },
+                { value: "pending", label: "Pending" },
+                { value: "completed", label: "Completed" },
+                { value: "failed", label: "Failed" },
+              ].map((filter) => (
+                <button
+                  key={filter.value ?? "all"}
+                  onClick={() => handleOpsFilterChange(filter.value)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    opsStatusFilter === filter.value
+                      ? "bg-background shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {operations.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[100px]">ID</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {operations.map((op) => (
-                    <TableRow key={op.id} className={op.status === "failed" ? "bg-red-500/5" : ""}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {op.id.substring(0, 8)}
-                      </TableCell>
-                      <TableCell className="font-medium">{op.task_type}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {new Date(op.created_at).toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        {op.status === "pending" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                            <Clock className="w-3 h-3" />
-                            pending
-                          </span>
-                        )}
-                        {op.status === "failed" && (
-                          <span
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
-                            title={op.error_message}
-                          >
-                            <AlertCircle className="w-3 h-3" />
-                            failed
-                          </span>
-                        )}
-                        {op.status === "completed" && (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle className="w-3 h-3" />
-                            done
-                          </span>
-                        )}
-                      </TableCell>
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[100px]">ID</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-[80px]"></TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {operations.map((op) => (
+                      <TableRow
+                        key={op.id}
+                        className={op.status === "failed" ? "bg-red-500/5" : ""}
+                      >
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {op.id.substring(0, 8)}
+                        </TableCell>
+                        <TableCell className="font-medium">{op.task_type}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {new Date(op.created_at).toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          {op.status === "pending" && (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                              <Clock className="w-3 h-3" />
+                              pending
+                            </span>
+                          )}
+                          {op.status === "failed" && (
+                            <span
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+                              title={op.error_message}
+                            >
+                              <AlertCircle className="w-3 h-3" />
+                              failed
+                            </span>
+                          )}
+                          {op.status === "completed" && (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              <CheckCircle className="w-3 h-3" />
+                              completed
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {op.status === "pending" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-muted-foreground hover:text-red-600 dark:hover:text-red-400"
+                              onClick={() => handleCancelOperation(op.id)}
+                              disabled={cancellingOpId === op.id}
+                            >
+                              {cancellingOpId === op.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <X className="w-3 h-3 mr-1" />
+                              )}
+                              {cancellingOpId === op.id ? "" : "Cancel"}
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {/* Pagination */}
+              {totalOperations > opsLimit && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {opsOffset + 1}-{Math.min(opsOffset + opsLimit, totalOperations)} of{" "}
+                    {totalOperations}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpsPageChange(Math.max(0, opsOffset - opsLimit))}
+                      disabled={opsOffset === 0}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpsPageChange(opsOffset + opsLimit)}
+                      disabled={opsOffset + opsLimit >= totalOperations}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <p className="text-muted-foreground text-center py-8 text-sm">
-              No background operations
+              No {opsStatusFilter ? `${opsStatusFilter} ` : ""}operations
             </p>
           )}
         </CardContent>

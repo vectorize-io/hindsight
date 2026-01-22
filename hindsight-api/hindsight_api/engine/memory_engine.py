@@ -5277,30 +5277,60 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         *,
+        status: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
         request_context: "RequestContext",
-    ) -> list[dict[str, Any]]:
-        """List async operations for a bank."""
+    ) -> dict[str, Any]:
+        """List async operations for a bank with optional filtering and pagination.
+
+        Args:
+            bank_id: Bank identifier
+            status: Optional status filter (pending, completed, failed)
+            limit: Maximum number of operations to return (default 20)
+            offset: Number of operations to skip (default 0)
+            request_context: Request context for authentication
+
+        Returns:
+            Dict with total count and list of operations, sorted by most recent first
+        """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
 
         async with acquire_with_retry(pool) as conn:
-            # Get total count
+            # Build WHERE clause
+            where_conditions = ["bank_id = $1"]
+            params: list[Any] = [bank_id]
+
+            if status:
+                # Map API status to DB statuses (pending includes processing)
+                if status == "pending":
+                    where_conditions.append("status IN ('pending', 'processing')")
+                else:
+                    where_conditions.append(f"status = ${len(params) + 1}")
+                    params.append(status)
+
+            where_clause = " AND ".join(where_conditions)
+
+            # Get total count (with filter)
             total_row = await conn.fetchrow(
-                f"SELECT COUNT(*) as total FROM {fq_table('async_operations')} WHERE bank_id = $1",
-                bank_id,
+                f"SELECT COUNT(*) as total FROM {fq_table('async_operations')} WHERE {where_clause}",
+                *params,
             )
             total = total_row["total"] if total_row else 0
 
-            # Get recent operations
+            # Get operations with pagination
             operations = await conn.fetch(
                 f"""
                 SELECT operation_id, operation_type, created_at, status, error_message
                 FROM {fq_table("async_operations")}
-                WHERE bank_id = $1
+                WHERE {where_clause}
                 ORDER BY created_at DESC
-                LIMIT 50
+                LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
                 """,
-                bank_id,
+                *params,
+                limit,
+                offset,
             )
 
             return {
@@ -5312,7 +5342,8 @@ class MemoryEngine(MemoryEngineInterface):
                         "items_count": 0,
                         "document_id": None,
                         "created_at": row["created_at"].isoformat(),
-                        "status": row["status"],
+                        # Map DB status to API status (processing -> pending for simplicity)
+                        "status": "pending" if row["status"] in ("pending", "processing") else row["status"],
                         "error_message": row["error_message"],
                     }
                     for row in operations
@@ -5446,6 +5477,89 @@ class MemoryEngine(MemoryEngineInterface):
         # Return updated profile
         return await self.get_bank_profile(bank_id, request_context=request_context)
 
+    async def _submit_async_operation(
+        self,
+        bank_id: str,
+        operation_type: str,
+        task_type: str,
+        task_payload: dict[str, Any],
+        *,
+        result_metadata: dict[str, Any] | None = None,
+        dedupe_by_bank: bool = False,
+    ) -> dict[str, Any]:
+        """Generic helper to submit an async operation.
+
+        Args:
+            bank_id: Bank identifier
+            operation_type: Operation type for the async_operations record (e.g., 'consolidation', 'retain')
+            task_type: Task type for the task payload (e.g., 'consolidation', 'batch_retain')
+            task_payload: Additional task payload fields (operation_id and bank_id are added automatically)
+            result_metadata: Optional metadata to store with the operation record
+            dedupe_by_bank: If True, skip creating a new task if one is already pending for this bank+operation_type
+
+        Returns:
+            Dict with operation_id and optionally deduplicated=True if an existing task was found
+        """
+        import json
+
+        pool = await self._get_pool()
+
+        # Check for existing pending task if deduplication is enabled
+        # Note: We only check 'pending', not 'processing', because a processing task
+        # uses a watermark from when it started - new memories added after that point
+        # would need another consolidation run to be processed.
+        if dedupe_by_bank:
+            async with acquire_with_retry(pool) as conn:
+                existing = await conn.fetchrow(
+                    f"""
+                    SELECT operation_id FROM {fq_table("async_operations")}
+                    WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
+                    LIMIT 1
+                    """,
+                    bank_id,
+                    operation_type,
+                )
+                if existing:
+                    logger.debug(
+                        f"{operation_type} task already pending for bank_id={bank_id}, "
+                        f"skipping duplicate (existing operation_id={existing['operation_id']})"
+                    )
+                    return {
+                        "operation_id": str(existing["operation_id"]),
+                        "deduplicated": True,
+                    }
+
+        operation_id = uuid.uuid4()
+
+        # Insert operation record into database
+        async with acquire_with_retry(pool) as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
+                VALUES ($1, $2, $3, $4)
+                """,
+                operation_id,
+                bank_id,
+                operation_type,
+                json.dumps(result_metadata or {}),
+            )
+
+        # Build and submit task payload
+        full_payload = {
+            "type": task_type,
+            "operation_id": str(operation_id),
+            "bank_id": bank_id,
+            **task_payload,
+        }
+
+        await self._task_backend.submit_task(full_payload)
+
+        logger.info(f"{operation_type} task queued for bank_id={bank_id}, operation_id={operation_id}")
+
+        return {
+            "operation_id": str(operation_id),
+        }
+
     async def submit_async_retain(
         self,
         bank_id: str,
@@ -5456,43 +5570,22 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously."""
         await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
 
-        import json
-
-        operation_id = uuid.uuid4()
-
-        # Insert operation record into database
-        async with acquire_with_retry(pool) as conn:
-            await conn.execute(
-                f"""
-                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
-                VALUES ($1, $2, $3, $4)
-                """,
-                operation_id,
-                bank_id,
-                "retain",
-                json.dumps({"items_count": len(contents)}),
-            )
-
-        # Submit task to background queue
-        task_payload = {
-            "type": "batch_retain",
-            "operation_id": str(operation_id),
-            "bank_id": bank_id,
-            "contents": contents,
-        }
+        task_payload: dict[str, Any] = {"contents": contents}
         if document_tags:
             task_payload["document_tags"] = document_tags
 
-        await self._task_backend.submit_task(task_payload)
+        result = await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="retain",
+            task_type="batch_retain",
+            task_payload=task_payload,
+            result_metadata={"items_count": len(contents)},
+            dedupe_by_bank=False,
+        )
 
-        logger.info(f"Retain task queued for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}")
-
-        return {
-            "operation_id": str(operation_id),
-            "items_count": len(contents),
-        }
+        result["items_count"] = len(contents)
+        return result
 
     async def submit_async_consolidation(
         self,
@@ -5502,6 +5595,9 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> dict[str, Any]:
         """Submit a consolidation operation to run asynchronously.
 
+        Deduplicates by bank_id - if there's already a pending consolidation for this bank,
+        returns the existing operation_id instead of creating a new one.
+
         Args:
             bank_id: Bank identifier
             request_context: Request context for authentication
@@ -5510,39 +5606,13 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with operation_id
         """
         await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
-
-        import json
-
-        operation_id = uuid.uuid4()
-
-        # Insert operation record into database
-        async with acquire_with_retry(pool) as conn:
-            await conn.execute(
-                f"""
-                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
-                VALUES ($1, $2, $3, $4)
-                """,
-                operation_id,
-                bank_id,
-                "consolidation",
-                json.dumps({}),
-            )
-
-        # Submit task to background queue
-        task_payload = {
-            "type": "consolidation",
-            "operation_id": str(operation_id),
-            "bank_id": bank_id,
-        }
-
-        await self._task_backend.submit_task(task_payload)
-
-        logger.info(f"Consolidation task queued for bank_id={bank_id}, operation_id={operation_id}")
-
-        return {
-            "operation_id": str(operation_id),
-        }
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="consolidation",
+            task_type="consolidation",
+            task_payload={},
+            dedupe_by_bank=True,
+        )
 
     async def submit_async_create_reflection(
         self,
@@ -5573,7 +5643,6 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with operation_id
         """
         await self._authenticate_tenant(request_context)
-        pool = await self._get_pool()
 
         # 1. Create the reflection in the database with placeholder content
         reflection = await self.create_reflection(
@@ -5586,36 +5655,16 @@ class MemoryEngine(MemoryEngineInterface):
         )
         reflection_id = reflection["id"]
 
-        # 2. Create operation record
-        operation_id = uuid.uuid4()
-        async with acquire_with_retry(pool) as conn:
-            await conn.execute(
-                f"""
-                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
-                VALUES ($1, $2, $3, $4)
-                """,
-                operation_id,
-                bank_id,
-                "create_reflection",
-                json.dumps({"reflection_id": reflection_id, "name": name, "source_query": source_query}),
-            )
-
-        # 3. Submit task to background queue
-        task_payload = {
-            "type": "create_reflection",
-            "operation_id": str(operation_id),
-            "bank_id": bank_id,
-            "reflection_id": reflection_id,
-            "source_query": source_query,
-            "max_tokens": max_tokens,
-        }
-
-        await self._task_backend.submit_task(task_payload)
-
-        logger.info(
-            f"Create reflection task queued for bank_id={bank_id}, reflection_id={reflection_id}, operation_id={operation_id}"
+        # 2. Submit async operation
+        return await self._submit_async_operation(
+            bank_id=bank_id,
+            operation_type="create_reflection",
+            task_type="create_reflection",
+            task_payload={
+                "reflection_id": reflection_id,
+                "source_query": source_query,
+                "max_tokens": max_tokens,
+            },
+            result_metadata={"reflection_id": reflection_id, "name": name, "source_query": source_query},
+            dedupe_by_bank=False,
         )
-
-        return {
-            "operation_id": str(operation_id),
-        }

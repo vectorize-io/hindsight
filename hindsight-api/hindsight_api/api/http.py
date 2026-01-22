@@ -1206,6 +1206,8 @@ class OperationsListResponse(BaseModel):
             "example": {
                 "bank_id": "user123",
                 "total": 150,
+                "limit": 20,
+                "offset": 0,
                 "operations": [
                     {
                         "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -1221,6 +1223,8 @@ class OperationsListResponse(BaseModel):
 
     bank_id: str
     total: int
+    limit: int
+    offset: int
     operations: list[OperationResponse]
 
 
@@ -2770,17 +2774,27 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations",
         response_model=OperationsListResponse,
         summary="List async operations",
-        description="Get a list of all async operations (pending and failed) for a specific agent, including error messages for failed operations",
+        description="Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.",
         operation_id="list_operations",
         tags=["Operations"],
     )
-    async def api_list_operations(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """List all async operations (pending and failed) for a memory bank."""
+    async def api_list_operations(
+        bank_id: str,
+        status: str | None = Query(default=None, description="Filter by status: pending, completed, or failed"),
+        limit: int = Query(default=20, ge=1, le=100, description="Maximum number of operations to return"),
+        offset: int = Query(default=0, ge=0, description="Number of operations to skip"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List async operations for a memory bank with optional filtering and pagination."""
         try:
-            result = await app.state.memory.list_operations(bank_id, request_context=request_context)
+            result = await app.state.memory.list_operations(
+                bank_id, status=status, limit=limit, offset=offset, request_context=request_context
+            )
             return OperationsListResponse(
                 bank_id=bank_id,
                 total=result["total"],
+                limit=limit,
+                offset=offset,
                 operations=[OperationResponse(**op) for op in result["operations"]],
             )
         except (AuthenticationError, HTTPException):

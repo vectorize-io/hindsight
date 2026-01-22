@@ -96,6 +96,7 @@ ENV_RETAIN_OBSERVATIONS_ASYNC = "HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC"
 # Consolidation settings
 ENV_ENABLE_CONSOLIDATION = "HINDSIGHT_API_ENABLE_CONSOLIDATION"
 ENV_CONSOLIDATION_SIMILARITY_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_SIMILARITY_THRESHOLD"
+ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
@@ -178,6 +179,7 @@ DEFAULT_RETAIN_OBSERVATIONS_ASYNC = False  # Run observation generation async (a
 # Consolidation defaults
 DEFAULT_ENABLE_CONSOLIDATION = False  # Consolidation disabled by default (experimental)
 DEFAULT_CONSOLIDATION_SIMILARITY_THRESHOLD = 0.75  # Minimum similarity to consider a learning related
+DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
@@ -335,6 +337,7 @@ class HindsightConfig:
     # Consolidation settings
     enable_consolidation: bool
     consolidation_similarity_threshold: float
+    consolidation_batch_size: int
 
     # Optimization flags
     skip_llm_verification: bool
@@ -443,6 +446,9 @@ class HindsightConfig:
             == "true",
             consolidation_similarity_threshold=float(
                 os.getenv(ENV_CONSOLIDATION_SIMILARITY_THRESHOLD, str(DEFAULT_CONSOLIDATION_SIMILARITY_THRESHOLD))
+            ),
+            consolidation_batch_size=int(
+                os.getenv(ENV_CONSOLIDATION_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_BATCH_SIZE))
             ),
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",

@@ -73,6 +73,9 @@ class WorkerPoller:
 
         Uses FOR UPDATE SKIP LOCKED to ensure no conflicts with other workers.
 
+        For consolidation tasks specifically, skips pending tasks if there's already
+        a processing consolidation for the same bank (to avoid duplicate work).
+
         Returns:
             List of tuples (operation_id, task_dict)
         """
@@ -81,11 +84,24 @@ class WorkerPoller:
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 # Select and lock pending tasks
+                # For consolidation: skip if same bank already has one processing
                 rows = await conn.fetch(
                     f"""
                     SELECT operation_id, task_payload
-                    FROM {table}
+                    FROM {table} AS pending
                     WHERE status = 'pending' AND task_payload IS NOT NULL
+                    AND (
+                        -- Non-consolidation tasks: always claimable
+                        operation_type != 'consolidation'
+                        OR
+                        -- Consolidation: only if no other consolidation processing for same bank
+                        NOT EXISTS (
+                            SELECT 1 FROM {table} AS processing
+                            WHERE processing.bank_id = pending.bank_id
+                            AND processing.operation_type = 'consolidation'
+                            AND processing.status = 'processing'
+                        )
+                    )
                     ORDER BY created_at
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
@@ -188,6 +204,34 @@ class WorkerPoller:
             logger.error(f"Task {operation_id} failed: {e}")
             await self._retry_or_fail(operation_id, error_msg)
 
+    async def recover_own_tasks(self) -> int:
+        """
+        Recover tasks that were assigned to this worker but not completed.
+
+        This handles the case where a worker crashes while processing tasks.
+        On startup, we reset any tasks stuck in 'processing' for this worker_id
+        back to 'pending' so they can be picked up again.
+
+        Returns:
+            Number of tasks recovered
+        """
+        table = fq_table("async_operations", self._schema)
+
+        result = await self._pool.execute(
+            f"""
+            UPDATE {table}
+            SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+            WHERE status = 'processing' AND worker_id = $1
+            """,
+            self._worker_id,
+        )
+
+        # Parse "UPDATE N" to get count
+        count = int(result.split()[-1]) if result else 0
+        if count > 0:
+            logger.info(f"Worker {self._worker_id} recovered {count} stale tasks from previous run")
+        return count
+
     async def run(self):
         """
         Main polling loop.
@@ -195,6 +239,9 @@ class WorkerPoller:
         Continuously polls for pending tasks, claims them, and executes them
         until shutdown is signaled.
         """
+        # Recover any tasks from a previous crash before starting
+        await self.recover_own_tasks()
+
         logger.info(f"Worker {self._worker_id} starting polling loop")
 
         while not self._shutdown.is_set():

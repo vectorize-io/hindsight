@@ -23,12 +23,40 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Check, ChevronsUpDown, Plus, FileText, Moon, Sun, Github, Tag } from "lucide-react";
+import {
+  Check,
+  ChevronsUpDown,
+  Plus,
+  FileText,
+  Moon,
+  Sun,
+  Github,
+  Tag,
+  Upload,
+  X,
+} from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+
+// Supported text file extensions (matching CLI)
+const TEXT_EXTENSIONS = [
+  "txt",
+  "md",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "csv",
+  "log",
+  "rst",
+  "adoc",
+];
+const ACCEPT_FILES = TEXT_EXTENSIONS.map((ext) => `.${ext}`).join(",");
 
 function BankSelectorInner() {
   const router = useRouter();
@@ -43,6 +71,7 @@ function BankSelectorInner() {
 
   // Document creation state
   const [docDialogOpen, setDocDialogOpen] = React.useState(false);
+  const [docTab, setDocTab] = React.useState<"text" | "upload">("text");
   const [docContent, setDocContent] = React.useState("");
   const [docContext, setDocContext] = React.useState("");
   const [docEventDate, setDocEventDate] = React.useState("");
@@ -51,6 +80,11 @@ function BankSelectorInner() {
   const [docAsync, setDocAsync] = React.useState(false);
   const [isCreatingDoc, setIsCreatingDoc] = React.useState(false);
   const [docError, setDocError] = React.useState<string | null>(null);
+
+  // File upload state
+  const [selectedFiles, setSelectedFiles] = React.useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = React.useState<string>("");
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const sortedBanks = React.useMemo(() => {
     return [...banks].sort((a, b) => a.localeCompare(b));
@@ -74,6 +108,91 @@ function BankSelectorInner() {
       setCreateError(error instanceof Error ? error.message : "Failed to create bank");
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    // Filter to only supported extensions
+    const validFiles = files.filter((file) => {
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      return ext && TEXT_EXTENSIONS.includes(ext);
+    });
+    setSelectedFiles((prev) => [...prev, ...validFiles]);
+    // Reset input to allow selecting same file again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const readFileContent = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.onerror = (e) => reject(e);
+      reader.readAsText(file);
+    });
+  };
+
+  const handleUploadFiles = async () => {
+    if (!currentBank || selectedFiles.length === 0) return;
+
+    setIsCreatingDoc(true);
+    setDocError(null);
+    setUploadProgress("");
+
+    try {
+      const parsedTags = docTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
+      // Read all files and create items
+      const items: any[] = [];
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        setUploadProgress(`Reading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
+        const content = await readFileContent(file);
+        const item: any = {
+          content,
+          context: `File: ${file.name}`,
+        };
+        if (parsedTags.length > 0) item.tags = parsedTags;
+        items.push(item);
+      }
+
+      setUploadProgress(`Uploading ${items.length} file(s)...`);
+
+      const params: any = {
+        bank_id: currentBank,
+        items,
+      };
+      if (parsedTags.length > 0) params.document_tags = parsedTags;
+
+      if (docAsync) {
+        await client.retain({ ...params, async: true });
+      } else {
+        await client.retain(params);
+      }
+
+      // Reset form and close dialog
+      setDocDialogOpen(false);
+      setSelectedFiles([]);
+      setDocTags("");
+      setDocAsync(false);
+      setUploadProgress("");
+
+      // Navigate to documents view
+      router.push(`/banks/${currentBank}?view=documents`);
+    } catch (error) {
+      setDocError(error instanceof Error ? error.message : "Failed to upload files");
+    } finally {
+      setIsCreatingDoc(false);
+      setUploadProgress("");
     }
   };
 
@@ -299,81 +418,187 @@ function BankSelectorInner() {
                 <span className="font-semibold">{currentBank}</span>
               </p>
             </DialogHeader>
-            <div className="py-4 space-y-4">
-              <div>
-                <label className="font-bold block mb-1 text-sm text-foreground">Content *</label>
-                <Textarea
-                  value={docContent}
-                  onChange={(e) => setDocContent(e.target.value)}
-                  placeholder="Enter the document content..."
-                  className="min-h-[150px] resize-y"
-                  autoFocus
-                />
-              </div>
 
-              <div>
-                <label className="font-bold block mb-1 text-sm text-foreground">Context</label>
-                <Input
-                  type="text"
-                  value={docContext}
-                  onChange={(e) => setDocContext(e.target.value)}
-                  placeholder="Optional context about this document..."
-                />
-              </div>
+            <Tabs value={docTab} onValueChange={(v) => setDocTab(v as "text" | "upload")}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="text" className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Text
+                </TabsTrigger>
+                <TabsTrigger value="upload" className="flex items-center gap-2">
+                  <Upload className="h-4 w-4" />
+                  Upload Files
+                </TabsTrigger>
+              </TabsList>
 
-              <div className="grid grid-cols-2 gap-4">
+              <TabsContent value="text" className="space-y-4 mt-4">
                 <div>
-                  <label className="font-bold block mb-1 text-sm text-foreground">Event Date</label>
-                  <Input
-                    type="datetime-local"
-                    value={docEventDate}
-                    onChange={(e) => setDocEventDate(e.target.value)}
-                    className="text-foreground"
+                  <label className="font-bold block mb-1 text-sm text-foreground">Content *</label>
+                  <Textarea
+                    value={docContent}
+                    onChange={(e) => setDocContent(e.target.value)}
+                    placeholder="Enter the document content..."
+                    className="min-h-[150px] resize-y"
+                    autoFocus
                   />
                 </div>
 
                 <div>
-                  <label className="font-bold block mb-1 text-sm text-foreground">
-                    Document ID
+                  <label className="font-bold block mb-1 text-sm text-foreground">Context</label>
+                  <Input
+                    type="text"
+                    value={docContext}
+                    onChange={(e) => setDocContext(e.target.value)}
+                    placeholder="Optional context about this document..."
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="font-bold block mb-1 text-sm text-foreground">
+                      Event Date
+                    </label>
+                    <Input
+                      type="datetime-local"
+                      value={docEventDate}
+                      onChange={(e) => setDocEventDate(e.target.value)}
+                      className="text-foreground"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold block mb-1 text-sm text-foreground">
+                      Document ID
+                    </label>
+                    <Input
+                      type="text"
+                      value={docDocumentId}
+                      onChange={(e) => setDocDocumentId(e.target.value)}
+                      placeholder="Optional document identifier..."
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    Tags
                   </label>
                   <Input
                     type="text"
-                    value={docDocumentId}
-                    onChange={(e) => setDocDocumentId(e.target.value)}
-                    placeholder="Optional document identifier..."
+                    value={docTags}
+                    onChange={(e) => setDocTags(e.target.value)}
+                    placeholder="user_alice, session_123, project_x"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Comma-separated tags for filtering during recall/reflect
+                  </p>
                 </div>
-              </div>
 
-              <div>
-                <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
-                  <Tag className="h-4 w-4" />
-                  Tags
-                </label>
-                <Input
-                  type="text"
-                  value={docTags}
-                  onChange={(e) => setDocTags(e.target.value)}
-                  placeholder="user_alice, session_123, project_x"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Comma-separated tags for filtering during recall/reflect
-                </p>
-              </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="async-doc"
+                    checked={docAsync}
+                    onCheckedChange={(checked) => setDocAsync(checked as boolean)}
+                  />
+                  <label htmlFor="async-doc" className="text-sm cursor-pointer text-foreground">
+                    Process in background (async)
+                  </label>
+                </div>
+              </TabsContent>
 
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="async-doc"
-                  checked={docAsync}
-                  onCheckedChange={(checked) => setDocAsync(checked as boolean)}
-                />
-                <label htmlFor="async-doc" className="text-sm cursor-pointer text-foreground">
-                  Process in background (async)
-                </label>
-              </div>
+              <TabsContent value="upload" className="space-y-4 mt-4">
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept={ACCEPT_FILES}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    id="file-upload"
+                  />
+                  <label
+                    htmlFor="file-upload"
+                    className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 hover:bg-accent/50 transition-colors"
+                  >
+                    <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                    <span className="text-sm text-muted-foreground">
+                      Click to select files or drag and drop
+                    </span>
+                    <span className="text-xs text-muted-foreground mt-1">
+                      Supported: {TEXT_EXTENSIONS.join(", ")}
+                    </span>
+                  </label>
+                </div>
 
-              {docError && <p className="text-sm text-destructive">{docError}</p>}
-            </div>
+                {selectedFiles.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="font-bold block text-sm text-foreground">
+                      Selected Files ({selectedFiles.length})
+                    </label>
+                    <div className="max-h-[150px] overflow-y-auto space-y-1">
+                      {selectedFiles.map((file, index) => (
+                        <div
+                          key={`${file.name}-${index}`}
+                          className="flex items-center justify-between p-2 bg-muted rounded-md"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            <span className="text-sm truncate">{file.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ({(file.size / 1024).toFixed(1)} KB)
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            onClick={() => removeFile(index)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    Tags (applied to all files)
+                  </label>
+                  <Input
+                    type="text"
+                    value={docTags}
+                    onChange={(e) => setDocTags(e.target.value)}
+                    placeholder="user_alice, session_123, project_x"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Comma-separated tags for filtering during recall/reflect
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="async-upload"
+                    checked={docAsync}
+                    onCheckedChange={(checked) => setDocAsync(checked as boolean)}
+                  />
+                  <label htmlFor="async-upload" className="text-sm cursor-pointer text-foreground">
+                    Process in background (async)
+                  </label>
+                </div>
+
+                {uploadProgress && (
+                  <p className="text-sm text-muted-foreground">{uploadProgress}</p>
+                )}
+              </TabsContent>
+            </Tabs>
+
+            {docError && <p className="text-sm text-destructive mt-2">{docError}</p>}
+
             <DialogFooter>
               <Button
                 variant="secondary"
@@ -386,13 +611,29 @@ function BankSelectorInner() {
                   setDocTags("");
                   setDocAsync(false);
                   setDocError(null);
+                  setSelectedFiles([]);
+                  setUploadProgress("");
                 }}
               >
                 Cancel
               </Button>
-              <Button onClick={handleCreateDocument} disabled={isCreatingDoc || !docContent.trim()}>
-                {isCreatingDoc ? "Adding..." : "Add Document"}
-              </Button>
+              {docTab === "text" ? (
+                <Button
+                  onClick={handleCreateDocument}
+                  disabled={isCreatingDoc || !docContent.trim()}
+                >
+                  {isCreatingDoc ? "Adding..." : "Add Document"}
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleUploadFiles}
+                  disabled={isCreatingDoc || selectedFiles.length === 0}
+                >
+                  {isCreatingDoc
+                    ? uploadProgress || "Uploading..."
+                    : `Upload ${selectedFiles.length} File${selectedFiles.length !== 1 ? "s" : ""}`}
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>

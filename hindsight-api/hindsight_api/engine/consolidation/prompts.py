@@ -1,10 +1,36 @@
 """Prompts for the consolidation engine."""
 
-CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to identify when a new fact should be merged with existing knowledge (mental models).
+CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (mental models) and merge with existing knowledge when appropriate.
 
 You must output ONLY valid JSON with no markdown formatting, no code blocks, and no additional text.
 
-## MERGE RULES (same subject + same topic):
+## EXTRACT DURABLE KNOWLEDGE, NOT EPHEMERAL STATE
+Facts often describe events or actions. Extract the DURABLE KNOWLEDGE implied by the fact, not the transient state.
+
+Examples of extracting durable knowledge:
+- "User moved to Room 203" -> "Room 203 exists" (location exists, not where user is now)
+- "User visited Acme Corp at Room 105" -> "Acme Corp is located in Room 105"
+- "User took the elevator to floor 3" -> "Floor 3 is accessible by elevator"
+- "User met Sarah at the lobby" -> "Sarah can be found at the lobby"
+
+DO NOT track current user position/state as knowledge - that changes constantly.
+DO track permanent facts learned from the user's actions.
+
+## PRESERVE SPECIFIC DETAILS
+Keep names, locations, numbers, and other specifics. Do NOT:
+- Abstract into general principles
+- Generate business insights
+- Make knowledge generic
+
+GOOD examples:
+- Fact: "John likes pizza" -> "John likes pizza"
+- Fact: "Alice works at Google" -> "Alice works at Google"
+
+BAD examples:
+- "John likes pizza" -> "Understanding dietary preferences helps..." (TOO ABSTRACT)
+- "User is at Room 203" -> "User is currently at Room 203" (EPHEMERAL STATE)
+
+## MERGE RULES (when comparing to existing mental models):
 1. REDUNDANT: Same information worded differently → update existing
 2. CONTRADICTION: Opposite information about same topic → update with history (e.g., "used to X, now Y")
 3. UPDATE: New state replacing old state → update with history
@@ -34,9 +60,10 @@ Output an ARRAY of actions (can be empty, one, or many).
 - NEVER merge unrelated topics (food preferences vs work vs hobbies)
 - When merging contradictions, capture the CHANGE (before → after)
 - Keep mental models focused on ONE specific topic per person
-- Cross-scope insights (alice's fact about bob's topic) become UNTAGGED (global)"""
+- Cross-scope insights (alice's fact about bob's topic) become UNTAGGED (global)
+- The "text" field MUST contain durable knowledge, not ephemeral state"""
 
-CONSOLIDATION_USER_PROMPT = """Analyze this new fact against existing mental models.
+CONSOLIDATION_USER_PROMPT = """Analyze this new fact and consolidate into knowledge.
 {mission_section}
 NEW FACT: {fact_text}
 FACT TAGS: {fact_tags}
@@ -44,61 +71,21 @@ FACT TAGS: {fact_tags}
 EXISTING MENTAL MODELS:
 {mental_models_text}
 
-For each relevant mental model, decide: UPDATE existing or CREATE new?
-- Same scope (tags match or model is global): UPDATE
-- Different scope (both have non-overlapping tags): CREATE untagged cross-scope insight
-- No match found: CREATE with fact's tags
+Instructions:
+1. First, extract the DURABLE KNOWLEDGE from the fact (not ephemeral state like "user is at X")
+2. Then compare with existing mental models:
+   - If a model covers the same topic: UPDATE it with the new knowledge
+   - If no model covers the topic: CREATE a new one
+   - If fact is about different scope: apply tag routing rules
 
-Output JSON array of actions:
+Output JSON array of actions (ALWAYS an array, even for single action):
 [
-  {{"action": "update", "learning_id": "uuid", "text": "updated text", "reason": "..."}},
-  {{"action": "create", "tags": ["tag"], "text": "new learning", "reason": "..."}}
+  {{"action": "update", "learning_id": "uuid", "text": "updated durable knowledge", "reason": "..."}},
+  {{"action": "create", "tags": ["tag"], "text": "new durable knowledge", "reason": "..."}}
 ]
 
-If NO consolidation is needed (fact is unrelated to all models), output empty array:
+If NO consolidation is needed (fact is purely ephemeral with no durable knowledge):
 []
 
-If no models exist but fact should become a learning, output create action:
-[{{"action": "create", "tags": {fact_tags}, "text": "learning text", "reason": "new topic"}}]"""
-
-NEW_LEARNING_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into clear, memorable knowledge statements.
-
-You must output ONLY valid JSON with no markdown formatting, no code blocks, and no additional text.
-
-## EXTRACT DURABLE KNOWLEDGE, NOT EPHEMERAL STATE
-Facts often describe events or actions. Extract the DURABLE KNOWLEDGE implied by the fact, not the transient state.
-
-Examples of extracting durable knowledge:
-- "User moved to Room 203" -> "Room 203 exists" (location exists, not where user is now)
-- "User visited Patterson Law at Room 203" -> "Patterson Law is located in Room 203"
-- "User took the elevator to floor 3" -> "Floor 3 is accessible by elevator"
-- "User met John at the coffee shop" -> "John frequents the coffee shop" or just the fact itself
-
-DO NOT track current user position/state as knowledge - that changes constantly.
-DO track permanent facts learned from the user's actions.
-
-## PRESERVE SPECIFIC DETAILS
-Keep names, locations, numbers, and other specifics. Do NOT:
-- Abstract into general principles
-- Generate business insights
-- Make knowledge generic
-
-GOOD examples:
-- Fact: "John likes pizza" -> "John likes pizza"
-- Fact: "Alice works at Google" -> "Alice works at Google"
-
-BAD examples:
-- "John likes pizza" -> "Understanding dietary preferences helps..." (TOO ABSTRACT)
-- "User is at Room 203" -> "User is currently at Room 203" (EPHEMERAL STATE)"""
-
-NEW_LEARNING_USER_PROMPT = """Convert this fact into a clear, durable knowledge statement.
-{mission_section}
-FACT: {fact_text}
-
-IMPORTANT: Extract PERMANENT knowledge from this fact, not transient user state.
-If the fact describes user movement/location, extract what it tells us about the environment, not where the user currently is.
-
-Output JSON:
-{{
-  "learning_text": "..."  // Durable knowledge (not "user is currently at X")
-}}"""
+If no models exist and fact contains durable knowledge:
+[{{"action": "create", "tags": {fact_tags}, "text": "durable knowledge text", "reason": "new topic"}}]"""

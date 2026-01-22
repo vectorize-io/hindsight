@@ -29,8 +29,10 @@ class OperationsListResponse(BaseModel):
     """ # noqa: E501
     bank_id: StrictStr
     total: StrictInt
+    limit: StrictInt
+    offset: StrictInt
     operations: List[OperationResponse]
-    __properties: ClassVar[List[str]] = ["bank_id", "total", "operations"]
+    __properties: ClassVar[List[str]] = ["bank_id", "total", "limit", "offset", "operations"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -92,6 +94,8 @@ class OperationsListResponse(BaseModel):
         _obj = cls.model_validate({
             "bank_id": obj.get("bank_id"),
             "total": obj.get("total"),
+            "limit": obj.get("limit"),
+            "offset": obj.get("offset"),
             "operations": [OperationResponse.from_dict(_item) for _item in obj["operations"]] if obj.get("operations") is not None else None
         })
         return _obj

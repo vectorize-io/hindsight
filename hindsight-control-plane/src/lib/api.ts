@@ -124,10 +124,45 @@ export class ControlPlaneClient {
   }
 
   /**
-   * List operations
+   * List operations with optional filtering and pagination
    */
-  async listOperations(bankId: string) {
-    return this.fetchApi(`/api/operations/${bankId}`);
+  async listOperations(
+    bankId: string,
+    options?: { status?: string; limit?: number; offset?: number }
+  ) {
+    const params = new URLSearchParams();
+    if (options?.status) params.append("status", options.status);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    const query = params.toString();
+    return this.fetchApi<{
+      bank_id: string;
+      total: number;
+      limit: number;
+      offset: number;
+      operations: Array<{
+        id: string;
+        task_type: string;
+        items_count: number;
+        document_id: string | null;
+        created_at: string;
+        status: string;
+        error_message: string | null;
+      }>;
+    }>(`/api/operations/${bankId}${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Cancel a pending operation
+   */
+  async cancelOperation(bankId: string, operationId: string) {
+    return this.fetchApi<{
+      success: boolean;
+      message: string;
+      operation_id: string;
+    }>(`/api/operations/${bankId}?operation_id=${operationId}`, {
+      method: "DELETE",
+    });
   }
 
   /**

@@ -7,9 +7,15 @@ export async function GET(
 ) {
   try {
     const { agentId } = await params;
+    const searchParams = request.nextUrl.searchParams;
+    const status = searchParams.get("status") || undefined;
+    const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : undefined;
+    const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!) : undefined;
+
     const response = await sdk.listOperations({
       client: lowLevelClient,
       path: { bank_id: agentId },
+      query: { status, limit, offset },
     });
     return NextResponse.json(response.data || {}, { status: 200 });
   } catch (error) {
