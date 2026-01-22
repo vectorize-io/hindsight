@@ -25,17 +25,18 @@ Example:
     ```
 """
 
-from .hindsight_client import Hindsight
+from hindsight_client_api.models.bank_profile_response import BankProfileResponse
+from hindsight_client_api.models.disposition_traits import DispositionTraits
+from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
+from hindsight_client_api.models.recall_response import RecallResponse as _RecallResponse
+from hindsight_client_api.models.recall_result import RecallResult as _RecallResult
+from hindsight_client_api.models.reflect_fact import ReflectFact
+from hindsight_client_api.models.reflect_response import ReflectResponse
 
 # Re-export response types for convenient access
 from hindsight_client_api.models.retain_response import RetainResponse
-from hindsight_client_api.models.recall_response import RecallResponse as _RecallResponse
-from hindsight_client_api.models.recall_result import RecallResult as _RecallResult
-from hindsight_client_api.models.reflect_response import ReflectResponse
-from hindsight_client_api.models.reflect_fact import ReflectFact
-from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
-from hindsight_client_api.models.bank_profile_response import BankProfileResponse
-from hindsight_client_api.models.disposition_traits import DispositionTraits
+
+from .hindsight_client import Hindsight
 
 
 # Add cleaner __repr__ and __iter__ for REPL usability
