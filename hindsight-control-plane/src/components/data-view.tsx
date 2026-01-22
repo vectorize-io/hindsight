@@ -33,9 +33,10 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
+import { Graph3D } from "./graph-3d";
 
 type FactType = "world" | "experience";
-type ViewMode = "graph" | "table" | "timeline";
+type ViewMode = "graph" | "graph3d" | "table" | "timeline";
 
 interface DataViewProps {
   factType: FactType;
@@ -297,7 +298,17 @@ export function DataView({ factType }: DataViewProps) {
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                Graph View
+                2D Graph
+              </button>
+              <button
+                onClick={() => setViewMode("graph3d")}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  viewMode === "graph3d"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                3D Graph
               </button>
               <button
                 onClick={() => setViewMode("table")}
@@ -322,19 +333,31 @@ export function DataView({ factType }: DataViewProps) {
             </div>
           </div>
 
-          {viewMode === "graph" && (
+          {(viewMode === "graph" || viewMode === "graph3d") && (
             <div className="flex gap-0">
               {/* Graph */}
               <div className="flex-1 min-w-0">
-                <Graph2D
-                  data={graph2DData}
-                  height={700}
-                  showLabels={showLabels}
-                  onNodeClick={handleGraphNodeClick}
-                  maxNodes={maxNodes}
-                  nodeColorFn={nodeColorFn}
-                  linkColorFn={linkColorFn}
-                />
+                {viewMode === "graph" ? (
+                  <Graph2D
+                    data={graph2DData}
+                    height={700}
+                    showLabels={showLabels}
+                    onNodeClick={handleGraphNodeClick}
+                    maxNodes={maxNodes}
+                    nodeColorFn={nodeColorFn}
+                    linkColorFn={linkColorFn}
+                  />
+                ) : (
+                  <Graph3D
+                    data={graph2DData}
+                    height={700}
+                    showLabels={showLabels}
+                    onNodeClick={handleGraphNodeClick}
+                    maxNodes={maxNodes}
+                    nodeColorFn={nodeColorFn}
+                    linkColorFn={linkColorFn}
+                  />
+                )}
               </div>
 
               {/* Right Toggle Button */}
