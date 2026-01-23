@@ -62,15 +62,20 @@ curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app claude --
 If you use [add-skill](https://add-skill.org/) to manage your agent skills:
 
 ```bash
-npx add-skill vectorize-io/hindsight --skill hindsight
+# For local mode (individual developers)
+npx add-skill vectorize-io/hindsight --skill hindsight-local
+
+# For Hindsight Cloud (teams)
+npx add-skill vectorize-io/hindsight --skill hindsight-cloud
+
+# For self-hosted Hindsight servers
+npx add-skill vectorize-io/hindsight --skill hindsight-self-hosted
 ```
 
-This installs a universal SKILL.md that auto-detects your configuration. On first use, the AI will prompt you to run the interactive setup if Hindsight isn't configured yet.
-
-**Note:** After installing via add-skill, you still need to configure Hindsight on first use. The AI will guide you through running:
-```bash
-curl -fsSL https://hindsight.vectorize.io/get-skill | bash
-```
+On first use, the AI will guide you through the remaining setup:
+- **Local**: Run `uvx hindsight-embed configure` to set up your LLM provider
+- **Cloud**: Provide your API key and bank ID
+- **Self-hosted**: Provide your server URL, API key, and bank ID
 
 ## What the Skill Provides
 

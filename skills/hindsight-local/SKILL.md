@@ -3,76 +3,53 @@ name: hindsight
 description: Store user preferences, learnings from tasks, and procedure outcomes. Use to remember what works and recall context before new tasks. (user)
 ---
 
-# Hindsight Memory Skill
+# Hindsight Memory Skill (Local)
 
-You have persistent memory via Hindsight. **Proactively store learnings and recall context** to provide better assistance.
+You have persistent memory via the `hindsight-embed` CLI. **Proactively store learnings and recall context** to provide better assistance.
 
 ## Setup Check (First-Time Only)
 
-Before using memory commands, check if Hindsight is configured:
+Before using memory commands, verify Hindsight is configured:
 
 ```bash
-# Check for cloud config
-cat ~/.hindsight/config 2>/dev/null
-
-# Or check for local daemon
-uvx hindsight-embed daemon status 2>/dev/null
+uvx hindsight-embed daemon status
 ```
 
-**If neither works**, prompt the user to run the interactive setup:
+**If this fails or shows "not configured"**, run the interactive setup:
 
 ```bash
-curl -fsSL https://hindsight.vectorize.io/get-skill | bash
+uvx hindsight-embed configure
 ```
 
-This configures either **local mode** (data on their machine) or **cloud mode** (shared team memory). After setup, the commands below will work.
+This will prompt for an LLM provider and API key. After setup, the commands below will work.
 
 ## Commands
 
-### Detect Which Mode
-
-- **Cloud mode**: `~/.hindsight/config` exists with `api_url` and `api_key` → use `hindsight` CLI
-- **Local mode**: No cloud config → use `uvx hindsight-embed`
-
 ### Store a memory
 
-**Local mode:**
+Use `memory retain` to store what you learn:
+
 ```bash
 uvx hindsight-embed memory retain default "User prefers TypeScript with strict mode"
 uvx hindsight-embed memory retain default "Running tests requires NODE_ENV=test" --context procedures
 uvx hindsight-embed memory retain default "Build failed when using Node 18, works with Node 20" --context learnings
 ```
 
-**Cloud mode** (ask user for bank ID if not known, or check their existing SKILL.md):
-```bash
-hindsight memory retain <bank-id> "User prefers TypeScript with strict mode"
-hindsight memory retain <bank-id> "Running tests requires NODE_ENV=test" --context procedures
-```
-
 ### Recall memories
 
-**Local mode:**
+Use `memory recall` BEFORE starting tasks to get relevant context:
+
 ```bash
 uvx hindsight-embed memory recall default "user preferences for this project"
 uvx hindsight-embed memory recall default "what issues have we encountered before"
 ```
 
-**Cloud mode:**
-```bash
-hindsight memory recall <bank-id> "user preferences for this project"
-hindsight memory recall <bank-id> "what issues have we encountered before"
-```
-
 ### Reflect on memories
 
-**Local mode:**
+Use `memory reflect` to synthesize context:
+
 ```bash
 uvx hindsight-embed memory reflect default "How should I approach this task based on past experience?"
-```
-
-**Cloud mode:**
-```bash
-hindsight memory reflect <bank-id> "How should I approach this task based on past experience?"
 ```
 
 ## IMPORTANT: When to Store Memories
