@@ -25,6 +25,8 @@ The skill supports two deployment modes:
 
 ## Quick Install
 
+### Option 1: Interactive Installer (Recommended)
+
 ```bash
 curl -fsSL https://hindsight.vectorize.io/get-skill | bash
 ```
@@ -54,6 +56,26 @@ curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app codex
 # Direct cloud setup (skips interactive prompts for mode)
 curl -fsSL https://hindsight.vectorize.io/get-skill | bash -s -- --app claude --mode cloud
 ```
+
+### Option 2: Using add-skill
+
+If you use [add-skill](https://add-skill.org/) to manage your agent skills:
+
+```bash
+# For local mode (individual developers)
+npx add-skill vectorize-io/hindsight --skill hindsight-local
+
+# For Hindsight Cloud (teams)
+npx add-skill vectorize-io/hindsight --skill hindsight-cloud
+
+# For self-hosted Hindsight servers
+npx add-skill vectorize-io/hindsight --skill hindsight-self-hosted
+```
+
+On first use, the AI will guide you through the remaining setup:
+- **Local**: Run `uvx hindsight-embed configure` to set up your LLM provider
+- **Cloud**: Provide your API key and bank ID
+- **Self-hosted**: Provide your server URL, API key, and bank ID
 
 ## What the Skill Provides
 
