@@ -93,6 +93,12 @@ async def run_consolidation_job(
         logger.debug(f"Consolidation disabled for bank {bank_id}")
         return {"status": "disabled", "bank_id": bank_id}
 
+    # Note: For background tasks (async consolidation), the schema context is already
+    # set by _handle_consolidation before calling this function. For synchronous calls,
+    # the caller must ensure the schema is set via _authenticate_tenant beforehand.
+    # We don't call _authenticate_tenant here because background tasks pass an empty
+    # RequestContext without JWT tokens.
+
     async with memory_engine._pool.acquire() as conn:
         # Get bank profile and last_consolidated_at
         t0 = time.time()

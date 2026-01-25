@@ -1386,6 +1386,35 @@ def create_app(
         # Start worker poller if enabled (standalone mode)
         if config.worker_enabled and memory._pool is not None:
             worker_id = config.worker_id or socket.gethostname()
+            # Enable multi-tenant polling when a tenant extension is configured
+            # This allows the worker to poll tasks from all tenant schemas
+            multi_tenant = memory._tenant_extension is not None
+
+            # In multi-tenant mode, run migrations on all existing tenant schemas
+            # This ensures tenant schemas created before new migrations were added are up-to-date
+            if multi_tenant:
+                from hindsight_api.migrations import run_migrations
+
+                async with memory._pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        """
+                        SELECT DISTINCT table_schema
+                        FROM information_schema.tables
+                        WHERE table_name = 'async_operations'
+                        AND table_schema LIKE 'tenant_%'
+                        ORDER BY table_schema
+                        """
+                    )
+                    tenant_schemas = [row["table_schema"] for row in rows]
+
+                if tenant_schemas:
+                    logging.info(f"Running migrations on {len(tenant_schemas)} tenant schemas...")
+                    for schema in tenant_schemas:
+                        try:
+                            run_migrations(memory.db_url, schema=schema)
+                        except Exception as e:
+                            logging.warning(f"Failed to run migrations on {schema}: {e}")
+
             poller = WorkerPoller(
                 pool=memory._pool,
                 worker_id=worker_id,
@@ -1393,9 +1422,16 @@ def create_app(
                 poll_interval_ms=config.worker_poll_interval_ms,
                 batch_size=config.worker_batch_size,
                 max_retries=config.worker_max_retries,
+                multi_tenant=multi_tenant,
             )
-            poller_task = asyncio.create_task(poller.run())
-            logging.info(f"Worker poller started (worker_id={worker_id})")
+            async def run_poller_with_error_handling():
+                try:
+                    await poller.run()
+                except Exception as e:
+                    logging.error(f"Worker poller crashed: {e}", exc_info=True)
+
+            poller_task = asyncio.create_task(run_poller_with_error_handling())
+            logging.info(f"Worker poller started (worker_id={worker_id}, multi_tenant={multi_tenant})")
 
         # Call HTTP extension startup hook
         if http_extension:

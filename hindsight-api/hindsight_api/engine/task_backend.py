@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def fq_table(table: str, schema: str | None = None) -> str:
-    """Get fully-qualified table name with optional schema prefix."""
+    """Get fully-qualified table name with optional schema prefix.
+
+    If schema is None, uses the current schema from context variable.
+    """
+    if schema is None:
+        # Import here to avoid circular import
+        from hindsight_api.engine.memory_engine import get_current_schema
+        schema = get_current_schema()
     if schema:
         return f'"{schema}".{table}'
     return table
@@ -180,7 +187,8 @@ class BrokerTaskBackend(TaskBackend):
         bank_id = task_dict.get("bank_id")
         payload_json = json.dumps(task_dict)
 
-        table = fq_table("async_operations", self._schema)
+        # Use context-aware fq_table to write to the correct tenant schema
+        table = fq_table("async_operations")
 
         if operation_id:
             # Update existing operation with task payload
@@ -231,7 +239,8 @@ class BrokerTaskBackend(TaskBackend):
         import asyncio
 
         pool = self._pool_getter()
-        table = fq_table("async_operations", self._schema)
+        # Use context-aware fq_table to write to the correct tenant schema
+        table = fq_table("async_operations")
 
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout:

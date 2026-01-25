@@ -479,7 +479,7 @@ class MemoryEngine(MemoryEngineInterface):
         Handler for batch retain tasks.
 
         Args:
-            task_dict: Dict with 'bank_id', 'contents'
+            task_dict: Dict with 'bank_id', 'contents', and 'schema_name' for multi-tenancy
 
         Raises:
             ValueError: If bank_id is missing
@@ -490,14 +490,24 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError("bank_id is required for batch retain task")
         contents = task_dict.get("contents", [])
 
+        # Set schema for multi-tenancy support
+        # schema_name is injected by WorkerPoller in multi-tenant mode
+        schema_name = task_dict.get("schema_name", "public")
+        _current_schema.set(schema_name)
+
+        # Extract tenant_id from schema_name (format: tenant_<uuid_with_underscores>)
+        # Convert underscores back to dashes for valid UUID format (validation expects dashes)
+        tenant_id = schema_name[7:].replace("_", "-") if schema_name.startswith("tenant_") else None
+
         logger.info(
-            f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
+            f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, schema={schema_name}, {len(contents)} items"
         )
 
         # Use internal request context for background tasks
+        # internal=True + tenant_id allows authentication without API key
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext()
+        internal_context = RequestContext(internal=True, tenant_id=tenant_id)
         await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=internal_context)
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
@@ -509,7 +519,7 @@ class MemoryEngine(MemoryEngineInterface):
         Consolidates new memories into learnings for a bank.
 
         Args:
-            task_dict: Dict with 'bank_id'
+            task_dict: Dict with 'bank_id' and 'schema_name' for multi-tenancy
 
         Raises:
             ValueError: If bank_id is missing
@@ -519,18 +529,29 @@ class MemoryEngine(MemoryEngineInterface):
         if not bank_id:
             raise ValueError("bank_id is required for consolidation task")
 
+        # Set schema for multi-tenancy support
+        # schema_name is injected by WorkerPoller in multi-tenant mode
+        schema_name = task_dict.get("schema_name", "public")
+        _current_schema.set(schema_name)
+
+        # Extract tenant_id from schema_name (format: tenant_<uuid_with_underscores>)
+        # Convert underscores back to dashes for valid UUID format (validation expects dashes)
+        tenant_id = schema_name[7:].replace("_", "-") if schema_name.startswith("tenant_") else None
+
         from hindsight_api.models import RequestContext
 
         from .consolidation import run_consolidation_job
 
-        internal_context = RequestContext()
+        # Use internal request context for background tasks
+        # internal=True + tenant_id allows authentication without API key
+        internal_context = RequestContext(internal=True, tenant_id=tenant_id)
         result = await run_consolidation_job(
             memory_engine=self,
             bank_id=bank_id,
             request_context=internal_context,
         )
 
-        logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
+        logger.info(f"[CONSOLIDATION] bank={bank_id} schema={schema_name} completed: {result.get('memories_processed', 0)} processed")
 
     async def _handle_create_reflection(self, task_dict: dict[str, Any]):
         """
@@ -540,7 +561,8 @@ class MemoryEngine(MemoryEngineInterface):
         The reflection should already exist in the database (created during submit_async_create_reflection).
 
         Args:
-            task_dict: Dict with 'bank_id', 'reflection_id', 'source_query', 'max_tokens', 'operation_id'
+            task_dict: Dict with 'bank_id', 'reflection_id', 'source_query', 'max_tokens', 'operation_id',
+                      and 'schema_name' for multi-tenancy
 
         Raises:
             ValueError: If required fields are missing
@@ -554,11 +576,22 @@ class MemoryEngine(MemoryEngineInterface):
         if not bank_id or not reflection_id or not source_query:
             raise ValueError("bank_id, reflection_id, and source_query are required for create_reflection task")
 
-        logger.info(f"[CREATE_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}")
+        # Set schema for multi-tenancy support
+        # schema_name is injected by WorkerPoller in multi-tenant mode
+        schema_name = task_dict.get("schema_name", "public")
+        _current_schema.set(schema_name)
+
+        # Extract tenant_id from schema_name (format: tenant_<uuid_with_underscores>)
+        # Convert underscores back to dashes for valid UUID format (validation expects dashes)
+        tenant_id = schema_name[7:].replace("_", "-") if schema_name.startswith("tenant_") else None
+
+        logger.info(f"[CREATE_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}, schema={schema_name}")
 
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext()
+        # Use internal request context for background tasks
+        # internal=True + tenant_id allows authentication without API key
+        internal_context = RequestContext(internal=True, tenant_id=tenant_id)
 
         # Run reflect to generate content
         reflect_result = await self.reflect_async(
@@ -613,6 +646,11 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id = task_dict.get("operation_id")
         retry_count = task_dict.get("retry_count", 0)
         max_retries = 3
+
+        # Set schema context FIRST - required for fq_table() to work correctly
+        # schema_name is injected by WorkerPoller in multi-tenant mode
+        schema_name = task_dict.get("schema_name", "public")
+        _current_schema.set(schema_name)
 
         # Check if operation was cancelled (only for tasks with operation_id)
         if operation_id:
