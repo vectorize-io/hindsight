@@ -17,55 +17,31 @@
 
 ## What is Hindsight?
 
-Hindsight™ is an agent memory system built to create smarter agents that learn over time. It eliminates the shortcomings of alternative techniques such as RAG and knowledge graph and delivers state-of-the-art performance on long term memory tasks.
+Hindsight™ is an agent memory system built to create smarter agents that learn over time. Most agent memory systems focus on recalling conversation history. Hindsight is focused on making agents that learn, not just remember.
 
-Hindsight addresses common challenges that have frustrated AI engineers building agents to automate tasks and assist users with conversational interfaces. Many of these challenges stem directly from a lack of memory.
 
-- **Inconsistency:** Agents complete tasks successfully one time, then fail when asked to complete the same task again. Memory gives the agent a mechanism to remember what worked and what didn't and to use that information to reduce errors and improve consistency.
-- **Hallucinations:** Long term memory can be seeded with external knowledge to ground agent behavior in reliable sources to augment training data.
-- **Cognitive Overload:** As workflows get complex, retrievals, tool calls, user messages and agent responses can grow to fill the context window leading to context rot. Short term memory optimization allows agents to reduce tokens and focus context by removing irrelevant details.
+<video src="https://github.com/user-attachments/assets/dc8adaed-1f9c-4be7-97bb-536f1addb946" controls></video>
 
-## How is Hindsight Different From Other Memory Systems?
-
-![Overview](./hindsight-docs/static/img/hindsight-overview.webp)
-
-Most agent memory implementation rely on basic vector search or sometimes use a knowledge graph. Hindsight uses biomimetic data structures to organize agent memories in a way that is more like how human memory works:
-
-- **World:** Facts about the world ("The stove gets hot")
-- **Experiences:** Agent's own experiences ("I touched the stove and it really hurt")
-- **Opinion:** Beliefs with confidence scores ("I shouldn't touch the stove again" - .99 confidence)
-- **Observation:** Complex mental models derived by reflecting on facts and experiences ("Curling irons, ovens, and fire are also hot. I shouldn't touch those either.")
-
-Memories in Hindsight are stored in banks (i.e. memory banks). When memories are added to Hindsight, they are pushed into either the world facts or experiences memory pathway. They are then represented as a combination of entities, relationships, and time series with sparse/dense vector representations to aid in later recall.
-
-Hindsight provides three simple methods to interact with the system:
-
-- **Retain:** Provide information to Hindsight that you want it to remember
-- **Recall:** Retrieve memories from Hindsight
-- **Reflect:** Reflect on memories and experiences to generate new observations and insights from existing memories.
-
-### Agent Memory That Learns
-
-A key goal of Hindsight is to build agent memory that enables agents to learn and improve over time. This is the role of the `reflect` operation which provides the agent to form broader opinions and observations over time.
-
-For example, imagine a product support agent that is helping a user troubleshoot a problem. It uses a `search-documentation` tool it found on an MCP server. Later in the conversation, the agent discovers that the documentation returned from the tool wasn't for the product the user was asking about. The agent now has an experience in its memory bank. And just like humans, we want that agent to learn from its experience.
-
-As the agent gains more experiences, `reflect` allows the agent to form observations about what worked, what didn't, and what to do differently the next time it encounters a similar task.
-
----
+It eliminates the shortcomings of alternative techniques such as RAG and knowledge graph and delivers state-of-the-art performance on long term memory tasks.
 
 ## Memory Performance & Accuracy
 
-Hindsight has achieved state-of-the-art performance on the LongMemEval benchmark, widely used to assess memory system performance across a variety of conversational
-AI scenarios. The current reported performance of Hindsight and other agent memory solutions as of December 2025 is shown here:
+Hindsight is the most accurate agent memory system according to benchmark performance. It has achieved state-of-the-art performance on the LongMemEval benchmark, widely used to assess memory system performance across a variety of conversational AI scenarios. The current reported performance of Hindsight and other agent memory solutions as of January 2026 is shown here:
 
 ![Overview](./hindsight-docs/static/img/hindsight-bench.jpg)
 
-The benchmark performance data for Hindsight and GPT-4o (full context) have been reproduced by research collaborators at the Virginia Tech [Sanghani Center for Artificial Intelligence and Data Analytics](https://sanghani.cs.vt.edu/) and The Washington Post. Other scores are self-reported by software vendors.
+The benchmark performance data for Hindsight has been independently reproduced by research collaborators at the Virginia Tech [Sanghani Center for Artificial Intelligence and Data Analytics](https://sanghani.cs.vt.edu/) and The Washington Post. Other scores are self-reported by software vendors.
 
-A thorough examination of the techniques implemented in Hindsight and detailed breakdowns of benchmark performance are [available on arXiv](https://arxiv.org/abs/2512.12818). This research is currently being prepared for conference submission and the wider peer review process.
+Hindsight is being used in production at Fortune 500 enterprises and by a growing number of AI startups. 
 
-The benchmark results from this research can be inspected in our [visual benchmark explorer](https://hindsight-benchmarks.vercel.app). As additional improvements are made to Hindsight, new benchmark data will be available for review using this same tool.
+## Adding Hindsight to Your AI Agents
+
+The easiest way use Hindsight with an existing agent is with the LLM Wrapper. You can add memory to your agent with 2 lines of code. That will swap your current LLM client out with the Hindsight wrapper. After that, memories will be stored and retrieved automatically as you make LLM calls.
+
+If you need more control over how and when your agent stores and recalls memories, there's also a simple API you can integrate with.
+
+![Hindsight Banner](./hindsight-docs/static/img/migration-code.png)
+
 
 ## Quick Start
 
@@ -150,6 +126,22 @@ await client.recall('my-bank', 'What does Alice like?');
 
 ## Architecture & Operations
 
+![Overview](./hindsight-docs/static/img/hindsight-overview.webp)
+
+Most agent memory implementation rely on basic vector search or sometimes use a knowledge graph. Hindsight uses biomimetic data structures to organize agent memories in a way that is more like how human memory works:
+
+- **World:** Facts about the world ("The stove gets hot")
+- **Experiences:** Agent's own experiences ("I touched the stove and it really hurt")
+- **Mental Models:** Learned understanding of the agent's world formed by reflecting on raw memories and experiences.
+
+Memories in Hindsight are stored in banks (i.e. memory banks). When memories are added to Hindsight, they are pushed into either the world facts or experiences memory pathway. They are then represented as a combination of entities, relationships, and time series with sparse/dense vector representations to aid in later recall.
+
+Hindsight provides three simple methods to interact with the system:
+
+- **Retain:** Provide information to Hindsight that you want it to remember
+- **Recall:** Retrieve memories from Hindsight
+- **Reflect:** Reflect on memories and experiences to generate new observations and insights from existing memories.
+
 ### Retain
 
 The `retain` operation is used to push new memories into Hindsight. It tells Hindsight to _retain_ the information you pass in as an input.
@@ -208,7 +200,7 @@ The final output is trimmed as needed to fit within the token limit.
 
 ### Reflect
 
-The reflect operation is used to perform a more thorough analysis of existing memories. This allows the agent to form new connections between memories which are then persisted as opinions and/or observations. When building agents, the reflect operation is a key capability to enable the agent to learn from its experiences. 
+The reflect operation is used to perform a more thorough analysis of existing memories. This allows the agent to form new connections between memories and build a more thorough understanding of its world.
 
 For example, the `reflect` operation can be used to support use cases such as:
 
