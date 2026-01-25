@@ -551,7 +551,9 @@ class MemoryEngine(MemoryEngineInterface):
             request_context=internal_context,
         )
 
-        logger.info(f"[CONSOLIDATION] bank={bank_id} schema={schema_name} completed: {result.get('memories_processed', 0)} processed")
+        logger.info(
+            f"[CONSOLIDATION] bank={bank_id} schema={schema_name} completed: {result.get('memories_processed', 0)} processed"
+        )
 
     async def _handle_create_reflection(self, task_dict: dict[str, Any]):
         """
@@ -585,7 +587,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Convert underscores back to dashes for valid UUID format (validation expects dashes)
         tenant_id = schema_name[7:].replace("_", "-") if schema_name.startswith("tenant_") else None
 
-        logger.info(f"[CREATE_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}, schema={schema_name}")
+        logger.info(
+            f"[CREATE_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}, schema={schema_name}"
+        )
 
         from hindsight_api.models import RequestContext
 
@@ -3513,9 +3517,10 @@ class MemoryEngine(MemoryEngineInterface):
             request_context=request_context,
         )
         # Convert directive format to the expected format for reflect agent
-        # The agent expects: name, description (optional), observations (list of {title, content})
+        # The agent expects: id, name, description (optional), observations (list of {title, content})
         directives = [
             {
+                "id": d["id"],
                 "name": d["name"],
                 "description": d["content"],  # Use content as description
                 "observations": [],  # Directives use content directly, not observations
@@ -3607,12 +3612,12 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
+                        # get_mental_model returns: id, bank_id, text, proof_count, history, tags, source_memory_ids
+                        model_text = model.get("text", "")
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=f"{model_name}: {model_summary}",
+                                text=model_text,
                                 fact_type="mental-models",
                                 context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                 occurred_start=None,
@@ -3629,12 +3634,12 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
+                        # search_mental_models returns: id, text, proof_count, source_memory_ids, tags, is_stale
+                        model_text = model.get("text", "")
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=f"{model_name}: {model_summary}",
+                                text=model_text,
                                 fact_type="mental-models",
                                 context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                 occurred_start=None,
