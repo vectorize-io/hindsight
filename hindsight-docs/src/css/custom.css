@@ -1247,3 +1247,59 @@ ul[class*="suggestion"] {
   display: none !important;
 }
 
+/* ===== Blog Styling ===== */
+
+/* Hide TOC sidebar on blog post pages */
+.blog-post-page .col--3,
+.blog-post-page [class*="tableOfContents"],
+.blog-post-page aside[class*="toc"] {
+  display: none !important;
+}
+
+/* Make blog post content full width when TOC is hidden */
+.blog-post-page .col--9 {
+  --ifm-col-width: 100%;
+  max-width: 100%;
+  flex-basis: 100%;
+}
+
+/* Hide author avatar/icon on blog posts */
+[class*="blogPostAuthor"] img,
+[class*="authorImage"],
+.avatar__photo {
+  display: none !important;
+}
+
+/* Blog author text visible in dark mode */
+[data-theme='dark'] [class*="blogPostAuthor"],
+[data-theme='dark'] [class*="blogPostAuthor"] *,
+[data-theme='dark'] .avatar__name,
+[data-theme='dark'] .avatar__name a,
+[data-theme='dark'] .avatar__subtitle,
+[data-theme='dark'] [class*="authorName"],
+[data-theme='dark'] [class*="blogPostData"] a,
+[data-theme='dark'] [class*="blogPostInfo"] a {
+  color: #e2e8f0 !important;
+  -webkit-text-fill-color: #e2e8f0 !important;
+}
+
+/* Blog navbar icon */
+@media (min-width: 997px) {
+  .navbar-item-blog::before {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    content: '';
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-blog::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
+}
+
