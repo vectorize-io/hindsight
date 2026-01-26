@@ -144,17 +144,21 @@ class BrokerTaskBackend(TaskBackend):
         self,
         pool_getter: Callable[[], "asyncpg.Pool"],
         schema: str | None = None,
+        schema_getter: Callable[[], str | None] | None = None,
     ):
         """
         Initialize the broker task backend.
 
         Args:
             pool_getter: Callable that returns the asyncpg connection pool
-            schema: Database schema for multi-tenant support (optional)
+            schema: Database schema for multi-tenant support (optional, static)
+            schema_getter: Callable that returns current schema dynamically (optional).
+                          If set, takes precedence over static schema for submit_task.
         """
         super().__init__()
         self._pool_getter = pool_getter
         self._schema = schema
+        self._schema_getter = schema_getter
 
     async def initialize(self):
         """Initialize the backend."""
@@ -180,7 +184,8 @@ class BrokerTaskBackend(TaskBackend):
         bank_id = task_dict.get("bank_id")
         payload_json = json.dumps(task_dict)
 
-        table = fq_table("async_operations", self._schema)
+        schema = self._schema_getter() if self._schema_getter else self._schema
+        table = fq_table("async_operations", schema)
 
         if operation_id:
             # Update existing operation with task payload
@@ -231,7 +236,8 @@ class BrokerTaskBackend(TaskBackend):
         import asyncio
 
         pool = self._pool_getter()
-        table = fq_table("async_operations", self._schema)
+        schema = self._schema_getter() if self._schema_getter else self._schema
+        table = fq_table("async_operations", schema)
 
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout:

@@ -261,6 +261,9 @@ class WorkerPoller:
         try:
             schema_info = f", schema={task.schema}" if task.schema else ""
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
+            # Pass schema to executor so it can set the correct context
+            if task.schema:
+                task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             await self._mark_completed(task.operation_id, task.schema)
             logger.debug(f"Task {task.operation_id} completed successfully")

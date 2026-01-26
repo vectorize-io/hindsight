@@ -433,7 +433,10 @@ class MemoryEngine(MemoryEngineInterface):
         # Initialize task backend
         # If no custom backend provided, use BrokerTaskBackend which stores tasks in PostgreSQL
         # The pool_getter lambda will return the pool once it's initialized
-        self._task_backend = task_backend or BrokerTaskBackend(pool_getter=lambda: self._pool)
+        self._task_backend = task_backend or BrokerTaskBackend(
+            pool_getter=lambda: self._pool,
+            schema_getter=get_current_schema,
+        )
 
         # Backpressure mechanism: limit concurrent searches to prevent overwhelming the database
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
@@ -497,6 +500,13 @@ class MemoryEngine(MemoryEngineInterface):
         if request_context is None:
             raise AuthenticationError("RequestContext is required when tenant extension is configured")
 
+        # For internal/background operations (e.g., worker tasks), skip extension authentication
+        # if the schema has already been set by execute_task via the _schema field.
+        if request_context.internal:
+            current = _current_schema.get()
+            if current and current != "public":
+                return current
+
         # Let AuthenticationError propagate - HTTP layer will convert to 401
         tenant_context = await self._tenant_extension.authenticate(request_context)
 
@@ -523,10 +533,10 @@ class MemoryEngine(MemoryEngineInterface):
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
         )
 
-        # Use internal request context for background tasks
+        # Use internal request context for background tasks (skips tenant auth when schema is pre-set)
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext()
+        internal_context = RequestContext(internal=True)
         await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=internal_context)
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
@@ -552,7 +562,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         from .consolidation import run_consolidation_job
 
-        internal_context = RequestContext()
+        internal_context = RequestContext(internal=True)
         result = await run_consolidation_job(
             memory_engine=self,
             bank_id=bank_id,
@@ -587,7 +597,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext()
+        internal_context = RequestContext(internal=True)
 
         # Run reflect to generate content
         reflect_result = await self.reflect_async(
@@ -653,7 +663,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext()
+        internal_context = RequestContext(internal=True)
 
         # Get the current reflection to get source_query
         reflection = await self.get_reflection(bank_id, reflection_id, request_context=internal_context)
@@ -718,6 +728,11 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id = task_dict.get("operation_id")
         retry_count = task_dict.get("retry_count", 0)
         max_retries = 3
+
+        # Set schema context for multi-tenant task execution
+        schema = task_dict.pop("_schema", None)
+        if schema:
+            _current_schema.set(schema)
 
         # Check if operation was cancelled (only for tasks with operation_id)
         if operation_id:

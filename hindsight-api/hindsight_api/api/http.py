@@ -1389,6 +1389,7 @@ def create_app(
                 poll_interval_ms=config.worker_poll_interval_ms,
                 batch_size=config.worker_batch_size,
                 max_retries=config.worker_max_retries,
+                tenant_extension=getattr(memory, "_tenant_extension", None),
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
