@@ -1,0 +1,179 @@
+---
+sidebar_position: 2
+---
+
+# Recall Memories
+
+Retrieve memories using multi-strategy recall.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import recallPy from '!!raw-loader!@site/examples/api/recall.py';
+import recallMjs from '!!raw-loader!@site/examples/api/recall.mjs';
+import recallSh from '!!raw-loader!@site/examples/api/recall.sh';
+
+:::info How Recall Works
+Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](/developer/retrieval) guide.
+:::
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Basic Recall
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-basic" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-basic" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-basic" language="bash" />
+</TabItem>
+</Tabs>
+
+## Recall Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | required | Natural language query |
+| `types` | list | all | Filter: `world`, `experience`, `opinion` |
+| `budget` | string | "mid" | Budget level: `low`, `mid`, `high` |
+| `max_tokens` | int | 4096 | Token budget for results |
+| `trace` | bool | false | Enable trace output for debugging |
+| `include_entities` | bool | false | Include entity observations |
+| `max_entity_tokens` | int | 500 | Token budget for entity observations |
+| `tags` | list | None | Filter memories by tags (see [Tag Filtering](#filter-by-tags)) |
+| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-with-options" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-with-options" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Filter by Fact Type
+
+Recall specific memory types:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-world-only" language="python" />
+<CodeSnippet code={recallPy} section="recall-experience-only" language="python" />
+<CodeSnippet code={recallPy} section="recall-opinions-only" language="python" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-fact-type" language="bash" />
+</TabItem>
+</Tabs>
+
+:::warning About Opinions
+Opinions are beliefs formed during [reflect](/developer/api/reflect) operations. Unlike world facts and experience, opinions are subjective interpretations and may not represent objective truth. Depending on your use case:
+- **Exclude opinions** (`types=["world", "experience"]`) when you need factual, verifiable information
+- **Include opinions** when you want the agent's perspective or formed beliefs
+- **Use opinions alone** (`types=["opinion"]`) only when specifically asking about the agent's views
+:::
+
+## Token Budget Management
+
+Hindsight is built for AI agents, not humans. Traditional retrieval systems return "top-k" results, but agents don't think in terms of result counts—they think in tokens. An agent's context window is measured in tokens, and that's exactly how Hindsight measures results.
+
+The `max_tokens` parameter lets you control how much of your agent's context budget to spend on memories:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-token-budget" language="python" />
+</TabItem>
+</Tabs>
+
+This design means you never have to guess whether 10 results or 50 results will fit your context. Just specify the token budget and Hindsight returns as many relevant memories as will fit.
+
+## Include Related Context
+
+Beyond the core memory results, you can optionally retrieve additional context—each with its own token budget:
+
+| Option | Parameter | Description |
+|--------|-----------|-------------|
+| **Chunks** | `include_chunks`, `max_chunk_tokens` | Raw text chunks that generated the memories |
+| **Entity Observations** | `include_entities`, `max_entity_tokens` | Related observations about entities mentioned in results |
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-include-entities" language="python" />
+</TabItem>
+</Tabs>
+
+This gives your agent richer context while maintaining precise control over total token consumption.
+
+## Budget Levels
+
+The `budget` parameter controls graph traversal depth:
+
+- **"low"**: Fast, shallow retrieval — good for simple lookups
+- **"mid"**: Balanced — default for most queries
+- **"high"**: Deep exploration — finds indirect connections
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-budget-levels" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-budget-levels" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Filter by Tags
+
+Tags enable **visibility scoping**—filter memories based on tags assigned during [retain](./retain#tagging-memories). This is essential for multi-user agents where each user should only see their own memories.
+
+### Basic Tag Filtering
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-with-tags" language="python" />
+</TabItem>
+</Tabs>
+
+### Tag Match Modes
+
+The `tags_match` parameter controls how tags are matched:
+
+| Mode | Behavior | Untagged Memories |
+|------|----------|-------------------|
+| `any` | OR: memory has ANY of the specified tags | **Included** |
+| `all` | AND: memory has ALL of the specified tags | **Included** |
+| `any_strict` | OR: memory has ANY of the specified tags | **Excluded** |
+| `all_strict` | AND: memory has ALL of the specified tags | **Excluded** |
+
+**Strict modes** are useful when you want to ensure only tagged memories are returned:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-strict" language="python" />
+</TabItem>
+</Tabs>
+
+**AND matching** requires all specified tags to be present:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-all" language="python" />
+</TabItem>
+</Tabs>
+
+### Use Cases
+
+| Scenario | Tags | Mode | Result |
+|----------|------|------|--------|
+| User A's memories only | `["user:alice"]` | `any_strict` | Only memories tagged `user:alice` |
+| Support + feedback | `["support", "feedback"]` | `any` | Memories with either tag + untagged |
+| Multi-user room | `["user:alice", "room:general"]` | `all_strict` | Only memories with both tags |
+| Global + user-specific | `["user:alice"]` | `any` | Alice's memories + shared (untagged) |

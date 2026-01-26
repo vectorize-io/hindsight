@@ -68,6 +68,34 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/vectorize-io/hindsight/tree/main/hindsight-docs/',
           routeBasePath: '/',
+          // Only show "next" version in development or when INCLUDE_CURRENT_VERSION=true
+          // In production, only show released versions from versions.json
+          onlyIncludeVersions:
+            process.env.NODE_ENV === 'development' ||
+            process.env.INCLUDE_CURRENT_VERSION === 'true'
+              ? undefined
+              : (() => {
+                  try {
+                    return require('./versions.json');
+                  } catch {
+                    return undefined; // No versions yet, show current
+                  }
+                })(),
+          // Disable version badges on all versions
+          versions: (() => {
+            const config: Record<string, {badge: boolean}> = {
+              current: {badge: false},
+            };
+            try {
+              const versions = require('./versions.json') as string[];
+              versions.forEach((v: string) => {
+                config[v] = {badge: false};
+              });
+            } catch {
+              // No versions yet
+            }
+            return config;
+          })(),
         },
         blog: false,
         theme: {
@@ -190,6 +218,10 @@ const config: Config = {
           position: 'right',
           label: 'Hindsight Cloud',
           className: 'navbar-item-cloud',
+        },
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
         },
         {
           href: 'https://github.com/vectorize-io/hindsight',
