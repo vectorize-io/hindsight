@@ -29,8 +29,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/mental-models',
-          label: 'Mental Models',
+          id: 'developer/observations',
+          label: 'Observations',
         },
         {
           type: 'doc',
@@ -81,8 +81,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/api/reflections',
-          label: 'Reflections',
+          id: 'developer/api/mental-models',
+          label: 'Mental Models',
         },
         {
           type: 'doc',

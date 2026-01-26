@@ -13,7 +13,7 @@ AI agents forget everything between sessions. Every conversation starts from zer
 
 - **Simple vector search isn't enough** — "What did Alice do last spring?" requires temporal reasoning, not just semantic similarity
 - **Facts get disconnected** — Knowing "Alice works at Google" and "Google is in Mountain View" should let you answer "Where does Alice work?" even if you never stored that directly
-- **AI Agents need to consolidate knowledge** — A coding assistant that remembers "the user prefers functional programming" should consolidate this into a mental model and weigh it when making recommendations
+- **AI Agents need to consolidate knowledge** — A coding assistant that remembers "the user prefers functional programming" should consolidate this into an observation and weigh it when making recommendations
 - **Context matters** — The same information means different things to different memory banks with different personalities
 
 Hindsight solves these problems with a memory system designed specifically for AI agents.
@@ -31,12 +31,12 @@ graph LR
 
         subgraph bank["<b>Memory Bank</b>"]
             direction TB
-            MentalModels[Mental Models]
+            Observations[Observations]
             MemEnt[Memories & Entities]
             Chunks[Chunks]
             Documents[Documents]
 
-            MentalModels --> MemEnt --> Chunks --> Documents
+            Observations --> MemEnt --> Chunks --> Documents
         end
     end
 
@@ -53,13 +53,13 @@ graph LR
 
 ### Memory Types
 
-Hindsight organizes knowledge into facts and consolidated mental models:
+Hindsight organizes knowledge into facts and consolidated observations:
 
 | Type | What it stores | Example |
 |------|----------------|---------|
 | **World** | Objective facts received | "Alice works at Google" |
 | **Experience** | Bank's own actions and interactions | "I recommended Python to Bob" |
-| **Mental Model** | Consolidated knowledge from facts | "The user prefers functional programming patterns"
+| **Observation** | Consolidated knowledge from facts | "The user prefers functional programming patterns"
 
 ### Multi-Strategy Retrieval (TEMPR)
 
@@ -88,13 +88,13 @@ graph LR
 | **Graph** | Related entities, indirect connections |
 | **Temporal** | "last spring", "in June", time ranges |
 
-### Mental Model Consolidation
+### Observation Consolidation
 
-After memories are retained, Hindsight automatically consolidates related facts into **mental models** — synthesized knowledge representations that capture patterns and learnings:
+After memories are retained, Hindsight automatically consolidates related facts into **observations** — synthesized knowledge representations that capture patterns and learnings:
 
-- **Automatic synthesis**: New facts are analyzed and consolidated into existing or new mental models
-- **Evidence tracking**: Each mental model tracks which facts support it
-- **Continuous refinement**: Mental models evolve as new evidence arrives
+- **Automatic synthesis**: New facts are analyzed and consolidated into existing or new observations
+- **Evidence tracking**: Each observation tracks which facts support it
+- **Continuous refinement**: Observations evolve as new evidence arrives
 
 ### Disposition Traits
 

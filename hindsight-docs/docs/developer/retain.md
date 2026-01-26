@@ -63,7 +63,7 @@ Hindsight distinguishes between **world** facts (about others) and **experience*
 | **experience** | Conversations and events         | "I recommended Python to Alice" |
 
 
-**Note:** Mental models are consolidated automatically in the background after `retain()` operations complete. This consolidation process synthesizes patterns from new facts into the bank's knowledge base.
+**Note:** Observations are consolidated automatically in the background after `retain()` operations complete. This consolidation process synthesizes patterns from new facts into the bank's knowledge base.
 
 ---
 
@@ -176,24 +176,24 @@ All stored in your isolated **memory bank**, ready for `recall()` and `reflect()
 
 ---
 
-## Mental Model Consolidation
+## Observation Consolidation
 
-After `retain()` completes, Hindsight automatically triggers **mental model consolidation** in the background. This process:
+After `retain()` completes, Hindsight automatically triggers **observation consolidation** in the background. This process:
 
-1. Analyzes new facts against existing mental models
-2. Creates new mental models when patterns emerge
-3. Refines existing mental models with new evidence
-4. Tracks which facts support each mental model
+1. Analyzes new facts against existing observations
+2. Creates new observations when patterns emerge
+3. Refines existing observations with new evidence
+4. Tracks which facts support each observation
 
 This happens asynchronously — your `retain()` call returns immediately while consolidation runs in the background.
 
-See [Mental Models](./mental-models) for details on how consolidation works.
+See [Observations](./observations) for details on how consolidation works.
 
 ---
 
 ## Next Steps
 
-- [**Mental Models**](./mental-models) — How knowledge is consolidated after retain
+- [**Observations**](./observations) — How knowledge is consolidated after retain
 - [**Recall**](./retrieval) — How multi-strategy search retrieves relevant memories
-- [**Reflect**](./reflect) — How the agentic loop uses mental models
+- [**Reflect**](./reflect) — How the agentic loop uses observations
 - [**Retain API**](./api/retain) — Code examples and parameters

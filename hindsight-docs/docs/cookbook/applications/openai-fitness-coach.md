@@ -48,7 +48,7 @@ OpenAI Assistant (analyzes, gives advice)
     |
 Function Call: store_memory(advice as experience)
     |
-Hindsight API (stores coach's advice, consolidates into mental models)
+Hindsight API (stores coach's advice, consolidates into observations)
     |
 Personalized Answer
 ```
@@ -126,7 +126,7 @@ retrieve_memories(query, fact_types, top_k)
 search_workouts(after_date, before_date, workout_type)
 get_nutrition_summary(after_date, before_date)
 get_user_goals()
-get_coach_insights(about)  # Retrieves mental models
+get_coach_insights(about)  # Retrieves observations
 ```
 
 Each function makes API calls to Hindsight to fetch relevant memories.
@@ -192,7 +192,7 @@ The OpenAI Agent can retrieve different memory types from Hindsight:
 
 - **World Facts** (`fact_type: "world"`): Workouts, meals, activities
 - **Experience Facts** (`fact_type: "experience"`): Goals, intentions, coach advice
-- **Mental Models** (`fact_type: "mental_model"`): Consolidated knowledge about user patterns
+- **Observations** (`fact_type: "observation"`): Consolidated knowledge about user patterns
 
 ## Customization
 
@@ -266,7 +266,7 @@ The key benefit: **Separation of concerns**
 
 **Use Hindsight directly when:**
 - You want a complete memory-first solution
-- You want automatic memory retrieval and mental model consolidation
+- You want automatic memory retrieval and observation consolidation
 - You want to use different LLM providers (not just OpenAI)
 - You want the `/reflect` endpoint's integrated approach
 

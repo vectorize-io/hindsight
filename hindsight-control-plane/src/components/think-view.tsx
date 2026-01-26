@@ -52,9 +52,9 @@ export function ThinkView() {
   const [selectedDirective, setSelectedDirective] = useState<any | null>(null);
   const [fullDirective, setFullDirective] = useState<any | null>(null);
   const [loadingDirective, setLoadingDirective] = useState(false);
-  const [selectedMentalModel, setSelectedMentalModel] = useState<any | null>(null);
-  const [fullMentalModel, setFullMentalModel] = useState<any | null>(null);
-  const [loadingMentalModel, setLoadingMentalModel] = useState(false);
+  const [selectedObservation, setSelectedObservation] = useState<any | null>(null);
+  const [fullObservation, setFullObservation] = useState<any | null>(null);
+  const [loadingObservation, setLoadingObservation] = useState(false);
 
   const FEEDBACK_DIRECTIVE_NAME = "General Feedback";
 
@@ -77,22 +77,22 @@ export function ThinkView() {
     }
   };
 
-  // Load full mental model data when one is selected
-  const handleSelectMentalModel = async (model: any) => {
-    setSelectedMentalModel(model);
-    setFullMentalModel(null);
-    if (!currentBank || !model?.id) return;
+  // Load full observation data when one is selected
+  const handleSelectObservation = async (observation: any) => {
+    setSelectedObservation(observation);
+    setFullObservation(null);
+    if (!currentBank || !observation?.id) return;
 
-    setLoadingMentalModel(true);
+    setLoadingObservation(true);
     try {
-      const models = await client.listMentalModels(currentBank);
-      const fullModel = models.items?.find((m: any) => m.id === model.id);
-      setFullMentalModel(fullModel || model);
+      const observations = await client.listObservations(currentBank);
+      const fullObs = observations.items?.find((o: any) => o.id === observation.id);
+      setFullObservation(fullObs || observation);
     } catch (error) {
-      console.error("Failed to load mental model:", error);
-      setFullMentalModel(model); // Fall back to partial data
+      console.error("Failed to load observation:", error);
+      setFullObservation(observation); // Fall back to partial data
     } finally {
-      setLoadingMentalModel(false);
+      setLoadingObservation(false);
     }
   };
 
@@ -436,33 +436,33 @@ export function ThinkView() {
           {/* Trace View - Split Layout */}
           {viewMode === "trace" && (
             <div className="space-y-4">
-              {/* Mental Models Created */}
-              {result.mental_models_created && result.mental_models_created.length > 0 && (
+              {/* Observations Created */}
+              {result.observations_created && result.observations_created.length > 0 && (
                 <Card className="border-emerald-200 dark:border-emerald-800">
                   <CardHeader className="bg-emerald-50 dark:bg-emerald-950 py-3">
                     <CardTitle className="flex items-center gap-2 text-base">
                       <Brain className="w-4 h-4 text-emerald-600" />
-                      Mental Models Created ({result.mental_models_created.length})
+                      Observations Created ({result.observations_created.length})
                     </CardTitle>
                     <CardDescription className="text-xs">
-                      New mental models learned during this reflection
+                      New observations learned during this reflection
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-4">
                     <div className="space-y-2">
-                      {result.mental_models_created.map((model: any, i: number) => (
+                      {result.observations_created.map((obs: any, i: number) => (
                         <div
                           key={i}
                           className="p-3 bg-emerald-50 dark:bg-emerald-950/50 rounded-lg border border-emerald-200 dark:border-emerald-800"
                         >
                           <div className="font-medium text-sm text-emerald-900 dark:text-emerald-100">
-                            {model.name}
+                            {obs.name}
                           </div>
                           <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
-                            {model.description}
+                            {obs.description}
                           </div>
                           <div className="text-[10px] text-muted-foreground mt-2 font-mono">
-                            ID: {model.id}
+                            ID: {obs.id}
                           </div>
                         </div>
                       ))}
@@ -665,10 +665,10 @@ export function ThinkView() {
                     <CardTitle className="text-base">Based On</CardTitle>
                     <CardDescription className="text-xs">
                       {(result.based_on?.memories?.length || 0) +
-                        (result.based_on?.mental_models?.filter(
-                          (m: any) => m.subtype !== "directive"
+                        (result.based_on?.observations?.filter(
+                          (o: any) => o.subtype !== "directive"
                         )?.length || 0) +
-                        (result.trace?.mental_models?.filter((m: any) => m.subtype === "directive")
+                        (result.trace?.observations?.filter((o: any) => o.subtype === "directive")
                           ?.length || 0)}{" "}
                       items used
                     </CardDescription>
@@ -685,8 +685,7 @@ export function ThinkView() {
                         </div>
                       </div>
                     ) : (result.based_on?.memories && result.based_on.memories.length > 0) ||
-                      (result.based_on?.mental_models &&
-                        result.based_on.mental_models.length > 0) ? (
+                      (result.based_on?.observations && result.based_on.observations.length > 0) ? (
                       <div className="space-y-4 max-h-[500px] overflow-y-auto">
                         {(() => {
                           const memories = result.based_on?.memories || [];
@@ -695,12 +694,12 @@ export function ThinkView() {
                             (f: any) => f.type === "experience"
                           );
                           const opinionFacts = memories.filter((f: any) => f.type === "opinion");
-                          const mentalModels = (result.based_on?.mental_models || []).filter(
-                            (m: any) => m.subtype !== "directive"
+                          const observations = (result.based_on?.observations || []).filter(
+                            (o: any) => o.subtype !== "directive"
                           );
                           const directives =
-                            result.trace?.mental_models?.filter(
-                              (m: any) => m.subtype === "directive"
+                            result.trace?.observations?.filter(
+                              (o: any) => o.subtype === "directive"
                             ) || [];
 
                           return (
@@ -742,21 +741,21 @@ export function ThinkView() {
                                 </div>
                               )}
 
-                              {/* Mental Models */}
-                              {mentalModels.length > 0 && (
+                              {/* Observations */}
+                              {observations.length > 0 && (
                                 <div className="space-y-1.5">
                                   <div className="flex items-center gap-2 text-xs font-semibold text-orange-600 dark:text-orange-400">
                                     <div className="w-2 h-2 rounded-full bg-orange-500" />
-                                    Mental Models ({mentalModels.length})
+                                    Observations ({observations.length})
                                   </div>
                                   <div className="space-y-1.5">
-                                    {mentalModels.map((model: any, i: number) => (
+                                    {observations.map((obs: any, i: number) => (
                                       <div
                                         key={i}
                                         className="p-2 bg-muted rounded text-xs cursor-pointer hover:bg-muted/80 transition-colors"
-                                        onClick={() => handleSelectMentalModel(model)}
+                                        onClick={() => handleSelectObservation(obs)}
                                       >
-                                        <div className="font-medium">{model.name}</div>
+                                        <div className="font-medium">{obs.name}</div>
                                       </div>
                                     ))}
                                   </div>
@@ -999,73 +998,43 @@ export function ThinkView() {
         </div>
       )}
 
-      {/* Mental Model Detail Panel */}
-      {selectedMentalModel && (
+      {/* Observation Detail Panel */}
+      {selectedObservation && (
         <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l shadow-2xl z-50 overflow-y-auto">
           <div className="p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <Brain className="w-5 h-5" />
-                <h2 className="text-lg font-semibold">Mental Model</h2>
+                <h2 className="text-lg font-semibold">Observation</h2>
               </div>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => {
-                  setSelectedMentalModel(null);
-                  setFullMentalModel(null);
+                  setSelectedObservation(null);
+                  setFullObservation(null);
                 }}
               >
                 <X className="w-4 h-4" />
               </Button>
             </div>
-            {loadingMentalModel ? (
+            {loadingObservation ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
               </div>
             ) : (
               <div className="space-y-4">
                 <div>
-                  <h3 className="text-sm font-medium text-muted-foreground">Name</h3>
+                  <h3 className="text-sm font-medium text-muted-foreground">Text</h3>
                   <p className="mt-1 font-medium">
-                    {fullMentalModel?.name || selectedMentalModel.name}
+                    {fullObservation?.text || selectedObservation.text}
                   </p>
                 </div>
-                {fullMentalModel?.description && (
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Description</h3>
-                    <p className="mt-1 text-sm">{fullMentalModel.description}</p>
-                  </div>
-                )}
-                <div className="flex gap-4">
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Type</h3>
-                    <p className="mt-1 text-sm">{selectedMentalModel.type}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-medium text-muted-foreground">Subtype</h3>
-                    <span
-                      className={`inline-block mt-1 text-xs px-2 py-0.5 rounded ${
-                        selectedMentalModel.subtype === "structural"
-                          ? "bg-blue-500/10 text-blue-600"
-                          : selectedMentalModel.subtype === "emergent"
-                            ? "bg-emerald-500/10 text-emerald-600"
-                            : selectedMentalModel.subtype === "learned"
-                              ? "bg-violet-500/10 text-violet-600"
-                              : selectedMentalModel.subtype === "directive"
-                                ? "bg-rose-500/10 text-rose-600"
-                                : "bg-muted"
-                      }`}
-                    >
-                      {selectedMentalModel.subtype}
-                    </span>
-                  </div>
-                </div>
-                {fullMentalModel?.tags && fullMentalModel.tags.length > 0 && (
+                {fullObservation?.tags && fullObservation.tags.length > 0 && (
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-1">Tags</h3>
                     <div className="flex flex-wrap gap-1">
-                      {fullMentalModel.tags.map((tag: string) => (
+                      {fullObservation.tags.map((tag: string) => (
                         <span
                           key={tag}
                           className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground flex items-center gap-1"
@@ -1077,23 +1046,17 @@ export function ThinkView() {
                     </div>
                   </div>
                 )}
-                {fullMentalModel?.observations && fullMentalModel.observations.length > 0 && (
+                {fullObservation?.source_memories && fullObservation.source_memories.length > 0 && (
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Observations ({fullMentalModel.observations.length})
+                      Source Memories ({fullObservation.source_memories.length})
                     </h3>
                     <div className="space-y-2">
-                      {fullMentalModel.observations.map((obs: any, i: number) => (
+                      {fullObservation.source_memories.map((mem: any, i: number) => (
                         <div key={i} className="p-3 bg-muted rounded-lg">
-                          {obs.title && <div className="font-medium text-sm mb-1">{obs.title}</div>}
                           <div className="text-sm text-muted-foreground whitespace-pre-wrap">
-                            {obs.content || obs.text || (typeof obs === "string" ? obs : "")}
+                            {mem.text || (typeof mem === "string" ? mem : "")}
                           </div>
-                          {obs.memory_ids && obs.memory_ids.length > 0 && (
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              Based on {obs.memory_ids.length} memories
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -1102,7 +1065,7 @@ export function ThinkView() {
                 <div className="pt-2 border-t">
                   <h3 className="text-sm font-medium text-muted-foreground">ID</h3>
                   <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {selectedMentalModel.id}
+                    {selectedObservation.id}
                   </p>
                 </div>
               </div>

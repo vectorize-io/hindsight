@@ -17,17 +17,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict
+from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.mental_model_response import MentalModelResponse
 from typing import Optional, Set
 from typing_extensions import Self
 
-class UpdateReflectionRequest(BaseModel):
+class MentalModelListResponse(BaseModel):
     """
-    Request model for updating a reflection.
+    Response model for listing mental models.
     """ # noqa: E501
-    name: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name"]
+    items: List[MentalModelResponse]
+    __properties: ClassVar[List[str]] = ["items"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +48,7 @@ class UpdateReflectionRequest(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of UpdateReflectionRequest from a JSON string"""
+        """Create an instance of MentalModelListResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,16 +69,18 @@ class UpdateReflectionRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # set to None if name (nullable) is None
-        # and model_fields_set contains the field
-        if self.name is None and "name" in self.model_fields_set:
-            _dict['name'] = None
-
+        # override the default output from pydantic by calling `to_dict()` of each item in items (list)
+        _items = []
+        if self.items:
+            for _item_items in self.items:
+                if _item_items:
+                    _items.append(_item_items.to_dict())
+            _dict['items'] = _items
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of UpdateReflectionRequest from a dict"""
+        """Create an instance of MentalModelListResponse from a dict"""
         if obj is None:
             return None
 
@@ -85,7 +88,7 @@ class UpdateReflectionRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "name": obj.get("name")
+            "items": [MentalModelResponse.from_dict(_item) for _item in obj["items"]] if obj.get("items") is not None else None
         })
         return _obj
 

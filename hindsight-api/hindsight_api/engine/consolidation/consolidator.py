@@ -1,13 +1,13 @@
-"""Consolidation engine for automatic mental model creation from memories.
+"""Consolidation engine for automatic observation creation from memories.
 
 The consolidation engine runs as a background job after retain operations complete.
 It processes new memories and either:
-- Creates new mental models from novel facts
-- Updates existing mental models when new evidence supports/contradicts/refines them
+- Creates new observations from novel facts
+- Updates existing observations when new evidence supports/contradicts/refines them
 
-Mental models are stored in memory_units with fact_type='mental_model' and include:
+Observations are stored in memory_units with fact_type='observation' and include:
 - proof_count: Number of supporting memories
-- source_memory_ids: Array of memory UUIDs that contribute to this mental model
+- source_memory_ids: Array of memory UUIDs that contribute to this observation
 - history: JSONB tracking changes over time
 """
 
@@ -89,7 +89,7 @@ async def run_consolidation_job(
     max_memories_per_batch = config.consolidation_batch_size
 
     # Check if consolidation is enabled
-    if not config.enable_mental_models:
+    if not config.enable_observations:
         logger.debug(f"Consolidation disabled for bank {bank_id}")
         return {"status": "disabled", "bank_id": bank_id}
 
@@ -136,9 +136,9 @@ async def run_consolidation_job(
     # Process each memory with individual commits for crash recovery
     stats = {
         "memories_processed": 0,
-        "mental_models_created": 0,
-        "mental_models_updated": 0,
-        "mental_models_merged": 0,
+        "observations_created": 0,
+        "observations_updated": 0,
+        "observations_merged": 0,
         "actions_executed": 0,
         "skipped": 0,
     }
@@ -201,18 +201,18 @@ async def run_consolidation_job(
 
             action = result.get("action")
             if action == "created":
-                stats["mental_models_created"] += 1
+                stats["observations_created"] += 1
                 stats["actions_executed"] += 1
             elif action == "updated":
-                stats["mental_models_updated"] += 1
+                stats["observations_updated"] += 1
                 stats["actions_executed"] += 1
             elif action == "merged":
-                stats["mental_models_merged"] += 1
+                stats["observations_merged"] += 1
                 stats["actions_executed"] += 1
             elif action == "multiple":
-                stats["mental_models_created"] += result.get("created", 0)
-                stats["mental_models_updated"] += result.get("updated", 0)
-                stats["mental_models_merged"] += result.get("merged", 0)
+                stats["observations_created"] += result.get("created", 0)
+                stats["observations_updated"] += result.get("updated", 0)
+                stats["observations_merged"] += result.get("merged", 0)
                 stats["actions_executed"] += result.get("total_actions", 0)
             elif action == "skipped":
                 stats["skipped"] += 1
@@ -234,9 +234,9 @@ async def run_consolidation_job(
     perf.log(
         f"[3] Results: {stats['memories_processed']} memories -> "
         f"{stats['actions_executed']} actions "
-        f"({stats['mental_models_created']} created, "
-        f"{stats['mental_models_updated']} updated, "
-        f"{stats['mental_models_merged']} merged, "
+        f"({stats['observations_created']} created, "
+        f"{stats['observations_updated']} updated, "
+        f"{stats['observations_merged']} merged, "
         f"{stats['skipped']} skipped)"
     )
 
@@ -272,13 +272,13 @@ async def _process_memory(
     Process a single memory for consolidation using a SINGLE LLM call.
 
     This function:
-    1. Finds related mental models (can be empty)
+    1. Finds related observations (can be empty)
     2. Uses ONE LLM call to extract durable knowledge AND decide on actions
     3. Executes array of actions (can be multiple creates/updates)
 
     The LLM handles all cases:
-    - No related models: returns create action(s) with extracted durable knowledge
-    - Related models exist: returns update/create actions based on tag routing
+    - No related observations: returns create action(s) with extracted durable knowledge
+    - Related observations exist: returns update/create actions based on tag routing
     - Purely ephemeral fact: returns empty array (skip)
 
     Returns:
@@ -288,9 +288,9 @@ async def _process_memory(
     memory_id = memory["id"]
     fact_tags = memory.get("tags") or []
 
-    # Find related mental models using the full recall system (NO tag filtering)
+    # Find related observations using the full recall system (NO tag filtering)
     t0 = time.time()
-    related_mental_models = await _find_related_mental_models(
+    related_observations = await _find_related_observations(
         conn=conn,
         memory_engine=memory_engine,
         bank_id=bank_id,
@@ -300,13 +300,13 @@ async def _process_memory(
     if perf:
         perf.record_timing("recall", time.time() - t0)
 
-    # Single LLM call handles ALL cases (with or without existing models)
+    # Single LLM call handles ALL cases (with or without existing observations)
     t0 = time.time()
     actions = await _consolidate_with_llm(
         memory_engine=memory_engine,
         fact_text=fact_text,
         fact_tags=fact_tags,
-        mental_models=related_mental_models,  # Can be empty list
+        observations=related_observations,  # Can be empty list
         mission=mission,
     )
     if perf:
@@ -327,7 +327,7 @@ async def _process_memory(
                 bank_id=bank_id,
                 memory_id=memory_id,
                 action=action,
-                mental_models=related_mental_models,
+                observations=related_observations,
                 source_mentioned_at=memory.get("mentioned_at"),
                 perf=perf,
             )
@@ -373,14 +373,14 @@ async def _execute_update_action(
     bank_id: str,
     memory_id: uuid.UUID,
     action: dict[str, Any],
-    mental_models: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
     source_mentioned_at: datetime | None = None,
     perf: ConsolidationPerfLog | None = None,
 ) -> dict[str, Any]:
     """
-    Execute an update action on an existing mental model.
+    Execute an update action on an existing observation.
 
-    Updates the mental model text, adds to history, increments proof_count,
+    Updates the observation text, adds to history, increments proof_count,
     and updates mentioned_at if the new source memory has a more recent date.
     """
     learning_id = action.get("learning_id")
@@ -390,8 +390,8 @@ async def _execute_update_action(
     if not learning_id or not new_text:
         return {"action": "skipped", "reason": "missing_learning_id_or_text"}
 
-    # Find the mental model
-    model = next((m for m in mental_models if str(m["id"]) == learning_id), None)
+    # Find the observation
+    model = next((m for m in observations if str(m["id"]) == learning_id), None)
     if not model:
         return {"action": "skipped", "reason": "learning_not_found"}
 
@@ -441,14 +441,14 @@ async def _execute_update_action(
         source_mentioned_at,
     )
 
-    # Create links from memory to mental model
+    # Create links from memory to observation
     await _create_memory_links(conn, memory_id, uuid.UUID(learning_id))
     if perf:
         perf.record_timing("db_write", time.time() - t0)
 
-    logger.debug(f"Updated mental model {learning_id} with memory {memory_id}")
+    logger.debug(f"Updated observation {learning_id} with memory {memory_id}")
 
-    return {"action": "updated", "mental_model_id": learning_id}
+    return {"action": "updated", "observation_id": learning_id}
 
 
 async def _execute_create_action(
@@ -463,9 +463,9 @@ async def _execute_create_action(
     perf: ConsolidationPerfLog | None = None,
 ) -> dict[str, Any]:
     """
-    Execute a create action for a new mental model.
+    Execute a create action for a new observation.
 
-    Creates a new mental model with the specified text and tags.
+    Creates a new observation with the specified text and tags.
     The text comes directly from the classify LLM - no second LLM call needed.
     """
     text = action.get("text")
@@ -475,12 +475,12 @@ async def _execute_create_action(
         return {"action": "skipped", "reason": "missing_text"}
 
     # Use text directly from classify - skip the redundant LLM call
-    result = await _create_mental_model_directly(
+    result = await _create_observation_directly(
         conn=conn,
         memory_engine=memory_engine,
         bank_id=bank_id,
         source_memory_id=memory_id,
-        mental_model_text=text,  # Text already processed by classify LLM
+        observation_text=text,  # Text already processed by classify LLM
         tags=tags,
         event_date=event_date,
         occurred_start=occurred_start,
@@ -488,7 +488,7 @@ async def _execute_create_action(
         perf=perf,
     )
 
-    logger.debug(f"Created mental model {result.get('mental_model_id')} from memory {memory_id} (tags: {tags})")
+    logger.debug(f"Created observation {result.get('observation_id')} from memory {memory_id} (tags: {tags})")
 
     return result
 
@@ -496,17 +496,17 @@ async def _execute_create_action(
 async def _create_memory_links(
     conn: "Connection",
     memory_id: uuid.UUID,
-    mental_model_id: uuid.UUID,
+    observation_id: uuid.UUID,
 ) -> None:
     """
-    Create links between a source memory and its mental model.
+    Create links between a source memory and its observation.
 
     This:
-    1. Creates bidirectional semantic links between memory and mental model
-    2. Copies existing memory_links from the source memory to the mental model
-    3. Copies entity links from the source memory to the mental model
+    1. Creates bidirectional semantic links between memory and observation
+    2. Copies existing memory_links from the source memory to the observation
+    3. Copies entity links from the source memory to the observation
 
-    This enables graph traversal to find related memories via their mental models.
+    This enables graph traversal to find related memories via their observations.
 
     Note: Uses EXISTS checks to handle the case where source memory was deleted
     by a concurrent operation between fetching and link creation.
@@ -515,7 +515,7 @@ async def _create_memory_links(
     ml_table = fq_table("memory_links")
     ue_table = fq_table("unit_entities")
 
-    # 1. Bidirectional link between memory and mental model
+    # 1. Bidirectional link between memory and observation
     # Only insert if both units exist (handles concurrent deletion)
     await conn.execute(
         f"""
@@ -526,7 +526,7 @@ async def _create_memory_links(
         ON CONFLICT DO NOTHING
         """,
         memory_id,
-        mental_model_id,
+        observation_id,
     )
     await conn.execute(
         f"""
@@ -536,12 +536,12 @@ async def _create_memory_links(
           AND EXISTS (SELECT 1 FROM {mu_table} WHERE id = $2)
         ON CONFLICT DO NOTHING
         """,
-        mental_model_id,
+        observation_id,
         memory_id,
     )
 
-    # 2. Copy outgoing memory_links from source memory to mental model
-    # If source memory links to X, mental model should also link to X
+    # 2. Copy outgoing memory_links from source memory to observation
+    # If source memory links to X, observation should also link to X
     await conn.execute(
         f"""
         INSERT INTO {ml_table} (from_unit_id, to_unit_id, link_type, entity_id, weight)
@@ -552,12 +552,12 @@ async def _create_memory_links(
           AND EXISTS (SELECT 1 FROM {mu_table} WHERE id = ml.to_unit_id)
         ON CONFLICT DO NOTHING
         """,
-        mental_model_id,
+        observation_id,
         memory_id,
     )
 
-    # 3. Copy incoming memory_links from source memory to mental model
-    # If X links to source memory, X should also link to mental model
+    # 3. Copy incoming memory_links from source memory to observation
+    # If X links to source memory, X should also link to observation
     await conn.execute(
         f"""
         INSERT INTO {ml_table} (from_unit_id, to_unit_id, link_type, entity_id, weight)
@@ -568,11 +568,11 @@ async def _create_memory_links(
           AND EXISTS (SELECT 1 FROM {mu_table} WHERE id = ml.from_unit_id)
         ON CONFLICT DO NOTHING
         """,
-        mental_model_id,
+        observation_id,
         memory_id,
     )
 
-    # 4. Copy entity links from source memory to mental model
+    # 4. Copy entity links from source memory to observation
     await conn.execute(
         f"""
         INSERT INTO {ue_table} (unit_id, entity_id)
@@ -582,12 +582,12 @@ async def _create_memory_links(
           AND EXISTS (SELECT 1 FROM {mu_table} WHERE id = $1)
         ON CONFLICT DO NOTHING
         """,
-        mental_model_id,
+        observation_id,
         memory_id,
     )
 
 
-async def _find_related_mental_models(
+async def _find_related_observations(
     conn: "Connection",
     memory_engine: "MemoryEngine",
     bank_id: str,
@@ -595,10 +595,10 @@ async def _find_related_mental_models(
     request_context: "RequestContext",
 ) -> list[dict[str, Any]]:
     """
-    Find mental models related to the given query using the full recall system.
+    Find observations related to the given query using the full recall system.
 
     IMPORTANT: We do NOT filter by tags here. Consolidation needs to see ALL
-    potentially related mental models regardless of scope, so the LLM can
+    potentially related observations regardless of scope, so the LLM can
     decide on tag routing (same scope update vs cross-scope create).
 
     This leverages:
@@ -608,37 +608,37 @@ async def _find_related_mental_models(
     - Graph traversal (connected via entity links)
 
     Returns:
-        List of related mental models with their tags for LLM tag routing
+        List of related observations with their tags for LLM tag routing
     """
-    # Use recall to find related mental models
-    # NO tags parameter - we want ALL mental models regardless of scope
-    # Use low max_tokens since we only need mental models, not memories
+    # Use recall to find related observations
+    # NO tags parameter - we want ALL observations regardless of scope
+    # Use low max_tokens since we only need observations, not memories
     recall_result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
-        max_tokens=5000,  # Token budget for mental models
-        fact_type=["mental_model"],  # Only retrieve mental models
+        max_tokens=5000,  # Token budget for observations
+        fact_type=["observation"],  # Only retrieve observations
         request_context=request_context,
         _quiet=True,  # Suppress logging
-        # NO tags parameter - intentionally get ALL mental models
+        # NO tags parameter - intentionally get ALL observations
     )
 
-    # If no mental models returned, return empty list
-    # When fact_type=["mental_model"], results come back in `results` field
+    # If no observations returned, return empty list
+    # When fact_type=["observation"], results come back in `results` field
     if not recall_result.results:
         return []
 
-    # Trust recall's relevance filtering - fetch full data for each mental model
+    # Trust recall's relevance filtering - fetch full data for each observation
     results = []
-    for mm in recall_result.results:
-        # Fetch full mental model data from DB to get history, source_memory_ids, tags
+    for obs in recall_result.results:
+        # Fetch full observation data from DB to get history, source_memory_ids, tags
         row = await conn.fetchrow(
             f"""
             SELECT id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
             FROM {fq_table("memory_units")}
-            WHERE id = $1 AND bank_id = $2 AND fact_type = 'mental_model'
+            WHERE id = $1 AND bank_id = $2 AND fact_type = 'observation'
             """,
-            uuid.UUID(mm.id),
+            uuid.UUID(obs.id),
             bank_id,
         )
 
@@ -668,15 +668,15 @@ async def _consolidate_with_llm(
     memory_engine: "MemoryEngine",
     fact_text: str,
     fact_tags: list[str],
-    mental_models: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
     mission: str,
 ) -> list[dict[str, Any]]:
     """
     Single LLM call to extract durable knowledge and decide on consolidation actions.
 
     This handles ALL cases:
-    - No related mental models: extracts durable knowledge, returns create action
-    - Related models exist: compares and returns update/create actions
+    - No related observations: extracts durable knowledge, returns create action
+    - Related observations exist: compares and returns update/create actions
     - Purely ephemeral fact: returns empty array
 
     Returns:
@@ -685,14 +685,14 @@ async def _consolidate_with_llm(
         - {"action": "create", "tags": [...], "text": "...", "reason": "..."}
         - [] if fact is purely ephemeral (no durable knowledge)
     """
-    # Format mental models WITH their tags (or "None" if empty)
-    if mental_models:
-        mental_models_text = "\n".join(
-            f'- ID: {mm["id"]}, Tags: {json.dumps(mm["tags"])}, Text: "{mm["text"]}" (proof_count: {mm["proof_count"]})'
-            for mm in mental_models
+    # Format observations WITH their tags (or "None" if empty)
+    if observations:
+        observations_text = "\n".join(
+            f'- ID: {obs["id"]}, Tags: {json.dumps(obs["tags"])}, Text: "{obs["text"]}" (proof_count: {obs["proof_count"]})'
+            for obs in observations
         )
     else:
-        mental_models_text = "None (this is a new topic - create if fact contains durable knowledge)"
+        observations_text = "None (this is a new topic - create if fact contains durable knowledge)"
 
     # Only include mission section if mission is set and not the default
     mission_section = ""
@@ -707,7 +707,7 @@ Focus on DURABLE knowledge that serves this mission, not ephemeral state.
         mission_section=mission_section,
         fact_text=fact_text,
         fact_tags=json.dumps(fact_tags),
-        mental_models_text=mental_models_text,
+        observations_text=observations_text,
     )
 
     messages = [
@@ -746,12 +746,12 @@ Focus on DURABLE knowledge that serves this mission, not ephemeral state.
         return []
 
 
-async def _create_mental_model_directly(
+async def _create_observation_directly(
     conn: "Connection",
     memory_engine: "MemoryEngine",
     bank_id: str,
     source_memory_id: uuid.UUID,
-    mental_model_text: str,
+    observation_text: str,
     tags: list[str] | None = None,
     event_date: datetime | None = None,
     occurred_start: datetime | None = None,
@@ -759,52 +759,52 @@ async def _create_mental_model_directly(
     perf: ConsolidationPerfLog | None = None,
 ) -> dict[str, Any]:
     """
-    Create a mental model directly with pre-processed text (no LLM call).
+    Create an observation directly with pre-processed text (no LLM call).
 
     Used when the classify LLM has already provided the learning text.
     This avoids the redundant second LLM call.
     """
-    # Generate embedding for the mental model (convert to string for pgvector)
+    # Generate embedding for the observation (convert to string for pgvector)
     t0 = time.time()
-    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [mental_model_text])
+    embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [observation_text])
     embedding_str = str(embeddings[0]) if embeddings else None
     if perf:
         perf.record_timing("embedding", time.time() - t0)
 
-    # Create the mental model as a memory_unit
+    # Create the observation as a memory_unit
     now = datetime.now(timezone.utc)
-    mm_event_date = event_date or now
-    mm_occurred_start = occurred_start or now
-    mm_mentioned_at = mentioned_at or now
-    mm_tags = tags or []
+    obs_event_date = event_date or now
+    obs_occurred_start = occurred_start or now
+    obs_mentioned_at = mentioned_at or now
+    obs_tags = tags or []
 
     t0 = time.time()
-    mental_model_id = uuid.uuid4()
+    observation_id = uuid.uuid4()
     row = await conn.fetchrow(
         f"""
         INSERT INTO {fq_table("memory_units")} (
             id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
             tags, event_date, occurred_start, mentioned_at
         )
-        VALUES ($1, $2, $3, 'mental_model', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9)
         RETURNING id
         """,
-        mental_model_id,
+        observation_id,
         bank_id,
-        mental_model_text,
+        observation_text,
         embedding_str,
         [source_memory_id],
-        mm_tags,
-        mm_event_date,
-        mm_occurred_start,
-        mm_mentioned_at,
+        obs_tags,
+        obs_event_date,
+        obs_occurred_start,
+        obs_mentioned_at,
     )
 
-    # Create links between memory and mental model (includes entity links, memory_links)
-    await _create_memory_links(conn, source_memory_id, mental_model_id)
+    # Create links between memory and observation (includes entity links, memory_links)
+    await _create_memory_links(conn, source_memory_id, observation_id)
     if perf:
         perf.record_timing("db_write", time.time() - t0)
 
-    logger.debug(f"Created mental model {mental_model_id} from memory {source_memory_id} (tags: {mm_tags})")
+    logger.debug(f"Created observation {observation_id} from memory {source_memory_id} (tags: {obs_tags})")
 
-    return {"action": "created", "mental_model_id": str(row["id"]), "tags": mm_tags}
+    return {"action": "created", "observation_id": str(row["id"]), "tags": obs_tags}

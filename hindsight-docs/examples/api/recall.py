@@ -67,31 +67,31 @@ experience = client.recall(
 # [/docs:recall-experience-only]
 
 
-# [docs:recall-mental-models-only]
-# Only mental models (consolidated knowledge)
-mental_models = client.recall(
+# [docs:recall-observations-only]
+# Only observations (consolidated knowledge)
+observations = client.recall(
     bank_id="my-bank",
     query="What patterns have I learned?",
-    types=["mental_model"]
+    types=["observation"]
 )
-# [/docs:recall-mental-models-only]
+# [/docs:recall-observations-only]
 
 
-# [docs:recall-with-mental-models]
-# Include mental models in recall
+# [docs:recall-with-observations]
+# Include observations in recall
 results = client.recall(
     bank_id="my-bank",
     query="What programming languages does Alice prefer?",
-    types=["world", "experience", "mental_model"]
+    types=["world", "experience", "observation"]
 )
 
-# Mental models only
-models = client.recall(
+# Observations only
+observations = client.recall(
     bank_id="my-bank",
     query="What patterns have I learned?",
-    types=["mental_model"]
+    types=["observation"]
 )
-# [/docs:recall-with-mental-models]
+# [/docs:recall-with-observations]
 
 
 # [docs:recall-token-budget]

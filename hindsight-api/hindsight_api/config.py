@@ -87,7 +87,7 @@ ENV_MCP_LOCAL_BANK_ID = "HINDSIGHT_API_MCP_LOCAL_BANK_ID"
 ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
 
-# Observation thresholds
+# Observation settings (consolidated knowledge from facts)
 ENV_OBSERVATION_MIN_FACTS = "HINDSIGHT_API_OBSERVATION_MIN_FACTS"
 ENV_OBSERVATION_TOP_ENTITIES = "HINDSIGHT_API_OBSERVATION_TOP_ENTITIES"
 
@@ -98,8 +98,8 @@ ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_OBSERVATIONS_ASYNC = "HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC"
 
-# Mental models settings
-ENV_ENABLE_MENTAL_MODELS = "HINDSIGHT_API_ENABLE_MENTAL_MODELS"
+# Observations settings (consolidated knowledge from facts)
+ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_CONSOLIDATION_SIMILARITY_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_SIMILARITY_THRESHOLD"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 
@@ -181,8 +181,8 @@ DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise" or "ver
 RETAIN_EXTRACTION_MODES = ("concise", "verbose")  # Allowed extraction modes
 DEFAULT_RETAIN_OBSERVATIONS_ASYNC = False  # Run observation generation async (after retain completes)
 
-# Mental models defaults
-DEFAULT_ENABLE_MENTAL_MODELS = False  # Mental models disabled by default (experimental)
+# Observations defaults (consolidated knowledge from facts)
+DEFAULT_ENABLE_OBSERVATIONS = False  # Observations disabled by default (experimental)
 DEFAULT_CONSOLIDATION_SIMILARITY_THRESHOLD = 0.75  # Minimum similarity to consider a learning related
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 
@@ -344,8 +344,8 @@ class HindsightConfig:
     retain_extraction_mode: str
     retain_observations_async: bool
 
-    # Mental models settings
-    enable_mental_models: bool
+    # Observations settings (consolidated knowledge from facts)
+    enable_observations: bool
     consolidation_similarity_threshold: float
     consolidation_batch_size: int
 
@@ -455,9 +455,8 @@ class HindsightConfig:
                 ENV_RETAIN_OBSERVATIONS_ASYNC, str(DEFAULT_RETAIN_OBSERVATIONS_ASYNC)
             ).lower()
             == "true",
-            # Mental models settings
-            enable_mental_models=os.getenv(ENV_ENABLE_MENTAL_MODELS, str(DEFAULT_ENABLE_MENTAL_MODELS)).lower()
-            == "true",
+            # Observations settings (consolidated knowledge from facts)
+            enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
             consolidation_similarity_threshold=float(
                 os.getenv(ENV_CONSOLIDATION_SIMILARITY_THRESHOLD, str(DEFAULT_CONSOLIDATION_SIMILARITY_THRESHOLD))
             ),

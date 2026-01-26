@@ -111,7 +111,7 @@ def recall(
         query: The query string to search memories for
         bank_id: Override the configured bank_id. For multi-user support,
             use different bank_ids per user (e.g., f"user-{user_id}")
-        fact_types: Filter by fact types (world, experience, mental_model)
+        fact_types: Filter by fact types (world, experience, observation)
         budget: Recall budget level (low, mid, high) - controls how many memories are returned
         max_tokens: Maximum tokens for memory context
         hindsight_api_url: Override the configured API URL
@@ -1523,7 +1523,7 @@ def wrap_openai(
             - store_conversations: Whether to store conversations (default: True)
             - inject_memories: Whether to inject memories (default: True)
             - budget: Recall budget level - low/mid/high (default: "mid")
-            - fact_types: Filter by fact types (world/experience/mental_model)
+            - fact_types: Filter by fact types (world/experience/observation)
             - max_memories: Max memories to inject (None = no limit)
             - max_memory_tokens: Max tokens for memory context (default: 4096)
             - use_reflect: Use reflect API instead of recall (default: False)
@@ -1623,7 +1623,7 @@ def wrap_anthropic(
             - store_conversations: Whether to store conversations (default: True)
             - inject_memories: Whether to inject memories (default: True)
             - budget: Recall budget level - low/mid/high (default: "mid")
-            - fact_types: Filter by fact types (world/experience/mental_model)
+            - fact_types: Filter by fact types (world/experience/observation)
             - max_memories: Max memories to inject (None = no limit)
             - max_memory_tokens: Max tokens for memory context (default: 4096)
             - use_reflect: Use reflect API instead of recall (default: False)

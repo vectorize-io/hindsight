@@ -7,5 +7,5 @@ pub mod explore;
 pub mod health;
 pub mod memory;
 pub mod operation;
-pub mod reflection;
+pub mod mental_model;
 pub mod tag;

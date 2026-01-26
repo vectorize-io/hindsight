@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { client } from "./api";
 
 interface Features {
-  mental_models: boolean;
+  observations: boolean;
   mcp: boolean;
   worker: boolean;
 }
@@ -16,7 +16,7 @@ interface FeaturesContextType {
 }
 
 const defaultFeatures: Features = {
-  mental_models: false,
+  observations: false,
   mcp: false,
   worker: false,
 };

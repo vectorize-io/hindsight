@@ -11,7 +11,7 @@ When you call **reflect**, Hindsight runs an **agentic loop** that:
 2. **Applies** the bank's disposition traits to shape the reasoning style
 3. **Generates** a grounded answer with citations to the sources used
 
-The agent has access to hierarchical retrieval tools (reflections → mental models → raw facts) and decides what information it needs to answer your query.
+The agent has access to hierarchical retrieval tools (mental models → observations → raw facts) and decides what information it needs to answer your query.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
@@ -66,7 +66,7 @@ The `budget` parameter controls how thoroughly the agent searches for informatio
 | `mid` | 1x base | Balanced exploration |
 | `high` | 2x base | Complex questions, comprehensive analysis |
 
-Higher budgets allow the agent more iterations to search reflections, mental models, and raw facts before generating a response. Use `high` for questions that require synthesizing information from multiple sources.
+Higher budgets allow the agent more iterations to search mental models, observations, and raw facts before generating a response. Use `high` for questions that require synthesizing information from multiple sources.
 
 ### Max Tokens
 
@@ -78,8 +78,8 @@ The `max_tokens` parameter limits the length of the final generated response. Th
 |-------|------|-------------|
 | `text` | string | The generated answer text |
 | `used_memory_ids` | array | Memory IDs cited by the agent |
-| `used_reflection_ids` | array | Reflection IDs cited by the agent |
 | `used_mental_model_ids` | array | Mental model IDs cited by the agent |
+| `used_observation_ids` | array | Observation IDs cited by the agent |
 | `structured_output` | object | Parsed structured output (when `response_schema` provided) |
 | `iterations` | int | Number of agent loop iterations |
 | `tools_called` | int | Total number of tool calls made |
@@ -123,8 +123,8 @@ The bank's disposition affects reflect responses:
 The agent cites which sources it used to generate the response:
 
 - `used_memory_ids` — Raw memory facts that were retrieved and cited
-- `used_reflection_ids` — User-curated reflections that were used
-- `used_mental_model_ids` — Consolidated mental models that were used
+- `used_mental_model_ids` — User-curated mental models that were used
+- `used_observation_ids` — Consolidated observations that were used
 
 **Important:** Only IDs that were actually retrieved during the agent loop can be cited. The agent validates citations to prevent hallucinated references.
 

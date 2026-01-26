@@ -25,7 +25,7 @@ Support for external streaming platforms like Kafka for scale-out processing is 
 | Operation | Trigger | Description |
 |-----------|---------|-------------|
 | **batch_retain** | `retain_batch` with `async=True` | Processes large content batches in the background |
-| **consolidate** | After `retain` | Consolidates new facts into mental models |
+| **consolidate** | After `retain` | Consolidates new facts into observations |
 
 ## Async Retain Example
 

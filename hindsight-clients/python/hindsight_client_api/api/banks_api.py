@@ -356,7 +356,7 @@ class BanksApi:
 
 
     @validate_call
-    async def clear_mental_models(
+    async def clear_observations(
         self,
         bank_id: StrictStr,
         authorization: Optional[StrictStr] = None,
@@ -373,9 +373,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> DeleteResponse:
-        """Clear all mental models
+        """Clear all observations
 
-        Delete all mental models for a memory bank. This is useful for resetting the consolidated knowledge.
+        Delete all observations for a memory bank. This is useful for resetting the consolidated knowledge.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -403,7 +403,7 @@ class BanksApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._clear_mental_models_serialize(
+        _param = self._clear_observations_serialize(
             bank_id=bank_id,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -428,7 +428,7 @@ class BanksApi:
 
 
     @validate_call
-    async def clear_mental_models_with_http_info(
+    async def clear_observations_with_http_info(
         self,
         bank_id: StrictStr,
         authorization: Optional[StrictStr] = None,
@@ -445,9 +445,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[DeleteResponse]:
-        """Clear all mental models
+        """Clear all observations
 
-        Delete all mental models for a memory bank. This is useful for resetting the consolidated knowledge.
+        Delete all observations for a memory bank. This is useful for resetting the consolidated knowledge.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -475,7 +475,7 @@ class BanksApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._clear_mental_models_serialize(
+        _param = self._clear_observations_serialize(
             bank_id=bank_id,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -500,7 +500,7 @@ class BanksApi:
 
 
     @validate_call
-    async def clear_mental_models_without_preload_content(
+    async def clear_observations_without_preload_content(
         self,
         bank_id: StrictStr,
         authorization: Optional[StrictStr] = None,
@@ -517,9 +517,9 @@ class BanksApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Clear all mental models
+        """Clear all observations
 
-        Delete all mental models for a memory bank. This is useful for resetting the consolidated knowledge.
+        Delete all observations for a memory bank. This is useful for resetting the consolidated knowledge.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -547,7 +547,7 @@ class BanksApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._clear_mental_models_serialize(
+        _param = self._clear_observations_serialize(
             bank_id=bank_id,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -567,7 +567,7 @@ class BanksApi:
         return response_data.response
 
 
-    def _clear_mental_models_serialize(
+    def _clear_observations_serialize(
         self,
         bank_id,
         authorization,
@@ -617,7 +617,7 @@ class BanksApi:
 
         return self.api_client.param_serialize(
             method='DELETE',
-            resource_path='/v1/default/banks/{bank_id}/mental-models',
+            resource_path='/v1/default/banks/{bank_id}/observations',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,
@@ -2056,7 +2056,7 @@ class BanksApi:
     ) -> ConsolidationResponse:
         """Trigger consolidation
 
-        Run memory consolidation to create/update mental models from recent memories.
+        Run memory consolidation to create/update observations from recent memories.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2128,7 +2128,7 @@ class BanksApi:
     ) -> ApiResponse[ConsolidationResponse]:
         """Trigger consolidation
 
-        Run memory consolidation to create/update mental models from recent memories.
+        Run memory consolidation to create/update observations from recent memories.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2200,7 +2200,7 @@ class BanksApi:
     ) -> RESTResponseType:
         """Trigger consolidation
 
-        Run memory consolidation to create/update mental models from recent memories.
+        Run memory consolidation to create/update observations from recent memories.
 
         :param bank_id: (required)
         :type bank_id: str

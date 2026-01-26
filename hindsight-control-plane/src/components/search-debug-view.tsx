@@ -32,7 +32,7 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 
-type FactType = "world" | "experience" | "mental_model";
+type FactType = "world" | "experience" | "observation";
 type Budget = "low" | "mid" | "high";
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 type ViewMode = "results" | "trace" | "json";
@@ -55,7 +55,7 @@ export function SearchDebugView() {
   const [results, setResults] = useState<any[] | null>(null);
   const [entities, setEntities] = useState<any[] | null>(null);
   const [chunks, setChunks] = useState<any[] | null>(null);
-  const [mentalModels, setMentalModels] = useState<any[] | null>(null);
+  const [observations, setObservations] = useState<any[] | null>(null);
   const [trace, setTrace] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("results");
@@ -109,7 +109,7 @@ export function SearchDebugView() {
 
     // Must select at least one type
     if (factTypes.length === 0) {
-      alert("Please select at least one type (World, Experience, or Mental Models)");
+      alert("Please select at least one type (World, Experience, or Observations)");
       return;
     }
 
@@ -142,7 +142,7 @@ export function SearchDebugView() {
       setResults(data.results || []);
       setEntities(data.entities || null);
       setChunks(data.chunks || null);
-      setMentalModels(data.mental_models || null);
+      setObservations(data.observations || null);
       setTrace(data.trace || null);
       setViewMode("results");
     } catch (error) {
@@ -208,10 +208,10 @@ export function SearchDebugView() {
                 ))}
                 <label className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
-                    checked={factTypes.includes("mental_model")}
-                    onCheckedChange={() => toggleFactType("mental_model")}
+                    checked={factTypes.includes("observation")}
+                    onCheckedChange={() => toggleFactType("observation")}
                   />
-                  <span className="text-sm">Mental Models</span>
+                  <span className="text-sm">Observations</span>
                 </label>
               </div>
             </div>
@@ -360,29 +360,29 @@ export function SearchDebugView() {
           {/* Results View */}
           {viewMode === "results" && (
             <div className="space-y-4">
-              {/* Mental Models Section */}
-              {mentalModels && mentalModels.length > 0 && (
+              {/* Observations Section */}
+              {observations && observations.length > 0 && (
                 <Card className="border-orange-500/30 bg-orange-500/5">
                   <CardHeader className="py-3">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Database className="h-4 w-4 text-orange-500" />
-                      <span>Mental Models</span>
-                      <span className="text-xs text-muted-foreground">({mentalModels.length})</span>
+                      <span>Observations</span>
+                      <span className="text-xs text-muted-foreground">({observations.length})</span>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0 space-y-2">
-                    {mentalModels.map((mm: any, idx: number) => (
+                    {observations.map((obs: any, idx: number) => (
                       <div
-                        key={mm.id || idx}
+                        key={obs.id || idx}
                         className="p-3 bg-background rounded-lg border border-orange-500/20"
                       >
-                        <p className="text-sm text-foreground">{mm.text}</p>
+                        <p className="text-sm text-foreground">{obs.text}</p>
                         <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                           <span className="px-2 py-0.5 rounded bg-orange-500/10 text-orange-600">
-                            Mental Model
+                            Observation
                           </span>
-                          <span>Proof count: {mm.proof_count || 1}</span>
-                          <span>Relevance: {(mm.relevance || 0).toFixed(3)}</span>
+                          <span>Proof count: {obs.proof_count || 1}</span>
+                          <span>Relevance: {(obs.relevance || 0).toFixed(3)}</span>
                         </div>
                       </div>
                     ))}
@@ -392,7 +392,7 @@ export function SearchDebugView() {
 
               {/* Memories Section */}
               <div className="space-y-3">
-                {results.length === 0 && (!mentalModels || mentalModels.length === 0) ? (
+                {results.length === 0 && (!observations || observations.length === 0) ? (
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center py-12">
                       <Search className="h-12 w-12 text-muted-foreground mb-4" />
@@ -1010,7 +1010,7 @@ export function SearchDebugView() {
                       results,
                       ...(entities && { entities }),
                       ...(chunks && { chunks }),
-                      ...(mentalModels && { mental_models: mentalModels }),
+                      ...(observations && { observations }),
                       trace,
                     }}
                     collapsed={2}

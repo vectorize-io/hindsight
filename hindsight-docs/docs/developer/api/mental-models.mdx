@@ -2,7 +2,7 @@
 sidebar_position: 4
 ---
 
-# Reflections
+# Mental Models
 
 User-curated summaries that provide high-quality, pre-computed answers for common queries.
 
@@ -11,23 +11,23 @@ import TabItem from '@theme/TabItem';
 import CodeSnippet from '@site/src/components/CodeSnippet';
 
 {/* Import raw source files */}
-import reflectionsPy from '!!raw-loader!@site/examples/api/reflections.py';
+import mentalModelsPy from '!!raw-loader!@site/examples/api/mental-models.py';
 
-## What Are Reflections?
+## What Are Mental Models?
 
-Reflections are **saved reflect responses** that you curate for your memory bank. When you create a reflection, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
+Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
 
 ```mermaid
 graph LR
-    A[Create Reflection] --> B[Run Reflect]
+    A[Create Mental Model] --> B[Run Reflect]
     B --> C[Store Result]
     C --> D[Future Queries]
     D --> E{Match Found?}
-    E -->|Yes| F[Return Reflection]
+    E -->|Yes| F[Return Mental Model]
     E -->|No| G[Run Full Reflect]
 ```
 
-### Why Use Reflections?
+### Why Use Mental Models?
 
 | Benefit | Description |
 |---------|-------------|
@@ -40,27 +40,27 @@ graph LR
 
 During reflect, the agent checks sources in priority order:
 
-1. **Reflections** — User-curated summaries (highest priority)
-2. **Mental Models** — Consolidated knowledge
+1. **Mental Models** — User-curated summaries (highest priority)
+2. **Observations** — Consolidated knowledge
 3. **Raw Facts** — Ground truth memories
 
-Reflections are checked first because they represent your explicitly curated knowledge.
+Mental models are checked first because they represent your explicitly curated knowledge.
 
 ---
 
-## Create a Reflection
+## Create a Mental Model
 
-Creating a reflection runs a reflect operation in the background and saves the result:
+Creating a mental model runs a reflect operation in the background and saves the result:
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="create-reflection" language="python" />
+<CodeSnippet code={mentalModelsPy} section="create-mental-model" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-# Create a reflection (async operation)
-curl -X POST "http://localhost:8888/v1/default/banks/my-bank/reflections" \
+# Create a mental model (async operation)
+curl -X POST "http://localhost:8888/v1/default/banks/my-bank/mental-models" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Team Communication Preferences",
@@ -79,23 +79,23 @@ curl -X POST "http://localhost:8888/v1/default/banks/my-bank/reflections" \
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `name` | string | Yes | Human-readable name for the reflection |
+| `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query to run to generate content |
 | `tags` | list | No | Tags for filtering during retrieval |
-| `max_tokens` | int | No | Maximum tokens for the reflection content |
+| `max_tokens` | int | No | Maximum tokens for the mental model content |
 
 ---
 
-## List Reflections
+## List Mental Models
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="list-reflections" language="python" />
+<CodeSnippet code={mentalModelsPy} section="list-mental-models" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl "http://localhost:8888/v1/default/banks/my-bank/reflections"
+curl "http://localhost:8888/v1/default/banks/my-bank/mental-models"
 ```
 
 </TabItem>
@@ -103,16 +103,16 @@ curl "http://localhost:8888/v1/default/banks/my-bank/reflections"
 
 ---
 
-## Get a Reflection
+## Get a Mental Model
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="get-reflection" language="python" />
+<CodeSnippet code={mentalModelsPy} section="get-mental-model" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflection_id}"
+curl "http://localhost:8888/v1/default/banks/my-bank/mental-models/{mental_model_id}"
 ```
 
 </TabItem>
@@ -122,30 +122,30 @@ curl "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflection_id}
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique reflection ID |
+| `id` | string | Unique mental model ID |
 | `bank_id` | string | Memory bank ID |
 | `name` | string | Human-readable name |
 | `source_query` | string | The query used to generate content |
-| `content` | string | The generated reflection text |
+| `content` | string | The generated mental model text |
 | `tags` | list | Tags for filtering |
-| `last_refreshed_at` | string | When the reflection was last updated |
-| `created_at` | string | When the reflection was created |
+| `last_refreshed_at` | string | When the mental model was last updated |
+| `created_at` | string | When the mental model was created |
 | `reflect_response` | object | Full reflect response including `based_on` facts |
 
 ---
 
-## Refresh a Reflection
+## Refresh a Mental Model
 
-Re-run the source query to update the reflection with current knowledge:
+Re-run the source query to update the mental model with current knowledge:
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="refresh-reflection" language="python" />
+<CodeSnippet code={mentalModelsPy} section="refresh-mental-model" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl -X POST "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflection_id}/refresh"
+curl -X POST "http://localhost:8888/v1/default/banks/my-bank/mental-models/{mental_model_id}/refresh"
 ```
 
 </TabItem>
@@ -153,23 +153,23 @@ curl -X POST "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflec
 
 Refreshing is useful when:
 - New memories have been retained that affect the topic
-- Mental models have been updated
-- You want to ensure the reflection reflects current knowledge
+- Observations have been updated
+- You want to ensure the mental model reflects current knowledge
 
 ---
 
-## Update a Reflection
+## Update a Mental Model
 
-Update the reflection's name:
+Update the mental model's name:
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="update-reflection" language="python" />
+<CodeSnippet code={mentalModelsPy} section="update-mental-model" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl -X PATCH "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflection_id}" \
+curl -X PATCH "http://localhost:8888/v1/default/banks/my-bank/mental-models/{mental_model_id}" \
   -H "Content-Type: application/json" \
   -d '{"name": "Updated Team Communication Preferences"}'
 ```
@@ -179,16 +179,16 @@ curl -X PATCH "http://localhost:8888/v1/default/banks/my-bank/reflections/{refle
 
 ---
 
-## Delete a Reflection
+## Delete a Mental Model
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={reflectionsPy} section="delete-reflection" language="python" />
+<CodeSnippet code={mentalModelsPy} section="delete-mental-model" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 ```bash
-curl -X DELETE "http://localhost:8888/v1/default/banks/my-bank/reflections/{reflection_id}"
+curl -X DELETE "http://localhost:8888/v1/default/banks/my-bank/mental-models/{mental_model_id}"
 ```
 
 </TabItem>
@@ -209,6 +209,6 @@ curl -X DELETE "http://localhost:8888/v1/default/banks/my-bank/reflections/{refl
 
 ## Next Steps
 
-- [**Reflect**](./reflect) — How the agentic loop uses reflections
-- [**Mental Models**](/developer/mental-models) — How knowledge is consolidated
-- [**Operations**](./operations) — Track async reflection creation
+- [**Reflect**](./reflect) — How the agentic loop uses mental models
+- [**Observations**](/developer/observations) — How knowledge is consolidated
+- [**Operations**](./operations) — Track async mental model creation

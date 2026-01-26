@@ -10,8 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Valid fact types for recall operations (excludes 'observation' which is internal, and 'opinion' which is deprecated)
-VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "mental_model"])
+# Valid fact types for recall operations (excludes 'opinion' which is deprecated)
+VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "observation"])
 
 
 class LLMToolCall(BaseModel):
@@ -49,13 +49,13 @@ class LLMCallTrace(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
 
 
-class MentalModelRef(BaseModel):
-    """Reference to a mental model accessed during reflect."""
+class ObservationRef(BaseModel):
+    """Reference to an observation accessed during reflect."""
 
-    id: str = Field(description="Mental model ID")
-    name: str = Field(description="Mental model name")
-    type: str = Field(description="Mental model type: entity, concept, event")
-    subtype: str = Field(description="Mental model subtype: structural, emergent, learned")
+    id: str = Field(description="Observation ID")
+    name: str = Field(description="Observation name")
+    type: str = Field(description="Observation type: entity, concept, event")
+    subtype: str = Field(description="Observation subtype: structural, emergent, learned")
     description: str = Field(description="Brief description")
     summary: str | None = Field(default=None, description="Full summary (when looked up in detail)")
 
@@ -168,23 +168,23 @@ class ChunkInfo(BaseModel):
     truncated: bool = Field(default=False, description="Whether the chunk was truncated due to token limits")
 
 
-class MentalModelResult(BaseModel):
-    """A mental model result from recall."""
+class ObservationResult(BaseModel):
+    """An observation result from recall (consolidated knowledge synthesized from facts)."""
 
-    id: str = Field(description="Unique mental model ID")
-    text: str = Field(description="The mental model text")
-    proof_count: int = Field(description="Number of facts supporting this mental model")
+    id: str = Field(description="Unique observation ID")
+    text: str = Field(description="The observation text")
+    proof_count: int = Field(description="Number of facts supporting this observation")
     relevance: float = Field(default=0.0, description="Relevance score to the query")
     tags: list[str] | None = Field(default=None, description="Tags for visibility scoping")
     source_memory_ids: list[str] = Field(
-        default_factory=list, description="IDs of facts that contribute to this mental model"
+        default_factory=list, description="IDs of facts that contribute to this observation"
     )
 
 
-class ReflectionResult(BaseModel):
-    """A reflection result from recall."""
+class MentalModelResult(BaseModel):
+    """A mental model result from recall (stored reflect response)."""
 
-    id: str = Field(description="Unique reflection ID")
+    id: str = Field(description="Unique mental model ID")
     name: str = Field(description="Human-readable name")
     content: str = Field(description="The synthesized content")
     relevance: float = Field(default=0.0, description="Relevance score to the query")

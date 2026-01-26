@@ -20,7 +20,6 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.reflect_llm_call import ReflectLLMCall
-from hindsight_client_api.models.reflect_mental_model import ReflectMentalModel
 from hindsight_client_api.models.reflect_tool_call import ReflectToolCall
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,8 +30,7 @@ class ReflectTrace(BaseModel):
     """ # noqa: E501
     tool_calls: Optional[List[ReflectToolCall]] = Field(default=None, description="Tool calls made during reflection")
     llm_calls: Optional[List[ReflectLLMCall]] = Field(default=None, description="LLM calls made during reflection")
-    mental_models: Optional[List[ReflectMentalModel]] = Field(default=None, description="Mental models used during reflection (includes directives with subtype='directive')")
-    __properties: ClassVar[List[str]] = ["tool_calls", "llm_calls", "mental_models"]
+    __properties: ClassVar[List[str]] = ["tool_calls", "llm_calls"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -87,13 +85,6 @@ class ReflectTrace(BaseModel):
                 if _item_llm_calls:
                     _items.append(_item_llm_calls.to_dict())
             _dict['llm_calls'] = _items
-        # override the default output from pydantic by calling `to_dict()` of each item in mental_models (list)
-        _items = []
-        if self.mental_models:
-            for _item_mental_models in self.mental_models:
-                if _item_mental_models:
-                    _items.append(_item_mental_models.to_dict())
-            _dict['mental_models'] = _items
         return _dict
 
     @classmethod
@@ -107,8 +98,7 @@ class ReflectTrace(BaseModel):
 
         _obj = cls.model_validate({
             "tool_calls": [ReflectToolCall.from_dict(_item) for _item in obj["tool_calls"]] if obj.get("tool_calls") is not None else None,
-            "llm_calls": [ReflectLLMCall.from_dict(_item) for _item in obj["llm_calls"]] if obj.get("llm_calls") is not None else None,
-            "mental_models": [ReflectMentalModel.from_dict(_item) for _item in obj["mental_models"]] if obj.get("mental_models") is not None else None
+            "llm_calls": [ReflectLLMCall.from_dict(_item) for _item in obj["llm_calls"]] if obj.get("llm_calls") is not None else None
         })
         return _obj
 

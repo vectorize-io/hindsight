@@ -214,7 +214,7 @@ export function BankProfileView() {
   const router = useRouter();
   const { currentBank, setCurrentBank, loadBanks } = useBank();
   const { features } = useFeatures();
-  const mentalModelsEnabled = features?.mental_models ?? false;
+  const observationsEnabled = features?.observations ?? false;
   const [profile, setProfile] = useState<BankProfile | null>(null);
   const [stats, setStats] = useState<BankStats | null>(null);
   const [operations, setOperations] = useState<Operation[]>([]);
@@ -243,9 +243,9 @@ export function BankProfileView() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Clear mental models state
-  const [showClearMentalModelsDialog, setShowClearMentalModelsDialog] = useState(false);
-  const [isClearingMentalModels, setIsClearingMentalModels] = useState(false);
+  // Clear observations state
+  const [showClearObservationsDialog, setShowClearObservationsDialog] = useState(false);
+  const [isClearingObservations, setIsClearingObservations] = useState(false);
 
   // Consolidation state
   const [isConsolidating, setIsConsolidating] = useState(false);
@@ -372,20 +372,20 @@ export function BankProfileView() {
     }
   };
 
-  const handleClearMentalModels = async () => {
+  const handleClearObservations = async () => {
     if (!currentBank) return;
 
-    setIsClearingMentalModels(true);
+    setIsClearingObservations(true);
     try {
-      const result = await client.clearMentalModels(currentBank);
-      setShowClearMentalModelsDialog(false);
+      const result = await client.clearObservations(currentBank);
+      setShowClearObservationsDialog(false);
       await loadData();
-      alert(result.message || "Mental models cleared successfully");
+      alert(result.message || "Observations cleared successfully");
     } catch (error) {
-      console.error("Error clearing mental models:", error);
-      alert("Error clearing mental models: " + (error as Error).message);
+      console.error("Error clearing observations:", error);
+      alert("Error clearing observations: " + (error as Error).message);
     } finally {
-      setIsClearingMentalModels(false);
+      setIsClearingObservations(false);
     }
   };
 
@@ -537,8 +537,8 @@ export function BankProfileView() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleTriggerConsolidation}
-                  disabled={isConsolidating || !mentalModelsEnabled}
-                  title={!mentalModelsEnabled ? "Mental models feature is not enabled" : undefined}
+                  disabled={isConsolidating || !observationsEnabled}
+                  title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
                 >
                   {isConsolidating ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -546,19 +546,19 @@ export function BankProfileView() {
                     <Brain className="w-4 h-4 mr-2" />
                   )}
                   {isConsolidating ? "Consolidating..." : "Run Consolidation"}
-                  {!mentalModelsEnabled && (
+                  {!observationsEnabled && (
                     <span className="ml-auto text-xs text-muted-foreground">Off</span>
                   )}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setShowClearMentalModelsDialog(true)}
-                  disabled={!mentalModelsEnabled}
+                  onClick={() => setShowClearObservationsDialog(true)}
+                  disabled={!observationsEnabled}
                   className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
-                  title={!mentalModelsEnabled ? "Mental models feature is not enabled" : undefined}
+                  title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Clear Mental Models
-                  {!mentalModelsEnabled && (
+                  Clear Observations
+                  {!observationsEnabled && (
                     <span className="ml-auto text-xs text-muted-foreground">Off</span>
                   )}
                 </DropdownMenuItem>
@@ -664,26 +664,26 @@ export function BankProfileView() {
           </div>
           <div
             className={`rounded-xl p-4 text-center ${
-              mentalModelsEnabled
+              observationsEnabled
                 ? "bg-amber-500/10 border border-amber-500/20"
                 : "bg-muted/50 border border-muted"
             }`}
-            title={!mentalModelsEnabled ? "Mental models feature is not enabled" : undefined}
+            title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
           >
             <p
               className={`text-xs font-semibold uppercase tracking-wide ${
-                mentalModelsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                observationsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
               }`}
             >
-              Mental Models
-              {!mentalModelsEnabled && <span className="ml-1 normal-case">(Off)</span>}
+              Observations
+              {!observationsEnabled && <span className="ml-1 normal-case">(Off)</span>}
             </p>
             <p
               className={`text-2xl font-bold mt-1 ${
-                mentalModelsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                observationsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
               }`}
             >
-              {mentalModelsEnabled ? stats.total_mental_models || 0 : "—"}
+              {observationsEnabled ? stats.total_mental_models || 0 : "—"}
             </p>
           </div>
           <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-center">
@@ -1024,35 +1024,35 @@ export function BankProfileView() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Clear Mental Models Confirmation Dialog */}
-      <AlertDialog open={showClearMentalModelsDialog} onOpenChange={setShowClearMentalModelsDialog}>
+      {/* Clear Observations Confirmation Dialog */}
+      <AlertDialog open={showClearObservationsDialog} onOpenChange={setShowClearObservationsDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear Mental Models</AlertDialogTitle>
+            <AlertDialogTitle>Clear Observations</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
-                  Are you sure you want to clear all mental models for{" "}
+                  Are you sure you want to clear all observations for{" "}
                   <span className="font-semibold text-foreground">{currentBank}</span>?
                 </p>
                 <p className="text-amber-600 dark:text-amber-400 font-medium">
-                  This will delete all consolidated knowledge. Mental models will be regenerated the
+                  This will delete all consolidated knowledge. Observations will be regenerated the
                   next time consolidation runs.
                 </p>
                 {stats && stats.total_mental_models > 0 && (
-                  <p>This will delete {stats.total_mental_models} mental models.</p>
+                  <p>This will delete {stats.total_mental_models} observations.</p>
                 )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isClearingMentalModels}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isClearingObservations}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleClearMentalModels}
-              disabled={isClearingMentalModels}
+              onClick={handleClearObservations}
+              disabled={isClearingObservations}
               className="bg-amber-500 text-white hover:bg-amber-600"
             >
-              {isClearingMentalModels ? (
+              {isClearingObservations ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Clearing...
@@ -1060,7 +1060,7 @@ export function BankProfileView() {
               ) : (
                 <>
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Clear Mental Models
+                  Clear Observations
                 </>
               )}
             </AlertDialogAction>

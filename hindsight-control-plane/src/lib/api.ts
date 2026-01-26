@@ -51,7 +51,7 @@ export class ControlPlaneClient {
     include?: {
       entities?: { max_tokens: number } | null;
       chunks?: { max_tokens: number } | null;
-      mental_models?: { max_results?: number } | null;
+      observations?: { max_results?: number } | null;
     };
     query_timestamp?: string;
     tags?: string[];
@@ -244,14 +244,14 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Clear all mental models for a bank
+   * Clear all observations for a bank
    */
-  async clearMentalModels(bankId: string) {
+  async clearObservations(bankId: string) {
     return this.fetchApi<{
       success: boolean;
       message: string;
       deleted_count: number;
-    }>(`/api/banks/${bankId}/mental-models`, {
+    }>(`/api/banks/${bankId}/observations`, {
       method: "DELETE",
     });
   }
@@ -470,12 +470,12 @@ export class ControlPlaneClient {
     });
   }
 
-  // ============= MENTAL MODELS (auto-consolidated, read-only) =============
+  // ============= OBSERVATIONS (auto-consolidated, read-only) =============
 
   /**
-   * List mental models for a bank (auto-consolidated knowledge)
+   * List observations for a bank (auto-consolidated knowledge)
    */
-  async listMentalModels(bankId: string, tags?: string[], tagsMatch?: string) {
+  async listObservations(bankId: string, tags?: string[], tagsMatch?: string) {
     const params = new URLSearchParams();
     if (tags && tags.length > 0) {
       tags.forEach((t) => params.append("tags", t));
@@ -508,13 +508,13 @@ export class ControlPlaneClient {
         created_at: string;
         updated_at: string;
       }>;
-    }>(`/api/banks/${bankId}/mental-models${query ? `?${query}` : ""}`);
+    }>(`/api/banks/${bankId}/observations${query ? `?${query}` : ""}`);
   }
 
   /**
-   * Get a mental model with source memories
+   * Get an observation with source memories
    */
-  async getMentalModel(bankId: string, modelId: string) {
+  async getObservation(bankId: string, observationId: string) {
     return this.fetchApi<{
       id: string;
       bank_id: string;
@@ -537,15 +537,15 @@ export class ControlPlaneClient {
       }>;
       created_at: string;
       updated_at: string;
-    }>(`/api/banks/${bankId}/mental-models/${modelId}`);
+    }>(`/api/banks/${bankId}/observations/${observationId}`);
   }
 
-  // ============= REFLECTIONS =============
+  // ============= MENTAL MODELS (stored reflect responses) =============
 
   /**
-   * List reflections for a bank
+   * List mental models for a bank
    */
-  async listReflections(bankId: string, tags?: string[], tagsMatch?: string) {
+  async listMentalModels(bankId: string, tags?: string[], tagsMatch?: string) {
     const params = new URLSearchParams();
     if (tags && tags.length > 0) {
       tags.forEach((t) => params.append("tags", t));
@@ -567,17 +567,16 @@ export class ControlPlaneClient {
         reflect_response?: {
           text: string;
           based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
-          mental_models?: Array<{ id: string; text: string }>;
         };
       }>;
-    }>(`/api/banks/${bankId}/reflections${query ? `?${query}` : ""}`);
+    }>(`/api/banks/${bankId}/mental-models${query ? `?${query}` : ""}`);
   }
 
   /**
-   * Create a reflection (async - content auto-generated in background)
+   * Create a mental model (async - content auto-generated in background)
    * Returns operation_id to track progress
    */
-  async createReflection(
+  async createMentalModel(
     bankId: string,
     params: {
       name: string;
@@ -588,16 +587,16 @@ export class ControlPlaneClient {
   ) {
     return this.fetchApi<{
       operation_id: string;
-    }>(`/api/banks/${bankId}/reflections`, {
+    }>(`/api/banks/${bankId}/mental-models`, {
       method: "POST",
       body: JSON.stringify(params),
     });
   }
 
   /**
-   * Get a reflection
+   * Get a mental model
    */
-  async getReflection(bankId: string, reflectionId: string) {
+  async getMentalModel(bankId: string, mentalModelId: string) {
     return this.fetchApi<{
       id: string;
       bank_id: string;
@@ -610,17 +609,17 @@ export class ControlPlaneClient {
       reflect_response?: {
         text: string;
         based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
-        mental_models?: Array<{ id: string; text: string }>;
+        observations?: Array<{ id: string; text: string }>;
       };
-    }>(`/api/banks/${bankId}/reflections/${reflectionId}`);
+    }>(`/api/banks/${bankId}/mental-models/${mentalModelId}`);
   }
 
   /**
-   * Update a reflection
+   * Update a mental model
    */
-  async updateReflection(
+  async updateMentalModel(
     bankId: string,
-    reflectionId: string,
+    mentalModelId: string,
     params: {
       name?: string;
     }
@@ -637,30 +636,30 @@ export class ControlPlaneClient {
       reflect_response?: {
         text: string;
         based_on: Record<string, Array<{ id: string; text: string; type: string }>>;
-        mental_models?: Array<{ id: string; text: string }>;
+        observations?: Array<{ id: string; text: string }>;
       };
-    }>(`/api/banks/${bankId}/reflections/${reflectionId}`, {
+    }>(`/api/banks/${bankId}/mental-models/${mentalModelId}`, {
       method: "PATCH",
       body: JSON.stringify(params),
     });
   }
 
   /**
-   * Delete a reflection
+   * Delete a mental model
    */
-  async deleteReflection(bankId: string, reflectionId: string) {
-    return this.fetchApi(`/api/banks/${bankId}/reflections/${reflectionId}`, {
+  async deleteMentalModel(bankId: string, mentalModelId: string) {
+    return this.fetchApi(`/api/banks/${bankId}/mental-models/${mentalModelId}`, {
       method: "DELETE",
     });
   }
 
   /**
-   * Refresh a reflection (re-run source query) - async operation
+   * Refresh a mental model (re-run source query) - async operation
    */
-  async refreshReflection(bankId: string, reflectionId: string) {
+  async refreshMentalModel(bankId: string, mentalModelId: string) {
     return this.fetchApi<{
       operation_id: string;
-    }>(`/api/banks/${bankId}/reflections/${reflectionId}/refresh`, {
+    }>(`/api/banks/${bankId}/mental-models/${mentalModelId}/refresh`, {
       method: "POST",
     });
   }
@@ -673,7 +672,7 @@ export class ControlPlaneClient {
     return this.fetchApi<{
       api_version: string;
       features: {
-        mental_models: boolean;
+        observations: boolean;
         mcp: boolean;
         worker: boolean;
       };

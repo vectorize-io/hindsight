@@ -22,9 +22,9 @@ from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class ReflectionResponse(BaseModel):
+class MentalModelResponse(BaseModel):
     """
-    Response model for a reflection.
+    Response model for a mental model (stored reflect response).
     """ # noqa: E501
     id: StrictStr
     bank_id: StrictStr
@@ -55,7 +55,7 @@ class ReflectionResponse(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ReflectionResponse from a JSON string"""
+        """Create an instance of MentalModelResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -95,7 +95,7 @@ class ReflectionResponse(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ReflectionResponse from a dict"""
+        """Create an instance of MentalModelResponse from a dict"""
         if obj is None:
             return None
 

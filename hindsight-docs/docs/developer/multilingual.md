@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Multilingual Support
 
-Hindsight automatically detects the language of your input and responds in the same language. This means facts, entities, and reflections are preserved in their original language without translation to English.
+Hindsight automatically detects the language of your input and responds in the same language. This means facts, entities, and reflect responses are preserved in their original language without translation to English.
 
 ## How It Works
 

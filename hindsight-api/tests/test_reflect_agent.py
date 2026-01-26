@@ -68,15 +68,15 @@ class TestToolNameNormalization:
         """Standard tool names should pass through unchanged."""
         assert _normalize_tool_name("done") == "done"
         assert _normalize_tool_name("recall") == "recall"
-        assert _normalize_tool_name("search_reflections") == "search_reflections"
         assert _normalize_tool_name("search_mental_models") == "search_mental_models"
+        assert _normalize_tool_name("search_observations") == "search_observations"
         assert _normalize_tool_name("expand") == "expand"
 
     def test_normalize_functions_prefix(self):
         """Tool names with 'functions.' prefix should be normalized."""
         assert _normalize_tool_name("functions.done") == "done"
         assert _normalize_tool_name("functions.recall") == "recall"
-        assert _normalize_tool_name("functions.search_reflections") == "search_reflections"
+        assert _normalize_tool_name("functions.search_mental_models") == "search_mental_models"
 
     def test_normalize_call_equals_prefix(self):
         """Tool names with 'call=' prefix should be normalized."""
@@ -87,7 +87,7 @@ class TestToolNameNormalization:
         """Tool names with 'call=functions.' prefix should be normalized."""
         assert _normalize_tool_name("call=functions.done") == "done"
         assert _normalize_tool_name("call=functions.recall") == "recall"
-        assert _normalize_tool_name("call=functions.search_mental_models") == "search_mental_models"
+        assert _normalize_tool_name("call=functions.search_observations") == "search_observations"
 
     def test_is_done_tool(self):
         """Test _is_done_tool helper."""
@@ -123,8 +123,8 @@ class TestReflectAgentMocked:
     def mock_functions(self):
         """Create mock search/recall functions."""
         return {
-            "search_reflections_fn": AsyncMock(return_value={"reflections": []}),
             "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
             "recall_fn": AsyncMock(return_value={"memories": [{"id": "mem-1", "content": "test memory"}]}),
             "expand_fn": AsyncMock(return_value={"memories": []}),
         }

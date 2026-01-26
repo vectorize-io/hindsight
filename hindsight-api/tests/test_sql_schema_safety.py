@@ -22,7 +22,7 @@ TABLES = [
     "chunks",
     "async_operations",
     "directives",
-    "reflections",
+    "mental_models",
 ]
 
 # Files to scan for SQL queries

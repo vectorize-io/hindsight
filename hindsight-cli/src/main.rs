@@ -95,9 +95,9 @@ enum Commands {
     #[command(subcommand)]
     Operation(OperationCommands),
 
-    /// Manage reflections (user-curated summaries)
+    /// Manage mental models (user-curated summaries)
     #[command(subcommand)]
-    Reflection(ReflectionCommands),
+    MentalModel(MentalModelCommands),
 
     /// Manage directives (behavioral rules)
     #[command(subcommand)]
@@ -539,67 +539,67 @@ enum ChunkCommands {
 }
 
 #[derive(Subcommand)]
-enum ReflectionCommands {
-    /// List reflections for a bank
+enum MentalModelCommands {
+    /// List mental models for a bank
     List {
         /// Bank ID
         bank_id: String,
     },
 
-    /// Get a specific reflection
+    /// Get a specific mental model
     Get {
         /// Bank ID
         bank_id: String,
 
-        /// Reflection ID
-        reflection_id: String,
+        /// Mental model ID
+        mental_model_id: String,
     },
 
-    /// Create a new reflection
+    /// Create a new mental model
     Create {
         /// Bank ID
         bank_id: String,
 
-        /// Reflection name
+        /// Mental model name
         name: String,
 
-        /// Source query to generate the reflection from
+        /// Source query to generate the mental model from
         source_query: String,
     },
 
-    /// Update a reflection
+    /// Update a mental model
     Update {
         /// Bank ID
         bank_id: String,
 
-        /// Reflection ID
-        reflection_id: String,
+        /// Mental model ID
+        mental_model_id: String,
 
         /// New name
         #[arg(long)]
         name: Option<String>,
     },
 
-    /// Delete a reflection
+    /// Delete a mental model
     Delete {
         /// Bank ID
         bank_id: String,
 
-        /// Reflection ID
-        reflection_id: String,
+        /// Mental model ID
+        mental_model_id: String,
 
         /// Skip confirmation prompt
         #[arg(short = 'y', long)]
         yes: bool,
     },
 
-    /// Refresh a reflection (re-run the source query)
+    /// Refresh a mental model (re-run the source query)
     Refresh {
         /// Bank ID
         bank_id: String,
 
-        /// Reflection ID
-        reflection_id: String,
+        /// Mental model ID
+        mental_model_id: String,
     },
 }
 
@@ -817,25 +817,25 @@ fn run() -> Result<()> {
             }
         },
 
-        // Reflection commands
-        Commands::Reflection(ref_cmd) => match ref_cmd {
-            ReflectionCommands::List { bank_id } => {
-                commands::reflection::list(&client, &bank_id, verbose, output_format)
+        // Mental model commands
+        Commands::MentalModel(mm_cmd) => match mm_cmd {
+            MentalModelCommands::List { bank_id } => {
+                commands::mental_model::list(&client, &bank_id, verbose, output_format)
             }
-            ReflectionCommands::Get { bank_id, reflection_id } => {
-                commands::reflection::get(&client, &bank_id, &reflection_id, verbose, output_format)
+            MentalModelCommands::Get { bank_id, mental_model_id } => {
+                commands::mental_model::get(&client, &bank_id, &mental_model_id, verbose, output_format)
             }
-            ReflectionCommands::Create { bank_id, name, source_query } => {
-                commands::reflection::create(&client, &bank_id, &name, &source_query, verbose, output_format)
+            MentalModelCommands::Create { bank_id, name, source_query } => {
+                commands::mental_model::create(&client, &bank_id, &name, &source_query, verbose, output_format)
             }
-            ReflectionCommands::Update { bank_id, reflection_id, name } => {
-                commands::reflection::update(&client, &bank_id, &reflection_id, name, verbose, output_format)
+            MentalModelCommands::Update { bank_id, mental_model_id, name } => {
+                commands::mental_model::update(&client, &bank_id, &mental_model_id, name, verbose, output_format)
             }
-            ReflectionCommands::Delete { bank_id, reflection_id, yes } => {
-                commands::reflection::delete(&client, &bank_id, &reflection_id, yes, verbose, output_format)
+            MentalModelCommands::Delete { bank_id, mental_model_id, yes } => {
+                commands::mental_model::delete(&client, &bank_id, &mental_model_id, yes, verbose, output_format)
             }
-            ReflectionCommands::Refresh { bank_id, reflection_id } => {
-                commands::reflection::refresh(&client, &bank_id, &reflection_id, verbose, output_format)
+            MentalModelCommands::Refresh { bank_id, mental_model_id } => {
+                commands::mental_model::refresh(&client, &bank_id, &mental_model_id, verbose, output_format)
             }
         },
 

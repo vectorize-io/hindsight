@@ -9,11 +9,11 @@ import { EntitiesView } from "@/components/entities-view";
 import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
-import { ReflectionsView } from "@/components/reflections-view";
+import { MentalModelsView } from "@/components/mental-models-view";
 import { useFeatures } from "@/lib/features-context";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
-type DataSubTab = "world" | "experience" | "models" | "reflections";
+type DataSubTab = "world" | "experience" | "observations" | "mental-models";
 
 export default function BankPage() {
   const params = useParams();
@@ -24,7 +24,7 @@ export default function BankPage() {
   const bankId = params.bankId as string;
   const view = (searchParams.get("view") || "profile") as NavItem;
   const subTab = (searchParams.get("subTab") || "world") as DataSubTab;
-  const mentalModelsEnabled = features?.mental_models ?? false;
+  const observationsEnabled = features?.observations ?? false;
 
   const handleTabChange = (tab: NavItem) => {
     router.push(`/banks/${bankId}?view=${tab}`);
@@ -115,33 +115,33 @@ export default function BankPage() {
                       )}
                     </button>
                     <button
-                      onClick={() => handleDataSubTabChange("models")}
+                      onClick={() => handleDataSubTabChange("observations")}
                       className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "models"
+                        subTab === "observations"
+                          ? "text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Observations
+                      {!observationsEnabled && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          Off
+                        </span>
+                      )}
+                      {subTab === "observations" && (
+                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDataSubTabChange("mental-models")}
+                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                        subTab === "mental-models"
                           ? "text-primary"
                           : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       Mental Models
-                      {!mentalModelsEnabled && (
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          Off
-                        </span>
-                      )}
-                      {subTab === "models" && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleDataSubTabChange("reflections")}
-                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
-                        subTab === "reflections"
-                          ? "text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Reflections
-                      {subTab === "reflections" && (
+                      {subTab === "mental-models" && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                       )}
                     </button>
@@ -151,9 +151,9 @@ export default function BankPage() {
                 <div>
                   {subTab === "world" && <DataView key="world" factType="world" />}
                   {subTab === "experience" && <DataView key="experience" factType="experience" />}
-                  {subTab === "models" &&
-                    (mentalModelsEnabled ? (
-                      <DataView key="models" factType="mental_model" />
+                  {subTab === "observations" &&
+                    (observationsEnabled ? (
+                      <DataView key="observations" factType="observation" />
                     ) : (
                       <div className="flex flex-col items-center justify-center py-16 text-center">
                         <div className="text-muted-foreground mb-2">
@@ -174,18 +174,18 @@ export default function BankPage() {
                           </svg>
                         </div>
                         <h3 className="text-lg font-semibold text-foreground mb-1">
-                          Mental Models Not Enabled
+                          Observations Not Enabled
                         </h3>
                         <p className="text-sm text-muted-foreground max-w-md">
-                          Mental models consolidation is disabled on this server. Set{" "}
+                          Observations consolidation is disabled on this server. Set{" "}
                           <code className="px-1 py-0.5 bg-muted rounded text-xs">
-                            HINDSIGHT_API_ENABLE_MENTAL_MODELS=true
+                            HINDSIGHT_API_ENABLE_OBSERVATIONS=true
                           </code>{" "}
                           to enable.
                         </p>
                       </div>
                     ))}
-                  {subTab === "reflections" && <ReflectionsView key="reflections" />}
+                  {subTab === "mental-models" && <MentalModelsView key="mental-models" />}
                 </div>
               </div>
             )}

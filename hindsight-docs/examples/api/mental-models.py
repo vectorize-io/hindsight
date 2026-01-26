@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Reflections API examples for Hindsight.
-Run: python examples/api/reflections.py
+Mental Models API examples for Hindsight.
+Run: python examples/api/mental-models.py
 """
 import os
 import time
 import requests
 
 HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
-BANK_ID = "reflections-demo-bank"
+BANK_ID = "mental-models-demo-bank"
 
 # =============================================================================
 # Setup (not shown in docs)
@@ -18,7 +18,7 @@ from hindsight_client import Hindsight
 client = Hindsight(base_url=HINDSIGHT_URL)
 
 # Create bank and seed some data
-client.create_bank(bank_id=BANK_ID, name="Reflections Demo")
+client.create_bank(bank_id=BANK_ID, name="Mental Models Demo")
 client.retain(bank_id=BANK_ID, content="The team prefers async communication via Slack")
 client.retain(bank_id=BANK_ID, content="For urgent issues, use the #incidents channel")
 client.retain(bank_id=BANK_ID, content="Weekly syncs happen every Monday at 10am")
@@ -30,10 +30,10 @@ time.sleep(2)
 # Doc Examples
 # =============================================================================
 
-# [docs:create-reflection]
-# Create a reflection (runs reflect in background)
+# [docs:create-mental-model]
+# Create a mental model (runs reflect in background)
 response = requests.post(
-    f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections",
+    f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models",
     json={
         "name": "Team Communication Preferences",
         "source_query": "How does the team prefer to communicate?",
@@ -44,66 +44,66 @@ result = response.json()
 
 # Returns an operation_id - check operations endpoint for completion
 print(f"Operation ID: {result['operation_id']}")
-# [/docs:create-reflection]
+# [/docs:create-mental-model]
 
-# Wait for the reflection to be created
+# Wait for the mental model to be created
 time.sleep(5)
 
-# [docs:list-reflections]
-# List all reflections in a bank
-response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections")
-reflections = response.json()
+# [docs:list-mental-models]
+# List all mental models in a bank
+response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models")
+mental_models = response.json()
 
-for reflection in reflections["items"]:
-    print(f"- {reflection['name']}: {reflection['source_query']}")
-# [/docs:list-reflections]
+for mental_model in mental_models["items"]:
+    print(f"- {mental_model['name']}: {mental_model['source_query']}")
+# [/docs:list-mental-models]
 
-# Get the reflection ID for subsequent examples
-reflection_id = reflections["items"][0]["id"] if reflections["items"] else None
+# Get the mental model ID for subsequent examples
+mental_model_id = mental_models["items"][0]["id"] if mental_models["items"] else None
 
-if reflection_id:
-    # [docs:get-reflection]
-    # Get a specific reflection
+if mental_model_id:
+    # [docs:get-mental-model]
+    # Get a specific mental model
     response = requests.get(
-        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections/{reflection_id}"
+        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models/{mental_model_id}"
     )
-    reflection = response.json()
+    mental_model = response.json()
 
-    print(f"Name: {reflection['name']}")
-    print(f"Content: {reflection['content']}")
-    print(f"Last refreshed: {reflection['last_refreshed_at']}")
-    # [/docs:get-reflection]
+    print(f"Name: {mental_model['name']}")
+    print(f"Content: {mental_model['content']}")
+    print(f"Last refreshed: {mental_model['last_refreshed_at']}")
+    # [/docs:get-mental-model]
 
 
-    # [docs:refresh-reflection]
-    # Refresh a reflection to update with current knowledge
+    # [docs:refresh-mental-model]
+    # Refresh a mental model to update with current knowledge
     response = requests.post(
-        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections/{reflection_id}/refresh"
+        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models/{mental_model_id}/refresh"
     )
     result = response.json()
 
     print(f"Refresh operation ID: {result['operation_id']}")
-    # [/docs:refresh-reflection]
+    # [/docs:refresh-mental-model]
 
 
-    # [docs:update-reflection]
-    # Update a reflection's name
+    # [docs:update-mental-model]
+    # Update a mental model's name
     response = requests.patch(
-        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections/{reflection_id}",
+        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models/{mental_model_id}",
         json={"name": "Updated Team Communication Preferences"}
     )
     updated = response.json()
 
     print(f"Updated name: {updated['name']}")
-    # [/docs:update-reflection]
+    # [/docs:update-mental-model]
 
 
-    # [docs:delete-reflection]
-    # Delete a reflection
+    # [docs:delete-mental-model]
+    # Delete a mental model
     requests.delete(
-        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/reflections/{reflection_id}"
+        f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/mental-models/{mental_model_id}"
     )
-    # [/docs:delete-reflection]
+    # [/docs:delete-mental-model]
 
 
 # =============================================================================
@@ -111,4 +111,4 @@ if reflection_id:
 # =============================================================================
 requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}")
 
-print("reflections.py: All examples passed")
+print("mental-models.py: All examples passed")

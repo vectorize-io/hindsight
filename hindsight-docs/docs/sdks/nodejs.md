@@ -83,7 +83,7 @@ for (const r of response.results) {
 
 // With options
 const response = await client.recall('my-bank', 'What does Alice do?', {
-    types: ['world', 'mental_model'],  // Filter by fact type
+    types: ['world', 'observation'],  // Filter by fact type
     maxTokens: 4096,
     budget: 'high',  // 'low', 'mid', or 'high'
 });

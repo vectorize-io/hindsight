@@ -241,8 +241,8 @@ class TestReflectToolSchemas:
         tools = get_reflect_tools()
 
         tool_names = [t["function"]["name"] for t in tools]
-        assert "search_reflections" in tool_names
         assert "search_mental_models" in tool_names
+        assert "search_observations" in tool_names
         assert "recall" in tool_names
         assert "expand" in tool_names
         assert "done" in tool_names
@@ -273,8 +273,8 @@ class TestReflectToolSchemas:
 
         assert "answer" in params
         assert "memory_ids" in params
+        assert "observation_ids" in params
         assert "mental_model_ids" in params
-        assert "reflection_ids" in params
 
 
 class TestLLMToolCallResult:

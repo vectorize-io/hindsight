@@ -58,8 +58,8 @@ export function MemoryDetailPanel({
 
   // Use full memory data if available, otherwise fall back to the partial data passed in
   const displayMemory = fullMemory || memory;
-  const isMentalModel =
-    displayMemory?.fact_type === "mental_model" || displayMemory?.type === "mental_model";
+  const isObservation =
+    displayMemory?.fact_type === "observation" || displayMemory?.type === "observation";
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -127,8 +127,8 @@ export function MemoryDetailPanel({
                 </div>
               </div>
 
-              {/* Context (not shown for mental models) */}
-              {displayMemory.context && !isMentalModel && (
+              {/* Context (not shown for observations) */}
+              {displayMemory.context && !isObservation && (
                 <div className="p-4 bg-muted/50 rounded-lg">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
                     Context
@@ -209,7 +209,7 @@ export function MemoryDetailPanel({
                 </div>
               )}
 
-              {/* Source Memories (for mental models) */}
+              {/* Source Memories (for observations) */}
               {displayMemory.source_memories && displayMemory.source_memories.length > 0 && (
                 <div className="border-t border-border pt-5">
                   <div className="text-xs font-bold text-muted-foreground uppercase mb-3">

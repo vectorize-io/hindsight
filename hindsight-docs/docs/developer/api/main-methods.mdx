@@ -89,7 +89,7 @@ hindsight recall my-bank "Tell me about Alice" -v
 
 ## Reflect: Reason with Disposition
 
-Generate disposition-aware responses using memories and mental models.
+Generate disposition-aware responses using memories and observations.
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -104,7 +104,7 @@ Generate disposition-aware responses using memories and mental models.
 # Basic reflect
 hindsight reflect my-bank "Should we adopt TypeScript for our backend?"
 
-# Verbose output (shows sources and mental models)
+# Verbose output (shows sources and observations)
 hindsight reflect my-bank "What are Alice's strengths for the team lead role?" -v
 
 # With higher reasoning budget
@@ -114,7 +114,7 @@ hindsight reflect my-bank "Analyze our tech stack" --budget high
 </TabItem>
 </Tabs>
 
-**What happens:** Memories and mental models are recalled, bank disposition is applied, and the LLM reasons through the evidence to generate a response.
+**What happens:** Memories and observations are recalled, bank disposition is applied, and the LLM reasons through the evidence to generate a response.
 
 **See:** [Reflect Details](./reflect) for disposition configuration.
 
@@ -126,9 +126,9 @@ hindsight reflect my-bank "Analyze our tech stack" --budget high
 |---------|--------|--------|---------|
 | **Purpose** | Store information | Find information | Reason about information |
 | **Input** | Raw text/documents | Search query | Question/prompt |
-| **Output** | Memory IDs | Ranked facts + mental models | Reasoned response |
+| **Output** | Memory IDs | Ranked facts + observations | Reasoned response |
 | **Uses LLM** | Yes (extraction) | No | Yes (generation) |
-| **Uses mental models** | No | Yes | Yes |
+| **Uses observations** | No | Yes | Yes |
 | **Disposition** | No | No | Yes |
 
 ---

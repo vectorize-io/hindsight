@@ -26,10 +26,10 @@ class FeaturesInfo(BaseModel):
     """
     Feature flags indicating which capabilities are enabled.
     """ # noqa: E501
-    mental_models: StrictBool = Field(description="Whether mental models (auto-consolidation) are enabled")
+    observations: StrictBool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: StrictBool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: StrictBool = Field(description="Whether the background worker is enabled")
-    __properties: ClassVar[List[str]] = ["mental_models", "mcp", "worker"]
+    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +82,7 @@ class FeaturesInfo(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "mental_models": obj.get("mental_models"),
+            "observations": obj.get("observations"),
             "mcp": obj.get("mcp"),
             "worker": obj.get("worker")
         })

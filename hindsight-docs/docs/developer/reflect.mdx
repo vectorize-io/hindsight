@@ -14,8 +14,8 @@ graph TB
     subgraph agent["Reflect Agent Loop"]
         A[Query] --> B{Need more info?}
         B -->|Yes| C[Call Tools]
-        C --> D[search_reflections]
-        C --> E[search_mental_models]
+        C --> D[search_mental_models]
+        C --> E[search_observations]
         C --> F[recall]
         C --> G[expand]
         D --> B
@@ -34,9 +34,9 @@ graph TB
 Unlike simple retrieval, reflect is an **agentic system** that:
 
 1. **Autonomously gathers evidence** — The agent decides what information it needs and calls appropriate tools
-2. **Uses hierarchical retrieval** — Checks reflections first, then mental models, then raw facts
+2. **Uses hierarchical retrieval** — Checks mental models first, then observations, then raw facts
 3. **Applies disposition** — Shapes reasoning based on the bank's personality traits
-4. **Cites sources** — Returns which memories and mental models were used
+4. **Cites sources** — Returns which memories and observations were used
 
 ### The Agentic Loop
 
@@ -44,8 +44,8 @@ The reflect agent runs in a loop with access to these tools:
 
 | Tool | Purpose | Priority |
 |------|---------|----------|
-| `search_reflections` | User-curated summaries | Highest (check first) |
-| `search_mental_models` | Consolidated knowledge | High |
+| `search_mental_models` | User-curated summaries | Highest (check first) |
+| `search_observations` | Consolidated knowledge | High |
 | `recall` | Raw facts (ground truth) | Fallback |
 | `expand` | Get more context for a memory | As needed |
 | `done` | Complete with final answer | When ready |
@@ -59,13 +59,13 @@ The agent:
 
 The agent uses a smart retrieval hierarchy:
 
-1. **[Reflections](/developer/api/reflections)** — User-curated summaries you've pre-computed for common queries
-2. **[Mental Models](/developer/mental-models)** — Consolidated knowledge with freshness awareness
-3. **Raw Facts** — Ground truth for verification when models are stale
+1. **[Mental Models](/developer/api/mental-models)** — User-curated summaries you've pre-computed for common queries
+2. **[Observations](/developer/observations)** — Consolidated knowledge with freshness awareness
+3. **Raw Facts** — Ground truth for verification when observations are stale
 
-**Reflections** are saved reflect responses that you create for frequently asked questions. They're checked first because they represent explicitly curated knowledge. See the [Reflections API](/developer/api/reflections) for how to create and manage them.
+**Mental models** are saved reflect responses that you create for frequently asked questions. They're checked first because they represent explicitly curated knowledge. See the [Mental Models API](/developer/api/mental-models) for how to create and manage them.
 
-If a mental model is marked as **stale**, the agent automatically verifies it against current facts.
+If an observation is marked as **stale**, the agent automatically verifies it against current facts.
 
 ---
 
@@ -85,7 +85,7 @@ Without reflect:
 
 With reflect:
 - **Consistent character**: A "detail-oriented, cautious" bank emphasizes risks and thorough planning
-- **Evolving knowledge**: Mental models strengthen and adapt as evidence accumulates
+- **Evolving knowledge**: Observations strengthen and adapt as evidence accumulates
 - **Contextual reasoning**: "Based on what I know about your team's remote work success..."
 - **Differentiated behavior**: Support bots sound diplomatic, code reviewers sound direct
 
@@ -162,7 +162,7 @@ When you call `reflect()`:
 **Returns:**
 - **Response text** — Disposition-influenced answer from the agent
 - **based_on** — Evidence used: memories that grounded the response
-- **trace** — Tool calls, LLM calls, and mental models accessed (when `include.tool_calls=True`)
+- **trace** — Tool calls, LLM calls, and observations accessed (when `include.tool_calls=True`)
 - **structured_output** — Parsed response if `response_schema` was provided
 - **usage** — Token usage metrics
 
@@ -183,8 +183,8 @@ When you call `reflect()`:
     "llm_calls": [
       {"scope": "agent_1", "duration_ms": 1200}
     ],
-    "mental_models": [
-      {"id": "mm-789", "name": "Alice", "type": "entity", "subtype": "structural"}
+    "observations": [
+      {"id": "obs-789", "name": "Alice", "type": "entity", "subtype": "structural"}
     ]
   },
   "usage": {"input_tokens": 1500, "output_tokens": 500, "total_tokens": 2000}
@@ -204,13 +204,13 @@ Without disposition, all AI assistants sound the same. With disposition:
 - **Creative assistants** can be open to unconventional ideas
 - **Risk analysts** can be appropriately cautious
 
-Disposition creates **consistent character** across conversations while mental models **evolve with evidence**.
+Disposition creates **consistent character** across conversations while observations **evolve with evidence**.
 
 ---
 
 ## Next Steps
 
-- [**Mental Models**](./mental-models) — How knowledge is consolidated
+- [**Observations**](./observations) — How knowledge is consolidated
 - [**Retain**](./retain) — How rich facts are stored
 - [**Recall**](./retrieval) — How multi-strategy search works
 - [**Reflect API**](./api/reflect) — Code examples and parameters

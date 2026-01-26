@@ -141,15 +141,15 @@ from .entity_resolver import EntityResolver
 from .llm_wrapper import LLMConfig
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
-from .reflect.models import MentalModelInput
-from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models
+from .reflect.models import ObservationInput
+from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
 from .response_models import (
     VALID_RECALL_FACT_TYPES,
     EntityObservation,
     EntityState,
     LLMCallTrace,
     MemoryFact,
-    MentalModelRef,
+    ObservationRef,
     ReflectResult,
     TokenUsage,
     ToolCallTrace,
@@ -561,29 +561,29 @@ class MemoryEngine(MemoryEngineInterface):
 
         logger.info(f"[CONSOLIDATION] bank={bank_id} completed: {result.get('memories_processed', 0)} processed")
 
-    async def _handle_create_reflection(self, task_dict: dict[str, Any]):
+    async def _handle_create_mental_model(self, task_dict: dict[str, Any]):
         """
-        Handler for create_reflection tasks.
+        Handler for create_mental_model tasks.
 
-        Runs reflect with the source query and updates the reflection with the generated content.
-        The reflection should already exist in the database (created during submit_async_create_reflection).
+        Runs reflect with the source query and updates the mental model with the generated content.
+        The mental model should already exist in the database (created during submit_async_create_mental_model).
 
         Args:
-            task_dict: Dict with 'bank_id', 'reflection_id', 'source_query', 'max_tokens', 'operation_id'
+            task_dict: Dict with 'bank_id', 'mental_model_id', 'source_query', 'max_tokens', 'operation_id'
 
         Raises:
             ValueError: If required fields are missing
             Exception: Any exception from reflect/update (propagates to execute_task for retry)
         """
         bank_id = task_dict.get("bank_id")
-        reflection_id = task_dict.get("reflection_id")
+        mental_model_id = task_dict.get("mental_model_id")
         source_query = task_dict.get("source_query")
         max_tokens = task_dict.get("max_tokens", 2048)
 
-        if not bank_id or not reflection_id or not source_query:
-            raise ValueError("bank_id, reflection_id, and source_query are required for create_reflection task")
+        if not bank_id or not mental_model_id or not source_query:
+            raise ValueError("bank_id, mental_model_id, and source_query are required for create_mental_model task")
 
-        logger.info(f"[CREATE_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}")
+        logger.info(f"[CREATE_MENTAL_MODEL_TASK] Starting for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
         from hindsight_api.models import RequestContext
 
@@ -615,55 +615,55 @@ class MemoryEngine(MemoryEngineInterface):
             },
         }
 
-        # Update the reflection with the generated content and reflect_response
-        await self.update_reflection(
+        # Update the mental model with the generated content and reflect_response
+        await self.update_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection_id,
+            mental_model_id=mental_model_id,
             content=generated_content,
             reflect_response=reflect_response,
             request_context=internal_context,
         )
 
-        logger.info(f"[CREATE_REFLECTION_TASK] Completed for bank_id={bank_id}, reflection_id={reflection_id}")
+        logger.info(f"[CREATE_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
-    async def _handle_refresh_reflection(self, task_dict: dict[str, Any]):
+    async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]):
         """
-        Handler for refresh_reflection tasks.
+        Handler for refresh_mental_model tasks.
 
-        Re-runs the source query through reflect and updates the reflection content.
+        Re-runs the source query through reflect and updates the mental model content.
 
         Args:
-            task_dict: Dict with 'bank_id', 'reflection_id', 'operation_id'
+            task_dict: Dict with 'bank_id', 'mental_model_id', 'operation_id'
 
         Raises:
             ValueError: If required fields are missing
             Exception: Any exception from reflect/update (propagates to execute_task for retry)
         """
         bank_id = task_dict.get("bank_id")
-        reflection_id = task_dict.get("reflection_id")
+        mental_model_id = task_dict.get("mental_model_id")
 
-        if not bank_id or not reflection_id:
-            raise ValueError("bank_id and reflection_id are required for refresh_reflection task")
+        if not bank_id or not mental_model_id:
+            raise ValueError("bank_id and mental_model_id are required for refresh_mental_model task")
 
-        logger.info(f"[REFRESH_REFLECTION_TASK] Starting for bank_id={bank_id}, reflection_id={reflection_id}")
+        logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Starting for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
         from hindsight_api.models import RequestContext
 
         internal_context = RequestContext()
 
-        # Get the current reflection to get source_query
-        reflection = await self.get_reflection(bank_id, reflection_id, request_context=internal_context)
-        if not reflection:
-            raise ValueError(f"Reflection {reflection_id} not found in bank {bank_id}")
+        # Get the current mental model to get source_query
+        mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=internal_context)
+        if not mental_model:
+            raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
 
-        source_query = reflection["source_query"]
+        source_query = mental_model["source_query"]
 
-        # Run reflect to generate new content, excluding the reflection being refreshed
+        # Run reflect to generate new content, excluding the mental model being refreshed
         reflect_result = await self.reflect_async(
             bank_id=bank_id,
             query=source_query,
             request_context=internal_context,
-            exclude_reflection_ids=[reflection_id],
+            exclude_mental_model_ids=[mental_model_id],
         )
 
         generated_content = reflect_result.text or "No content generated"
@@ -684,16 +684,16 @@ class MemoryEngine(MemoryEngineInterface):
             },
         }
 
-        # Update the reflection with the generated content and reflect_response
-        await self.update_reflection(
+        # Update the mental model with the generated content and reflect_response
+        await self.update_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection_id,
+            mental_model_id=mental_model_id,
             content=generated_content,
             reflect_response=reflect_response,
             request_context=internal_context,
         )
 
-        logger.info(f"[REFRESH_REFLECTION_TASK] Completed for bank_id={bank_id}, reflection_id={reflection_id}")
+        logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
     async def execute_task(self, task_dict: dict[str, Any]):
         """
@@ -733,10 +733,10 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._handle_batch_retain(task_dict)
             elif task_type == "consolidation":
                 await self._handle_consolidation(task_dict)
-            elif task_type == "create_reflection":
-                await self._handle_create_reflection(task_dict)
-            elif task_type == "refresh_reflection":
-                await self._handle_refresh_reflection(task_dict)
+            elif task_type == "create_mental_model":
+                await self._handle_create_mental_model(task_dict)
+            elif task_type == "refresh_mental_model":
+                await self._handle_refresh_mental_model(task_dict)
             else:
                 logger.error(f"Unknown task type: {task_type}")
                 # Don't retry unknown task types
@@ -1436,7 +1436,7 @@ class MemoryEngine(MemoryEngineInterface):
         from ..config import get_config
 
         config = get_config()
-        if config.enable_mental_models:
+        if config.enable_observations:
             try:
                 await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
             except Exception as e:
@@ -2690,35 +2690,35 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
 
-    async def clear_mental_models(
+    async def clear_observations(
         self,
         bank_id: str,
         *,
         request_context: "RequestContext",
     ) -> dict[str, int]:
         """
-        Clear all mental models for a bank.
+        Clear all observations for a bank (consolidated knowledge).
 
         Args:
-            bank_id: Bank ID to clear mental models for
+            bank_id: Bank ID to clear observations for
             request_context: Request context for authentication.
 
         Returns:
-            Dictionary with count of deleted mental models
+            Dictionary with count of deleted observations
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
-                # Count mental models before deletion
+                # Count observations before deletion
                 count = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'mental_model'",
+                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
                     bank_id,
                 )
 
-                # Delete all mental models
+                # Delete all observations
                 await conn.execute(
-                    f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'mental_model'",
+                    f"DELETE FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = 'observation'",
                     bank_id,
                 )
 
@@ -3153,8 +3153,8 @@ class MemoryEngine(MemoryEngineInterface):
                 "tags": row["tags"] if row["tags"] else [],
             }
 
-            # For mental models, include source_memory_ids and fetch source_memories
-            if row["fact_type"] == "mental_model" and row["source_memory_ids"]:
+            # For observations, include source_memory_ids and fetch source_memories
+            if row["fact_type"] == "observation" and row["source_memory_ids"]:
                 source_ids = row["source_memory_ids"]
                 result["source_memory_ids"] = [str(sid) for sid in source_ids]
 
@@ -3485,7 +3485,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
-        exclude_reflection_ids: list[str] | None = None,
+        exclude_mental_model_ids: list[str] | None = None,
     ) -> ReflectResult:
         """
         Reflect and formulate an answer using an agentic loop with tools.
@@ -3509,8 +3509,8 @@ class MemoryEngine(MemoryEngineInterface):
             response_schema: Optional JSON Schema for structured output (not yet supported)
             tags: Optional tags to filter memories
             tags_match: How to match tags - "any" (OR), "all" (AND)
-            exclude_reflection_ids: Optional list of reflection IDs to exclude from search
-                (used when refreshing a reflection to avoid circular reference)
+            exclude_mental_model_ids: Optional list of mental model IDs to exclude from search
+                (used when refreshing a mental model to avoid circular reference)
 
         Returns:
             ReflectResult containing:
@@ -3569,15 +3569,14 @@ class MemoryEngine(MemoryEngineInterface):
         pending_consolidation = bank_stats.pending_consolidation if hasattr(bank_stats, "pending_consolidation") else 0
 
         # Create tool callbacks that acquire connections only when needed
-        from .reflect.tools import tool_search_reflections
         from .retain import embedding_utils
 
-        async def search_reflections_fn(q: str, max_results: int = 5) -> dict[str, Any]:
+        async def search_mental_models_fn(q: str, max_results: int = 5) -> dict[str, Any]:
             # Generate embedding for the query
             embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, [q])
             query_embedding = embeddings[0]
             async with pool.acquire() as conn:
-                return await tool_search_reflections(
+                return await tool_search_mental_models(
                     conn,
                     bank_id,
                     q,
@@ -3585,11 +3584,11 @@ class MemoryEngine(MemoryEngineInterface):
                     max_results=max_results,
                     tags=tags,
                     tags_match=tags_match,
-                    exclude_ids=exclude_reflection_ids,
+                    exclude_ids=exclude_mental_model_ids,
                 )
 
-        async def search_mental_models_fn(q: str, max_tokens: int = 5000) -> dict[str, Any]:
-            return await tool_search_mental_models(
+        async def search_observations_fn(q: str, max_tokens: int = 5000) -> dict[str, Any]:
+            return await tool_search_observations(
                 self,
                 bank_id,
                 q,
@@ -3638,8 +3637,8 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id=bank_id,
             query=query,
             bank_profile=profile,
-            search_reflections_fn=search_reflections_fn,
             search_mental_models_fn=search_mental_models_fn,
+            search_observations_fn=search_observations_fn,
             recall_fn=recall_fn,
             expand_fn=expand_fn,
             context=context,
@@ -3673,7 +3672,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Extract memories from recall tool outputs - only include memories the agent actually used
         # agent_result.used_memory_ids contains validated IDs from the done action
         used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
-        based_on: dict[str, list[MemoryFact]] = {"world": [], "experience": [], "opinion": []}
+        based_on: dict[str, list[MemoryFact]] = {"world": [], "experience": [], "opinion": [], "observation": []}
         seen_memory_ids: set[str] = set()
         for tc in agent_result.tool_trace:
             if tc.tool == "recall" and "memories" in tc.output:
@@ -3714,13 +3713,14 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        # Mental models have a "text" field containing the consolidated knowledge
+                        model_name = model.get("name", "")
+                        model_summary = model.get("summary") or model.get("description", "")
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=model.get("text", ""),
+                                text=f"{model_name}: {model_summary}",
                                 fact_type="mental-models",
-                                context=None,
+                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                 occurred_start=None,
                                 occurred_end=None,
                             )
@@ -3735,38 +3735,39 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        # Mental models have a "text" field containing the consolidated knowledge
+                        model_name = model.get("name", "")
+                        model_summary = model.get("summary") or model.get("description", "")
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=model.get("text", ""),
+                                text=f"{model_name}: {model_summary}",
                                 fact_type="mental-models",
-                                context=None,
+                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                 occurred_start=None,
                                 occurred_end=None,
                             )
                         )
-            elif tc.tool == "search_reflections":
-                # Search reflections - include all returned reflections (filtered by used_reflection_ids_set if specified)
-                used_reflection_ids_set = (
-                    set(agent_result.used_reflection_ids) if agent_result.used_reflection_ids else set()
+            elif tc.tool == "search_mental_models":
+                # Search mental models - include all returned mental models (filtered by used_mental_model_ids_set if specified)
+                used_mental_model_ids_set = (
+                    set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
                 )
-                for reflection in tc.output.get("reflections", []):
-                    reflection_id = reflection.get("id")
-                    if reflection_id and reflection_id not in seen_model_ids:
-                        # Only include reflections that the agent declared as used (or all if none specified)
-                        if used_reflection_ids_set and reflection_id not in used_reflection_ids_set:
-                            continue  # Skip reflections not actually used by the agent
-                        seen_model_ids.add(reflection_id)
-                        # Add to based_on as MemoryFact with type "mental-models" (reflections are synthesized knowledge)
-                        reflection_name = reflection.get("name", "")
-                        reflection_content = reflection.get("content", "")
+                for mental_model in tc.output.get("mental_models", []):
+                    mental_model_id = mental_model.get("id")
+                    if mental_model_id and mental_model_id not in seen_model_ids:
+                        # Only include mental models that the agent declared as used (or all if none specified)
+                        if used_mental_model_ids_set and mental_model_id not in used_mental_model_ids_set:
+                            continue  # Skip mental models not actually used by the agent
+                        seen_model_ids.add(mental_model_id)
+                        # Add to based_on as MemoryFact with type "mental-models" (mental models are synthesized knowledge)
+                        mental_model_name = mental_model.get("name", "")
+                        mental_model_content = mental_model.get("content", "")
                         based_on["mental-models"].append(
                             MemoryFact(
-                                id=reflection_id,
-                                text=f"{reflection_name}: {reflection_content}",
+                                id=mental_model_id,
+                                text=f"{mental_model_name}: {mental_model_content}",
                                 fact_type="mental-models",
-                                context="reflection (user-curated)",
+                                context="mental model (user-curated)",
                                 occurred_start=None,
                                 occurred_end=None,
                             )
@@ -4309,18 +4310,18 @@ class MemoryEngine(MemoryEngineInterface):
         fact_ids: list[str],
     ) -> int:
         """
-        Remove fact IDs from mental model source_memory_ids when memories are deleted.
+        Remove fact IDs from observation source_memory_ids when memories are deleted.
 
-        Mental models are now stored in memory_units with fact_type='mental_model'
+        Observations are stored in memory_units with fact_type='observation'
         and have a source_memory_ids column (UUID[]) tracking their source memories.
 
         Args:
             conn: Database connection
             bank_id: Bank identifier
-            fact_ids: List of fact IDs to remove from mental models
+            fact_ids: List of fact IDs to remove from observations
 
         Returns:
-            Number of mental models updated
+            Number of observations updated
         """
         if not fact_ids:
             return 0
@@ -4330,7 +4331,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         fact_uuids = [uuid_module.UUID(fid) for fid in fact_ids]
 
-        # Update mental models (memory_units with fact_type='mental_model')
+        # Update observations (memory_units with fact_type='observation')
         # by removing the deleted fact IDs from source_memory_ids
         # Use array subtraction: source_memory_ids - deleted_ids
         result = await conn.execute(
@@ -4343,7 +4344,7 @@ class MemoryEngine(MemoryEngineInterface):
             ),
                 updated_at = NOW()
             WHERE bank_id = $1
-            AND fact_type = 'mental_model'
+            AND fact_type = 'observation'
             AND source_memory_ids && $2::uuid[]
             """,
             bank_id,
@@ -4354,7 +4355,7 @@ class MemoryEngine(MemoryEngineInterface):
         updated_count = int(result.split()[-1]) if result and "UPDATE" in result else 0
         if updated_count > 0:
             logger.info(
-                f"[MENTAL_MODELS] Invalidated {len(fact_ids)} fact IDs from {updated_count} mental models in bank {bank_id}"
+                f"[OBSERVATIONS] Invalidated {len(fact_ids)} fact IDs from {updated_count} observations in bank {bank_id}"
             )
         return updated_count
 
@@ -4680,9 +4681,9 @@ class MemoryEngine(MemoryEngineInterface):
         offset: int = 0,
         request_context: "RequestContext",
     ) -> list[dict[str, Any]]:
-        """List auto-consolidated mental models for a bank.
+        """List auto-consolidated observations for a bank.
 
-        Mental models are stored in memory_units with fact_type='mental_model'.
+        Observations are stored in memory_units with fact_type='observation'.
         They are automatically created and updated by the consolidation engine.
 
         Args:
@@ -4694,7 +4695,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context: Request context for authentication
 
         Returns:
-            List of mental model dicts
+            List of observation dicts
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -4716,33 +4717,33 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
-                WHERE bank_id = $1 AND fact_type = 'mental_model' {tag_filter}
+                WHERE bank_id = $1 AND fact_type = 'observation' {tag_filter}
                 ORDER BY updated_at DESC NULLS LAST
                 LIMIT $2 OFFSET $3
                 """,
                 *params,
             )
 
-            return [self._row_to_mental_model_consolidated(row) for row in rows]
+            return [self._row_to_observation_consolidated(row) for row in rows]
 
-    async def get_mental_model_consolidated(
+    async def get_observation_consolidated(
         self,
         bank_id: str,
-        model_id: str,
+        observation_id: str,
         *,
         include_source_memories: bool = True,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Get a single mental model by ID.
+        """Get a single observation by ID.
 
         Args:
             bank_id: Bank identifier
-            model_id: Mental model ID
+            observation_id: Observation ID
             include_source_memories: Whether to include full source memory details
             request_context: Request context for authentication
 
         Returns:
-            Mental model dict or None if not found
+            Observation dict or None if not found
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -4752,16 +4753,16 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
                 FROM {fq_table("memory_units")}
-                WHERE bank_id = $1 AND id = $2 AND fact_type = 'mental_model'
+                WHERE bank_id = $1 AND id = $2 AND fact_type = 'observation'
                 """,
                 bank_id,
-                model_id,
+                observation_id,
             )
 
             if not row:
                 return None
 
-            result = self._row_to_mental_model_consolidated(row)
+            result = self._row_to_observation_consolidated(row)
 
             # Fetch source memories if requested and source_memory_ids exist
             if include_source_memories and result.get("source_memory_ids"):
@@ -4789,8 +4790,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             return result
 
-    def _row_to_mental_model_consolidated(self, row: Any) -> dict[str, Any]:
-        """Convert a database row to a mental model dict."""
+    def _row_to_observation_consolidated(self, row: Any) -> dict[str, Any]:
+        """Convert a database row to an observation dict."""
         import json
 
         history = row["history"]
@@ -4817,10 +4818,10 @@ class MemoryEngine(MemoryEngineInterface):
         }
 
     # =========================================================================
-    # REFLECTIONS CRUD
+    # MENTAL MODELS CRUD
     # =========================================================================
 
-    async def list_reflections(
+    async def list_mental_models(
         self,
         bank_id: str,
         *,
@@ -4830,7 +4831,7 @@ class MemoryEngine(MemoryEngineInterface):
         offset: int = 0,
         request_context: "RequestContext",
     ) -> list[dict[str, Any]]:
-        """List pinned reflections for a bank.
+        """List pinned mental models for a bank.
 
         Args:
             bank_id: Bank identifier
@@ -4841,7 +4842,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context: Request context for authentication
 
         Returns:
-            List of pinned reflection dicts
+            List of pinned mental model dicts
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -4863,7 +4864,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, created_at, reflect_response
-                FROM {fq_table("reflections")}
+                FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 {tag_filter}
                 ORDER BY last_refreshed_at DESC
                 LIMIT $2 OFFSET $3
@@ -4871,24 +4872,24 @@ class MemoryEngine(MemoryEngineInterface):
                 *params,
             )
 
-            return [self._row_to_reflection(row) for row in rows]
+            return [self._row_to_mental_model(row) for row in rows]
 
-    async def get_reflection(
+    async def get_mental_model(
         self,
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Get a single pinned reflection by ID.
+        """Get a single pinned mental model by ID.
 
         Args:
             bank_id: Bank identifier
-            reflection_id: Pinned reflection UUID
+            mental_model_id: Pinned mental model UUID
             request_context: Request context for authentication
 
         Returns:
-            Pinned reflection dict or None if not found
+            Pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -4898,16 +4899,16 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, created_at, reflect_response
-                FROM {fq_table("reflections")}
+                FROM {fq_table("mental_models")}
                 WHERE bank_id = $1 AND id = $2
                 """,
                 bank_id,
-                reflection_id,
+                mental_model_id,
             )
 
-            return self._row_to_reflection(row) if row else None
+            return self._row_to_mental_model(row) if row else None
 
-    async def create_reflection(
+    async def create_mental_model(
         self,
         bank_id: str,
         name: str,
@@ -4917,18 +4918,18 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Create a new pinned reflection.
+        """Create a new pinned mental model.
 
         Args:
             bank_id: Bank identifier
-            name: Human-readable name for the reflection
-            source_query: The query that generated this reflection
+            name: Human-readable name for the mental model
+            source_query: The query that generated this mental model
             content: The synthesized content
             tags: Optional tags for scoped visibility
             request_context: Request context for authentication
 
         Returns:
-            The created pinned reflection dict
+            The created pinned mental model dict
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -4942,7 +4943,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(pool) as conn:
             row = await conn.fetchrow(
                 f"""
-                INSERT INTO {fq_table("reflections")}
+                INSERT INTO {fq_table("mental_models")}
                 (bank_id, name, source_query, content, embedding, tags)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id, bank_id, name, source_query, content, tags,
@@ -4956,45 +4957,45 @@ class MemoryEngine(MemoryEngineInterface):
                 tags or [],
             )
 
-        logger.info(f"[REFLECTIONS] Created pinned reflection '{name}' for bank {bank_id}")
-        return self._row_to_reflection(row)
+        logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
+        return self._row_to_mental_model(row)
 
-    async def refresh_reflection(
+    async def refresh_mental_model(
         self,
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Refresh a pinned reflection by re-running its source query.
+        """Refresh a pinned mental model by re-running its source query.
 
         This method:
-        1. Gets the pinned reflection
+        1. Gets the pinned mental model
         2. Runs the source_query through reflect
         3. Updates the content with the new synthesis
         4. Updates last_refreshed_at
 
         Args:
             bank_id: Bank identifier
-            reflection_id: Pinned reflection UUID
+            mental_model_id: Pinned mental model UUID
             request_context: Request context for authentication
 
         Returns:
-            Updated pinned reflection dict or None if not found
+            Updated pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
 
-        # Get the current reflection
-        reflection = await self.get_reflection(bank_id, reflection_id, request_context=request_context)
-        if not reflection:
+        # Get the current mental model
+        mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=request_context)
+        if not mental_model:
             return None
 
-        # Run reflect with the source query, excluding the reflection being refreshed
+        # Run reflect with the source query, excluding the mental model being refreshed
         reflect_result = await self.reflect_async(
             bank_id=bank_id,
-            query=reflection["source_query"],
+            query=mental_model["source_query"],
             request_context=request_context,
-            exclude_reflection_ids=[reflection_id],
+            exclude_mental_model_ids=[mental_model_id],
         )
 
         # Build reflect_response payload to store
@@ -5011,39 +5012,40 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 for fact_type, facts in reflect_result.based_on.items()
             },
+            "mental_models": [],  # Mental models are included in based_on["mental-models"]
         }
 
-        # Update the reflection with new content and reflect_response
-        return await self.update_reflection(
+        # Update the mental model with new content and reflect_response
+        return await self.update_mental_model(
             bank_id,
-            reflection_id,
+            mental_model_id,
             content=reflect_result.text,
             reflect_response=reflect_response_payload,
             request_context=request_context,
         )
 
-    async def update_reflection(
+    async def update_mental_model(
         self,
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         *,
         name: str | None = None,
         content: str | None = None,
         reflect_response: dict[str, Any] | None = None,
         request_context: "RequestContext",
     ) -> dict[str, Any] | None:
-        """Update a pinned reflection.
+        """Update a pinned mental model.
 
         Args:
             bank_id: Bank identifier
-            reflection_id: Pinned reflection UUID
+            mental_model_id: Pinned mental model UUID
             name: New name (if changing)
             content: New content (if changing)
             reflect_response: Full reflect API response payload (if changing)
             request_context: Request context for authentication
 
         Returns:
-            Updated pinned reflection dict or None if not found
+            Updated pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
         pool = await self._get_pool()
@@ -5051,7 +5053,7 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(pool) as conn:
             # Build dynamic update
             updates = []
-            params: list[Any] = [bank_id, reflection_id]
+            params: list[Any] = [bank_id, mental_model_id]
             param_idx = 3
 
             if name is not None:
@@ -5081,7 +5083,7 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
 
             query = f"""
-                UPDATE {fq_table("reflections")}
+                UPDATE {fq_table("mental_models")}
                 SET {", ".join(updates)}
                 WHERE bank_id = $1 AND id = $2
                 RETURNING id, bank_id, name, source_query, content, tags,
@@ -5090,20 +5092,20 @@ class MemoryEngine(MemoryEngineInterface):
 
             row = await conn.fetchrow(query, *params)
 
-            return self._row_to_reflection(row) if row else None
+            return self._row_to_mental_model(row) if row else None
 
-    async def delete_reflection(
+    async def delete_mental_model(
         self,
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         *,
         request_context: "RequestContext",
     ) -> bool:
-        """Delete a pinned reflection.
+        """Delete a pinned mental model.
 
         Args:
             bank_id: Bank identifier
-            reflection_id: Pinned reflection UUID
+            mental_model_id: Pinned mental model UUID
             request_context: Request context for authentication
 
         Returns:
@@ -5114,15 +5116,15 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(pool) as conn:
             result = await conn.execute(
-                f"DELETE FROM {fq_table('reflections')} WHERE bank_id = $1 AND id = $2",
+                f"DELETE FROM {fq_table('mental_models')} WHERE bank_id = $1 AND id = $2",
                 bank_id,
-                reflection_id,
+                mental_model_id,
             )
 
         return result == "DELETE 1"
 
-    def _row_to_reflection(self, row) -> dict[str, Any]:
-        """Convert a database row to a reflection dict."""
+    def _row_to_mental_model(self, row) -> dict[str, Any]:
+        """Convert a database row to a mental model dict."""
         reflect_response = row.get("reflect_response")
         # Parse JSON string to dict if needed (asyncpg may return JSONB as string)
         if isinstance(reflect_response, str):
@@ -5747,7 +5749,7 @@ class MemoryEngine(MemoryEngineInterface):
             dedupe_by_bank=True,
         )
 
-    async def submit_async_create_reflection(
+    async def submit_async_create_mental_model(
         self,
         bank_id: str,
         name: str,
@@ -5757,16 +5759,16 @@ class MemoryEngine(MemoryEngineInterface):
         max_tokens: int = 2048,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Submit an async reflection creation operation.
+        """Submit an async mental model creation operation.
 
         This:
-        1. Creates the reflection in the database immediately (with placeholder content)
+        1. Creates the mental model in the database immediately (with placeholder content)
         2. Schedules a background task to run reflect and update the content
         3. Returns operation_id for tracking
 
         Args:
             bank_id: Bank identifier
-            name: Human-readable name for the reflection
+            name: Human-readable name for the mental model
             source_query: The query to run to generate content
             tags: Optional tags for scoped visibility
             max_tokens: Maximum tokens for the reflect response
@@ -5777,8 +5779,8 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
 
-        # 1. Create the reflection in the database with placeholder content
-        reflection = await self.create_reflection(
+        # 1. Create the mental model in the database with placeholder content
+        mental_model = await self.create_mental_model(
             bank_id=bank_id,
             name=name,
             source_query=source_query,
@@ -5786,36 +5788,36 @@ class MemoryEngine(MemoryEngineInterface):
             tags=tags,
             request_context=request_context,
         )
-        reflection_id = reflection["id"]
+        mental_model_id = mental_model["id"]
 
         # 2. Submit async operation
         return await self._submit_async_operation(
             bank_id=bank_id,
-            operation_type="create_reflection",
-            task_type="create_reflection",
+            operation_type="create_mental_model",
+            task_type="create_mental_model",
             task_payload={
-                "reflection_id": reflection_id,
+                "mental_model_id": mental_model_id,
                 "source_query": source_query,
                 "max_tokens": max_tokens,
             },
-            result_metadata={"reflection_id": reflection_id, "name": name, "source_query": source_query},
+            result_metadata={"mental_model_id": mental_model_id, "name": name, "source_query": source_query},
             dedupe_by_bank=False,
         )
 
-    async def submit_async_refresh_reflection(
+    async def submit_async_refresh_mental_model(
         self,
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Submit an async reflection refresh operation.
+        """Submit an async mental model refresh operation.
 
         This schedules a background task to re-run the source query and update the content.
 
         Args:
             bank_id: Bank identifier
-            reflection_id: Reflection UUID to refresh
+            mental_model_id: Mental model UUID to refresh
             request_context: Request context for authentication
 
         Returns:
@@ -5823,18 +5825,18 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
 
-        # Verify reflection exists
-        reflection = await self.get_reflection(bank_id, reflection_id, request_context=request_context)
-        if not reflection:
-            raise ValueError(f"Reflection {reflection_id} not found in bank {bank_id}")
+        # Verify mental model exists
+        mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=request_context)
+        if not mental_model:
+            raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
 
         return await self._submit_async_operation(
             bank_id=bank_id,
-            operation_type="refresh_reflection",
-            task_type="refresh_reflection",
+            operation_type="refresh_mental_model",
+            task_type="refresh_mental_model",
             task_payload={
-                "reflection_id": reflection_id,
+                "mental_model_id": mental_model_id,
             },
-            result_metadata={"reflection_id": reflection_id, "name": reflection["name"]},
+            result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
         )

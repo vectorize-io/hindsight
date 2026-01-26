@@ -1,4 +1,4 @@
-"""Tests for reflections, mental models, and learnings functionality."""
+"""Tests for mental models (formerly reflections), observations, and learnings functionality."""
 
 import uuid
 
@@ -21,22 +21,22 @@ async def api_client(memory):
 @pytest.fixture
 def test_bank_id():
     """Provide a unique bank ID for this test run."""
-    return f"test_reflections_{uuid.uuid4().hex[:8]}"
+    return f"test_mental_models_{uuid.uuid4().hex[:8]}"
 
 
-class TestReflectionsCRUD:
-    """Test reflections CRUD operations via memory engine."""
+class TestMentalModelsCRUD:
+    """Test mental models CRUD operations via memory engine."""
 
     @pytest.mark.asyncio
-    async def test_create_and_get_reflection(self, memory: MemoryEngine, request_context):
-        """Test creating and retrieving a reflection."""
-        bank_id = f"test-reflection-{uuid.uuid4().hex[:8]}"
+    async def test_create_and_get_mental_model(self, memory: MemoryEngine, request_context):
+        """Test creating and retrieving a mental model."""
+        bank_id = f"test-mental-model-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
         await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        # Create a reflection
-        reflection = await memory.create_reflection(
+        # Create a mental model
+        mental_model = await memory.create_mental_model(
             bank_id=bank_id,
             name="Team Preferences",
             source_query="What are the team's communication preferences?",
@@ -45,45 +45,45 @@ class TestReflectionsCRUD:
             request_context=request_context,
         )
 
-        assert reflection["name"] == "Team Preferences"
-        assert reflection["source_query"] == "What are the team's communication preferences?"
-        assert reflection["content"] == "The team prefers async communication via Slack"
-        assert reflection["tags"] == ["team"]
-        assert "id" in reflection
+        assert mental_model["name"] == "Team Preferences"
+        assert mental_model["source_query"] == "What are the team's communication preferences?"
+        assert mental_model["content"] == "The team prefers async communication via Slack"
+        assert mental_model["tags"] == ["team"]
+        assert "id" in mental_model
 
-        # Get the reflection
-        fetched = await memory.get_reflection(
+        # Get the mental model
+        fetched = await memory.get_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection["id"],
+            mental_model_id=mental_model["id"],
             request_context=request_context,
         )
 
-        assert fetched["id"] == reflection["id"]
+        assert fetched["id"] == mental_model["id"]
         assert fetched["name"] == "Team Preferences"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_list_reflections(self, memory: MemoryEngine, request_context):
-        """Test listing reflections with filters."""
-        bank_id = f"test-reflection-list-{uuid.uuid4().hex[:8]}"
+    async def test_list_mental_models(self, memory: MemoryEngine, request_context):
+        """Test listing mental models with filters."""
+        bank_id = f"test-mental-model-list-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
         await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        # Create multiple reflections
-        await memory.create_reflection(
+        # Create multiple mental models
+        await memory.create_mental_model(
             bank_id=bank_id,
-            name="Reflection 1",
+            name="Mental Model 1",
             source_query="Query 1",
             content="Content 1",
             tags=["tag1"],
             request_context=request_context,
         )
-        await memory.create_reflection(
+        await memory.create_mental_model(
             bank_id=bank_id,
-            name="Reflection 2",
+            name="Mental Model 2",
             source_query="Query 2",
             content="Content 2",
             tags=["tag2"],
@@ -91,33 +91,33 @@ class TestReflectionsCRUD:
         )
 
         # List all
-        all_reflections = await memory.list_reflections(
+        all_mental_models = await memory.list_mental_models(
             bank_id=bank_id,
             request_context=request_context,
         )
-        assert len(all_reflections) == 2
+        assert len(all_mental_models) == 2
 
         # List with tag filter
-        tag1_reflections = await memory.list_reflections(
+        tag1_mental_models = await memory.list_mental_models(
             bank_id=bank_id,
             tags=["tag1"],
             request_context=request_context,
         )
-        assert len(tag1_reflections) == 1
+        assert len(tag1_mental_models) == 1
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_update_reflection(self, memory: MemoryEngine, request_context):
-        """Test updating a reflection."""
-        bank_id = f"test-reflection-update-{uuid.uuid4().hex[:8]}"
+    async def test_update_mental_model(self, memory: MemoryEngine, request_context):
+        """Test updating a mental model."""
+        bank_id = f"test-mental-model-update-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
         await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        # Create a reflection
-        reflection = await memory.create_reflection(
+        # Create a mental model
+        mental_model = await memory.create_mental_model(
             bank_id=bank_id,
             name="Original Name",
             source_query="Original Query",
@@ -125,10 +125,10 @@ class TestReflectionsCRUD:
             request_context=request_context,
         )
 
-        # Update the reflection
-        updated = await memory.update_reflection(
+        # Update the mental model
+        updated = await memory.update_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection["id"],
+            mental_model_id=mental_model["id"],
             name="Updated Name",
             content="Updated Content",
             request_context=request_context,
@@ -141,15 +141,15 @@ class TestReflectionsCRUD:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    async def test_delete_reflection(self, memory: MemoryEngine, request_context):
-        """Test deleting a reflection."""
-        bank_id = f"test-reflection-delete-{uuid.uuid4().hex[:8]}"
+    async def test_delete_mental_model(self, memory: MemoryEngine, request_context):
+        """Test deleting a mental model."""
+        bank_id = f"test-mental-model-delete-{uuid.uuid4().hex[:8]}"
 
         # Create the bank first
         await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        # Create a reflection
-        reflection = await memory.create_reflection(
+        # Create a mental model
+        mental_model = await memory.create_mental_model(
             bank_id=bank_id,
             name="To Delete",
             source_query="Query",
@@ -157,17 +157,17 @@ class TestReflectionsCRUD:
             request_context=request_context,
         )
 
-        # Delete the reflection
-        await memory.delete_reflection(
+        # Delete the mental model
+        await memory.delete_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection["id"],
+            mental_model_id=mental_model["id"],
             request_context=request_context,
         )
 
         # Verify deletion - should return None
-        fetched = await memory.get_reflection(
+        fetched = await memory.get_mental_model(
             bank_id=bank_id,
-            reflection_id=reflection["id"],
+            mental_model_id=mental_model["id"],
             request_context=request_context,
         )
         assert fetched is None
@@ -176,45 +176,45 @@ class TestReflectionsCRUD:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-class TestMentalModelsAPI:
-    """Test mental models API endpoints.
+class TestObservationsAPI:
+    """Test observations API endpoints.
 
-    NOTE: Mental models are now stored in memory_units with fact_type='mental_model'
-    and accessed via recall with fact_type=["mental_model"]. The old /mental-models
+    NOTE: Observations are now stored in memory_units with fact_type='observation'
+    and accessed via recall with fact_type=["observation"]. The old /observations
     endpoint was removed. These tests are skipped.
     """
 
-    @pytest.mark.skip(reason="Mental models endpoint removed - use recall with fact_type=['mental_model']")
+    @pytest.mark.skip(reason="Observations endpoint removed - use recall with fact_type=['observation']")
     @pytest.mark.asyncio
-    async def test_list_mental_models_empty(self, api_client, test_bank_id):
-        """Test listing mental models when none exist."""
+    async def test_list_observations_empty(self, api_client, test_bank_id):
+        """Test listing observations when none exist."""
         pass
 
-    @pytest.mark.skip(reason="Mental models endpoint removed - use recall with fact_type=['mental_model']")
+    @pytest.mark.skip(reason="Observations endpoint removed - use recall with fact_type=['observation']")
     @pytest.mark.asyncio
-    async def test_get_mental_model_not_found(self, api_client, test_bank_id):
-        """Test getting a non-existent mental model."""
+    async def test_get_observation_not_found(self, api_client, test_bank_id):
+        """Test getting a non-existent observation."""
         pass
 
 
-class TestReflectionsAPI:
-    """Test reflections API endpoints."""
+class TestMentalModelsAPI:
+    """Test mental models API endpoints."""
 
     @pytest.mark.asyncio
-    async def test_reflections_api_crud(self, api_client, test_bank_id):
+    async def test_mental_models_api_crud(self, api_client, test_bank_id):
         """Test full CRUD cycle through API."""
         import asyncio
 
         # Create bank first via profile endpoint
         await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
 
-        # Create a reflection (async operation)
+        # Create a mental model (async operation)
         response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/reflections",
+            f"/v1/default/banks/{test_bank_id}/mental-models",
             json={
-                "name": "API Test Reflection",
+                "name": "API Test Mental Model",
                 "source_query": "What is the API test about?",
-                "content": "This is an API test reflection",
+                "content": "This is an API test mental model",
                 "tags": ["api-test"],
             },
         )
@@ -232,44 +232,72 @@ class TestReflectionsAPI:
                     break
             await asyncio.sleep(1)
 
-        # List reflections to get the created reflection
-        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/reflections")
+        # List mental models to get the created mental model
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models")
         assert response.status_code == 200
-        reflections = response.json()["items"]
-        assert len(reflections) >= 1
+        mental_models = response.json()["items"]
+        assert len(mental_models) >= 1
 
-        # Find our reflection
-        reflection = next((r for r in reflections if r["name"] == "API Test Reflection"), None)
-        assert reflection is not None, f"Reflection not found. Items: {reflections}"
-        reflection_id = reflection["id"]
+        # Find our mental model
+        mental_model = next((m for m in mental_models if m["name"] == "API Test Mental Model"), None)
+        assert mental_model is not None, f"Mental model not found. Items: {mental_models}"
+        mental_model_id = mental_model["id"]
 
-        # Get the reflection
-        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/reflections/{reflection_id}")
+        # Get the mental model
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
         assert response.status_code == 200
-        assert response.json()["name"] == "API Test Reflection"
+        assert response.json()["name"] == "API Test Mental Model"
 
-        # Update the reflection
+        # Update the mental model
         response = await api_client.patch(
-            f"/v1/default/banks/{test_bank_id}/reflections/{reflection_id}",
-            json={"name": "Updated API Test Reflection"},
+            f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}",
+            json={"name": "Updated API Test Mental Model"},
         )
         assert response.status_code == 200
-        assert response.json()["name"] == "Updated API Test Reflection"
+        assert response.json()["name"] == "Updated API Test Mental Model"
 
-        # Delete the reflection
-        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/reflections/{reflection_id}")
+        # Delete the mental model
+        response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
         assert response.status_code == 200
 
         # Verify deletion
-        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/reflections/{reflection_id}")
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/mental-models/{mental_model_id}")
         assert response.status_code == 404
 
         # Cleanup
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
 
-class TestRecallWithMentalModelsAndReflections:
-    """Test recall integration with mental models and reflections."""
+class TestRecallWithObservationsAndMentalModels:
+    """Test recall integration with observations and mental models."""
+
+    @pytest.mark.asyncio
+    async def test_recall_includes_observations(self, api_client, test_bank_id):
+        """Test that recall can include observations in the response."""
+        # Create bank first via profile endpoint
+        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+
+        # Note: Observations are auto-created via consolidation, not manually
+        # This test just verifies the include parameter works
+
+        # Recall with observations included
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories/recall",
+            json={
+                "query": "What is machine learning?",
+                "include": {
+                    "observations": {"max_results": 5},
+                },
+            },
+        )
+        assert response.status_code == 200
+        result = response.json()
+
+        # Should have observations field in response (may be empty)
+        assert "observations" in result or result.get("observations") is None
+
+        # Cleanup
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
     @pytest.mark.asyncio
     async def test_recall_includes_mental_models(self, api_client, test_bank_id):
@@ -277,37 +305,9 @@ class TestRecallWithMentalModelsAndReflections:
         # Create bank first via profile endpoint
         await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
 
-        # Note: Mental models are auto-created via consolidation, not manually
-        # This test just verifies the include parameter works
-
-        # Recall with mental models included
+        # Create a mental model first
         response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/memories/recall",
-            json={
-                "query": "What is machine learning?",
-                "include": {
-                    "mental_models": {"max_results": 5},
-                },
-            },
-        )
-        assert response.status_code == 200
-        result = response.json()
-
-        # Should have mental_models field in response (may be empty)
-        assert "mental_models" in result or result.get("mental_models") is None
-
-        # Cleanup
-        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
-
-    @pytest.mark.asyncio
-    async def test_recall_includes_reflections(self, api_client, test_bank_id):
-        """Test that recall can include reflections in the response."""
-        # Create bank first via profile endpoint
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
-
-        # Create a reflection first
-        response = await api_client.post(
-            f"/v1/default/banks/{test_bank_id}/reflections",
+            f"/v1/default/banks/{test_bank_id}/mental-models",
             json={
                 "name": "AI Overview",
                 "source_query": "What is AI?",
@@ -317,32 +317,32 @@ class TestRecallWithMentalModelsAndReflections:
         )
         assert response.status_code == 200
 
-        # Recall with reflections included
+        # Recall with mental models included
         response = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/memories/recall",
             json={
                 "query": "What is artificial intelligence?",
                 "include": {
-                    "reflections": {"max_results": 5},
+                    "mental_models": {"max_results": 5},
                 },
             },
         )
         assert response.status_code == 200
         result = response.json()
 
-        # Should have reflections in response (may be empty if embedding not generated yet)
-        assert "reflections" in result or result.get("reflections") is None
+        # Should have mental_models in response (may be empty if embedding not generated yet)
+        assert "mental_models" in result or result.get("mental_models") is None
 
         # Cleanup
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
     @pytest.mark.asyncio
-    async def test_recall_without_mental_models_by_default(self, api_client, test_bank_id):
-        """Test that recall does not include mental models by default."""
+    async def test_recall_without_observations_by_default(self, api_client, test_bank_id):
+        """Test that recall does not include observations by default."""
         # Create bank first via profile endpoint
         await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
 
-        # Recall without specifying mental models
+        # Recall without specifying observations
         response = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/memories/recall",
             json={
@@ -352,8 +352,8 @@ class TestRecallWithMentalModelsAndReflections:
         assert response.status_code == 200
         result = response.json()
 
-        # Mental models should not be in response
-        assert result.get("mental_models") is None
+        # Observations should not be in response
+        assert result.get("observations") is None
 
         # Cleanup
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")

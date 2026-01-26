@@ -194,15 +194,15 @@ export type BankStatsResponse = {
   /**
    * Pending Consolidation
    *
-   * Number of memories not yet processed into mental models
+   * Number of memories not yet processed into observations
    */
   pending_consolidation?: number;
   /**
-   * Total Mental Models
+   * Total Observations
    *
-   * Total number of mental models
+   * Total number of observations
    */
-  total_mental_models?: number;
+  total_observations?: number;
 };
 
 /**
@@ -388,15 +388,15 @@ export type CreateDirectiveRequest = {
 };
 
 /**
- * CreateReflectionRequest
+ * CreateMentalModelRequest
  *
- * Request model for creating a reflection.
+ * Request model for creating a mental model.
  */
-export type CreateReflectionRequest = {
+export type CreateMentalModelRequest = {
   /**
    * Name
    *
-   * Human-readable name for the reflection
+   * Human-readable name for the mental model
    */
   name: string;
   /**
@@ -420,11 +420,11 @@ export type CreateReflectionRequest = {
 };
 
 /**
- * CreateReflectionResponse
+ * CreateMentalModelResponse
  *
- * Response model for reflection creation.
+ * Response model for mental model creation.
  */
-export type CreateReflectionResponse = {
+export type CreateMentalModelResponse = {
   /**
    * Operation Id
    *
@@ -783,11 +783,11 @@ export type FactsIncludeOptions = {
  */
 export type FeaturesInfo = {
   /**
-   * Mental Models
+   * Observations
    *
-   * Whether mental models (auto-consolidation) are enabled
+   * Whether observations (auto-consolidation) are enabled
    */
-  mental_models: boolean;
+  observations: boolean;
   /**
    * Mcp
    *
@@ -983,6 +983,66 @@ export type MemoryItem = {
 };
 
 /**
+ * MentalModelListResponse
+ *
+ * Response model for listing mental models.
+ */
+export type MentalModelListResponse = {
+  /**
+   * Items
+   */
+  items: Array<MentalModelResponse>;
+};
+
+/**
+ * MentalModelResponse
+ *
+ * Response model for a mental model (stored reflect response).
+ */
+export type MentalModelResponse = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Source Query
+   */
+  source_query: string;
+  /**
+   * Content
+   */
+  content: string;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Last Refreshed At
+   */
+  last_refreshed_at?: string | null;
+  /**
+   * Created At
+   */
+  created_at?: string | null;
+  /**
+   * Reflect Response
+   *
+   * Full reflect API response payload including based_on facts and observations
+   */
+  reflect_response?: {
+    [key: string]: unknown;
+  } | null;
+};
+
+/**
  * OperationResponse
  *
  * Response model for a single async operation.
@@ -1095,7 +1155,7 @@ export type RecallRequest = {
   /**
    * Types
    *
-   * List of fact types to recall: 'world', 'experience', 'mental_model'. Defaults to world and experience if not specified. Note: 'opinion' is accepted but ignored (opinions are excluded from recall).
+   * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified. Note: 'opinion' is accepted but ignored (opinions are excluded from recall).
    */
   types?: Array<string> | null;
   budget?: Budget;
@@ -1306,44 +1366,6 @@ export type ReflectLlmCall = {
 };
 
 /**
- * ReflectMentalModel
- *
- * A mental model accessed during reflect.
- */
-export type ReflectMentalModel = {
-  /**
-   * Id
-   *
-   * Mental model ID
-   */
-  id: string;
-  /**
-   * Name
-   *
-   * Mental model name
-   */
-  name: string;
-  /**
-   * Type
-   *
-   * Mental model type: entity, concept, event
-   */
-  type: string;
-  /**
-   * Subtype
-   *
-   * Mental model subtype: structural, emergent, learned, directive
-   */
-  subtype: string;
-  /**
-   * Observations
-   *
-   * Observations for directive mental models (subtype='directive')
-   */
-  observations?: Array<string> | null;
-};
-
-/**
  * ReflectRequest
  *
  * Request model for reflect endpoint.
@@ -1486,72 +1508,6 @@ export type ReflectTrace = {
    * LLM calls made during reflection
    */
   llm_calls?: Array<ReflectLlmCall>;
-  /**
-   * Mental Models
-   *
-   * Mental models used during reflection (includes directives with subtype='directive')
-   */
-  mental_models?: Array<ReflectMentalModel>;
-};
-
-/**
- * ReflectionListResponse
- *
- * Response model for listing reflections.
- */
-export type ReflectionListResponse = {
-  /**
-   * Items
-   */
-  items: Array<ReflectionResponse>;
-};
-
-/**
- * ReflectionResponse
- *
- * Response model for a reflection.
- */
-export type ReflectionResponse = {
-  /**
-   * Id
-   */
-  id: string;
-  /**
-   * Bank Id
-   */
-  bank_id: string;
-  /**
-   * Name
-   */
-  name: string;
-  /**
-   * Source Query
-   */
-  source_query: string;
-  /**
-   * Content
-   */
-  content: string;
-  /**
-   * Tags
-   */
-  tags?: Array<string>;
-  /**
-   * Last Refreshed At
-   */
-  last_refreshed_at?: string | null;
-  /**
-   * Created At
-   */
-  created_at?: string | null;
-  /**
-   * Reflect Response
-   *
-   * Full reflect API response payload including based_on facts and mental_models
-   */
-  reflect_response?: {
-    [key: string]: unknown;
-  } | null;
 };
 
 /**
@@ -1725,15 +1681,15 @@ export type UpdateDispositionRequest = {
 };
 
 /**
- * UpdateReflectionRequest
+ * UpdateMentalModelRequest
  *
- * Request model for updating a reflection.
+ * Request model for updating a mental model.
  */
-export type UpdateReflectionRequest = {
+export type UpdateMentalModelRequest = {
   /**
    * Name
    *
-   * New name for the reflection
+   * New name for the mental model
    */
   name?: string | null;
 };
@@ -2229,7 +2185,7 @@ export type RegenerateEntityObservationsResponses = {
 export type RegenerateEntityObservationsResponse =
   RegenerateEntityObservationsResponses[keyof RegenerateEntityObservationsResponses];
 
-export type ListReflectionsData = {
+export type ListMentalModelsData = {
   body?: never;
   headers?: {
     /**
@@ -2265,31 +2221,31 @@ export type ListReflectionsData = {
      */
     offset?: number;
   };
-  url: "/v1/default/banks/{bank_id}/reflections";
+  url: "/v1/default/banks/{bank_id}/mental-models";
 };
 
-export type ListReflectionsErrors = {
+export type ListMentalModelsErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type ListReflectionsError =
-  ListReflectionsErrors[keyof ListReflectionsErrors];
+export type ListMentalModelsError =
+  ListMentalModelsErrors[keyof ListMentalModelsErrors];
 
-export type ListReflectionsResponses = {
+export type ListMentalModelsResponses = {
   /**
    * Successful Response
    */
-  200: ReflectionListResponse;
+  200: MentalModelListResponse;
 };
 
-export type ListReflectionsResponse =
-  ListReflectionsResponses[keyof ListReflectionsResponses];
+export type ListMentalModelsResponse =
+  ListMentalModelsResponses[keyof ListMentalModelsResponses];
 
-export type CreateReflectionData = {
-  body: CreateReflectionRequest;
+export type CreateMentalModelData = {
+  body: CreateMentalModelRequest;
   headers?: {
     /**
      * Authorization
@@ -2303,30 +2259,30 @@ export type CreateReflectionData = {
     bank_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/reflections";
+  url: "/v1/default/banks/{bank_id}/mental-models";
 };
 
-export type CreateReflectionErrors = {
+export type CreateMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type CreateReflectionError =
-  CreateReflectionErrors[keyof CreateReflectionErrors];
+export type CreateMentalModelError =
+  CreateMentalModelErrors[keyof CreateMentalModelErrors];
 
-export type CreateReflectionResponses = {
+export type CreateMentalModelResponses = {
   /**
    * Successful Response
    */
-  200: CreateReflectionResponse;
+  200: CreateMentalModelResponse;
 };
 
-export type CreateReflectionResponse2 =
-  CreateReflectionResponses[keyof CreateReflectionResponses];
+export type CreateMentalModelResponse2 =
+  CreateMentalModelResponses[keyof CreateMentalModelResponses];
 
-export type DeleteReflectionData = {
+export type DeleteMentalModelData = {
   body?: never;
   headers?: {
     /**
@@ -2340,32 +2296,32 @@ export type DeleteReflectionData = {
      */
     bank_id: string;
     /**
-     * Reflection Id
+     * Mental Model Id
      */
-    reflection_id: string;
+    mental_model_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/reflections/{reflection_id}";
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
 
-export type DeleteReflectionErrors = {
+export type DeleteMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type DeleteReflectionError =
-  DeleteReflectionErrors[keyof DeleteReflectionErrors];
+export type DeleteMentalModelError =
+  DeleteMentalModelErrors[keyof DeleteMentalModelErrors];
 
-export type DeleteReflectionResponses = {
+export type DeleteMentalModelResponses = {
   /**
    * Successful Response
    */
   200: unknown;
 };
 
-export type GetReflectionData = {
+export type GetMentalModelData = {
   body?: never;
   headers?: {
     /**
@@ -2379,35 +2335,36 @@ export type GetReflectionData = {
      */
     bank_id: string;
     /**
-     * Reflection Id
+     * Mental Model Id
      */
-    reflection_id: string;
+    mental_model_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/reflections/{reflection_id}";
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
 
-export type GetReflectionErrors = {
+export type GetMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type GetReflectionError = GetReflectionErrors[keyof GetReflectionErrors];
+export type GetMentalModelError =
+  GetMentalModelErrors[keyof GetMentalModelErrors];
 
-export type GetReflectionResponses = {
+export type GetMentalModelResponses = {
   /**
    * Successful Response
    */
-  200: ReflectionResponse;
+  200: MentalModelResponse;
 };
 
-export type GetReflectionResponse =
-  GetReflectionResponses[keyof GetReflectionResponses];
+export type GetMentalModelResponse =
+  GetMentalModelResponses[keyof GetMentalModelResponses];
 
-export type UpdateReflectionData = {
-  body: UpdateReflectionRequest;
+export type UpdateMentalModelData = {
+  body: UpdateMentalModelRequest;
   headers?: {
     /**
      * Authorization
@@ -2420,35 +2377,35 @@ export type UpdateReflectionData = {
      */
     bank_id: string;
     /**
-     * Reflection Id
+     * Mental Model Id
      */
-    reflection_id: string;
+    mental_model_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/reflections/{reflection_id}";
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
 
-export type UpdateReflectionErrors = {
+export type UpdateMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type UpdateReflectionError =
-  UpdateReflectionErrors[keyof UpdateReflectionErrors];
+export type UpdateMentalModelError =
+  UpdateMentalModelErrors[keyof UpdateMentalModelErrors];
 
-export type UpdateReflectionResponses = {
+export type UpdateMentalModelResponses = {
   /**
    * Successful Response
    */
-  200: ReflectionResponse;
+  200: MentalModelResponse;
 };
 
-export type UpdateReflectionResponse =
-  UpdateReflectionResponses[keyof UpdateReflectionResponses];
+export type UpdateMentalModelResponse =
+  UpdateMentalModelResponses[keyof UpdateMentalModelResponses];
 
-export type RefreshReflectionData = {
+export type RefreshMentalModelData = {
   body?: never;
   headers?: {
     /**
@@ -2462,33 +2419,33 @@ export type RefreshReflectionData = {
      */
     bank_id: string;
     /**
-     * Reflection Id
+     * Mental Model Id
      */
-    reflection_id: string;
+    mental_model_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/reflections/{reflection_id}/refresh";
+  url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh";
 };
 
-export type RefreshReflectionErrors = {
+export type RefreshMentalModelErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type RefreshReflectionError =
-  RefreshReflectionErrors[keyof RefreshReflectionErrors];
+export type RefreshMentalModelError =
+  RefreshMentalModelErrors[keyof RefreshMentalModelErrors];
 
-export type RefreshReflectionResponses = {
+export type RefreshMentalModelResponses = {
   /**
    * Successful Response
    */
   200: AsyncOperationSubmitResponse;
 };
 
-export type RefreshReflectionResponse =
-  RefreshReflectionResponses[keyof RefreshReflectionResponses];
+export type RefreshMentalModelResponse =
+  RefreshMentalModelResponses[keyof RefreshMentalModelResponses];
 
 export type ListDirectivesData = {
   body?: never;
@@ -3304,7 +3261,7 @@ export type CreateOrUpdateBankResponses = {
 export type CreateOrUpdateBankResponse =
   CreateOrUpdateBankResponses[keyof CreateOrUpdateBankResponses];
 
-export type ClearMentalModelsData = {
+export type ClearObservationsData = {
   body?: never;
   headers?: {
     /**
@@ -3319,28 +3276,28 @@ export type ClearMentalModelsData = {
     bank_id: string;
   };
   query?: never;
-  url: "/v1/default/banks/{bank_id}/mental-models";
+  url: "/v1/default/banks/{bank_id}/observations";
 };
 
-export type ClearMentalModelsErrors = {
+export type ClearObservationsErrors = {
   /**
    * Validation Error
    */
   422: HttpValidationError;
 };
 
-export type ClearMentalModelsError =
-  ClearMentalModelsErrors[keyof ClearMentalModelsErrors];
+export type ClearObservationsError =
+  ClearObservationsErrors[keyof ClearObservationsErrors];
 
-export type ClearMentalModelsResponses = {
+export type ClearObservationsResponses = {
   /**
    * Successful Response
    */
   200: DeleteResponse;
 };
 
-export type ClearMentalModelsResponse =
-  ClearMentalModelsResponses[keyof ClearMentalModelsResponses];
+export type ClearObservationsResponse =
+  ClearObservationsResponses[keyof ClearObservationsResponses];
 
 export type TriggerConsolidationData = {
   body?: never;

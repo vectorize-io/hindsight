@@ -1,4 +1,4 @@
-//! Reflection commands for managing user-curated summaries.
+//! Mental model commands for managing user-curated summaries.
 
 use anyhow::Result;
 
@@ -8,7 +8,7 @@ use crate::ui;
 
 use hindsight_client::types;
 
-/// List reflections for a bank
+/// List mental models for a bank
 pub fn list(
     client: &ApiClient,
     bank_id: &str,
@@ -16,12 +16,12 @@ pub fn list(
     output_format: OutputFormat,
 ) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Fetching reflections..."))
+        Some(ui::create_spinner("Fetching mental models..."))
     } else {
         None
     };
 
-    let response = client.list_reflections(bank_id, verbose);
+    let response = client.list_mental_models(bank_id, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -30,21 +30,21 @@ pub fn list(
     match response {
         Ok(result) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_section_header(&format!("Reflections: {}", bank_id));
+                ui::print_section_header(&format!("Mental Models: {}", bank_id));
 
                 if result.items.is_empty() {
-                    println!("  {}", ui::dim("No reflections found."));
+                    println!("  {}", ui::dim("No mental models found."));
                 } else {
-                    for reflection in &result.items {
+                    for mental_model in &result.items {
                         println!(
                             "  {} {}",
-                            ui::gradient_start(&reflection.id),
-                            reflection.name
+                            ui::gradient_start(&mental_model.id),
+                            mental_model.name
                         );
 
                         // Show content preview
-                        let preview: String = reflection.content.chars().take(80).collect();
-                        let ellipsis = if reflection.content.len() > 80 { "..." } else { "" };
+                        let preview: String = mental_model.content.chars().take(80).collect();
+                        let ellipsis = if mental_model.content.len() > 80 { "..." } else { "" };
                         println!("    {}{}", ui::dim(&preview), ellipsis);
 
                         println!();
@@ -59,32 +59,32 @@ pub fn list(
     }
 }
 
-/// Get a specific reflection
+/// Get a specific mental model
 pub fn get(
     client: &ApiClient,
     bank_id: &str,
-    reflection_id: &str,
+    mental_model_id: &str,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Fetching reflection..."))
+        Some(ui::create_spinner("Fetching mental model..."))
     } else {
         None
     };
 
-    let response = client.get_reflection(bank_id, reflection_id, verbose);
+    let response = client.get_mental_model(bank_id, mental_model_id, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
     }
 
     match response {
-        Ok(reflection) => {
+        Ok(mental_model) => {
             if output_format == OutputFormat::Pretty {
-                print_reflection_detail(&reflection);
+                print_mental_model_detail(&mental_model);
             } else {
-                output::print_output(&reflection, output_format)?;
+                output::print_output(&mental_model, output_format)?;
             }
             Ok(())
         }
@@ -92,7 +92,7 @@ pub fn get(
     }
 }
 
-/// Create a new reflection
+/// Create a new mental model
 pub fn create(
     client: &ApiClient,
     bank_id: &str,
@@ -102,19 +102,19 @@ pub fn create(
     output_format: OutputFormat,
 ) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Creating reflection..."))
+        Some(ui::create_spinner("Creating mental model..."))
     } else {
         None
     };
 
-    let request = types::CreateReflectionRequest {
+    let request = types::CreateMentalModelRequest {
         name: name.to_string(),
         source_query: source_query.to_string(),
         max_tokens: 2048,
         tags: vec![],
     };
 
-    let response = client.create_reflection(bank_id, &request, verbose);
+    let response = client.create_mental_model(bank_id, &request, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -123,7 +123,7 @@ pub fn create(
     match response {
         Ok(result) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Reflection created, operation_id: {}", result.operation_id));
+                ui::print_success(&format!("Mental model created, operation_id: {}", result.operation_id));
             } else {
                 output::print_output(&result, output_format)?;
             }
@@ -133,11 +133,11 @@ pub fn create(
     }
 }
 
-/// Update a reflection
+/// Update a mental model
 pub fn update(
     client: &ApiClient,
     bank_id: &str,
-    reflection_id: &str,
+    mental_model_id: &str,
     name: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
@@ -147,27 +147,27 @@ pub fn update(
     }
 
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Updating reflection..."))
+        Some(ui::create_spinner("Updating mental model..."))
     } else {
         None
     };
 
-    let request = types::UpdateReflectionRequest { name };
+    let request = types::UpdateMentalModelRequest { name };
 
-    let response = client.update_reflection(bank_id, reflection_id, &request, verbose);
+    let response = client.update_mental_model(bank_id, mental_model_id, &request, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
     }
 
     match response {
-        Ok(reflection) => {
+        Ok(mental_model) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Reflection '{}' updated successfully", reflection_id));
+                ui::print_success(&format!("Mental model '{}' updated successfully", mental_model_id));
                 println!();
-                print_reflection_detail(&reflection);
+                print_mental_model_detail(&mental_model);
             } else {
-                output::print_output(&reflection, output_format)?;
+                output::print_output(&mental_model, output_format)?;
             }
             Ok(())
         }
@@ -175,11 +175,11 @@ pub fn update(
     }
 }
 
-/// Delete a reflection
+/// Delete a mental model
 pub fn delete(
     client: &ApiClient,
     bank_id: &str,
-    reflection_id: &str,
+    mental_model_id: &str,
     yes: bool,
     verbose: bool,
     output_format: OutputFormat,
@@ -187,8 +187,8 @@ pub fn delete(
     // Confirmation prompt unless -y flag is used
     if !yes && output_format == OutputFormat::Pretty {
         let message = format!(
-            "Are you sure you want to delete reflection '{}'? This cannot be undone.",
-            reflection_id
+            "Are you sure you want to delete mental model '{}'? This cannot be undone.",
+            mental_model_id
         );
 
         let confirmed = ui::prompt_confirmation(&message)?;
@@ -200,12 +200,12 @@ pub fn delete(
     }
 
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Deleting reflection..."))
+        Some(ui::create_spinner("Deleting mental model..."))
     } else {
         None
     };
 
-    let response = client.delete_reflection(bank_id, reflection_id, verbose);
+    let response = client.delete_mental_model(bank_id, mental_model_id, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -214,7 +214,7 @@ pub fn delete(
     match response {
         Ok(_) => {
             if output_format == OutputFormat::Pretty {
-                ui::print_success(&format!("Reflection '{}' deleted successfully", reflection_id));
+                ui::print_success(&format!("Mental model '{}' deleted successfully", mental_model_id));
             } else {
                 println!("{{\"success\": true}}");
             }
@@ -224,21 +224,21 @@ pub fn delete(
     }
 }
 
-/// Refresh a reflection
+/// Refresh a mental model
 pub fn refresh(
     client: &ApiClient,
     bank_id: &str,
-    reflection_id: &str,
+    mental_model_id: &str,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
     let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Submitting reflection refresh..."))
+        Some(ui::create_spinner("Submitting mental model refresh..."))
     } else {
         None
     };
 
-    let response = client.refresh_reflection(bank_id, reflection_id, verbose);
+    let response = client.refresh_mental_model(bank_id, mental_model_id, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -248,7 +248,7 @@ pub fn refresh(
         Ok(operation) => {
             if output_format == OutputFormat::Pretty {
                 ui::print_success(&format!(
-                    "Reflection refresh submitted. Operation ID: {}",
+                    "Mental model refresh submitted. Operation ID: {}",
                     operation.operation_id
                 ));
                 println!("  {} {}", ui::dim("Status:"), operation.status);
@@ -263,16 +263,16 @@ pub fn refresh(
     }
 }
 
-// Helper function to print reflection details
-fn print_reflection_detail(reflection: &types::ReflectionResponse) {
-    ui::print_section_header(&reflection.name);
+// Helper function to print mental model details
+fn print_mental_model_detail(mental_model: &types::MentalModelResponse) {
+    ui::print_section_header(&mental_model.name);
 
-    println!("  {} {}", ui::dim("ID:"), ui::gradient_start(&reflection.id));
-    println!("  {} {}", ui::dim("Source Query:"), &reflection.source_query);
+    println!("  {} {}", ui::dim("ID:"), ui::gradient_start(&mental_model.id));
+    println!("  {} {}", ui::dim("Source Query:"), &mental_model.source_query);
 
     println!();
     println!("{}", ui::gradient_text("─── Content ───"));
     println!();
-    println!("{}", &reflection.content);
+    println!("{}", &mental_model.content);
     println!();
 }

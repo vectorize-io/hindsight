@@ -216,7 +216,7 @@ def main():
             retain_extract_causal_links=config.retain_extract_causal_links,
             retain_extraction_mode=config.retain_extraction_mode,
             retain_observations_async=config.retain_observations_async,
-            enable_mental_models=config.enable_mental_models,
+            enable_observations=config.enable_observations,
             consolidation_similarity_threshold=config.consolidation_similarity_threshold,
             consolidation_batch_size=config.consolidation_batch_size,
             skip_llm_verification=config.skip_llm_verification,

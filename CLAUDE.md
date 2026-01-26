@@ -100,7 +100,7 @@ cd hindsight-control-plane && npm run dev
 Main operations:
 - **Retain**: Store memories, extracts facts/entities/relationships
 - **Recall**: Retrieve memories via 4 parallel strategies (semantic, BM25, graph, temporal) + reranking
-- **Reflect**: Disposition-aware reasoning using memories and mental models
+- **Reflect**: Disposition-aware reasoning using memories and mental models.
 
 ### Database
 PostgreSQL with pgvector. Schema managed via Alembic migrations in `hindsight-api/hindsight_api/alembic/`. Migrations run automatically on API startup.

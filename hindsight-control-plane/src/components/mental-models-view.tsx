@@ -33,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus,
   Sparkles,
@@ -60,7 +59,7 @@ interface ReflectResponse {
   based_on: Record<string, ReflectResponseBasedOnFact[]>;
 }
 
-interface Reflection {
+interface MentalModel {
   id: string;
   bank_id: string;
   name: string;
@@ -72,30 +71,31 @@ interface Reflection {
   reflect_response?: ReflectResponse;
 }
 
-export function ReflectionsView() {
+export function MentalModelsView() {
   const { currentBank } = useBank();
-  const [reflections, setReflections] = useState<Reflection[]>([]);
+  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
 
-  const [showCreateReflection, setShowCreateReflection] = useState(false);
-  const [selectedReflection, setSelectedReflection] = useState<Reflection | null>(null);
+  const [showCreateMentalModel, setShowCreateMentalModel] = useState(false);
+  const [selectedMentalModel, setSelectedMentalModel] = useState<MentalModel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     name: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Filter reflections based on search query
-  const filteredReflections = reflections.filter((r) => {
+  // Filter mental models based on search query
+  const filteredMentalModels = mentalModels.filter((m) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
-      r.name.toLowerCase().includes(query) ||
-      r.source_query.toLowerCase().includes(query) ||
-      r.content.toLowerCase().includes(query)
+      m.id.toLowerCase().includes(query) ||
+      m.name.toLowerCase().includes(query) ||
+      m.source_query.toLowerCase().includes(query) ||
+      m.content.toLowerCase().includes(query)
     );
   });
 
@@ -104,10 +104,10 @@ export function ReflectionsView() {
 
     setLoading(true);
     try {
-      const reflectionsData = await client.listReflections(currentBank);
-      setReflections(reflectionsData.items || []);
+      const mentalModelsData = await client.listMentalModels(currentBank);
+      setMentalModels(mentalModelsData.items || []);
     } catch (error) {
-      console.error("Error loading reflections:", error);
+      console.error("Error loading mental models:", error);
     } finally {
       setLoading(false);
     }
@@ -118,12 +118,12 @@ export function ReflectionsView() {
 
     setDeleting(true);
     try {
-      await client.deleteReflection(currentBank, deleteTarget.id);
-      setReflections((prev) => prev.filter((r) => r.id !== deleteTarget.id));
-      if (selectedReflection?.id === deleteTarget.id) setSelectedReflection(null);
+      await client.deleteMentalModel(currentBank, deleteTarget.id);
+      setMentalModels((prev) => prev.filter((m) => m.id !== deleteTarget.id));
+      if (selectedMentalModel?.id === deleteTarget.id) setSelectedMentalModel(null);
       setDeleteTarget(null);
     } catch (error) {
-      console.error("Error deleting reflection:", error);
+      console.error("Error deleting mental model:", error);
       alert("Error deleting: " + (error as Error).message);
     } finally {
       setDeleting(false);
@@ -139,7 +139,7 @@ export function ReflectionsView() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSelectedReflection(null);
+        setSelectedMentalModel(null);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -155,17 +155,17 @@ export function ReflectionsView() {
     return (
       <Card>
         <CardContent className="p-10 text-center">
-          <p className="text-muted-foreground">Select a memory bank to view reflections.</p>
+          <p className="text-muted-foreground">Select a memory bank to view mental models.</p>
         </CardContent>
       </Card>
     );
   }
 
   // Pagination calculations
-  const totalPages = Math.ceil(filteredReflections.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredMentalModels.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedReflections = filteredReflections.slice(startIndex, endIndex);
+  const paginatedMentalModels = filteredMentalModels.slice(startIndex, endIndex);
 
   return (
     <div>
@@ -182,7 +182,7 @@ export function ReflectionsView() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter reflections by name, query, or content..."
+              placeholder="Filter mental models by name, query, or content..."
               className="max-w-md"
             />
           </div>
@@ -190,30 +190,31 @@ export function ReflectionsView() {
           <div className="flex items-center justify-between mb-6">
             <div className="text-sm text-muted-foreground">
               {searchQuery
-                ? `${filteredReflections.length} of ${reflections.length} reflections`
-                : `${reflections.length} reflection${reflections.length !== 1 ? "s" : ""}`}
+                ? `${filteredMentalModels.length} of ${mentalModels.length} mental models`
+                : `${mentalModels.length} mental model${mentalModels.length !== 1 ? "s" : ""}`}
             </div>
-            <Button onClick={() => setShowCreateReflection(true)} variant="outline" size="sm">
+            <Button onClick={() => setShowCreateMentalModel(true)} variant="outline" size="sm">
               <Plus className="w-4 h-4 mr-2" />
-              Add Reflection
+              Add Mental Model
             </Button>
           </div>
 
-          {filteredReflections.length > 0 ? (
+          {filteredMentalModels.length > 0 ? (
             <>
               <div className="border rounded-lg overflow-hidden">
                 <Table className="table-fixed">
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead className="w-[25%]">Name</TableHead>
-                      <TableHead className="w-[45%]">Source Query</TableHead>
-                      <TableHead className="w-[20%]">Last Refreshed</TableHead>
+                      <TableHead className="w-[20%]">ID</TableHead>
+                      <TableHead className="w-[20%]">Name</TableHead>
+                      <TableHead className="w-[35%]">Source Query</TableHead>
+                      <TableHead className="w-[15%]">Last Refreshed</TableHead>
                       <TableHead className="w-[10%]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedReflections.map((r) => {
-                      const refreshedDate = new Date(r.last_refreshed_at);
+                    {paginatedMentalModels.map((m) => {
+                      const refreshedDate = new Date(m.last_refreshed_at);
                       const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
@@ -227,18 +228,23 @@ export function ReflectionsView() {
 
                       return (
                         <TableRow
-                          key={r.id}
+                          key={m.id}
                           className={`cursor-pointer hover:bg-muted/50 ${
-                            selectedReflection?.id === r.id ? "bg-primary/10" : ""
+                            selectedMentalModel?.id === m.id ? "bg-primary/10" : ""
                           }`}
-                          onClick={() => setSelectedReflection(r)}
+                          onClick={() => setSelectedMentalModel(m)}
                         >
                           <TableCell className="py-2">
-                            <div className="font-medium text-foreground">{r.name}</div>
+                            <code className="text-xs font-mono text-muted-foreground truncate block">
+                              {m.id}
+                            </code>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="font-medium text-foreground">{m.name}</div>
                           </TableCell>
                           <TableCell className="py-2">
                             <div className="text-sm text-muted-foreground truncate">
-                              {r.source_query}
+                              {m.source_query}
                             </div>
                           </TableCell>
                           <TableCell className="py-2 text-sm text-foreground">
@@ -252,7 +258,7 @@ export function ReflectionsView() {
                               className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDeleteTarget({ id: r.id, name: r.name });
+                                setDeleteTarget({ id: m.id, name: m.name });
                               }}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -269,8 +275,8 @@ export function ReflectionsView() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-3 pt-3 border-t">
                   <div className="text-xs text-muted-foreground">
-                    {startIndex + 1}-{Math.min(endIndex, filteredReflections.length)} of{" "}
-                    {filteredReflections.length}
+                    {startIndex + 1}-{Math.min(endIndex, filteredMentalModels.length)} of{" "}
+                    {filteredMentalModels.length}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -321,20 +327,20 @@ export function ReflectionsView() {
               <Sparkles className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
                 {searchQuery
-                  ? "No reflections match your filter"
-                  : "No reflections yet. Create a reflection to generate and save a summary from your memories."}
+                  ? "No mental models match your filter"
+                  : "No mental models yet. Create a mental model to generate and save a summary from your memories."}
               </p>
             </div>
           )}
         </>
       )}
 
-      <CreateReflectionDialog
-        open={showCreateReflection}
-        onClose={() => setShowCreateReflection(false)}
+      <CreateMentalModelDialog
+        open={showCreateMentalModel}
+        onClose={() => setShowCreateMentalModel(false)}
         onCreated={() => {
-          setShowCreateReflection(false);
-          // Reload the list immediately to show the new reflection
+          setShowCreateMentalModel(false);
+          // Reload the list immediately to show the new mental model
           loadData();
         }}
       />
@@ -342,7 +348,7 @@ export function ReflectionsView() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Reflection</AlertDialogTitle>
+            <AlertDialogTitle>Delete Mental Model</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete{" "}
               <span className="font-semibold">&quot;{deleteTarget?.name}&quot;</span>?
@@ -365,16 +371,16 @@ export function ReflectionsView() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {selectedReflection && (
-        <ReflectionDetailPanel
-          reflection={selectedReflection}
-          onClose={() => setSelectedReflection(null)}
+      {selectedMentalModel && (
+        <MentalModelDetailPanel
+          mentalModel={selectedMentalModel}
+          onClose={() => setSelectedMentalModel(null)}
           onDelete={() =>
-            setDeleteTarget({ id: selectedReflection.id, name: selectedReflection.name })
+            setDeleteTarget({ id: selectedMentalModel.id, name: selectedMentalModel.name })
           }
           onRefreshed={(updated) => {
-            setReflections((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-            setSelectedReflection(updated);
+            setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+            setSelectedMentalModel(updated);
           }}
         />
       )}
@@ -382,7 +388,7 @@ export function ReflectionsView() {
   );
 }
 
-function CreateReflectionDialog({
+function CreateMentalModelDialog({
   open,
   onClose,
   onCreated,
@@ -407,8 +413,8 @@ function CreateReflectionDialog({
 
       const maxTokens = parseInt(form.maxTokens) || 2048;
 
-      // Submit reflection creation - content will be generated in background
-      await client.createReflection(currentBank, {
+      // Submit mental model creation - content will be generated in background
+      await client.createMentalModel(currentBank, {
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
         tags: tags.length > 0 ? tags : undefined,
@@ -418,8 +424,8 @@ function CreateReflectionDialog({
       setForm({ name: "", sourceQuery: "", maxTokens: "2048", tags: "" });
       onCreated();
     } catch (error) {
-      console.error("Error creating reflection:", error);
-      alert("Error creating reflection: " + (error as Error).message);
+      console.error("Error creating mental model:", error);
+      alert("Error creating mental model: " + (error as Error).message);
     } finally {
       setCreating(false);
     }
@@ -437,9 +443,9 @@ function CreateReflectionDialog({
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Reflection</DialogTitle>
+          <DialogTitle>Create Mental Model</DialogTitle>
           <DialogDescription>
-            Create a reflection by running a query. The content will be auto-generated and can be
+            Create a mental model by running a query. The content will be auto-generated and can be
             refreshed later.
           </DialogDescription>
         </DialogHeader>
@@ -513,39 +519,39 @@ function CreateReflectionDialog({
   );
 }
 
-function ReflectionDetailPanel({
-  reflection,
+function MentalModelDetailPanel({
+  mentalModel,
   onClose,
   onDelete,
   onRefreshed,
 }: {
-  reflection: Reflection;
+  mentalModel: MentalModel;
   onClose: () => void;
   onDelete: () => void;
-  onRefreshed: (r: Reflection) => void;
+  onRefreshed: (m: MentalModel) => void;
 }) {
   const { currentBank } = useBank();
   const [refreshing, setRefreshing] = useState(false);
   const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(reflection.name);
+  const [editName, setEditName] = useState(mentalModel.name);
   const [saving, setSaving] = useState(false);
 
-  // Reset edit form when reflection changes
+  // Reset edit form when mental model changes
   useEffect(() => {
-    setEditName(reflection.name);
+    setEditName(mentalModel.name);
     setIsEditing(false);
-  }, [reflection.id, reflection.name]);
+  }, [mentalModel.id, mentalModel.name]);
 
   const handleRefresh = async () => {
     if (!currentBank) return;
 
     setRefreshing(true);
-    const originalRefreshedAt = reflection.last_refreshed_at;
+    const originalRefreshedAt = mentalModel.last_refreshed_at;
 
     try {
       // Submit the refresh task
-      await client.refreshReflection(currentBank, reflection.id);
+      await client.refreshMentalModel(currentBank, mentalModel.id);
 
       // Poll until last_refreshed_at changes
       const pollInterval = 1000; // 1 second
@@ -555,7 +561,7 @@ function ReflectionDetailPanel({
       const poll = async (): Promise<void> => {
         attempts++;
         try {
-          const updated = await client.getReflection(currentBank, reflection.id);
+          const updated = await client.getMentalModel(currentBank, mentalModel.id);
           if (updated.last_refreshed_at !== originalRefreshedAt) {
             // Refresh complete
             onRefreshed(updated);
@@ -571,7 +577,7 @@ function ReflectionDetailPanel({
           // Continue polling
           setTimeout(poll, pollInterval);
         } catch (error) {
-          console.error("Error polling reflection:", error);
+          console.error("Error polling mental model:", error);
           setRefreshing(false);
         }
       };
@@ -579,7 +585,7 @@ function ReflectionDetailPanel({
       // Start polling after a short delay
       setTimeout(poll, pollInterval);
     } catch (error) {
-      console.error("Error refreshing reflection:", error);
+      console.error("Error refreshing mental model:", error);
       alert("Error refreshing: " + (error as Error).message);
       setRefreshing(false);
     }
@@ -590,13 +596,13 @@ function ReflectionDetailPanel({
 
     setSaving(true);
     try {
-      const updated = await client.updateReflection(currentBank, reflection.id, {
+      const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
         name: editName.trim(),
       });
       onRefreshed(updated);
       setIsEditing(false);
     } catch (error) {
-      console.error("Error updating reflection:", error);
+      console.error("Error updating mental model:", error);
       alert("Error updating: " + (error as Error).message);
     } finally {
       setSaving(false);
@@ -616,12 +622,15 @@ function ReflectionDetailPanel({
     })}`;
   };
 
-  // Extract facts by type from based_on
-  const basedOn = reflection.reflect_response?.based_on || {};
-  const worldFacts = basedOn["world"] || [];
-  const experienceFacts = basedOn["experience"] || [];
-  const mentalModels = basedOn["mental-models"] || [];
-  const totalFacts = worldFacts.length + experienceFacts.length + mentalModels.length;
+  // Extract all memories from based_on (excluding observations which are shown separately)
+  const basedOnFacts = mentalModel.reflect_response?.based_on
+    ? Object.entries(mentalModel.reflect_response.based_on)
+        .filter(([factType]) => factType !== "observation")
+        .flatMap(([factType, facts]) => facts.map((fact) => ({ ...fact, factType })))
+    : [];
+
+  // Observations are now in based_on with type=observation
+  const observations = mentalModel.reflect_response?.based_on?.observation || [];
 
   return (
     <div className="fixed right-0 top-0 h-screen w-1/2 bg-card border-l shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
@@ -645,7 +654,7 @@ function ReflectionDetailPanel({
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      setEditName(reflection.name);
+                      setEditName(mentalModel.name);
                       setIsEditing(false);
                     }}
                   >
@@ -656,7 +665,7 @@ function ReflectionDetailPanel({
             ) : (
               <>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-bold text-foreground">{reflection.name}</h3>
+                  <h3 className="text-xl font-bold text-foreground">{mentalModel.name}</h3>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -666,7 +675,7 @@ function ReflectionDetailPanel({
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">{reflection.source_query}</p>
+                <p className="text-sm text-muted-foreground mt-1">{mentalModel.source_query}</p>
               </>
             )}
           </div>
@@ -697,123 +706,84 @@ function ReflectionDetailPanel({
               Content
             </div>
             <div className="prose prose-base dark:prose-invert max-w-none">
-              <ReactMarkdown>{reflection.content}</ReactMarkdown>
+              <ReactMarkdown>{mentalModel.content}</ReactMarkdown>
             </div>
           </div>
 
-          {/* Based On Section with Tabs */}
-          {totalFacts > 0 ? (
+          {/* Based On Facts Section */}
+          {basedOnFacts.length > 0 && (
             <div className="border-t border-border pt-5">
               <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                Based On ({totalFacts} {totalFacts === 1 ? "item" : "items"})
+                Based On ({basedOnFacts.length} {basedOnFacts.length === 1 ? "fact" : "facts"})
               </div>
-              <Tabs
-                defaultValue={
-                  worldFacts.length > 0
-                    ? "world"
-                    : experienceFacts.length > 0
-                      ? "experience"
-                      : "mental-models"
-                }
-              >
-                <TabsList className="mb-4">
-                  <TabsTrigger value="world" disabled={worldFacts.length === 0}>
-                    World
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                      {worldFacts.length}
-                    </span>
-                  </TabsTrigger>
-                  <TabsTrigger value="experience" disabled={experienceFacts.length === 0}>
-                    Experience
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-green-500/10 text-green-600 dark:text-green-400">
-                      {experienceFacts.length}
-                    </span>
-                  </TabsTrigger>
-                  <TabsTrigger value="mental-models" disabled={mentalModels.length === 0}>
-                    Mental Models
-                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                      {mentalModels.length}
-                    </span>
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="world">
-                  <div className="space-y-3">
-                    {worldFacts.map((fact, i) => (
-                      <div
-                        key={fact.id || i}
-                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
+              <div className="space-y-3">
+                {basedOnFacts.map((fact, i) => (
+                  <div
+                    key={fact.id || i}
+                    className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          fact.factType === "world"
+                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                            : fact.factType === "experience"
+                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                        }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-foreground leading-relaxed flex-1">
-                            {fact.text}
-                          </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-xs shrink-0"
-                            onClick={() => setViewMemoryId(fact.id)}
-                          >
-                            View
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="experience">
-                  <div className="space-y-3">
-                    {experienceFacts.map((fact, i) => (
-                      <div
-                        key={fact.id || i}
-                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                        {fact.factType}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => setViewMemoryId(fact.id)}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-foreground leading-relaxed flex-1">
-                            {fact.text}
-                          </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-xs shrink-0"
-                            onClick={() => setViewMemoryId(fact.id)}
-                          >
-                            View
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                        View
+                      </Button>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed">{fact.text}</p>
                   </div>
-                </TabsContent>
-
-                <TabsContent value="mental-models">
-                  <div className="space-y-3">
-                    {mentalModels.map((model, i) => (
-                      <div
-                        key={model.id || i}
-                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-foreground leading-relaxed flex-1">
-                            {model.text}
-                          </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-xs shrink-0"
-                            onClick={() => setViewMemoryId(model.id)}
-                          >
-                            View
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </TabsContent>
-              </Tabs>
+                ))}
+              </div>
             </div>
-          ) : !reflection.reflect_response ? (
+          )}
+
+          {/* Observations Used Section */}
+          {observations.length > 0 && (
+            <div className="border-t border-border pt-5">
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
+                Observations Used ({observations.length})
+              </div>
+              <div className="space-y-3">
+                {observations.map((obs, i) => (
+                  <div
+                    key={obs.id || i}
+                    className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                        observation
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => setViewMemoryId(obs.id)}
+                      >
+                        View
+                      </Button>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed">{obs.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No based_on data yet */}
+          {!mentalModel.reflect_response && (
             <div className="border-t border-border pt-5">
               <div className="text-xs font-bold text-muted-foreground uppercase mb-3">Based On</div>
               <p className="text-sm text-muted-foreground">
@@ -821,15 +791,15 @@ function ReflectionDetailPanel({
                 tracking.
               </p>
             </div>
-          ) : null}
+          )}
 
-          {reflection.tags && reflection.tags.length > 0 && (
+          {mentalModel.tags && mentalModel.tags.length > 0 && (
             <div>
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
                 Tags
               </div>
               <div className="flex flex-wrap gap-2">
-                {reflection.tags.map((tag) => (
+                {mentalModel.tags.map((tag) => (
                   <span
                     key={tag}
                     className="px-2 py-1 rounded bg-muted text-muted-foreground text-sm"
@@ -842,8 +812,8 @@ function ReflectionDetailPanel({
           )}
 
           <div className="flex gap-6 text-sm text-muted-foreground">
-            <span>Created: {formatDateTime(reflection.created_at)}</span>
-            <span>Refreshed: {formatDateTime(reflection.last_refreshed_at)}</span>
+            <span>Created: {formatDateTime(mentalModel.created_at)}</span>
+            <span>Refreshed: {formatDateTime(mentalModel.last_refreshed_at)}</span>
           </div>
 
           <div className="p-4 bg-muted/50 rounded-lg">
@@ -851,7 +821,7 @@ function ReflectionDetailPanel({
               ID
             </div>
             <code className="text-sm font-mono break-all text-muted-foreground">
-              {reflection.id}
+              {mentalModel.id}
             </code>
           </div>
 

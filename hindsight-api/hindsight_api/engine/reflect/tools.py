@@ -2,8 +2,8 @@
 Tool implementations for the reflect agent.
 
 Implements hierarchical retrieval:
-1. search_reflections - User-curated summaries (highest quality)
-2. search_mental_models - Consolidated knowledge with freshness
+1. search_mental_models - User-curated stored reflect responses (highest quality)
+2. search_observations - Consolidated knowledge with freshness
 3. recall - Raw facts as ground truth
 """
 
@@ -20,11 +20,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Mental model is considered stale if not updated in this many days
+# Observation is considered stale if not updated in this many days
 STALE_THRESHOLD_DAYS = 7
 
 
-async def tool_search_reflections(
+async def tool_search_mental_models(
     conn: "Connection",
     bank_id: str,
     query: str,
@@ -35,9 +35,9 @@ async def tool_search_reflections(
     exclude_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
-    Search user-curated reflections by semantic similarity.
+    Search user-curated mental models by semantic similarity.
 
-    Reflections are high-quality, manually created summaries about specific topics.
+    Mental models are high-quality, manually created summaries about specific topics.
     They should be searched FIRST as they represent the most reliable synthesized knowledge.
 
     Args:
@@ -45,13 +45,13 @@ async def tool_search_reflections(
         bank_id: Bank identifier
         query: Search query (for logging/tracing)
         query_embedding: Pre-computed embedding for semantic search
-        max_results: Maximum number of reflections to return
-        tags: Optional tags to filter reflections
+        max_results: Maximum number of mental models to return
+        tags: Optional tags to filter mental models
         tags_match: How to match tags - "any" (OR), "all" (AND)
-        exclude_ids: Optional list of reflection IDs to exclude (e.g., when refreshing a reflection)
+        exclude_ids: Optional list of mental model IDs to exclude (e.g., when refreshing a mental model)
 
     Returns:
-        Dict with matching reflections including content and freshness info
+        Dict with matching mental models including content and freshness info
     """
     from ..memory_engine import fq_table
 
@@ -73,14 +73,14 @@ async def tool_search_reflections(
         params.append(exclude_ids)
         next_param += 1
 
-    # Search reflections by embedding similarity
+    # Search mental models by embedding similarity
     rows = await conn.fetch(
         f"""
         SELECT
             id, name, content, reflect_response,
             tags, created_at, last_refreshed_at,
             1 - (embedding <=> $2::vector) as relevance
-        FROM {fq_table("reflections")}
+        FROM {fq_table("mental_models")}
         WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
         ORDER BY embedding <=> $2::vector
         LIMIT $3
@@ -89,7 +89,7 @@ async def tool_search_reflections(
     )
 
     now = datetime.now(timezone.utc)
-    reflections = []
+    mental_models = []
 
     for row in rows:
         last_refreshed_at = row["last_refreshed_at"]
@@ -102,7 +102,7 @@ async def tool_search_reflections(
             age = now - last_refreshed_at
             is_stale = age > timedelta(days=STALE_THRESHOLD_DAYS)
 
-        reflections.append(
+        mental_models.append(
             {
                 "id": str(row["id"]),
                 "name": row["name"],
@@ -117,12 +117,12 @@ async def tool_search_reflections(
 
     return {
         "query": query,
-        "count": len(reflections),
-        "reflections": reflections,
+        "count": len(mental_models),
+        "mental_models": mental_models,
     }
 
 
-async def tool_search_mental_models(
+async def tool_search_observations(
     memory_engine: "MemoryEngine",
     bank_id: str,
     query: str,
@@ -134,9 +134,9 @@ async def tool_search_mental_models(
     pending_consolidation: int = 0,
 ) -> dict[str, Any]:
     """
-    Search consolidated mental models using recall with include_mental_models.
+    Search consolidated observations using recall with include_observations.
 
-    Mental models are auto-generated from memories. Returns freshness info
+    Observations are auto-generated from memories. Returns freshness info
     so the agent knows if it should also verify with recall().
 
     Args:
@@ -145,22 +145,22 @@ async def tool_search_mental_models(
         query: Search query
         request_context: Request context for authentication
         max_tokens: Maximum tokens for results (default 5000)
-        tags: Optional tags to filter models
+        tags: Optional tags to filter observations
         tags_match: How to match tags - "any" (OR), "all" (AND)
         last_consolidated_at: When consolidation last ran (for staleness check)
         pending_consolidation: Number of memories waiting to be consolidated
 
     Returns:
-        Dict with matching mental models including freshness info
+        Dict with matching observations including freshness info
     """
     from ..memory_engine import fq_table
 
-    # Use recall to search mental models (they come back in results field when fact_type=["mental_model"])
+    # Use recall to search observations (they come back in results field when fact_type=["observation"])
     result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
-        fact_type=["mental_model"],  # Only retrieve mental models
-        max_tokens=max_tokens,  # Token budget controls how many mental models are returned
+        fact_type=["observation"],  # Only retrieve observations
+        max_tokens=max_tokens,  # Token budget controls how many observations are returned
         enable_trace=False,
         request_context=request_context,
         tags=tags,
@@ -169,29 +169,29 @@ async def tool_search_mental_models(
         _quiet=True,
     )
 
-    mental_models = []
+    observations = []
 
-    # When fact_type=["mental_model"], results come back in `results` field as MemoryFact objects
+    # When fact_type=["observation"], results come back in `results` field as MemoryFact objects
     # We need to fetch additional fields (proof_count, source_memory_ids) from the database
     if result.results:
-        mm_ids = [m.id for m in result.results]
+        obs_ids = [m.id for m in result.results]
 
-        # Fetch proof_count and source_memory_ids for these mental models
+        # Fetch proof_count and source_memory_ids for these observations
         pool = await memory_engine._get_pool()
         async with pool.acquire() as conn:
-            mm_rows = await conn.fetch(
+            obs_rows = await conn.fetch(
                 f"""
                 SELECT id, proof_count, source_memory_ids
                 FROM {fq_table("memory_units")}
                 WHERE id = ANY($1::uuid[])
                 """,
-                mm_ids,
+                obs_ids,
             )
-            mm_data = {str(row["id"]): row for row in mm_rows}
+            obs_data = {str(row["id"]): row for row in obs_rows}
 
         for m in result.results:
             # Get additional data from DB lookup
-            extra = mm_data.get(m.id, {})
+            extra = obs_data.get(m.id, {})
             proof_count = extra.get("proof_count", 1) if extra else 1
             source_ids = extra.get("source_memory_ids", []) if extra else []
             # Convert UUIDs to strings
@@ -204,7 +204,7 @@ async def tool_search_mental_models(
                 is_stale = True
                 staleness_reason = f"{pending_consolidation} memories pending consolidation"
 
-            mental_models.append(
+            observations.append(
                 {
                     "id": str(m.id),
                     "text": m.text,
@@ -226,8 +226,8 @@ async def tool_search_mental_models(
 
     return {
         "query": query,
-        "count": len(mental_models),
-        "mental_models": mental_models,
+        "count": len(observations),
+        "observations": observations,
         "freshness": freshness,
     }
 
@@ -247,7 +247,7 @@ async def tool_recall(
     Search memories using TEMPR retrieval.
 
     This is the ground truth - raw facts and experiences.
-    Use when reflections/mental models don't exist, are stale, or need verification.
+    Use when mental models/observations don't exist, are stale, or need verification.
 
     Args:
         memory_engine: Memory engine instance
@@ -266,7 +266,7 @@ async def tool_recall(
     result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
-        fact_type=["experience", "world"],  # Exclude opinions and mental_models
+        fact_type=["experience", "world"],  # Exclude opinions and observations
         max_tokens=max_tokens,
         enable_trace=False,
         request_context=request_context,

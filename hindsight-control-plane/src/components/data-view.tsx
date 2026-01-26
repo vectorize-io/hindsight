@@ -36,7 +36,7 @@ import { Switch } from "@/components/ui/switch";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
 
-type FactType = "world" | "experience" | "mental_model";
+type FactType = "world" | "experience" | "observation";
 type ViewMode = "graph" | "table" | "timeline";
 
 interface DataViewProps {
@@ -117,8 +117,8 @@ export function DataView({ factType }: DataViewProps) {
       });
       setData(graphData);
 
-      // Fetch consolidation status for mental models
-      if (factType === "mental_model") {
+      // Fetch consolidation status for observations
+      if (factType === "observation") {
         const stats: any = await client.getBankStats(currentBank);
         setConsolidationStatus({
           pending_consolidation: stats.pending_consolidation || 0,
@@ -307,8 +307,8 @@ export function DataView({ factType }: DataViewProps) {
                 )}
               </div>
 
-              {/* Consolidation status for mental models */}
-              {factType === "mental_model" && consolidationStatus && (
+              {/* Consolidation status for observations */}
+              {factType === "observation" && consolidationStatus && (
                 <div
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
                     consolidationStatus.pending_consolidation === 0
@@ -617,11 +617,11 @@ export function DataView({ factType }: DataViewProps) {
                               <TableHeader>
                                 <TableRow className="bg-muted/50">
                                   <TableHead
-                                    className={factType === "mental_model" ? "w-[55%]" : "w-[45%]"}
+                                    className={factType === "observation" ? "w-[55%]" : "w-[45%]"}
                                   >
-                                    {factType === "mental_model" ? "Mental Model" : "Memory"}
+                                    {factType === "observation" ? "Observation" : "Memory"}
                                   </TableHead>
-                                  {factType === "mental_model" ? (
+                                  {factType === "observation" ? (
                                     <>
                                       <TableHead className="w-[10%]">Sources</TableHead>
                                       <TableHead className="w-[15%]">Created</TableHead>
@@ -676,7 +676,7 @@ export function DataView({ factType }: DataViewProps) {
                                           </div>
                                         )}
                                       </TableCell>
-                                      {factType === "mental_model" ? (
+                                      {factType === "observation" ? (
                                         <>
                                           <TableCell className="text-xs py-2 text-foreground text-center">
                                             {row.proof_count || 1}

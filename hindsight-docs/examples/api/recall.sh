@@ -29,7 +29,7 @@ hindsight memory recall my-bank "hiking recommendations" \
 
 
 # [docs:recall-fact-type]
-hindsight memory recall my-bank "query" --fact-type world,mental_model
+hindsight memory recall my-bank "query" --fact-type world,observation
 # [/docs:recall-fact-type]
 
 

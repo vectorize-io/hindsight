@@ -150,7 +150,7 @@ for r in results.results:
 results = client.recall(
     bank_id="my-bank",
     query="What does Alice do?",
-    types=["world", "mental_model"],  # Filter by fact type
+    types=["world", "observation"],  # Filter by fact type
     max_tokens=4096,
     budget="high",  # low, mid, or high
 )

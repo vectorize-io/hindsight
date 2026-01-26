@@ -1,6 +1,6 @@
 """Prompts for the consolidation engine."""
 
-CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (mental models) and merge with existing knowledge when appropriate.
+CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
 
 You must output ONLY valid JSON with no markdown formatting, no code blocks, and no additional text.
 
@@ -30,28 +30,28 @@ BAD examples:
 - "John likes pizza" -> "Understanding dietary preferences helps..." (TOO ABSTRACT)
 - "User is at Room 203" -> "User is currently at Room 203" (EPHEMERAL STATE)
 
-## MERGE RULES (when comparing to existing mental models):
+## MERGE RULES (when comparing to existing observations):
 1. REDUNDANT: Same information worded differently → update existing
 2. CONTRADICTION: Opposite information about same topic → update with history (e.g., "used to X, now Y")
 3. UPDATE: New state replacing old state → update with history
 
 ## TAG ROUTING RULES:
-Tags define visibility scopes. The fact and each mental model have tags (can be empty = global).
+Tags define visibility scopes. The fact and each observation have tags (can be empty = global).
 
-| Fact Tags | Model Tags | Action |
-|-----------|------------|--------|
-| [alice] | [alice] | UPDATE the model (same scope) |
-| [alice] | [] | UPDATE the model (global absorbs all scopes) |
-| [alice] | [bob] | CREATE new untagged model (cross-scope insight) |
-| [] | [alice] | UPDATE the model (untagged facts can update any scope) |
-| [] | [] | UPDATE the model (global to global) |
+| Fact Tags | Obs Tags | Action |
+|-----------|----------|--------|
+| [alice] | [alice] | UPDATE the observation (same scope) |
+| [alice] | [] | UPDATE the observation (global absorbs all scopes) |
+| [alice] | [bob] | CREATE new untagged observation (cross-scope insight) |
+| [] | [alice] | UPDATE the observation (untagged facts can update any scope) |
+| [] | [] | UPDATE the observation (global to global) |
 
-When NO existing model matches the fact's topic: CREATE new model with fact's tags.
+When NO existing observation matches the fact's topic: CREATE new observation with fact's tags.
 
 ## MULTIPLE ACTIONS:
 One fact can trigger MULTIPLE actions. For example:
-- Update a scoped model [alice] about pizza preferences
-- AND update a global model [] about pizza in general
+- Update a scoped observation [alice] about pizza preferences
+- AND update a global observation [] about pizza in general
 
 Output an ARRAY of actions (can be empty, one, or many).
 
@@ -59,7 +59,7 @@ Output an ARRAY of actions (can be empty, one, or many).
 - NEVER merge facts about DIFFERENT people
 - NEVER merge unrelated topics (food preferences vs work vs hobbies)
 - When merging contradictions, capture the CHANGE (before → after)
-- Keep mental models focused on ONE specific topic per person
+- Keep observations focused on ONE specific topic per person
 - Cross-scope insights (alice's fact about bob's topic) become UNTAGGED (global)
 - The "text" field MUST contain durable knowledge, not ephemeral state"""
 
@@ -68,14 +68,14 @@ CONSOLIDATION_USER_PROMPT = """Analyze this new fact and consolidate into knowle
 NEW FACT: {fact_text}
 FACT TAGS: {fact_tags}
 
-EXISTING MENTAL MODELS:
-{mental_models_text}
+EXISTING OBSERVATIONS:
+{observations_text}
 
 Instructions:
 1. First, extract the DURABLE KNOWLEDGE from the fact (not ephemeral state like "user is at X")
-2. Then compare with existing mental models:
-   - If a model covers the same topic: UPDATE it with the new knowledge
-   - If no model covers the topic: CREATE a new one
+2. Then compare with existing observations:
+   - If an observation covers the same topic: UPDATE it with the new knowledge
+   - If no observation covers the topic: CREATE a new one
    - If fact is about different scope: apply tag routing rules
 
 Output JSON array of actions (ALWAYS an array, even for single action):
@@ -87,5 +87,5 @@ Output JSON array of actions (ALWAYS an array, even for single action):
 If NO consolidation is needed (fact is purely ephemeral with no durable knowledge):
 []
 
-If no models exist and fact contains durable knowledge:
+If no observations exist and fact contains durable knowledge:
 [{{"action": "create", "tags": {fact_tags}, "text": "durable knowledge text", "reason": "new topic"}}]"""

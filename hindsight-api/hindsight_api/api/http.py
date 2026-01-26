@@ -92,7 +92,7 @@ class RecallRequest(BaseModel):
     query: str
     types: list[str] | None = Field(
         default=None,
-        description="List of fact types to recall: 'world', 'experience', 'mental_model'. Defaults to world and experience if not specified. "
+        description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified. "
         "Note: 'opinion' is accepted but ignored (opinions are excluded from recall).",
     )
     budget: Budget = Budget.MID
@@ -588,6 +588,14 @@ class ReflectResponse(BaseModel):
                 "trace": {
                     "tool_calls": [{"tool": "recall", "input": {"query": "AI"}, "duration_ms": 150}],
                     "llm_calls": [{"scope": "agent_1", "duration_ms": 1200}],
+                    "observations": [
+                        {
+                            "id": "obs-1",
+                            "name": "AI Technology",
+                            "type": "concept",
+                            "subtype": "structural",
+                        }
+                    ],
                 },
             }
         }
@@ -991,7 +999,7 @@ class BankStatsResponse(BaseModel):
                 "failed_operations": 0,
                 "last_consolidated_at": "2024-01-15T10:30:00Z",
                 "pending_consolidation": 0,
-                "total_mental_models": 45,
+                "total_observations": 45,
             }
         }
     )
@@ -1008,8 +1016,8 @@ class BankStatsResponse(BaseModel):
     failed_operations: int
     # Consolidation stats
     last_consolidated_at: str | None = Field(default=None, description="When consolidation last ran (ISO format)")
-    pending_consolidation: int = Field(default=0, description="Number of memories not yet processed into mental models")
-    total_mental_models: int = Field(default=0, description="Total number of mental models")
+    pending_consolidation: int = Field(default=0, description="Number of memories not yet processed into observations")
+    total_observations: int = Field(default=0, description="Total number of observations")
 
 
 # Mental Model models
@@ -1070,12 +1078,12 @@ class UpdateDirectiveRequest(BaseModel):
 
 
 # =========================================================================
-# Reflections Models
+# Mental Models (stored reflect responses)
 # =========================================================================
 
 
-class ReflectionResponse(BaseModel):
-    """Response model for a reflection."""
+class MentalModelResponse(BaseModel):
+    """Response model for a mental model (stored reflect response)."""
 
     id: str
     bank_id: str
@@ -1087,18 +1095,18 @@ class ReflectionResponse(BaseModel):
     created_at: str | None = None
     reflect_response: dict | None = Field(
         default=None,
-        description="Full reflect API response payload including based_on facts and mental_models",
+        description="Full reflect API response payload including based_on facts and observations",
     )
 
 
-class ReflectionListResponse(BaseModel):
-    """Response model for listing reflections."""
+class MentalModelListResponse(BaseModel):
+    """Response model for listing mental models."""
 
-    items: list[ReflectionResponse]
+    items: list[MentalModelResponse]
 
 
-class CreateReflectionRequest(BaseModel):
-    """Request model for creating a reflection."""
+class CreateMentalModelRequest(BaseModel):
+    """Request model for creating a mental model."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -1111,20 +1119,20 @@ class CreateReflectionRequest(BaseModel):
         }
     )
 
-    name: str = Field(description="Human-readable name for the reflection")
+    name: str = Field(description="Human-readable name for the mental model")
     source_query: str = Field(description="The query to run to generate content")
     tags: list[str] = Field(default_factory=list, description="Tags for scoped visibility")
     max_tokens: int = Field(default=2048, ge=256, le=8192, description="Maximum tokens for generated content")
 
 
-class CreateReflectionResponse(BaseModel):
-    """Response model for reflection creation."""
+class CreateMentalModelResponse(BaseModel):
+    """Response model for mental model creation."""
 
     operation_id: str = Field(description="Operation ID to track progress")
 
 
-class UpdateReflectionRequest(BaseModel):
-    """Request model for updating a reflection."""
+class UpdateMentalModelRequest(BaseModel):
+    """Request model for updating a mental model."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -1134,7 +1142,7 @@ class UpdateReflectionRequest(BaseModel):
         }
     )
 
-    name: str | None = Field(default=None, description="New name for the reflection")
+    name: str | None = Field(default=None, description="New name for the mental model")
 
 
 class OperationResponse(BaseModel):
@@ -1263,7 +1271,7 @@ class AsyncOperationSubmitResponse(BaseModel):
 class FeaturesInfo(BaseModel):
     """Feature flags indicating which capabilities are enabled."""
 
-    mental_models: bool = Field(description="Whether mental models (auto-consolidation) are enabled")
+    observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
 
@@ -1276,7 +1284,7 @@ class VersionResponse(BaseModel):
             "example": {
                 "api_version": "1.0.0",
                 "features": {
-                    "mental_models": False,
+                    "observations": False,
                     "mcp": True,
                     "worker": True,
                 },
@@ -1523,7 +1531,7 @@ def _register_routes(app: FastAPI):
         return VersionResponse(
             api_version="1.0.0",
             features=FeaturesInfo(
-                mental_models=config.enable_mental_models,
+                observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
             ),
@@ -1837,7 +1845,7 @@ def _register_routes(app: FastAPI):
                     tags_match=request.tags_match,
                 )
 
-            # Build based_on (memories + mental_models) if facts are requested
+            # Build based_on (memories + observations) if facts are requested
             based_on_result: ReflectBasedOn | None = None
             if request.include.facts is not None:
                 memories = []
@@ -1855,7 +1863,7 @@ def _register_routes(app: FastAPI):
                         )
                 based_on_result = ReflectBasedOn(memories=memories)
 
-            # Build trace (tool_calls + llm_calls + mental_models) if tool_calls is requested
+            # Build trace (tool_calls + llm_calls + observations) if tool_calls is requested
             trace_result: ReflectTrace | None = None
             if request.include.tool_calls is not None:
                 include_output = request.include.tool_calls.output
@@ -2020,16 +2028,16 @@ def _register_routes(app: FastAPI):
                 last_consolidated_at = consolidation_stats["last_consolidated_at"] if consolidation_stats else None
                 pending_consolidation = consolidation_stats["pending"] if consolidation_stats else 0
 
-                # Count total mental models
-                mental_model_count_result = await conn.fetchrow(
+                # Count total observations (consolidated knowledge)
+                observation_count_result = await conn.fetchrow(
                     f"""
                     SELECT COUNT(*) as count
                     FROM {fq_table("memory_units")}
-                    WHERE bank_id = $1 AND fact_type = 'mental_model'
+                    WHERE bank_id = $1 AND fact_type = 'observation'
                     """,
                     bank_id,
                 )
-                total_mental_models = mental_model_count_result["count"] if mental_model_count_result else 0
+                total_observations = observation_count_result["count"] if observation_count_result else 0
 
                 # Format results
                 nodes_by_type = {row["fact_type"]: row["count"] for row in node_stats}
@@ -2062,7 +2070,7 @@ def _register_routes(app: FastAPI):
                     failed_operations=failed_operations,
                     last_consolidated_at=(last_consolidated_at.isoformat() if last_consolidated_at else None),
                     pending_consolidation=pending_consolidation,
-                    total_mental_models=total_mental_models,
+                    total_observations=total_observations,
                 )
 
         except (AuthenticationError, HTTPException):
@@ -2169,18 +2177,18 @@ def _register_routes(app: FastAPI):
 
     # =========================================================================
     # =========================================================================
-    # REFLECTIONS ENDPOINTS
+    # MENTAL MODELS ENDPOINTS (stored reflect responses)
     # =========================================================================
 
     @app.get(
-        "/v1/default/banks/{bank_id}/reflections",
-        response_model=ReflectionListResponse,
-        summary="List reflections",
+        "/v1/default/banks/{bank_id}/mental-models",
+        response_model=MentalModelListResponse,
+        summary="List mental models",
         description="List user-curated living documents that stay current.",
-        operation_id="list_reflections",
-        tags=["Reflections"],
+        operation_id="list_mental_models",
+        tags=["Mental Models"],
     )
-    async def api_list_reflections(
+    async def api_list_mental_models(
         bank_id: str,
         tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
         tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
@@ -2188,9 +2196,9 @@ def _register_routes(app: FastAPI):
         offset: int = Query(0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """List reflections for a bank."""
+        """List mental models for a bank."""
         try:
-            reflections = await app.state.memory.list_reflections(
+            mental_models = await app.state.memory.list_mental_models(
                 bank_id=bank_id,
                 tags=tags_filter,
                 tags_match=tags_match,
@@ -2198,66 +2206,66 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
-            return ReflectionListResponse(items=[ReflectionResponse(**r) for r in reflections])
+            return MentalModelListResponse(items=[MentalModelResponse(**m) for m in mental_models])
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/reflections: {error_detail}")
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
-        "/v1/default/banks/{bank_id}/reflections/{reflection_id}",
-        response_model=ReflectionResponse,
-        summary="Get reflection",
-        description="Get a specific reflection by ID.",
-        operation_id="get_reflection",
-        tags=["Reflections"],
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
+        response_model=MentalModelResponse,
+        summary="Get mental model",
+        description="Get a specific mental model by ID.",
+        operation_id="get_mental_model",
+        tags=["Mental Models"],
     )
-    async def api_get_reflection(
+    async def api_get_mental_model(
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Get a reflection by ID."""
+        """Get a mental model by ID."""
         try:
-            reflection = await app.state.memory.get_reflection(
+            mental_model = await app.state.memory.get_mental_model(
                 bank_id=bank_id,
-                reflection_id=reflection_id,
+                mental_model_id=mental_model_id,
                 request_context=request_context,
             )
-            if reflection is None:
-                raise HTTPException(status_code=404, detail=f"Reflection '{reflection_id}' not found")
-            return ReflectionResponse(**reflection)
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
+            return MentalModelResponse(**mental_model)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in GET /v1/default/banks/{bank_id}/reflections/{reflection_id}: {error_detail}")
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
-        "/v1/default/banks/{bank_id}/reflections",
-        response_model=CreateReflectionResponse,
-        summary="Create reflection",
-        description="Create a reflection by running reflect with the source query in the background. "
+        "/v1/default/banks/{bank_id}/mental-models",
+        response_model=CreateMentalModelResponse,
+        summary="Create mental model",
+        description="Create a mental model by running reflect with the source query in the background. "
         "Returns an operation ID to track progress. The content is auto-generated by the reflect endpoint. "
         "Use the operations endpoint to check completion status.",
-        operation_id="create_reflection",
-        tags=["Reflections"],
+        operation_id="create_mental_model",
+        tags=["Mental Models"],
     )
-    async def api_create_reflection(
+    async def api_create_mental_model(
         bank_id: str,
-        body: CreateReflectionRequest,
+        body: CreateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Create a reflection (async - returns operation_id)."""
+        """Create a mental model (async - returns operation_id)."""
         try:
-            result = await app.state.memory.submit_async_create_reflection(
+            result = await app.state.memory.submit_async_create_mental_model(
                 bank_id=bank_id,
                 name=body.name,
                 source_query=body.source_query,
@@ -2265,7 +2273,7 @@ def _register_routes(app: FastAPI):
                 max_tokens=body.max_tokens,
                 request_context=request_context,
             )
-            return CreateReflectionResponse(operation_id=result["operation_id"])
+            return CreateMentalModelResponse(operation_id=result["operation_id"])
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
@@ -2274,27 +2282,27 @@ def _register_routes(app: FastAPI):
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in POST /v1/default/banks/{bank_id}/reflections: {error_detail}")
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/mental-models: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
-        "/v1/default/banks/{bank_id}/reflections/{reflection_id}/refresh",
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh",
         response_model=AsyncOperationSubmitResponse,
-        summary="Refresh reflection",
+        summary="Refresh mental model",
         description="Submit an async task to re-run the source query through reflect and update the content.",
-        operation_id="refresh_reflection",
-        tags=["Reflections"],
+        operation_id="refresh_mental_model",
+        tags=["Mental Models"],
     )
-    async def api_refresh_reflection(
+    async def api_refresh_mental_model(
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Refresh a reflection by re-running its source query (async)."""
+        """Refresh a mental model by re-running its source query (async)."""
         try:
-            result = await app.state.memory.submit_async_refresh_reflection(
+            result = await app.state.memory.submit_async_refresh_mental_model(
                 bank_id=bank_id,
-                reflection_id=reflection_id,
+                mental_model_id=mental_model_id,
                 request_context=request_context,
             )
             return AsyncOperationSubmitResponse(operation_id=result["operation_id"], status="queued")
@@ -2307,65 +2315,65 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(
-                f"Error in POST /v1/default/banks/{bank_id}/reflections/{reflection_id}/refresh: {error_detail}"
+                f"Error in POST /v1/default/banks/{bank_id}/mental-models/{mental_model_id}/refresh: {error_detail}"
             )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.patch(
-        "/v1/default/banks/{bank_id}/reflections/{reflection_id}",
-        response_model=ReflectionResponse,
-        summary="Update reflection",
-        description="Update a reflection's name.",
-        operation_id="update_reflection",
-        tags=["Reflections"],
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
+        response_model=MentalModelResponse,
+        summary="Update mental model",
+        description="Update a mental model's name.",
+        operation_id="update_mental_model",
+        tags=["Mental Models"],
     )
-    async def api_update_reflection(
+    async def api_update_mental_model(
         bank_id: str,
-        reflection_id: str,
-        body: UpdateReflectionRequest,
+        mental_model_id: str,
+        body: UpdateMentalModelRequest,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Update a reflection."""
+        """Update a mental model."""
         try:
-            reflection = await app.state.memory.update_reflection(
+            mental_model = await app.state.memory.update_mental_model(
                 bank_id=bank_id,
-                reflection_id=reflection_id,
+                mental_model_id=mental_model_id,
                 name=body.name,
                 request_context=request_context,
             )
-            if reflection is None:
-                raise HTTPException(status_code=404, detail=f"Reflection '{reflection_id}' not found")
-            return ReflectionResponse(**reflection)
+            if mental_model is None:
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
+            return MentalModelResponse(**mental_model)
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/reflections/{reflection_id}: {error_detail}")
+            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
-        "/v1/default/banks/{bank_id}/reflections/{reflection_id}",
-        summary="Delete reflection",
-        description="Delete a reflection.",
-        operation_id="delete_reflection",
-        tags=["Reflections"],
+        "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}",
+        summary="Delete mental model",
+        description="Delete a mental model.",
+        operation_id="delete_mental_model",
+        tags=["Mental Models"],
     )
-    async def api_delete_reflection(
+    async def api_delete_mental_model(
         bank_id: str,
-        reflection_id: str,
+        mental_model_id: str,
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Delete a reflection."""
+        """Delete a mental model."""
         try:
-            deleted = await app.state.memory.delete_reflection(
+            deleted = await app.state.memory.delete_mental_model(
                 bank_id=bank_id,
-                reflection_id=reflection_id,
+                mental_model_id=mental_model_id,
                 request_context=request_context,
             )
             if not deleted:
-                raise HTTPException(status_code=404, detail=f"Reflection '{reflection_id}' not found")
+                raise HTTPException(status_code=404, detail=f"Mental model '{mental_model_id}' not found")
             return {"status": "deleted"}
         except (AuthenticationError, HTTPException):
             raise
@@ -2373,7 +2381,7 @@ def _register_routes(app: FastAPI):
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/reflections/{reflection_id}: {error_detail}")
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models/{mental_model_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     # =========================================================================
@@ -3097,20 +3105,20 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(
-        "/v1/default/banks/{bank_id}/mental-models",
+        "/v1/default/banks/{bank_id}/observations",
         response_model=DeleteResponse,
-        summary="Clear all mental models",
-        description="Delete all mental models for a memory bank. This is useful for resetting the consolidated knowledge.",
-        operation_id="clear_mental_models",
+        summary="Clear all observations",
+        description="Delete all observations for a memory bank. This is useful for resetting the consolidated knowledge.",
+        operation_id="clear_observations",
         tags=["Banks"],
     )
-    async def api_clear_mental_models(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
-        """Clear all mental models for a bank."""
+    async def api_clear_observations(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+        """Clear all observations for a bank."""
         try:
-            result = await app.state.memory.clear_mental_models(bank_id, request_context=request_context)
+            result = await app.state.memory.clear_observations(bank_id, request_context=request_context)
             return DeleteResponse(
                 success=True,
-                message=f"Cleared {result.get('deleted_count', 0)} mental models",
+                message=f"Cleared {result.get('deleted_count', 0)} observations",
                 deleted_count=result.get("deleted_count", 0),
             )
         except (AuthenticationError, HTTPException):
@@ -3119,14 +3127,14 @@ def _register_routes(app: FastAPI):
             import traceback
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/mental-models: {error_detail}")
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/observations: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post(
         "/v1/default/banks/{bank_id}/consolidate",
         response_model=ConsolidationResponse,
         summary="Trigger consolidation",
-        description="Run memory consolidation to create/update mental models from recent memories.",
+        description="Run memory consolidation to create/update observations from recent memories.",
         operation_id="trigger_consolidation",
         tags=["Banks"],
     )

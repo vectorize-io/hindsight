@@ -42,7 +42,7 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | required | Natural language query |
-| `types` | list | all | Filter: `world`, `experience`, `mental_model` |
+| `types` | list | all | Filter: `world`, `experience`, `observation` |
 | `budget` | string | "mid" | Budget level: `low`, `mid`, `high` |
 | `max_tokens` | int | 4096 | Token budget for results |
 | `trace` | bool | false | Enable trace output for debugging |
@@ -68,15 +68,15 @@ Recall specific memory types:
 <TabItem value="python" label="Python">
 <CodeSnippet code={recallPy} section="recall-world-only" language="python" />
 <CodeSnippet code={recallPy} section="recall-experience-only" language="python" />
-<CodeSnippet code={recallPy} section="recall-mental-models-only" language="python" />
+<CodeSnippet code={recallPy} section="recall-observations-only" language="python" />
 </TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={recallSh} section="recall-fact-type" language="bash" />
 </TabItem>
 </Tabs>
 
-:::tip About Mental Models
-Mental models are consolidated knowledge synthesized from multiple facts. They capture patterns, preferences, and learnings that the memory bank has built up over time. Mental models are automatically created in the background after retain operations.
+:::tip About Observations
+Observations are consolidated knowledge synthesized from multiple facts. They capture patterns, preferences, and learnings that the memory bank has built up over time. Observations are automatically created in the background after retain operations.
 :::
 
 ## Token Budget Management

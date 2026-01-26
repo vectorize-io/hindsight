@@ -127,7 +127,7 @@ for r in results.results:
 
 ## Reflect: Generate Insights
 
-The `reflect` operation performs reasoning over existing memories using the bank's disposition. It retrieves relevant facts and mental models to generate contextual responses.
+The `reflect` operation performs reasoning over existing memories using the bank's disposition. It retrieves relevant facts and observations to generate contextual responses.
 
 Example use cases:
 - An AI Project Manager reflecting on what risks need to be mitigated
@@ -142,11 +142,11 @@ print(response)
 
 ## Memory Types
 
-Hindsight organizes knowledge into facts and consolidated mental models:
+Hindsight organizes knowledge into facts and consolidated observations:
 
 - **World**: Facts about the world ("The stove gets hot")
 - **Experience**: Agent's own experiences ("I touched the stove and it really hurt")
-- **Mental Model**: Consolidated knowledge synthesized from facts ("Always be careful around hot surfaces")
+- **Observation**: Consolidated knowledge synthesized from facts ("Always be careful around hot surfaces")
 
 ## Cleanup
 

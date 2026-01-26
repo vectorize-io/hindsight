@@ -83,13 +83,15 @@ const responseSchema = {
     required: ['recommendation', 'confidence', 'key_factors'],
 };
 
-const structuredResponse = await client.reflect('hiring-team', 'Should we hire Alice for the ML team lead position?', {
+const structuredResponse = await client.reflect('my-bank', 'What do you know about Alice and her career?', {
     responseSchema: responseSchema,
 });
 
-// Structured output
-console.log(structuredResponse.structuredOutput.recommendation);
-console.log(structuredResponse.structuredOutput.keyFactors);
+// Structured output (if returned)
+if (structuredResponse.structuredOutput) {
+    console.log('Recommendation:', structuredResponse.structuredOutput.recommendation || 'N/A');
+    console.log('Key factors:', structuredResponse.structuredOutput.key_factors || []);
+}
 // [/docs:reflect-structured-output]
 
 
