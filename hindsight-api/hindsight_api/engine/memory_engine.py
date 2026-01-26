@@ -613,10 +613,6 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 for fact_type, facts in reflect_result.based_on.items()
             },
-            # Extract mental models from based_on["mental-models"] for easy UI access
-            "mental_models": [
-                {"id": str(fact.id), "text": fact.text} for fact in reflect_result.based_on.get("mental-models", [])
-            ],
         }
 
         # Update the reflection with the generated content and reflect_response
@@ -686,10 +682,6 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 for fact_type, facts in reflect_result.based_on.items()
             },
-            # Extract mental models from based_on["mental-models"] for easy UI access
-            "mental_models": [
-                {"id": str(fact.id), "text": fact.text} for fact in reflect_result.based_on.get("mental-models", [])
-            ],
         }
 
         # Update the reflection with the generated content and reflect_response
@@ -3722,14 +3714,13 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
+                        # Mental models have a "text" field containing the consolidated knowledge
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=f"{model_name}: {model_summary}",
+                                text=model.get("text", ""),
                                 fact_type="mental-models",
-                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
+                                context=None,
                                 occurred_start=None,
                                 occurred_end=None,
                             )
@@ -3744,14 +3735,13 @@ class MemoryEngine(MemoryEngineInterface):
                             continue  # Skip models not actually used by the agent
                         seen_model_ids.add(model_id)
                         # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
+                        # Mental models have a "text" field containing the consolidated knowledge
                         based_on["mental-models"].append(
                             MemoryFact(
                                 id=model_id,
-                                text=f"{model_name}: {model_summary}",
+                                text=model.get("text", ""),
                                 fact_type="mental-models",
-                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
+                                context=None,
                                 occurred_start=None,
                                 occurred_end=None,
                             )
@@ -5021,7 +5011,6 @@ class MemoryEngine(MemoryEngineInterface):
                 ]
                 for fact_type, facts in reflect_result.based_on.items()
             },
-            "mental_models": [],  # Mental models are included in based_on["mental-models"]
         }
 
         # Update the reflection with new content and reflect_response

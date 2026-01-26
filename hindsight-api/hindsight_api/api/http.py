@@ -554,18 +554,6 @@ class ReflectLLMCall(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
 
 
-class ReflectMentalModel(BaseModel):
-    """A mental model accessed during reflect."""
-
-    id: str = Field(description="Mental model ID")
-    name: str = Field(description="Mental model name")
-    type: str = Field(description="Mental model type: entity, concept, event")
-    subtype: str = Field(description="Mental model subtype: structural, emergent, learned, directive")
-    observations: list[str] | None = Field(
-        default=None, description="Observations for directive mental models (subtype='directive')"
-    )
-
-
 class ReflectBasedOn(BaseModel):
     """Evidence the response is based on: memories and mental models."""
 
@@ -577,10 +565,6 @@ class ReflectTrace(BaseModel):
 
     tool_calls: list[ReflectToolCall] = Field(default_factory=list, description="Tool calls made during reflection")
     llm_calls: list[ReflectLLMCall] = Field(default_factory=list, description="LLM calls made during reflection")
-    mental_models: list[ReflectMentalModel] = Field(
-        default_factory=list,
-        description="Mental models used during reflection (includes directives with subtype='directive')",
-    )
 
 
 class ReflectResponse(BaseModel):
@@ -604,14 +588,6 @@ class ReflectResponse(BaseModel):
                 "trace": {
                     "tool_calls": [{"tool": "recall", "input": {"query": "AI"}, "duration_ms": 150}],
                     "llm_calls": [{"scope": "agent_1", "duration_ms": 1200}],
-                    "mental_models": [
-                        {
-                            "id": "mm-1",
-                            "name": "AI Technology",
-                            "type": "concept",
-                            "subtype": "structural",
-                        }
-                    ],
                 },
             }
         }
@@ -1894,33 +1870,9 @@ def _register_routes(app: FastAPI):
                     for tc in core_result.tool_trace
                 ]
                 llm_calls = [ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms) for lc in core_result.llm_trace]
-                # Build map of directive observations by id
-                directive_observations = {d.id: d.rules for d in core_result.directives_applied}
-                # Build mental models from tool trace (get_mental_model outputs)
-                trace_mental_models: list[ReflectMentalModel] = []
-                seen_model_ids: set[str] = set()
-                for tc in core_result.tool_trace:
-                    if tc.tool == "get_mental_model" and tc.output.get("found") and "model" in tc.output:
-                        model = tc.output["model"]
-                        model_id = model.get("id")
-                        if model_id and model_id not in seen_model_ids:
-                            seen_model_ids.add(model_id)
-                            model_subtype = model.get("subtype", "structural")
-                            trace_mental_models.append(
-                                ReflectMentalModel(
-                                    id=model_id,
-                                    name=model.get("name", ""),
-                                    type=model.get("type", "concept"),
-                                    subtype=model_subtype,
-                                    observations=directive_observations.get(model_id)
-                                    if model_subtype == "directive"
-                                    else None,
-                                )
-                            )
                 trace_result = ReflectTrace(
                     tool_calls=tool_calls,
                     llm_calls=llm_calls,
-                    mental_models=trace_mental_models,
                 )
 
             return ReflectResponse(

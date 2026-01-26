@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus,
   Sparkles,
@@ -57,7 +58,6 @@ interface ReflectResponseBasedOnFact {
 interface ReflectResponse {
   text: string;
   based_on: Record<string, ReflectResponseBasedOnFact[]>;
-  mental_models?: Array<{ id: string; text: string }>;
 }
 
 interface Reflection {
@@ -616,14 +616,12 @@ function ReflectionDetailPanel({
     })}`;
   };
 
-  // Extract all memories from based_on
-  const basedOnFacts = reflection.reflect_response?.based_on
-    ? Object.entries(reflection.reflect_response.based_on).flatMap(([factType, facts]) =>
-        facts.map((fact) => ({ ...fact, factType }))
-      )
-    : [];
-
-  const mentalModels = reflection.reflect_response?.mental_models || [];
+  // Extract facts by type from based_on
+  const basedOn = reflection.reflect_response?.based_on || {};
+  const worldFacts = basedOn["world"] || [];
+  const experienceFacts = basedOn["experience"] || [];
+  const mentalModels = basedOn["mental-models"] || [];
+  const totalFacts = worldFacts.length + experienceFacts.length + mentalModels.length;
 
   return (
     <div className="fixed right-0 top-0 h-screen w-1/2 bg-card border-l shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
@@ -703,80 +701,119 @@ function ReflectionDetailPanel({
             </div>
           </div>
 
-          {/* Based On Facts Section */}
-          {basedOnFacts.length > 0 && (
+          {/* Based On Section with Tabs */}
+          {totalFacts > 0 ? (
             <div className="border-t border-border pt-5">
               <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                Based On ({basedOnFacts.length} {basedOnFacts.length === 1 ? "fact" : "facts"})
+                Based On ({totalFacts} {totalFacts === 1 ? "item" : "items"})
               </div>
-              <div className="space-y-3">
-                {basedOnFacts.map((fact, i) => (
-                  <div
-                    key={fact.id || i}
-                    className="p-4 bg-muted/50 rounded-lg border border-border/50"
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          fact.factType === "world"
-                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                            : fact.factType === "experience"
-                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                              : "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                        }`}
-                      >
-                        {fact.factType}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => setViewMemoryId(fact.id)}
-                      >
-                        View
-                      </Button>
-                    </div>
-                    <p className="text-sm text-foreground leading-relaxed">{fact.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+              <Tabs
+                defaultValue={
+                  worldFacts.length > 0
+                    ? "world"
+                    : experienceFacts.length > 0
+                      ? "experience"
+                      : "mental-models"
+                }
+              >
+                <TabsList className="mb-4">
+                  <TabsTrigger value="world" disabled={worldFacts.length === 0}>
+                    World
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                      {worldFacts.length}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="experience" disabled={experienceFacts.length === 0}>
+                    Experience
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-green-500/10 text-green-600 dark:text-green-400">
+                      {experienceFacts.length}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="mental-models" disabled={mentalModels.length === 0}>
+                    Mental Models
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      {mentalModels.length}
+                    </span>
+                  </TabsTrigger>
+                </TabsList>
 
-          {/* Mental Models Used Section */}
-          {mentalModels.length > 0 && (
-            <div className="border-t border-border pt-5">
-              <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                Mental Models Used ({mentalModels.length})
-              </div>
-              <div className="space-y-3">
-                {mentalModels.map((model, i) => (
-                  <div
-                    key={model.id || i}
-                    className="p-4 bg-muted/50 rounded-lg border border-border/50"
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                        mental_model
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => setViewMemoryId(model.id)}
+                <TabsContent value="world">
+                  <div className="space-y-3">
+                    {worldFacts.map((fact, i) => (
+                      <div
+                        key={fact.id || i}
+                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
                       >
-                        View
-                      </Button>
-                    </div>
-                    <p className="text-sm text-foreground leading-relaxed">{model.text}</p>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm text-foreground leading-relaxed flex-1">
+                            {fact.text}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-xs shrink-0"
+                            onClick={() => setViewMemoryId(fact.id)}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                </TabsContent>
 
-          {/* No based_on data yet */}
-          {!reflection.reflect_response && (
+                <TabsContent value="experience">
+                  <div className="space-y-3">
+                    {experienceFacts.map((fact, i) => (
+                      <div
+                        key={fact.id || i}
+                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm text-foreground leading-relaxed flex-1">
+                            {fact.text}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-xs shrink-0"
+                            onClick={() => setViewMemoryId(fact.id)}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="mental-models">
+                  <div className="space-y-3">
+                    {mentalModels.map((model, i) => (
+                      <div
+                        key={model.id || i}
+                        className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm text-foreground leading-relaxed flex-1">
+                            {model.text}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-xs shrink-0"
+                            onClick={() => setViewMemoryId(model.id)}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          ) : !reflection.reflect_response ? (
             <div className="border-t border-border pt-5">
               <div className="text-xs font-bold text-muted-foreground uppercase mb-3">Based On</div>
               <p className="text-sm text-muted-foreground">
@@ -784,7 +821,7 @@ function ReflectionDetailPanel({
                 tracking.
               </p>
             </div>
-          )}
+          ) : null}
 
           {reflection.tags && reflection.tags.length > 0 && (
             <div>
