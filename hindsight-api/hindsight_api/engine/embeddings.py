@@ -145,14 +145,17 @@ class LocalSTEmbeddings(Embeddings):
             logger.info("Embeddings: forcing CPU mode")
         else:
             # Check for GPU (CUDA) or Apple Silicon (MPS)
-            has_gpu = torch.cuda.is_available() or (
-                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-            )
-
-            if has_gpu:
-                device = None  # Let sentence-transformers auto-detect GPU/MPS
-            else:
-                device = "cpu"
+            # Wrap in try-except to gracefully handle any device detection issues
+            # (e.g., in CI environments or when PyTorch is built without GPU support)
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
         self._model = SentenceTransformer(
             self.model_name,
@@ -214,14 +217,16 @@ class LocalSTEmbeddings(Embeddings):
         if self.force_cpu:
             device = "cpu"
         else:
-            has_gpu = torch.cuda.is_available() or (
-                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-            )
-
-            if has_gpu:
-                device = None  # Let sentence-transformers auto-detect GPU/MPS
-            else:
-                device = "cpu"
+            # Wrap in try-except to gracefully handle any device detection issues
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS during reinit, falling back to CPU: {e}")
 
         self._model = SentenceTransformer(
             self.model_name,
