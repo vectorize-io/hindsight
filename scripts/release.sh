@@ -77,6 +77,22 @@ for package in "${PYTHON_PACKAGES[@]}"; do
     fi
 done
 
+# Update __version__ in Python __init__.py files
+PYTHON_INIT_FILES=(
+    "hindsight-api/hindsight_api/__init__.py"
+    "hindsight-embed/hindsight_embed/__init__.py"
+    "hindsight-clients/python/hindsight_client_api/__init__.py"
+)
+for init_file in "${PYTHON_INIT_FILES[@]}"; do
+    if [ -f "$init_file" ]; then
+        print_info "Updating __version__ in $init_file"
+        sed -i.bak "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" "$init_file"
+        rm "${init_file}.bak"
+    else
+        print_warn "File $init_file not found, skipping"
+    fi
+done
+
 # Update Rust CLI
 CARGO_FILE="hindsight-cli/Cargo.toml"
 if [ -f "$CARGO_FILE" ]; then
