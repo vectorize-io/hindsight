@@ -1,0 +1,33 @@
+{
+  "id": "hindsight-memory",
+  "name": "Hindsight Memory",
+  "kind": "memory",
+  "moltbot": {
+    "skills": ["skills"]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "bankMission": {
+        "type": "string",
+        "description": "Custom mission/context for the memory bank (overrides default)"
+      },
+      "embedPort": {
+        "type": "number",
+        "description": "Port for hindsight-embed server (auto-assigned if not specified)",
+        "default": 0
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "bankMission": {
+      "label": "Bank Mission",
+      "placeholder": "Custom context for what this agent does..."
+    },
+    "embedPort": {
+      "label": "Embed Server Port",
+      "placeholder": "0 (auto-assign)"
+    }
+  }
+}
