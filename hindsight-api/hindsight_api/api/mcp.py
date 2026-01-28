@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 # Default bank_id from environment variable
 DEFAULT_BANK_ID = os.environ.get("HINDSIGHT_MCP_BANK_ID", "default")
 
+# MCP authentication token (optional - if set, Bearer token auth is required)
+MCP_AUTH_TOKEN = os.environ.get("HINDSIGHT_API_MCP_AUTH_TOKEN")
+
 # Context variable to hold the current bank_id
 _current_bank_id: ContextVar[str | None] = ContextVar("current_bank_id", default=None)
 
@@ -65,7 +68,11 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
 
 
 class MCPMiddleware:
-    """ASGI middleware that extracts bank_id from header or path and sets context.
+    """ASGI middleware that handles authentication and extracts bank_id from header or path.
+
+    Authentication:
+        If HINDSIGHT_API_MCP_AUTH_TOKEN is set, all requests must include a valid
+        Authorization header with Bearer token or direct token matching the configured value.
 
     Bank ID can be provided via:
     1. X-Bank-Id header (recommended for Claude Code)
@@ -74,7 +81,7 @@ class MCPMiddleware:
 
     For Claude Code, configure with:
         claude mcp add --transport http hindsight http://localhost:8888/mcp \\
-            --header "X-Bank-Id: my-bank"
+            --header "X-Bank-Id: my-bank" --header "Authorization: Bearer <token>"
     """
 
     def __init__(self, app, memory: MemoryEngine):
@@ -97,6 +104,18 @@ class MCPMiddleware:
         if scope["type"] != "http":
             await self.mcp_app(scope, receive, send)
             return
+
+        # Authenticate if MCP_AUTH_TOKEN is configured
+        if MCP_AUTH_TOKEN:
+            auth_header = self._get_header(scope, "Authorization")
+            if not auth_header:
+                await self._send_error(send, 401, "Authorization header required")
+                return
+            # Support both "Bearer <token>" and direct token
+            token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else auth_header.strip()
+            if token != MCP_AUTH_TOKEN:
+                await self._send_error(send, 401, "Invalid authentication token")
+                return
 
         path = scope.get("path", "")
 
@@ -175,6 +194,10 @@ class MCPMiddleware:
 def create_mcp_app(memory: MemoryEngine):
     """
     Create an ASGI app that handles MCP requests.
+
+    Authentication:
+        Set HINDSIGHT_API_MCP_AUTH_TOKEN to require Bearer token authentication.
+        If not set, MCP endpoint is open (for local development).
 
     Bank ID can be provided via:
     1. X-Bank-Id header: claude mcp add --transport http hindsight http://localhost:8888/mcp --header "X-Bank-Id: my-bank"
