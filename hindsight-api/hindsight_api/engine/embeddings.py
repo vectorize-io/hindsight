@@ -135,11 +135,17 @@ class LocalSTEmbeddings(Embeddings):
         import torch
 
         # Check for GPU (CUDA) or Apple Silicon (MPS)
-        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-
-        if has_gpu:
-            device = None  # Let sentence-transformers auto-detect GPU/MPS
-        else:
+        # Wrap in try-except to gracefully handle any device detection issues
+        # (e.g., in CI environments or when PyTorch is built without GPU support)
+        device = "cpu"  # Default to CPU
+        try:
+            has_gpu = torch.cuda.is_available() or (
+                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            )
+            if has_gpu:
+                device = None  # Let sentence-transformers auto-detect GPU/MPS
+        except Exception as e:
+            logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
             device = "cpu"
 
         self._model = SentenceTransformer(
@@ -181,13 +187,17 @@ class LocalSTEmbeddings(Embeddings):
         gc.collect()
 
         # If using CUDA/MPS, clear the cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            try:
-                torch.mps.empty_cache()
-            except AttributeError:
-                pass  # Method might not exist in all PyTorch versions
+        # Wrap in try-except to handle any device detection issues
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                try:
+                    torch.mps.empty_cache()
+                except AttributeError:
+                    pass  # Method might not exist in all PyTorch versions
+        except Exception:
+            pass  # Ignore any cache clearing errors
 
         # Reinitialize the model (inline version of initialize() but synchronous)
         try:
@@ -199,11 +209,16 @@ class LocalSTEmbeddings(Embeddings):
             )
 
         # Determine device based on hardware availability
-        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-
-        if has_gpu:
-            device = None  # Let sentence-transformers auto-detect GPU/MPS
-        else:
+        # Wrap in try-except to gracefully handle any device detection issues
+        device = "cpu"  # Default to CPU
+        try:
+            has_gpu = torch.cuda.is_available() or (
+                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            )
+            if has_gpu:
+                device = None  # Let sentence-transformers auto-detect GPU/MPS
+        except Exception as e:
+            logger.warning(f"Failed to detect GPU/MPS during reinit, falling back to CPU: {e}")
             device = "cpu"
 
         self._model = SentenceTransformer(
