@@ -162,6 +162,8 @@ jobs:
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -376,6 +378,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -452,6 +456,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -533,6 +539,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -612,6 +620,8 @@ jobs:
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -773,6 +783,8 @@ jobs:
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
@@ -883,6 +895,8 @@ jobs:
       HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU: "1"
+      HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU: "1"
 
     steps:
     - uses: actions/checkout@v4
