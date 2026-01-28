@@ -97,3 +97,47 @@ def test_path_parsing_logic():
     bank_id, remaining = parse_path("/my-bank/some/path")
     assert bank_id == "my-bank"
     assert remaining == "/some/path"
+
+
+@pytest.mark.asyncio
+async def test_api_key_context_variable():
+    """Test that API key context variable works correctly."""
+    from hindsight_api.api.mcp import get_current_api_key, _current_api_key
+
+    # Initially None
+    assert get_current_api_key() is None
+
+    # Set and verify
+    token = _current_api_key.set("test-api-key-123")
+    try:
+        assert get_current_api_key() == "test-api-key-123"
+    finally:
+        _current_api_key.reset(token)
+
+    # Back to None after reset
+    assert get_current_api_key() is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_propagate_api_key(mock_memory):
+    """Test that MCP tools propagate API key to RequestContext."""
+    from hindsight_api.api.mcp import create_mcp_server, _current_bank_id, _current_api_key
+
+    mcp_server = create_mcp_server(mock_memory)
+    tools = mcp_server._tool_manager._tools
+
+    # Set both bank_id and api_key context
+    bank_token = _current_bank_id.set("test-bank")
+    api_key_token = _current_api_key.set("test-bearer-token")
+    try:
+        retain_tool = tools["retain"]
+        result = await retain_tool.fn(content="test content", context="test_context", async_processing=False)
+        assert "successfully" in result.lower()
+
+        # Verify the memory was called with request_context containing api_key
+        mock_memory.retain_batch_async.assert_called_once()
+        call_kwargs = mock_memory.retain_batch_async.call_args.kwargs
+        assert call_kwargs["request_context"].api_key == "test-bearer-token"
+    finally:
+        _current_bank_id.reset(bank_token)
+        _current_api_key.reset(api_key_token)

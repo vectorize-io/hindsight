@@ -32,6 +32,9 @@ class MCPToolsConfig:
     # How to resolve bank_id for operations
     bank_id_resolver: Callable[[], str | None]
 
+    # How to resolve API key for tenant auth (optional)
+    api_key_resolver: Callable[[], str | None] | None = None
+
     # Whether to include bank_id as a parameter on tools (for multi-bank support)
     include_bank_id_param: bool = False
 
@@ -44,6 +47,16 @@ class MCPToolsConfig:
 
     # Retain behavior
     retain_fire_and_forget: bool = False  # If True, use asyncio.create_task pattern
+
+
+def _get_request_context(config: MCPToolsConfig) -> RequestContext:
+    """Create RequestContext with API key from resolver if available.
+
+    This enables tenant auth to work with MCP tools by propagating
+    the Bearer token from the MCP middleware to the memory engine.
+    """
+    api_key = config.api_key_resolver() if config.api_key_resolver else None
+    return RequestContext(api_key=api_key)
 
 
 def parse_timestamp(timestamp: str) -> datetime | None:
@@ -155,12 +168,14 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 if error:
                     return {"status": "error", "message": error}
 
+                request_context = _get_request_context(config)
+
                 async def _retain():
                     try:
                         await memory.retain_batch_async(
                             bank_id=target_bank,
                             contents=[content_dict],
-                            request_context=RequestContext(),
+                            request_context=request_context,
                         )
                     except Exception as e:
                         logger.error(f"Error storing memory: {e}", exc_info=True)
@@ -196,16 +211,17 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                         return f"Error: {error}"
 
                     contents = [content_dict]
+                    request_context = _get_request_context(config)
                     if async_processing:
                         result = await memory.submit_async_retain(
-                            bank_id=target_bank, contents=contents, request_context=RequestContext()
+                            bank_id=target_bank, contents=contents, request_context=request_context
                         )
                         return f"Memory queued for background processing (operation_id: {result.get('operation_id', 'N/A')})"
                     else:
                         await memory.retain_batch_async(
                             bank_id=target_bank,
                             contents=contents,
-                            request_context=RequestContext(),
+                            request_context=request_context,
                         )
                         return f"Memory stored successfully in bank '{target_bank}'"
                 except Exception as e:
@@ -237,12 +253,14 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             if error:
                 return {"status": "error", "message": error}
 
+            request_context = _get_request_context(config)
+
             async def _retain():
                 try:
                     await memory.retain_batch_async(
                         bank_id=target_bank,
                         contents=[content_dict],
-                        request_context=RequestContext(),
+                        request_context=request_context,
                     )
                 except Exception as e:
                     logger.error(f"Error storing memory: {e}", exc_info=True)
@@ -280,7 +298,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     fact_type=list(VALID_RECALL_FACT_TYPES),
                     budget=Budget.HIGH,
                     max_tokens=max_tokens,
-                    request_context=RequestContext(),
+                    request_context=_get_request_context(config),
                 )
 
                 return recall_result.model_dump_json(indent=2)
@@ -311,7 +329,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     fact_type=list(VALID_RECALL_FACT_TYPES),
                     budget=Budget.HIGH,
                     max_tokens=max_tokens,
-                    request_context=RequestContext(),
+                    request_context=_get_request_context(config),
                 )
 
                 return recall_result.model_dump()
@@ -370,7 +388,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                     query=query,
                     budget=budget_enum,
                     context=context,
-                    request_context=RequestContext(),
+                    request_context=_get_request_context(config),
                 )
 
                 return reflect_result.model_dump_json(indent=2)
@@ -423,7 +441,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
                     query=query,
                     budget=budget_enum,
                     context=context,
-                    request_context=RequestContext(),
+                    request_context=_get_request_context(config),
                 )
 
                 return reflect_result.model_dump()
@@ -447,7 +465,7 @@ def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
             JSON list of banks with their IDs, names, dispositions, and missions.
         """
         try:
-            banks = await memory.list_banks(request_context=RequestContext())
+            banks = await memory.list_banks(request_context=_get_request_context(config))
             return json.dumps({"banks": banks}, indent=2)
         except Exception as e:
             logger.error(f"Error listing banks: {e}", exc_info=True)
@@ -471,8 +489,9 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
             mission: Optional mission describing who the agent is and what they're trying to accomplish
         """
         try:
+            request_context = _get_request_context(config)
             # get_bank_profile auto-creates bank if it doesn't exist
-            profile = await memory.get_bank_profile(bank_id, request_context=RequestContext())
+            profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Update name/mission if provided
             if name is not None or mission is not None:
@@ -480,10 +499,10 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
                     bank_id,
                     name=name,
                     mission=mission,
-                    request_context=RequestContext(),
+                    request_context=request_context,
                 )
                 # Fetch updated profile
-                profile = await memory.get_bank_profile(bank_id, request_context=RequestContext())
+                profile = await memory.get_bank_profile(bank_id, request_context=request_context)
 
             # Serialize disposition if it's a Pydantic model
             if "disposition" in profile and hasattr(profile["disposition"], "model_dump"):
