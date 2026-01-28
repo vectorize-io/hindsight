@@ -24,6 +24,14 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    if (response.error || !response.data) {
+      console.error("Graph API error:", response.error);
+      return NextResponse.json(
+        { error: response.error || "Failed to fetch graph data" },
+        { status: 500 },
+      );
+    }
+
     return NextResponse.json(response.data, { status: 200 });
   } catch (error) {
     console.error("Error fetching graph data:", error);
