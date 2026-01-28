@@ -1,0 +1,71 @@
+# Build and push Docker image to Google Cloud Artifact Registry
+# Triggers on push to main branch or manual workflow dispatch
+#
+# Required secrets:
+#   GCP_SA_KEY - Service account JSON key with Artifact Registry Writer role
+#
+# Target registry: us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight
+
+name: Build and Push to GCP
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: deploy-gcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Free disk space - standalone image is ~9GB with ML models
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate with GCP using service account key
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-docker.pkg.dev --quiet
+
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/standalone/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:latest
+            us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:${{ github.sha }}
+          build-args: |
+            INCLUDE_API=true
+            INCLUDE_CP=true
+            INCLUDE_LOCAL_MODELS=true
+            PRELOAD_ML_MODELS=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
