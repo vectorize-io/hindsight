@@ -1,12 +1,13 @@
-# Build and push Docker image to Google Cloud Artifact Registry
+# Build, push Docker image to GCP Artifact Registry, and deploy to GKE
 # Triggers on push to main branch or manual workflow dispatch
 #
 # Required secrets:
-#   GCP_SA_KEY - Service account JSON key with Artifact Registry Writer role
+#   GCP_SA_KEY - Service account JSON key with Artifact Registry Writer + Container Developer roles
 #
 # Target registry: us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight
+# Target cluster:  gcp-k8s-xsolla-n8n-prod (us-west2) / namespace: hindsight
 
-name: Build and Push to GCP
+name: Build, Push and Deploy to GCP
 
 on:
   push:
@@ -68,3 +69,20 @@ jobs:
             PRELOAD_ML_MODELS=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: gcp-k8s-xsolla-n8n-prod
+          location: us-west2
+          project_id: xsolla-n8n-prod
+
+      - name: Deploy to GKE
+        run: |
+          kubectl rollout restart deployment/hindsight-current -n hindsight
+          kubectl rollout status deployment/hindsight-current -n hindsight --timeout=300s
