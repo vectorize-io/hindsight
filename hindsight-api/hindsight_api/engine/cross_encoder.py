@@ -163,11 +163,101 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         else:
             logger.info("Reranker: local provider initialized (using existing executor)")
 
+    def _is_xpc_error(self, error: Exception) -> bool:
+        """
+        Check if an error is an XPC connection error (macOS daemon issue).
+
+        On macOS, long-running daemons can lose XPC connections to system services
+        when the process is idle for extended periods.
+        """
+        error_str = str(error).lower()
+        return "xpc_error_connection_invalid" in error_str or "xpc error" in error_str
+
+    def _reinitialize_model_sync(self) -> None:
+        """
+        Clear and reinitialize the cross-encoder model synchronously.
+
+        This is used to recover from XPC errors on macOS where the
+        PyTorch/MPS backend loses its connection to system services.
+        """
+        logger.warning(f"Reinitializing reranker model {self.model_name} due to backend error")
+
+        # Clear existing model
+        self._model = None
+
+        # Force garbage collection to free resources
+        import gc
+
+        import torch
+
+        gc.collect()
+
+        # If using CUDA/MPS, clear the cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            try:
+                torch.mps.empty_cache()
+            except AttributeError:
+                pass  # Method might not exist in all PyTorch versions
+
+        # Reinitialize the model
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for LocalSTCrossEncoder. "
+                "Install it with: pip install sentence-transformers"
+            )
+
+        # Determine device based on hardware availability
+        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+
+        if has_gpu:
+            device = None  # Let sentence-transformers auto-detect GPU/MPS
+        else:
+            device = "cpu"
+
+        self._model = CrossEncoder(
+            self.model_name,
+            device=device,
+            model_kwargs={"low_cpu_mem_usage": False},
+        )
+
+        logger.info("Reranker: local provider reinitialized successfully")
+
+    def _predict_with_recovery(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Predict with automatic recovery from XPC errors.
+
+        This runs synchronously in the thread pool.
+        """
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            try:
+                scores = self._model.predict(pairs, show_progress_bar=False)
+                return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+            except Exception as e:
+                # Check if this is an XPC error (macOS daemon issue)
+                if self._is_xpc_error(e) and attempt < max_retries:
+                    logger.warning(f"XPC error detected in reranker (attempt {attempt + 1}): {e}")
+                    try:
+                        self._reinitialize_model_sync()
+                        logger.info("Reranker reinitialized successfully, retrying prediction")
+                        continue
+                    except Exception as reinit_error:
+                        logger.error(f"Failed to reinitialize reranker: {reinit_error}")
+                        raise Exception(f"Failed to recover from XPC error: {str(e)}")
+                else:
+                    # Not an XPC error or out of retries
+                    raise
+
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
         Score query-document pairs for relevance.
 
         Uses a dedicated thread pool with limited workers to prevent CPU thrashing.
+        Automatically recovers from XPC errors on macOS by reinitializing the model.
 
         Args:
             pairs: List of (query, document) tuples to score
@@ -180,11 +270,11 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         # Use dedicated executor - limited workers naturally limits concurrency
         loop = asyncio.get_event_loop()
-        scores = await loop.run_in_executor(
+        return await loop.run_in_executor(
             LocalSTCrossEncoder._executor,
-            lambda: self._model.predict(pairs, show_progress_bar=False),
+            self._predict_with_recovery,
+            pairs,
         )
-        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
 
 
 class RemoteTEICrossEncoder(CrossEncoderModel):
