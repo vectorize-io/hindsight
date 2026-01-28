@@ -3580,6 +3580,16 @@ class MemoryEngine(MemoryEngineInterface):
         if directives:
             logger.info(f"[REFLECT {reflect_id}] Loaded {len(directives)} directives")
 
+        # Check if the bank has any mental models
+        async with pool.acquire() as conn:
+            mental_model_count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('mental_models')} WHERE bank_id = $1",
+                bank_id,
+            )
+        has_mental_models = mental_model_count > 0
+        if has_mental_models:
+            logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
+
         # Run the agent
         agent_result = await run_reflect_agent(
             llm_config=self._reflect_llm_config,
@@ -3595,6 +3605,8 @@ class MemoryEngine(MemoryEngineInterface):
             max_tokens=max_tokens,
             response_schema=response_schema,
             directives=directives,
+            has_mental_models=has_mental_models,
+            budget=effective_budget,
         )
 
         total_time = time.time() - reflect_start
