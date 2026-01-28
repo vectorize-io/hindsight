@@ -264,5 +264,6 @@ These learning capabilities are the foundation for more sophisticated agent memo
 **Resources:**
 - [Recall API](../developer/api/recall) — retrieve observations alongside facts
 - [Reflect API](../developer/api/reflect) — responses now include supporting observations
-- [Mental Models](../developer/mental-models) — create and manage curated summaries, understand observations
+- [Mental Models API](../developer/api/mental-models) — create and manage curated summaries
+- [Observations Guide](../developer/observations) — deep dive into knowledge consolidation
 - [Full Changelog](../changelog)
