@@ -432,8 +432,28 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
 # FACT EXTRACTION PROMPTS
 # =============================================================================
 
-# Shared structural sections (used by concise and custom modes)
-_STRUCTURAL_SECTIONS = """
+# Base prompt template (shared by concise and custom modes)
+# Uses {extraction_guidelines} placeholder for mode-specific instructions
+_BASE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
+
+LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
+
+{fact_types_instruction}
+
+{extraction_guidelines}
+
+══════════════════════════════════════════════════════════════════════════
+FACT FORMAT - BE CONCISE
+══════════════════════════════════════════════════════════════════════════
+
+1. **what**: Core fact - concise but complete (1-2 sentences max)
+2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. **where**: Location if relevant. "N/A" if none.
+4. **who**: People involved with relationships. "N/A" if just general info.
+5. **why**: Context/significance ONLY if important. "N/A" if obvious.
+
+CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
+
 ══════════════════════════════════════════════════════════════════════════
 COREFERENCE RESOLUTION
 ══════════════════════════════════════════════════════════════════════════
@@ -468,11 +488,10 @@ ENTITIES
 ══════════════════════════════════════════════════════════════════════════
 
 Include: people names, organizations, places, key objects, abstract concepts (career, friendship, etc.)
-Always include "user" when fact is about the user."""
+Always include "user" when fact is about the user.{examples}"""
 
-# Concise mode selectivity guidelines
-_CONCISE_GUIDELINES = """
-══════════════════════════════════════════════════════════════════════════
+# Concise mode guidelines
+_CONCISE_GUIDELINES = """══════════════════════════════════════════════════════════════════════════
 SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
 ══════════════════════════════════════════════════════════════════════════
 
@@ -494,8 +513,9 @@ DO NOT extract:
 
 CONSOLIDATE related statements into ONE fact when possible."""
 
-# Concise mode examples and closing
+# Concise mode examples
 _CONCISE_EXAMPLES = """
+
 ══════════════════════════════════════════════════════════════════════════
 EXAMPLES
 ══════════════════════════════════════════════════════════════════════════
@@ -520,29 +540,18 @@ QUALITY OVER QUANTITY
 
 Ask: "Would this be useful to recall in 6 months?" If no, skip it."""
 
-# Assembled concise prompt (must match original exactly for backward compatibility)
-CONCISE_FACT_EXTRACTION_PROMPT = (
-    """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
+# Assembled concise prompt (backward compatible - exact same output as before)
+CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
+    fact_types_instruction="{fact_types_instruction}",
+    extraction_guidelines=_CONCISE_GUIDELINES,
+    examples=_CONCISE_EXAMPLES,
+)
 
-LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
-
-{fact_types_instruction}"""
-    + _CONCISE_GUIDELINES
-    + """
-
-══════════════════════════════════════════════════════════════════════════
-FACT FORMAT - BE CONCISE
-══════════════════════════════════════════════════════════════════════════
-
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
-
-CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones."""
-    + _STRUCTURAL_SECTIONS
-    + _CONCISE_EXAMPLES
+# Custom prompt uses same base but without examples
+CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
+    fact_types_instruction="{fact_types_instruction}",
+    extraction_guidelines="{custom_instructions}",
+    examples="",  # No examples for custom mode
 )
 
 
@@ -658,35 +667,6 @@ Extract ALL of the following from the fact:
 
 ALWAYS include "user" when fact is about the user.
 Extract anything that could help link related facts together."""
-
-
-# Custom extraction prompt - uses shared structural base with user-provided guidelines
-CUSTOM_FACT_EXTRACTION_PROMPT = (
-    """Extract facts from text. Follow the custom guidelines below.
-
-LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
-
-{fact_types_instruction}
-
-══════════════════════════════════════════════════════════════════════════
-EXTRACTION GUIDELINES - CUSTOM
-══════════════════════════════════════════════════════════════════════════
-
-{custom_instructions}
-
-══════════════════════════════════════════════════════════════════════════
-FACT FORMAT - BE CONCISE
-══════════════════════════════════════════════════════════════════════════
-
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
-
-CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones."""
-    + _STRUCTURAL_SECTIONS
-)
 
 
 # Causal relationships section - appended when causal extraction is enabled

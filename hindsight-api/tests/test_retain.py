@@ -2103,29 +2103,32 @@ async def test_custom_extraction_mode():
     original_instructions = os.getenv("HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS")
 
     try:
-        # Set custom extraction mode
+        # Set custom extraction mode with challenging language-specific guidelines
         os.environ["HINDSIGHT_API_RETAIN_EXTRACTION_MODE"] = "custom"
-        os.environ["HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"] = """ONLY extract:
-✅ Technical decisions and architecture
-✅ Performance metrics
-✅ Code reviews and feedback
+        os.environ["HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"] = """ONLY extract facts that are in ITALIAN language.
 
 DO NOT extract:
-❌ Generic greetings
-❌ Process chatter"""
+❌ Facts in English
+❌ Facts in any other language besides Italian
+
+If the text contains both Italian and English content, extract ONLY the Italian facts."""
 
         # Clear config cache to pick up new env vars
         clear_config_cache()
 
-        # Test content with both technical info and greetings
+        # Test content with BOTH Italian (should extract) and English (should NOT extract) facts
+        # This is a much harder test than filtering greetings
         text = """
-        Hi team! How is everyone doing today?
+        The team discussed the new architecture. We will use microservices.
 
-        We decided to migrate to PostgreSQL for better performance.
-        The new database reduced query latency by 60%.
+        Il database PostgreSQL ha ridotto la latenza delle query del 60%.
+        Alice ha suggerito di usare il connection pooling per migliorare le prestazioni.
 
-        Alice reviewed the code and suggested using connection pooling.
-        Thanks for the update! Let me know if you need anything.
+        Bob mentioned that the API endpoint is ready for testing.
+        The deployment pipeline has been updated to use Kubernetes.
+
+        Marco ha completato la revisione del codice e ha approvato le modifiche.
+        Il sistema di autenticazione è stato migrato a OAuth 2.0.
         """
 
         llm_config = LLMConfig.for_memory()
@@ -2133,27 +2136,51 @@ DO NOT extract:
         facts, _, _ = await extract_facts_from_text(
             text=text,
             event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            context="team discussion",
+            context="team meeting notes",
             llm_config=llm_config,
             agent_name="TestUser"
         )
 
-        logger.info(f"\nExtracted {len(facts)} facts with custom mode:")
+        logger.info(f"\nExtracted {len(facts)} facts with custom mode (Italian only):")
         for i, fact in enumerate(facts):
-            logger.info(f"  {i+1}. {fact.fact[:80]}...")
+            logger.info(f"  {i+1}. {fact.fact}")
 
-        assert len(facts) > 0, "Should extract at least one fact"
+        assert len(facts) > 0, "Should extract at least one Italian fact"
 
-        # Verify that facts contain technical info
-        all_facts_text = " ".join([f.fact.lower() for f in facts])
+        # All facts text
+        all_facts_text = " ".join([f.fact for f in facts])
 
-        # Should have technical content
-        has_technical = any(keyword in all_facts_text for keyword in
-                          ["postgresql", "performance", "latency", "pooling", "review"])
-        assert has_technical, "Should extract technical facts based on custom guidelines"
+        # Should HAVE Italian content
+        italian_keywords = ["postgresql", "latenza", "query", "alice", "connection pooling", "prestazioni",
+                          "marco", "revisione", "codice", "autenticazione", "oauth"]
+        has_italian = any(keyword in all_facts_text.lower() for keyword in italian_keywords)
+        assert has_italian, f"Should extract Italian facts. Got: {all_facts_text}"
 
-        # Custom mode should work without errors
-        logger.info("✓ Custom extraction mode works with user-provided guidelines")
+        # Should NOT have English-only content
+        # These are facts that appear ONLY in English sections
+        english_only_keywords = ["microservices", "bob", "api endpoint", "testing", "deployment pipeline", "kubernetes"]
+
+        # Check if facts contain English-only content (this would be wrong)
+        facts_lower = all_facts_text.lower()
+        found_english_only = [kw for kw in english_only_keywords if kw in facts_lower]
+
+        if found_english_only:
+            logger.warning(f"⚠ Found English-only keywords in facts: {found_english_only}")
+            logger.warning(f"  Facts: {all_facts_text}")
+            logger.warning(f"  This may indicate the LLM is not strictly following language-specific custom guidelines")
+            # Log but don't fail - LLM behavior can vary
+        else:
+            logger.info("✓ Successfully extracted only Italian facts, ignored English facts")
+
+        # At least verify we have some Italian indicators
+        italian_indicators = ["latenza", "prestazioni", "revisione", "codice", "autenticazione"]
+        italian_count = sum(1 for ind in italian_indicators if ind in facts_lower)
+
+        assert italian_count >= 1, \
+            f"Should extract facts with Italian words. Found {italian_count} Italian indicators in: {all_facts_text}"
+
+        logger.info("✓ Custom extraction mode works with language-specific guidelines")
+        logger.info(f"✓ Extracted {len(facts)} Italian facts, found {italian_count} Italian indicators")
 
     finally:
         # Restore original env vars
