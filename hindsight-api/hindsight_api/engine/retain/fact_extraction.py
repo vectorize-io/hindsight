@@ -432,47 +432,8 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
 # FACT EXTRACTION PROMPTS
 # =============================================================================
 
-# Concise extraction prompt (default) - selective, high-quality facts
-CONCISE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
-
-LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
-
-{fact_types_instruction}
-
-══════════════════════════════════════════════════════════════════════════
-SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
-══════════════════════════════════════════════════════════════════════════
-
-ONLY extract facts that are:
-✅ Personal info: names, relationships, roles, background
-✅ Preferences: likes, dislikes, habits, interests (e.g., "Alice likes coffee")
-✅ Significant events: milestones, decisions, achievements, changes
-✅ Plans/goals: future intentions, deadlines, commitments
-✅ Expertise: skills, knowledge, certifications, experience
-✅ Important context: projects, problems, constraints
-✅ Sensory/emotional details: feelings, sensations, perceptions that provide context
-✅ Observations: descriptions of people, places, things with specific details
-
-DO NOT extract:
-❌ Generic greetings: "how are you", "hello", pleasantries without substance
-❌ Pure filler: "thanks", "sounds good", "ok", "got it", "sure"
-❌ Process chatter: "let me check", "one moment", "I'll look into it"
-❌ Repeated info: if already stated, don't extract again
-
-CONSOLIDATE related statements into ONE fact when possible.
-
-══════════════════════════════════════════════════════════════════════════
-FACT FORMAT - BE CONCISE
-══════════════════════════════════════════════════════════════════════════
-
-1. **what**: Core fact - concise but complete (1-2 sentences max)
-2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
-3. **where**: Location if relevant. "N/A" if none.
-4. **who**: People involved with relationships. "N/A" if just general info.
-5. **why**: Context/significance ONLY if important. "N/A" if obvious.
-
-CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
-
+# Shared structural sections (used by concise and custom modes)
+_STRUCTURAL_SECTIONS = """
 ══════════════════════════════════════════════════════════════════════════
 COREFERENCE RESOLUTION
 ══════════════════════════════════════════════════════════════════════════
@@ -507,8 +468,34 @@ ENTITIES
 ══════════════════════════════════════════════════════════════════════════
 
 Include: people names, organizations, places, key objects, abstract concepts (career, friendship, etc.)
-Always include "user" when fact is about the user.
+Always include "user" when fact is about the user."""
 
+# Concise mode selectivity guidelines
+_CONCISE_GUIDELINES = """
+══════════════════════════════════════════════════════════════════════════
+SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
+══════════════════════════════════════════════════════════════════════════
+
+ONLY extract facts that are:
+✅ Personal info: names, relationships, roles, background
+✅ Preferences: likes, dislikes, habits, interests (e.g., "Alice likes coffee")
+✅ Significant events: milestones, decisions, achievements, changes
+✅ Plans/goals: future intentions, deadlines, commitments
+✅ Expertise: skills, knowledge, certifications, experience
+✅ Important context: projects, problems, constraints
+✅ Sensory/emotional details: feelings, sensations, perceptions that provide context
+✅ Observations: descriptions of people, places, things with specific details
+
+DO NOT extract:
+❌ Generic greetings: "how are you", "hello", pleasantries without substance
+❌ Pure filler: "thanks", "sounds good", "ok", "got it", "sure"
+❌ Process chatter: "let me check", "one moment", "I'll look into it"
+❌ Repeated info: if already stated, don't extract again
+
+CONSOLIDATE related statements into ONE fact when possible."""
+
+# Concise mode examples and closing
+_CONCISE_EXAMPLES = """
 ══════════════════════════════════════════════════════════════════════════
 EXAMPLES
 ══════════════════════════════════════════════════════════════════════════
@@ -532,6 +519,31 @@ QUALITY OVER QUANTITY
 ══════════════════════════════════════════════════════════════════════════
 
 Ask: "Would this be useful to recall in 6 months?" If no, skip it."""
+
+# Assembled concise prompt (must match original exactly for backward compatibility)
+CONCISE_FACT_EXTRACTION_PROMPT = (
+    """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
+
+LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
+
+{fact_types_instruction}"""
+    + _CONCISE_GUIDELINES
+    + """
+
+══════════════════════════════════════════════════════════════════════════
+FACT FORMAT - BE CONCISE
+══════════════════════════════════════════════════════════════════════════
+
+1. **what**: Core fact - concise but complete (1-2 sentences max)
+2. **when**: Temporal info if mentioned. "N/A" if none. Use day name when known.
+3. **where**: Location if relevant. "N/A" if none.
+4. **who**: People involved with relationships. "N/A" if just general info.
+5. **why**: Context/significance ONLY if important. "N/A" if obvious.
+
+CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones."""
+    + _STRUCTURAL_SECTIONS
+    + _CONCISE_EXAMPLES
+)
 
 
 # Verbose extraction prompt - detailed, comprehensive facts (legacy mode)
@@ -648,8 +660,9 @@ ALWAYS include "user" when fact is about the user.
 Extract anything that could help link related facts together."""
 
 
-# Custom extraction prompt - injects user-provided guidelines
-CUSTOM_FACT_EXTRACTION_PROMPT = """Extract facts from text. Follow the custom guidelines below.
+# Custom extraction prompt - uses shared structural base with user-provided guidelines
+CUSTOM_FACT_EXTRACTION_PROMPT = (
+    """Extract facts from text. Follow the custom guidelines below.
 
 LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
 
@@ -671,43 +684,9 @@ FACT FORMAT - BE CONCISE
 4. **who**: People involved with relationships. "N/A" if just general info.
 5. **why**: Context/significance ONLY if important. "N/A" if obvious.
 
-CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones.
-
-══════════════════════════════════════════════════════════════════════════
-COREFERENCE RESOLUTION
-══════════════════════════════════════════════════════════════════════════
-
-Link generic references to names when both appear:
-- "my roommate" + "Emily" → use "Emily (user's roommate)"
-- "the manager" + "Sarah" → use "Sarah (the manager)"
-
-══════════════════════════════════════════════════════════════════════════
-CLASSIFICATION
-══════════════════════════════════════════════════════════════════════════
-
-fact_kind:
-- "event": Specific datable occurrence (set occurred_start/end)
-- "conversation": Ongoing state, preference, trait (no dates)
-
-fact_type:
-- "world": About user's life, other people, external events
-- "assistant": Interactions with assistant (requests, recommendations)
-
-══════════════════════════════════════════════════════════════════════════
-TEMPORAL HANDLING
-══════════════════════════════════════════════════════════════════════════
-
-Use "Event Date" from input as reference for relative dates.
-- "yesterday" relative to Event Date, not today
-- For events: set occurred_start AND occurred_end (same for point events)
-- For conversation facts: NO occurred dates
-
-══════════════════════════════════════════════════════════════════════════
-ENTITIES
-══════════════════════════════════════════════════════════════════════════
-
-Include: people names, organizations, places, key objects, abstract concepts (career, friendship, etc.)
-Always include "user" when fact is about the user."""
+CONCISENESS: Capture the essence, not every word. One good sentence beats three mediocre ones."""
+    + _STRUCTURAL_SECTIONS
+)
 
 
 # Causal relationships section - appended when causal extraction is enabled
