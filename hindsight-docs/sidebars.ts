@@ -246,13 +246,6 @@ const sidebars: SidebarsConfig = {
       ],
     },
   ],
-  changelogSidebar: [
-    {
-      type: 'doc',
-      id: 'changelog/index',
-      label: 'Changelog',
-    },
-  ],
 };
 
 export default sidebars;

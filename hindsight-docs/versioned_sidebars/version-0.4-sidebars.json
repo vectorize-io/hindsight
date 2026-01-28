@@ -243,12 +243,5 @@
         }
       ]
     }
-  ],
-  "changelogSidebar": [
-    {
-      "type": "doc",
-      "id": "changelog/index",
-      "label": "Changelog"
-    }
   ]
 }

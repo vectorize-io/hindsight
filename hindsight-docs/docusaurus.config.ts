@@ -220,8 +220,7 @@ const config: Config = {
           className: 'navbar-item-blog',
         },
         {
-          type: 'doc',
-          docId: 'changelog/index',
+          to: '/changelog',
           position: 'left',
           label: 'Changelog',
           className: 'navbar-item-changelog',

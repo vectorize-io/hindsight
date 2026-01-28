@@ -3,7 +3,7 @@ slug: learning-capabilities
 title: "Agent memory that learns: observations and mental models"
 authors: [hindsight]
 image: /img/reflect-operation.webp
-hide_table_of_contents: false
+hide_table_of_contents: true
 ---
 
 Today we're releasing Hindsight 0.4.0, which introduces two powerful learning capabilities for AI agents: **Observations** for automatic knowledge consolidation, and **Mental Models** for user-curated summaries.

@@ -511,6 +511,17 @@ div[class*="codeBlockContent"] .prism-code {
   max-width: 100%;
 }
 
+/* Force blog posts to be wider - aggressive override */
+body[class*="blog"] .container,
+body[class*="blog"] main .container {
+  max-width: 100% !important;
+}
+
+body[class*="blog"] article {
+  max-width: 1200px !important;
+  margin: 0 auto !important;
+}
+
 /* Page title with gradient */
 article h1,
 .markdown h1,
@@ -1249,25 +1260,17 @@ ul[class*="suggestion"] {
 
 /* ===== Blog Styling ===== */
 
-/* Hide TOC sidebar on blog post pages */
-.blog-post-page .col--3,
-.blog-post-page [class*="tableOfContents"],
-.blog-post-page aside[class*="toc"] {
-  display: none !important;
-}
-
-/* Make blog post content full width when TOC is hidden */
-.blog-post-page .col--9 {
-  --ifm-col-width: 100%;
-  max-width: 100%;
-  flex-basis: 100%;
-}
-
-/* Hide author avatar/icon on blog posts */
-[class*="blogPostAuthor"] img,
-[class*="authorImage"],
-.avatar__photo {
-  display: none !important;
+/* Blog author text visible in light mode */
+[class*="blogPostAuthor"],
+[class*="blogPostAuthor"] *,
+.avatar__name,
+.avatar__name a,
+.avatar__subtitle,
+[class*="authorName"],
+[class*="blogPostData"] a,
+[class*="blogPostInfo"] a {
+  color: #1e293b !important;
+  -webkit-text-fill-color: #1e293b !important;
 }
 
 /* Blog author text visible in dark mode */
