@@ -84,14 +84,26 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: gcp-k8s-xsolla-n8n-prod
-          location: us-west2
-          project_id: xsolla-n8n-prod
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy to GKE (Dev)
+      - name: Deploy to GKE via Cloud Build
         run: |
-          kubectl rollout restart deployment/hindsight-current -n hindsight-dev
-          kubectl rollout status deployment/hindsight-current -n hindsight-dev --timeout=300s
+          gcloud builds submit --no-source \
+            --project=xsolla-n8n-prod \
+            --region=us-west2 \
+            --worker-pool=projects/xsolla-n8n-prod/locations/us-west2/workerPools/hindsight-deploy \
+            --config - <<'EOF'
+          steps:
+            - name: 'gcr.io/cloud-builders/gke-deploy'
+              entrypoint: 'bash'
+              args:
+                - '-c'
+                - |
+                  gcloud container clusters get-credentials gcp-k8s-xsolla-n8n-prod --region=us-west2 --project=xsolla-n8n-prod
+                  kubectl rollout restart deployment/hindsight-current -n hindsight-dev
+                  kubectl rollout status deployment/hindsight-current -n hindsight-dev --timeout=300s
+          serviceAccount: 'hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
+          options:
+            logging: CLOUD_LOGGING_ONLY
+          EOF
