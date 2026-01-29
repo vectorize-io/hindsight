@@ -693,7 +693,6 @@ async def _extract_facts_from_chunk(
     context: str,
     llm_config: "LLMConfig",
     agent_name: str = None,
-    extract_opinions: bool = False,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -707,17 +706,9 @@ async def _extract_facts_from_chunk(
 
     logger = logging.getLogger(__name__)
 
-    memory_bank_context = f"\n- Your name: {agent_name}" if agent_name and extract_opinions else ""
-
-    # Determine which fact types to extract based on the flag
+    # Determine which fact types to extract
     # Note: We use "assistant" in the prompt but convert to "bank" for storage
-    if extract_opinions:
-        # Opinion extraction uses a separate prompt (not this one)
-        fact_types_instruction = "Extract ONLY 'opinion' type facts (formed opinions, beliefs, and perspectives). DO NOT extract 'world' or 'assistant' facts."
-    else:
-        fact_types_instruction = (
-            "Extract ONLY 'world' and 'assistant' type facts. DO NOT extract opinions - those are extracted separately."
-        )
+    fact_types_instruction = "Extract ONLY 'world' and 'assistant' type facts."
 
     # Check config for extraction mode and causal link extraction
     config = get_config()
@@ -770,7 +761,6 @@ async def _extract_facts_from_chunk(
     # Format event_date with day of week for better temporal reasoning
     event_date_formatted = event_date.strftime("%A, %B %d, %Y")  # e.g., "Monday, June 10, 2024"
     user_message = f"""Extract facts from the following text chunk.
-{memory_bank_context}
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_formatted} ({event_date.isoformat()})
@@ -1029,7 +1019,6 @@ async def _extract_facts_with_auto_split(
     context: str,
     llm_config: LLMConfig,
     agent_name: str = None,
-    extract_opinions: bool = False,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -1045,7 +1034,6 @@ async def _extract_facts_with_auto_split(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Optional agent name (memory owner)
-        extract_opinions: If True, extract ONLY opinions. If False, extract world and agent facts (no opinions)
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
@@ -1064,7 +1052,6 @@ async def _extract_facts_with_auto_split(
             context=context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk in half and retry
@@ -1109,7 +1096,6 @@ async def _extract_facts_with_auto_split(
                 context=context,
                 llm_config=llm_config,
                 agent_name=agent_name,
-                extract_opinions=extract_opinions,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -1119,7 +1105,6 @@ async def _extract_facts_with_auto_split(
                 context=context,
                 llm_config=llm_config,
                 agent_name=agent_name,
-                extract_opinions=extract_opinions,
             ),
         ]
 
@@ -1143,7 +1128,6 @@ async def extract_facts_from_text(
     llm_config: LLMConfig,
     agent_name: str,
     context: str = "",
-    extract_opinions: bool = False,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -1160,7 +1144,6 @@ async def extract_facts_from_text(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Agent name (memory owner)
-        extract_opinions: If True, extract ONLY opinions. If False, extract world and bank facts (no opinions)
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -1188,7 +1171,6 @@ async def extract_facts_from_text(
             context=context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -1220,7 +1202,7 @@ SECONDS_PER_FACT = 10
 
 
 async def extract_facts_from_contents(
-    contents: list[RetainContent], llm_config, agent_name: str, extract_opinions: bool = False
+    contents: list[RetainContent], llm_config, agent_name: str
 ) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
@@ -1235,7 +1217,6 @@ async def extract_facts_from_contents(
         contents: List of RetainContent objects to process
         llm_config: LLM configuration for fact extraction
         agent_name: Name of the agent (for agent-related fact detection)
-        extract_opinions: If True, extract only opinions; otherwise world/bank facts
 
     Returns:
         Tuple of (extracted_facts, chunks_metadata, usage)
@@ -1254,7 +1235,6 @@ async def extract_facts_from_contents(
             context=item.context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
         fact_extraction_tasks.append(task)
 

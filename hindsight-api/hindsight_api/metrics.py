@@ -189,7 +189,7 @@ class MetricsCollectorBase:
         Args:
             provider: LLM provider name (openai, anthropic, gemini, groq, ollama, lmstudio)
             model: Model name
-            scope: Scope identifier (e.g., "memory", "reflect", "entity_observation")
+            scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
             input_tokens: Number of input/prompt tokens
             output_tokens: Number of output/completion tokens
@@ -321,7 +321,7 @@ class MetricsCollector(MetricsCollectorBase):
                 pass
 
         Args:
-            operation: Operation name (retain, recall, reflect, entity_observation)
+            operation: Operation name (retain, recall, reflect, consolidation)
             bank_id: Memory bank ID
             source: Source of the operation (api, reflect, internal)
             budget: Optional budget level (low, mid, high)
@@ -371,7 +371,7 @@ class MetricsCollector(MetricsCollectorBase):
         Args:
             provider: LLM provider name (openai, anthropic, gemini, groq, ollama, lmstudio)
             model: Model name
-            scope: Scope identifier (e.g., "memory", "reflect", "entity_observation")
+            scope: Scope identifier (e.g., "memory", "reflect", "consolidation")
             duration: Call duration in seconds
             input_tokens: Number of input/prompt tokens
             output_tokens: Number of output/completion tokens

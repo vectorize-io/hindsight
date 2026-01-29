@@ -442,49 +442,6 @@ class MemoryEngineInterface(ABC):
         """
         ...
 
-    @abstractmethod
-    async def get_entity_observations(
-        self,
-        bank_id: str,
-        entity_id: str,
-        *,
-        limit: int = 10,
-        request_context: "RequestContext",
-    ) -> list[Any]:
-        """
-        Get observations for an entity.
-
-        Args:
-            bank_id: The memory bank ID.
-            entity_id: The entity ID.
-            limit: Maximum observations.
-            request_context: Request context for authentication.
-
-        Returns:
-            List of EntityObservation objects.
-        """
-        ...
-
-    @abstractmethod
-    async def regenerate_entity_observations(
-        self,
-        bank_id: str,
-        entity_id: str,
-        entity_name: str,
-        *,
-        request_context: "RequestContext",
-    ) -> None:
-        """
-        Regenerate observations for an entity.
-
-        Args:
-            bank_id: The memory bank ID.
-            entity_id: The entity ID.
-            entity_name: The entity's canonical name.
-            request_context: Request context for authentication.
-        """
-        ...
-
     # =========================================================================
     # Statistics & Operations
     # =========================================================================

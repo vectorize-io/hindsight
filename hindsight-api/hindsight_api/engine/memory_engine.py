@@ -1192,8 +1192,8 @@ class MemoryEngine(MemoryEngineInterface):
             context: Context about when/why this memory was formed
             event_date: When the event occurred (defaults to now)
             document_id: Optional document ID for tracking (always upserts if document already exists)
-            fact_type_override: Override fact type ('world', 'experience', 'opinion')
-            confidence_score: Confidence score for opinions (0.0 to 1.0)
+            fact_type_override: Override fact type ('world', 'experience')
+            confidence_score: Confidence score (0.0 to 1.0)
             request_context: Request context for authentication.
 
         Returns:
@@ -1248,8 +1248,8 @@ class MemoryEngine(MemoryEngineInterface):
                 - "document_id" (optional): Document ID for this specific content item
             document_id: **DEPRECATED** - Use "document_id" key in each content dict instead.
                         Applies the same document_id to ALL content items that don't specify their own.
-            fact_type_override: Override fact type for all facts ('world', 'experience', 'opinion')
-            confidence_score: Confidence score for opinions (0.0 to 1.0)
+            fact_type_override: Override fact type for all facts ('world', 'experience')
+            confidence_score: Confidence score (0.0 to 1.0)
             return_usage: If True, returns tuple of (unit_ids, TokenUsage). Default False for backward compatibility.
 
         Returns:
@@ -2236,44 +2236,15 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 top_results_dicts.append(result_dict)
 
-            # Get entities for each fact if include_entities is requested
-            fact_entity_map = {}  # unit_id -> list of (entity_id, entity_name)
-            if include_entities and top_scored:
-                unit_ids = [uuid.UUID(sr.id) for sr in top_scored]
-                if unit_ids:
-                    async with acquire_with_retry(pool) as entity_conn:
-                        entity_rows = await entity_conn.fetch(
-                            f"""
-                            SELECT ue.unit_id, e.id as entity_id, e.canonical_name
-                            FROM {fq_table("unit_entities")} ue
-                            JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                            WHERE ue.unit_id = ANY($1::uuid[])
-                            """,
-                            unit_ids,
-                        )
-                        for row in entity_rows:
-                            unit_id = str(row["unit_id"])
-                            if unit_id not in fact_entity_map:
-                                fact_entity_map[unit_id] = []
-                            fact_entity_map[unit_id].append(
-                                {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
-                            )
-
             # Convert results to MemoryFact objects
             memory_facts = []
             for result_dict in top_results_dicts:
-                result_id = str(result_dict.get("id"))
-                # Get entity names for this fact
-                entity_names = None
-                if include_entities and result_id in fact_entity_map:
-                    entity_names = [e["canonical_name"] for e in fact_entity_map[result_id]]
-
                 memory_facts.append(
                     MemoryFact(
-                        id=result_id,
+                        id=str(result_dict.get("id")),
                         text=result_dict.get("text"),
                         fact_type=result_dict.get("fact_type", "world"),
-                        entities=entity_names,
+                        entities=None,  # Entity observations removed
                         context=result_dict.get("context"),
                         occurred_start=result_dict.get("occurred_start"),
                         occurred_end=result_dict.get("occurred_end"),
@@ -2284,38 +2255,12 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 )
 
-            # Fetch entity observations if requested
+            # Entity observations removed - always set to None
             entities_dict = None
-            total_entity_tokens = 0
-            total_chunk_tokens = 0
-            if include_entities and fact_entity_map:
-                # Collect unique entities in order of fact relevance (preserving order from top_scored)
-                # Use a list to maintain order, but track seen entities to avoid duplicates
-                entities_ordered = []  # list of (entity_id, entity_name) tuples
-                seen_entity_ids = set()
-
-                # Iterate through facts in relevance order
-                for sr in top_scored:
-                    unit_id = sr.id
-                    if unit_id in fact_entity_map:
-                        for entity in fact_entity_map[unit_id]:
-                            entity_id = entity["entity_id"]
-                            entity_name = entity["canonical_name"]
-                            if entity_id not in seen_entity_ids:
-                                entities_ordered.append((entity_id, entity_name))
-                                seen_entity_ids.add(entity_id)
-
-                # Return entities with empty observations (summaries now live in mental models)
-                entities_dict = {}
-                for entity_id, entity_name in entities_ordered:
-                    entities_dict[entity_name] = EntityState(
-                        entity_id=entity_id,
-                        canonical_name=entity_name,
-                        observations=[],  # Mental models provide this now
-                    )
 
             # Fetch chunks if requested
             chunks_dict = None
+            total_chunk_tokens = 0
             if include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
@@ -2384,7 +2329,6 @@ class MemoryEngine(MemoryEngineInterface):
             # Log final recall stats
             total_time = time.time() - recall_start
             num_chunks = len(chunks_dict) if chunks_dict else 0
-            num_entities = len(entities_dict) if entities_dict else 0
             # Include wait times in log if significant
             wait_parts = []
             if semaphore_wait > 0.01:
@@ -2393,7 +2337,7 @@ class MemoryEngine(MemoryEngineInterface):
                 wait_parts.append(f"conn={max_conn_wait:.3f}s")
             wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
             log_buffer.append(
-                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
+                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )
             if not quiet:
                 logger.info("\n" + "\n".join(log_buffer))
@@ -3567,7 +3511,6 @@ class MemoryEngine(MemoryEngineInterface):
             ReflectResult containing:
                 - text: Plain text answer
                 - based_on: Empty dict (agent retrieves facts dynamically)
-                - new_opinions: Empty list
                 - structured_output: None (not yet supported for agentic reflect)
         """
         # Use cached LLM config
@@ -3892,7 +3835,6 @@ class MemoryEngine(MemoryEngineInterface):
         result = ReflectResult(
             text=agent_result.text,
             based_on=based_on,
-            new_opinions=[],  # Learnings stored as mental models
             structured_output=agent_result.structured_output,
             usage=usage,
             tool_trace=tool_trace_result,
@@ -3920,32 +3862,6 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
         return result
-
-    async def get_entity_observations(
-        self,
-        bank_id: str,
-        entity_id: str,
-        *,
-        limit: int = 10,
-        request_context: "RequestContext",
-    ) -> list[Any]:
-        """
-        Get observations for an entity.
-
-        NOTE: Entity observations/summaries have been moved to mental models.
-        This method returns an empty list. Use mental models for entity summaries.
-
-        Args:
-            bank_id: bank IDentifier
-            entity_id: Entity UUID to get observations for
-            limit: Ignored (kept for backwards compatibility)
-            request_context: Request context for authentication.
-
-        Returns:
-            Empty list (observations now in mental models)
-        """
-        await self._authenticate_tenant(request_context)
-        return []
 
     async def list_entities(
         self,
@@ -4133,36 +4049,6 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         return EntityState(entity_id=entity_id, canonical_name=entity_name, observations=[])
 
-    async def regenerate_entity_observations(
-        self,
-        bank_id: str,
-        entity_id: str,
-        entity_name: str,
-        *,
-        version: str | None = None,
-        conn=None,
-        request_context: "RequestContext",
-    ) -> list[str]:
-        """
-        Regenerate observations for an entity.
-
-        NOTE: Entity observations/summaries have been moved to mental models.
-        This method is now a no-op and returns an empty list.
-
-        Args:
-            bank_id: bank IDentifier
-            entity_id: Entity UUID
-            entity_name: Canonical name of the entity
-            version: Entity's last_seen timestamp when task was created (for deduplication)
-            conn: Optional database connection (ignored)
-            request_context: Request context for authentication.
-
-        Returns:
-            Empty list (observations now in mental models)
-        """
-        await self._authenticate_tenant(request_context)
-        return []
-
     # =========================================================================
     # Statistics & Operations (for HTTP API layer)
     # =========================================================================
@@ -4273,9 +4159,6 @@ class MemoryEngine(MemoryEngineInterface):
         if not entity_row:
             return None
 
-        # Get observations for the entity
-        observations = await self.get_entity_observations(bank_id, entity_id, limit=20, request_context=request_context)
-
         return {
             "id": str(entity_row["id"]),
             "canonical_name": entity_row["canonical_name"],
@@ -4283,7 +4166,7 @@ class MemoryEngine(MemoryEngineInterface):
             "first_seen": entity_row["first_seen"].isoformat() if entity_row["first_seen"] else None,
             "last_seen": entity_row["last_seen"].isoformat() if entity_row["last_seen"] else None,
             "metadata": entity_row["metadata"] or {},
-            "observations": observations,
+            "observations": [],
         }
 
     def _parse_observations(self, observations_raw: list):

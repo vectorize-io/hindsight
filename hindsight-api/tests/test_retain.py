@@ -16,7 +16,6 @@ async def test_retain_with_chunks(memory, request_context):
     Test that retain function:
     1. Stores facts with associated chunks
     2. Recall returns chunk_id for each fact
-    3. Recall with include_entities=True also works (for compatibility)
     """
     bank_id = f"test_chunks_{datetime.now(timezone.utc).timestamp()}"
     document_id = "test_doc_123"
@@ -56,7 +55,6 @@ async def test_retain_with_chunks(memory, request_context):
             budget=Budget.LOW,
             max_tokens=500,
             fact_type=["world"],  # Search for world facts
-            include_entities=False,  # Disable entities for simpler test
             include_chunks=True,  # Enable chunks
             max_chunk_tokens=8192,
             request_context=request_context,
@@ -146,7 +144,6 @@ async def test_chunks_and_entities_follow_fact_order(memory, request_context):
             budget=Budget.MID,
             max_tokens=1000,
             fact_type=["world"],
-            include_entities=True,
             include_chunks=True,
             max_chunk_tokens=8192,
             request_context=request_context,

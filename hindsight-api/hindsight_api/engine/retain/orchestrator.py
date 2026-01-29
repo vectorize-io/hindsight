@@ -101,11 +101,8 @@ async def retain_batch(
 
     # Step 1: Extract facts from all contents
     step_start = time.time()
-    extract_opinions = fact_type_override == "opinion"
 
-    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, agent_name, extract_opinions
-    )
+    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(contents, llm_config, agent_name)
     log_buffer.append(
         f"[1] Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks from {len(contents)} contents in {time.time() - step_start:.3f}s"
     )
