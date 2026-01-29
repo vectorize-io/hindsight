@@ -112,7 +112,8 @@ def test_llm_wrapper_vertexai_missing_dependency():
 
             LLMProvider(
                 provider="vertexai",
-                api_key=None,
+                api_key="",
+                base_url="",
                 model="google/gemini-2.0-flash-001",
             )
     finally:
@@ -132,7 +133,8 @@ def test_llm_wrapper_vertexai_missing_project_id():
 
             LLMProvider(
                 provider="vertexai",
-                api_key=None,
+                api_key="",
+                base_url="",
                 model="google/gemini-2.0-flash-001",
             )
 
@@ -163,7 +165,8 @@ async def test_llm_wrapper_vertexai_adc_auth():
             with patch("google.auth.transport.requests.Request"):
                 provider = LLMProvider(
                     provider="vertexai",
-                    api_key=None,
+                    api_key="",
+                    base_url="",
                     model="google/gemini-2.0-flash-001",
                 )
 
@@ -182,6 +185,7 @@ async def test_llm_wrapper_vertexai_adc_auth():
 async def test_llm_wrapper_vertexai_sa_auth():
     """Test Vertex AI with service account authentication (mocked)."""
     from hindsight_api.engine.llm_wrapper import LLMProvider
+    import google.auth.exceptions
 
     mock_credentials = MagicMock()
     mock_credentials.token = "test-token-sa"
@@ -201,7 +205,10 @@ async def test_llm_wrapper_vertexai_sa_auth():
         clear_config_cache()
 
         # Mock ADC failure, SA success
-        with patch("google.auth.default", side_effect=Exception("ADC not available")):
+        with patch(
+            "google.auth.default",
+            side_effect=google.auth.exceptions.DefaultCredentialsError("ADC not available"),
+        ):
             with patch(
                 "google.oauth2.service_account.Credentials.from_service_account_file",
                 return_value=mock_credentials,
@@ -209,7 +216,8 @@ async def test_llm_wrapper_vertexai_sa_auth():
                 with patch("google.auth.transport.requests.Request"):
                     provider = LLMProvider(
                         provider="vertexai",
-                        api_key=None,
+                        api_key="",
+                        base_url="",
                         model="google/gemini-2.0-flash-001",
                     )
 
@@ -226,6 +234,8 @@ async def test_llm_wrapper_vertexai_sa_auth():
 @pytest.mark.asyncio
 async def test_llm_wrapper_vertexai_auth_failure():
     """Test Vertex AI with both ADC and SA auth failing."""
+    import google.auth.exceptions
+
     with patch.dict(
         os.environ,
         {"HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project"},
@@ -237,13 +247,17 @@ async def test_llm_wrapper_vertexai_auth_failure():
         clear_config_cache()
 
         # Mock both ADC and SA failures
-        with patch("google.auth.default", side_effect=Exception("ADC failed")):
+        with patch(
+            "google.auth.default",
+            side_effect=google.auth.exceptions.DefaultCredentialsError("ADC failed"),
+        ):
             with pytest.raises(ValueError, match="authentication failed"):
                 from hindsight_api.engine.llm_wrapper import LLMProvider
 
                 LLMProvider(
                     provider="vertexai",
-                    api_key=None,
+                    api_key="",
+                    base_url="",
                     model="google/gemini-2.0-flash-001",
                 )
 
@@ -268,7 +282,8 @@ async def test_vertexai_integration_actual_api():
 
     provider = LLMProvider(
         provider="vertexai",
-        api_key=None,
+        api_key="",
+        base_url="",
         model="google/gemini-2.0-flash-001",
     )
 
