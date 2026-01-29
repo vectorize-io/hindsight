@@ -45,6 +45,8 @@ hindsight-docs/static/llms-full.txt
 
 hindsight-dev/benchmarks/locomo/results/
 hindsight-dev/benchmarks/longmemeval/results/
+hindsight-dev/benchmarks/consolidation/results/
+benchmarks/results/
 hindsight-cli/target
 hindsight-clients/rust/target
 .claude

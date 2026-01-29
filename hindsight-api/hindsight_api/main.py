@@ -228,6 +228,7 @@ def main():
             retain_observations_async=config.retain_observations_async,
             enable_observations=config.enable_observations,
             consolidation_batch_size=config.consolidation_batch_size,
+            consolidation_max_tokens=config.consolidation_max_tokens,
             skip_llm_verification=config.skip_llm_verification,
             lazy_reranker=config.lazy_reranker,
             run_migrations_on_startup=config.run_migrations_on_startup,

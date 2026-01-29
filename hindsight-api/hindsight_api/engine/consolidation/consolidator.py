@@ -639,28 +639,27 @@ async def _find_related_observations(
     request_context: "RequestContext",
 ) -> list[dict[str, Any]]:
     """
-    Find observations related to the given query using the full recall system.
+    Find observations related to the given query using optimized recall.
 
     IMPORTANT: We do NOT filter by tags here. Consolidation needs to see ALL
     potentially related observations regardless of scope, so the LLM can
     decide on tag routing (same scope update vs cross-scope create).
 
-    This leverages:
-    - Semantic search (embedding similarity)
-    - BM25 text search (keyword matching)
-    - Entity-based retrieval (shared entities)
-    - Graph traversal (connected via entity links)
+    Uses max_tokens to naturally limit observations (no artificial count limit).
+    Includes source memories with dates for LLM context.
 
     Returns:
-        List of related observations with their tags for LLM tag routing
+        List of related observations with their tags, source memories, and dates
     """
-    # Use recall to find related observations
-    # NO tags parameter - we want ALL observations regardless of scope
-    # Use low max_tokens since we only need observations, not memories
+    # Use recall to find related observations with token budget
+    # max_tokens naturally limits how many observations are returned
+    from ...config import get_config
+
+    config = get_config()
     recall_result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
-        max_tokens=5000,  # Token budget for observations
+        max_tokens=config.consolidation_max_tokens,  # Token budget for observations (configurable)
         fact_type=["observation"],  # Only retrieve observations
         request_context=request_context,
         _quiet=True,  # Suppress logging
@@ -668,42 +667,81 @@ async def _find_related_observations(
     )
 
     # If no observations returned, return empty list
-    # When fact_type=["observation"], results come back in `results` field
     if not recall_result.results:
         return []
 
-    # Trust recall's relevance filtering - fetch full data for each observation
+    # Batch fetch all observations in a single query (no artificial limit)
+    observation_ids = [uuid.UUID(obs.id) for obs in recall_result.results]
+
+    rows = await conn.fetch(
+        f"""
+        SELECT id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at,
+               occurred_start, occurred_end, mentioned_at
+        FROM {fq_table("memory_units")}
+        WHERE id = ANY($1) AND bank_id = $2 AND fact_type = 'observation'
+        """,
+        observation_ids,
+        bank_id,
+    )
+
+    # Build results list preserving recall order
+    id_to_row = {row["id"]: row for row in rows}
     results = []
+
     for obs in recall_result.results:
-        # Fetch full observation data from DB to get history, source_memory_ids, tags
-        row = await conn.fetchrow(
-            f"""
-            SELECT id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at
-            FROM {fq_table("memory_units")}
-            WHERE id = $1 AND bank_id = $2 AND fact_type = 'observation'
-            """,
-            uuid.UUID(obs.id),
-            bank_id,
-        )
+        obs_id = uuid.UUID(obs.id)
+        if obs_id not in id_to_row:
+            continue
 
-        if row:
-            history = row["history"]
-            if isinstance(history, str):
-                history = json.loads(history)
-            elif history is None:
-                history = []
+        row = id_to_row[obs_id]
+        history = row["history"]
+        if isinstance(history, str):
+            history = json.loads(history)
+        elif history is None:
+            history = []
 
-            results.append(
-                {
-                    "id": row["id"],
-                    "text": row["text"],
-                    "proof_count": row["proof_count"] or 1,
-                    "history": history,
-                    "tags": row["tags"] or [],  # Include tags for LLM tag routing
-                    "source_memory_ids": row["source_memory_ids"] or [],
-                    "similarity": 1.0,  # Retrieved via recall so assumed relevant
-                }
+        # Fetch source memories to include their text and dates
+        source_memory_ids = row["source_memory_ids"] or []
+        source_memories = []
+
+        if source_memory_ids:
+            source_rows = await conn.fetch(
+                f"""
+                SELECT text, occurred_start, occurred_end, mentioned_at, event_date
+                FROM {fq_table("memory_units")}
+                WHERE id = ANY($1) AND bank_id = $2
+                ORDER BY created_at ASC
+                LIMIT 5
+                """,
+                source_memory_ids[:5],  # Limit to first 5 source memories for token efficiency
+                bank_id,
             )
+
+            for src_row in source_rows:
+                source_memories.append(
+                    {
+                        "text": src_row["text"],
+                        "occurred_start": src_row["occurred_start"],
+                        "occurred_end": src_row["occurred_end"],
+                        "mentioned_at": src_row["mentioned_at"],
+                        "event_date": src_row["event_date"],
+                    }
+                )
+
+        results.append(
+            {
+                "id": row["id"],
+                "text": row["text"],
+                "proof_count": row["proof_count"] or 1,
+                "tags": row["tags"] or [],
+                "source_memories": source_memories,
+                "occurred_start": row["occurred_start"],
+                "occurred_end": row["occurred_end"],
+                "mentioned_at": row["mentioned_at"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
 
     return results
 
@@ -732,14 +770,43 @@ async def _consolidate_with_llm(
         - {"action": "create", "text": "...", "reason": "..."}
         - [] if fact is purely ephemeral (no durable knowledge)
     """
-    # Format observations WITH their tags (or "None" if empty)
+    # Format observations as JSON with source memories and dates
     if observations:
-        observations_text = "\n".join(
-            f'- ID: {obs["id"]}, Tags: {json.dumps(obs["tags"])}, Text: "{obs["text"]}" (proof_count: {obs["proof_count"]})'
-            for obs in observations
-        )
+        obs_list = []
+        for obs in observations:
+            obs_data = {
+                "id": str(obs["id"]),
+                "text": obs["text"],
+                "proof_count": obs["proof_count"],
+                "tags": obs["tags"],
+                "created_at": obs["created_at"].isoformat() if obs.get("created_at") else None,
+                "updated_at": obs["updated_at"].isoformat() if obs.get("updated_at") else None,
+            }
+
+            # Include temporal info if available
+            if obs.get("occurred_start"):
+                obs_data["occurred_start"] = obs["occurred_start"].isoformat()
+            if obs.get("occurred_end"):
+                obs_data["occurred_end"] = obs["occurred_end"].isoformat()
+            if obs.get("mentioned_at"):
+                obs_data["mentioned_at"] = obs["mentioned_at"].isoformat()
+
+            # Include source memories (up to 3 for brevity)
+            if obs.get("source_memories"):
+                obs_data["source_memories"] = [
+                    {
+                        "text": sm["text"],
+                        "event_date": sm["event_date"].isoformat() if sm.get("event_date") else None,
+                        "occurred_start": sm["occurred_start"].isoformat() if sm.get("occurred_start") else None,
+                    }
+                    for sm in obs["source_memories"][:3]  # Limit to 3 for token efficiency
+                ]
+
+            obs_list.append(obs_data)
+
+        observations_text = json.dumps(obs_list, indent=2)
     else:
-        observations_text = "None (this is a new topic - create if fact contains durable knowledge)"
+        observations_text = "[]"
 
     # Only include mission section if mission is set and not the default
     mission_section = ""

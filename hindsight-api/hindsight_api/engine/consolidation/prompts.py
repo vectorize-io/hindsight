@@ -47,23 +47,31 @@ CONSOLIDATION_USER_PROMPT = """Analyze this new fact and consolidate into knowle
 {mission_section}
 NEW FACT: {fact_text}
 
-EXISTING OBSERVATIONS:
+EXISTING OBSERVATIONS (JSON array with source memories and dates):
 {observations_text}
 
-Instructions:
-1. First, extract the DURABLE KNOWLEDGE from the fact (not ephemeral state like "user is at X")
-2. Then compare with existing observations:
-   - If an observation covers the same topic: UPDATE it with the new knowledge
-   - If no observation covers the topic: CREATE a new one
+Each observation includes:
+- id: unique identifier for updating
+- text: the observation content
+- proof_count: number of supporting memories
+- tags: visibility scope (handled automatically)
+- created_at/updated_at: when observation was created/modified
+- occurred_start/occurred_end: temporal range of source facts
+- source_memories: array of supporting facts with their text and dates
 
-Output JSON array of actions (ALWAYS an array, even for single action):
+Instructions:
+1. Extract DURABLE KNOWLEDGE from the new fact (not ephemeral state)
+2. Review source_memories in existing observations to understand evidence
+3. Check dates to detect contradictions or updates
+4. Compare with observations:
+   - Same topic → UPDATE with learning_id
+   - New topic → CREATE new observation
+   - Purely ephemeral → return []
+
+Output JSON array of actions:
 [
-  {{"action": "update", "learning_id": "uuid", "text": "updated durable knowledge", "reason": "..."}},
+  {{"action": "update", "learning_id": "uuid-from-observations", "text": "updated knowledge", "reason": "..."}},
   {{"action": "create", "text": "new durable knowledge", "reason": "..."}}
 ]
 
-If NO consolidation is needed (fact is purely ephemeral with no durable knowledge):
-[]
-
-If no observations exist and fact contains durable knowledge:
-[{{"action": "create", "text": "durable knowledge text", "reason": "new topic"}}]"""
+Return [] if fact contains no durable knowledge."""
