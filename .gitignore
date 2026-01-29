@@ -50,4 +50,5 @@ hindsight-clients/rust/target
 .claude
 whats-next.md
 TASK.md
-CHANGELOG.md
+# Changelog is now tracked in hindsight-docs/src/pages/changelog.md
+# CHANGELOG.md

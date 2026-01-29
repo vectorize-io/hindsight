@@ -18,6 +18,7 @@ import httpx
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
+    DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
@@ -26,6 +27,7 @@ from ..config import (
     ENV_EMBEDDINGS_COHERE_BASE_URL,
     ENV_EMBEDDINGS_COHERE_MODEL,
     ENV_EMBEDDINGS_LITELLM_MODEL,
+    ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
@@ -92,15 +94,18 @@ class LocalSTEmbeddings(Embeddings):
     The embedding dimension is auto-detected from the model.
     """
 
-    def __init__(self, model_name: str | None = None):
+    def __init__(self, model_name: str | None = None, force_cpu: bool = False):
         """
         Initialize local SentenceTransformers embeddings.
 
         Args:
             model_name: Name of the SentenceTransformer model to use.
                        Default: BAAI/bge-small-en-v1.5
+            force_cpu: Force CPU mode (avoids MPS/XPC issues on macOS in daemon mode).
+                      Default: False
         """
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
+        self.force_cpu = force_cpu
         self._model = None
         self._dimension: int | None = None
 
@@ -134,13 +139,23 @@ class LocalSTEmbeddings(Embeddings):
         # which can cause issues when accelerate is installed but no GPU is available.
         import torch
 
-        # Check for GPU (CUDA) or Apple Silicon (MPS)
-        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-
-        if has_gpu:
-            device = None  # Let sentence-transformers auto-detect GPU/MPS
-        else:
+        # Force CPU mode if configured (used in daemon mode to avoid MPS/XPC issues on macOS)
+        if self.force_cpu:
             device = "cpu"
+            logger.info("Embeddings: forcing CPU mode")
+        else:
+            # Check for GPU (CUDA) or Apple Silicon (MPS)
+            # Wrap in try-except to gracefully handle any device detection issues
+            # (e.g., in CI environments or when PyTorch is built without GPU support)
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
         self._model = SentenceTransformer(
             self.model_name,
@@ -151,9 +166,81 @@ class LocalSTEmbeddings(Embeddings):
         self._dimension = self._model.get_sentence_embedding_dimension()
         logger.info(f"Embeddings: local provider initialized (dim: {self._dimension})")
 
+    def _is_xpc_error(self, error: Exception) -> bool:
+        """
+        Check if an error is an XPC connection error (macOS daemon issue).
+
+        On macOS, long-running daemons can lose XPC connections to system services
+        when the process is idle for extended periods.
+        """
+        error_str = str(error).lower()
+        return "xpc_error_connection_invalid" in error_str or "xpc error" in error_str
+
+    def _reinitialize_model_sync(self) -> None:
+        """
+        Clear and reinitialize the embedding model synchronously.
+
+        This is used to recover from XPC errors on macOS where the
+        PyTorch/MPS backend loses its connection to system services.
+        """
+        logger.warning(f"Reinitializing embedding model {self.model_name} due to backend error")
+
+        # Clear existing model
+        self._model = None
+
+        # Force garbage collection to free resources
+        import gc
+
+        import torch
+
+        gc.collect()
+
+        # If using CUDA/MPS, clear the cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            try:
+                torch.mps.empty_cache()
+            except AttributeError:
+                pass  # Method might not exist in all PyTorch versions
+
+        # Reinitialize the model (inline version of initialize() but synchronous)
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for LocalSTEmbeddings. "
+                "Install it with: pip install sentence-transformers"
+            )
+
+        # Determine device based on hardware availability
+        if self.force_cpu:
+            device = "cpu"
+        else:
+            # Wrap in try-except to gracefully handle any device detection issues
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS during reinit, falling back to CPU: {e}")
+
+        self._model = SentenceTransformer(
+            self.model_name,
+            device=device,
+            model_kwargs={"low_cpu_mem_usage": False},
+        )
+
+        logger.info("Embeddings: local provider reinitialized successfully")
+
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for a list of texts.
+
+        Automatically recovers from XPC errors on macOS by reinitializing the model.
 
         Args:
             texts: List of text strings to encode
@@ -163,8 +250,27 @@ class LocalSTEmbeddings(Embeddings):
         """
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
-        embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-        return [emb.tolist() for emb in embeddings]
+
+        # Try encoding with automatic recovery from XPC errors
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            try:
+                embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+                return [emb.tolist() for emb in embeddings]
+            except Exception as e:
+                # Check if this is an XPC error (macOS daemon issue)
+                if self._is_xpc_error(e) and attempt < max_retries:
+                    logger.warning(f"XPC error detected in embedding generation (attempt {attempt + 1}): {e}")
+                    try:
+                        self._reinitialize_model_sync()
+                        logger.info("Model reinitialized successfully, retrying embedding generation")
+                        continue
+                    except Exception as reinit_error:
+                        logger.error(f"Failed to reinitialize model: {reinit_error}")
+                        raise Exception(f"Failed to recover from XPC error: {str(e)}")
+                else:
+                    # Not an XPC error or out of retries
+                    raise
 
 
 class RemoteTEIEmbeddings(Embeddings):
@@ -686,24 +792,28 @@ class LiteLLMEmbeddings(Embeddings):
 
 def create_embeddings_from_env() -> Embeddings:
     """
-    Create an Embeddings instance based on environment variables.
+    Create an Embeddings instance based on configuration.
 
-    See hindsight_api.config for environment variable names and defaults.
+    Reads configuration via get_config() to ensure consistency across the codebase.
 
     Returns:
         Configured Embeddings instance
     """
-    provider = os.environ.get(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER).lower()
+    from ..config import get_config
+
+    config = get_config()
+    provider = config.embeddings_provider.lower()
 
     if provider == "tei":
-        url = os.environ.get(ENV_EMBEDDINGS_TEI_URL)
+        url = config.embeddings_tei_url
         if not url:
             raise ValueError(f"{ENV_EMBEDDINGS_TEI_URL} is required when {ENV_EMBEDDINGS_PROVIDER} is 'tei'")
         return RemoteTEIEmbeddings(base_url=url)
     elif provider == "local":
-        model = os.environ.get(ENV_EMBEDDINGS_LOCAL_MODEL)
-        model_name = model or DEFAULT_EMBEDDINGS_LOCAL_MODEL
-        return LocalSTEmbeddings(model_name=model_name)
+        return LocalSTEmbeddings(
+            model_name=config.embeddings_local_model,
+            force_cpu=config.embeddings_local_force_cpu,
+        )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
         api_key = os.environ.get(ENV_EMBEDDINGS_OPENAI_API_KEY) or os.environ.get(ENV_LLM_API_KEY)

@@ -23,12 +23,17 @@ from ..metrics import get_metrics_collector
 from .db_budget import budgeted_operation
 
 # Context variable for current schema (async-safe, per-task isolation)
-_current_schema: contextvars.ContextVar[str] = contextvars.ContextVar("current_schema", default="public")
+# Note: default is None, actual default comes from config via get_current_schema()
+_current_schema: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_schema", default=None)
 
 
 def get_current_schema() -> str:
-    """Get the current schema from context (default: 'public')."""
-    return _current_schema.get()
+    """Get the current schema from context (falls back to config default)."""
+    schema = _current_schema.get()
+    if schema is None:
+        # Fall back to configured default schema
+        return get_config().database_schema
+    return schema
 
 
 def fq_table(table_name: str) -> str:
@@ -880,11 +885,12 @@ class MemoryEngine(MemoryEngineInterface):
             if not self.db_url:
                 raise ValueError("Database URL is required for migrations")
             logger.info("Running database migrations...")
-            run_migrations(self.db_url)
+            # Use configured database schema for migrations (defaults to "public")
+            run_migrations(self.db_url, schema=get_config().database_schema)
 
             # Ensure embedding column dimension matches the model's dimension
             # This is done after migrations and after embeddings.initialize()
-            ensure_embedding_dimension(self.db_url, self.embeddings.dimension)
+            ensure_embedding_dimension(self.db_url, self.embeddings.dimension, schema=get_config().database_schema)
 
         logger.info(f"Connecting to PostgreSQL at {self.db_url}")
 
@@ -2763,7 +2769,7 @@ class MemoryEngine(MemoryEngineInterface):
             param_count += 1
             units = await conn.fetch(
                 f"""
-                SELECT id, text, event_date, context, occurred_start, occurred_end, mentioned_at, document_id, chunk_id, fact_type, tags, created_at, proof_count
+                SELECT id, text, event_date, context, occurred_start, occurred_end, mentioned_at, document_id, chunk_id, fact_type, tags, created_at, proof_count, source_memory_ids
                 FROM {fq_table("memory_units")}
                 {where_clause}
                 ORDER BY mentioned_at DESC NULLS LAST, event_date DESC
@@ -2776,7 +2782,18 @@ class MemoryEngine(MemoryEngineInterface):
             # Get links, filtering to only include links between units of the selected agent
             # Use DISTINCT ON with LEAST/GREATEST to deduplicate bidirectional links
             unit_ids = [row["id"] for row in units]
-            if unit_ids:
+            unit_id_set = set(unit_ids)
+
+            # Collect source memory IDs from observations
+            source_memory_ids = []
+            for unit in units:
+                if unit["source_memory_ids"]:
+                    source_memory_ids.extend(unit["source_memory_ids"])
+            source_memory_ids = list(set(source_memory_ids))  # Deduplicate
+
+            # Fetch links involving both visible units AND source memories
+            all_relevant_ids = unit_ids + source_memory_ids
+            if all_relevant_ids:
                 links = await conn.fetch(
                     f"""
                     SELECT DISTINCT ON (LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid))
@@ -2787,13 +2804,68 @@ class MemoryEngine(MemoryEngineInterface):
                         e.canonical_name as entity_name
                     FROM {fq_table("memory_links")} ml
                     LEFT JOIN {fq_table("entities")} e ON ml.entity_id = e.id
-                    WHERE ml.from_unit_id = ANY($1::uuid[]) AND ml.to_unit_id = ANY($1::uuid[])
+                    WHERE ml.from_unit_id = ANY($1::uuid[]) OR ml.to_unit_id = ANY($1::uuid[])
                     ORDER BY LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid), ml.weight DESC
                 """,
-                    unit_ids,
+                    all_relevant_ids,
                 )
             else:
                 links = []
+
+            # Copy links from source memories to observations
+            # Observations inherit links from their source memories via source_memory_ids
+            # Build a map from source_id to observation_ids
+            source_to_observations = {}
+            for unit in units:
+                if unit["source_memory_ids"]:
+                    for source_id in unit["source_memory_ids"]:
+                        if source_id not in source_to_observations:
+                            source_to_observations[source_id] = []
+                        source_to_observations[source_id].append(unit["id"])
+
+            copied_links = []
+            for link in links:
+                from_id = link["from_unit_id"]
+                to_id = link["to_unit_id"]
+
+                # Get observations that should inherit this link
+                from_observations = source_to_observations.get(from_id, [])
+                to_observations = source_to_observations.get(to_id, [])
+
+                # If from_id is a source memory, copy links to its observations
+                if from_observations:
+                    for obs_id in from_observations:
+                        # Only include if the target is visible
+                        if to_id in unit_id_set or to_observations:
+                            target = to_observations[0] if to_observations and to_id not in unit_id_set else to_id
+                            if target in unit_id_set:
+                                copied_links.append(
+                                    {
+                                        "from_unit_id": obs_id,
+                                        "to_unit_id": target,
+                                        "link_type": link["link_type"],
+                                        "weight": link["weight"],
+                                        "entity_name": link["entity_name"],
+                                    }
+                                )
+
+                # If to_id is a source memory, copy links to its observations
+                if to_observations and from_id in unit_id_set:
+                    for obs_id in to_observations:
+                        copied_links.append(
+                            {
+                                "from_unit_id": from_id,
+                                "to_unit_id": obs_id,
+                                "link_type": link["link_type"],
+                                "weight": link["weight"],
+                                "entity_name": link["entity_name"],
+                            }
+                        )
+
+            # Keep only direct links between visible nodes
+            direct_links = [
+                link for link in links if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set
+            ]
 
             # Get entity information
             unit_entities = await conn.fetch(f"""
@@ -2811,6 +2883,18 @@ class MemoryEngine(MemoryEngineInterface):
             if unit_id not in entity_map:
                 entity_map[unit_id] = []
             entity_map[unit_id].append(entity_name)
+
+        # For observations, inherit entities from source memories
+        for unit in units:
+            if unit["source_memory_ids"] and unit["id"] not in entity_map:
+                # Collect entities from all source memories
+                source_entities = []
+                for source_id in unit["source_memory_ids"]:
+                    if source_id in entity_map:
+                        source_entities.extend(entity_map[source_id])
+                if source_entities:
+                    # Deduplicate while preserving order
+                    entity_map[unit["id"]] = list(dict.fromkeys(source_entities))
 
         # Build nodes
         nodes = []
@@ -2845,14 +2929,15 @@ class MemoryEngine(MemoryEngineInterface):
                 }
             )
 
-        # Build edges
+        # Build edges (combine direct links and copied links from sources)
         edges = []
-        for row in links:
+        all_links = direct_links + copied_links
+        for row in all_links:
             from_id = str(row["from_unit_id"])
             to_id = str(row["to_unit_id"])
             link_type = row["link_type"]
             weight = row["weight"]
-            entity_name = row["entity_name"]
+            entity_name = row.get("entity_name")
 
             # Color by link type
             if link_type == "temporal":
@@ -3579,6 +3664,16 @@ class MemoryEngine(MemoryEngineInterface):
         if directives:
             logger.info(f"[REFLECT {reflect_id}] Loaded {len(directives)} directives")
 
+        # Check if the bank has any mental models
+        async with pool.acquire() as conn:
+            mental_model_count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('mental_models')} WHERE bank_id = $1",
+                bank_id,
+            )
+        has_mental_models = mental_model_count > 0
+        if has_mental_models:
+            logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
+
         # Run the agent
         agent_result = await run_reflect_agent(
             llm_config=self._reflect_llm_config,
@@ -3594,6 +3689,8 @@ class MemoryEngine(MemoryEngineInterface):
             max_tokens=max_tokens,
             response_schema=response_schema,
             directives=directives,
+            has_mental_models=has_mental_models,
+            budget=effective_budget,
         )
 
         total_time = time.time() - reflect_start

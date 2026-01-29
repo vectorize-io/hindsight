@@ -38,6 +38,33 @@ for opinion in response.results:
 # [/docs:opinion-search]
 
 
+# [docs:recall-opinions-only]
+# Only retrieve opinions (beliefs and preferences)
+opinions = client.recall(
+    bank_id="my-bank",
+    query="What are my preferences?",
+    types=["opinion"]
+)
+# [/docs:recall-opinions-only]
+
+
+# [docs:recall-include-entities]
+# Include entity summaries in recall results
+response = client.recall(
+    bank_id="my-bank",
+    query="What do I know about Alice?",
+    include_entities=True,
+    max_entity_tokens=500
+)
+
+# Results include both facts and entity summaries
+for result in response.results:
+    print(f"- {result.text}")
+    if hasattr(result, 'entity_summary'):
+        print(f"  Entity: {result.entity_summary}")
+# [/docs:recall-include-entities]
+
+
 # [docs:opinion-disposition]
 # Bank disposition affects how opinions are formed
 # High skepticism = lower confidence, requires more evidence

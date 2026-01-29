@@ -58,6 +58,7 @@ def _normalize_tool_name(name: str) -> str:
     - 'functions.done' (OpenAI-style prefix)
     - 'call=functions.done' (some models)
     - 'call=done' (some models)
+    - 'done<|channel|>commentary' (malformed special tokens appended)
 
     Returns the normalized tool name (e.g., 'done', 'recall', etc.)
     """
@@ -68,6 +69,11 @@ def _normalize_tool_name(name: str) -> str:
     # Handle 'functions.name' format
     if name.startswith("functions."):
         name = name[len("functions.") :]
+
+    # Handle malformed special tokens appended to tool name
+    # e.g., 'done<|channel|>commentary' -> 'done'
+    if "<|" in name:
+        name = name.split("<|")[0]
 
     return name
 
@@ -80,6 +86,18 @@ def _is_done_tool(name: str) -> bool:
 # Pattern to match done() call as text - handles done({...}) with nested JSON
 _DONE_CALL_PATTERN = re.compile(r"done\s*\(\s*\{.*$", re.DOTALL)
 
+# Patterns for leaked structured output in the answer field
+_LEAKED_JSON_SUFFIX = re.compile(
+    r'\s*```(?:json)?\s*\{[^}]*(?:"(?:observation_ids|memory_ids|mental_model_ids)"|\})\s*```\s*$',
+    re.DOTALL | re.IGNORECASE,
+)
+_LEAKED_JSON_OBJECT = re.compile(
+    r'\s*\{[^{]*"(?:observation_ids|memory_ids|mental_model_ids|answer)"[^}]*\}\s*$', re.DOTALL
+)
+_TRAILING_IDS_PATTERN = re.compile(
+    r"\s*(?:observation_ids|memory_ids|mental_model_ids)\s*[=:]\s*\[.*?\]\s*$", re.DOTALL | re.IGNORECASE
+)
+
 
 def _clean_answer_text(text: str) -> str:
     """Clean up answer text by removing any done() tool call syntax.
@@ -89,6 +107,33 @@ def _clean_answer_text(text: str) -> str:
     """
     # Remove done() call pattern from the end of the text
     cleaned = _DONE_CALL_PATTERN.sub("", text).strip()
+    return cleaned if cleaned else text
+
+
+def _clean_done_answer(text: str) -> str:
+    """Clean up the answer field from a done() tool call.
+
+    Some LLMs leak structured output patterns into the answer text, such as:
+    - JSON code blocks with observation_ids/memory_ids at the end
+    - Raw JSON objects with these fields
+    - Plain text like "observation_ids: [...]"
+
+    This cleans those patterns while preserving the actual answer content.
+    """
+    if not text:
+        return text
+
+    cleaned = text
+
+    # Remove leaked JSON in code blocks at the end
+    cleaned = _LEAKED_JSON_SUFFIX.sub("", cleaned).strip()
+
+    # Remove leaked raw JSON objects at the end
+    cleaned = _LEAKED_JSON_OBJECT.sub("", cleaned).strip()
+
+    # Remove trailing ID patterns
+    cleaned = _TRAILING_IDS_PATTERN.sub("", cleaned).strip()
+
     return cleaned if cleaned else text
 
 
@@ -141,35 +186,55 @@ async def _generate_structured_output(
             fields[field_name] = (field_type, default)
 
         if not fields:
-            return None
+            logger.warning(f"[REFLECT {reflect_id}] No fields found in response_schema, skipping structured output")
+            return None, 0, 0
 
         DynamicModel = create_model("StructuredResponse", **fields)
 
         # Include the full schema in the prompt for better LLM guidance
         schema_str = json.dumps(response_schema, indent=2)
 
+        # Build field descriptions for the prompt
+        field_descriptions = []
+        for field_name, field_schema in schema_props.items():
+            field_type = field_schema.get("type", "string")
+            field_desc = field_schema.get("description", "")
+            is_required = field_name in required_fields
+            req_marker = " (REQUIRED)" if is_required else " (optional)"
+            field_descriptions.append(f"- {field_name} ({field_type}){req_marker}: {field_desc}")
+        fields_text = "\n".join(field_descriptions)
+
         # Call LLM with the answer to extract structured data
-        structured_prompt = f"""Based on this answer, extract the information into the requested structured format.
+        structured_prompt = f"""Your task is to extract specific information from the answer below and format it as JSON.
 
-Answer: {answer}
+ANSWER TO EXTRACT FROM:
+\"\"\"
+{answer}
+\"\"\"
 
-JSON Schema to follow:
+REQUIRED OUTPUT FORMAT - Extract the following fields from the answer above:
+{fields_text}
+
+JSON Schema:
 ```json
 {schema_str}
 ```
 
-Return ONLY a valid JSON object that matches this exact schema. Pay special attention to field types:
-- "type": "array" means the value must be a JSON array/list, NOT a string
-- "type": "string" means the value must be a string
-- "type": "object" means the value must be a JSON object
+INSTRUCTIONS:
+1. Read the answer carefully and identify the information that matches each field
+2. Extract the ACTUAL content from the answer - do NOT leave fields empty if information is present
+3. For string fields: use the exact text or a clear summary from the answer
+4. For array fields: return a JSON array (e.g., ["item1", "item2"]), NOT a string
+5. For required fields: you MUST provide a value extracted from the answer
+6. Return ONLY the JSON object, no explanation
 
-Do not include any explanation, only the JSON object."""
+OUTPUT:"""
 
         structured_result, usage = await llm_config.call(
             messages=[
                 {
                     "role": "system",
-                    "content": "Extract structured data from the given answer. Return only valid JSON matching the provided schema exactly.",
+                    "content": "You are a precise data extraction assistant. Extract information from text and return it as valid JSON matching the provided schema. Always extract actual content - never return empty strings for required fields if information is available.",
                 },
                 {"role": "user", "content": structured_prompt},
             ],
@@ -187,6 +252,12 @@ Do not include any explanation, only the JSON object."""
         else:
             # Try to parse as JSON
             structured_output = json.loads(str(structured_result))
+
+        # Validate that required fields have non-empty values
+        for field_name in required_fields:
+            value = structured_output.get(field_name)
+            if value is None or value == "" or value == []:
+                logger.warning(f"[REFLECT {reflect_id}] Required field '{field_name}' is empty in structured output")
 
         logger.info(f"[REFLECT {reflect_id}] Generated structured output with {len(structured_output)} fields")
         return structured_output, usage.input_tokens, usage.output_tokens
@@ -722,7 +793,9 @@ async def _process_done_tool(
     """Process the done tool call and return the result."""
     args = done_call.arguments
 
-    answer = args.get("answer", "").strip()
+    # Extract and clean the answer - some LLMs leak structured output into the answer text
+    raw_answer = args.get("answer", "").strip()
+    answer = _clean_done_answer(raw_answer) if raw_answer else ""
     if not answer:
         answer = "No answer provided."
 

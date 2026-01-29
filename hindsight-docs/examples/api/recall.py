@@ -148,6 +148,33 @@ response = client.recall(
 
 
 # =============================================================================
+# Legacy snippets for v0.3 docs (kept for backward compatibility)
+# =============================================================================
+
+# [docs:recall-opinions-only]
+# Legacy: opinions replaced by observations in v0.4+
+# Only retrieve opinions (beliefs and preferences)
+opinions = client.recall(
+    bank_id="my-bank",
+    query="What are my preferences?",
+    types=["opinion"]
+)
+# [/docs:recall-opinions-only]
+
+
+# [docs:recall-include-entities]
+# Legacy: entity summaries replaced by observations in v0.4+
+# Include entity summaries in recall results
+response = client.recall(
+    bank_id="my-bank",
+    query="What do I know about Alice?",
+    include_entities=True,
+    max_entity_tokens=500
+)
+# [/docs:recall-include-entities]
+
+
+# =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================
 requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/my-bank")

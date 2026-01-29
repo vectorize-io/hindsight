@@ -25,7 +25,7 @@ GITHUB_REPO = "vectorize-io/hindsight"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_COMMIT_URL = f"https://github.com/{GITHUB_REPO}/commit"
 REPO_PATH = Path(__file__).parent.parent.parent
-CHANGELOG_PATH = REPO_PATH / "hindsight-docs" / "docs" / "changelog" / "index.md"
+CHANGELOG_PATH = REPO_PATH / "hindsight-docs" / "src" / "pages" / "changelog.md"
 
 
 class ChangelogEntry(BaseModel):
@@ -238,7 +238,7 @@ def read_existing_changelog() -> tuple[str, str]:
     """Read existing changelog and split into header and content."""
     if not CHANGELOG_PATH.exists():
         header = """---
-sidebar_position: 1
+hide_table_of_contents: true
 ---
 
 # Changelog

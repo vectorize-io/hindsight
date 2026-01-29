@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Environment variable names
 ENV_DATABASE_URL = "HINDSIGHT_API_DATABASE_URL"
+ENV_DATABASE_SCHEMA = "HINDSIGHT_API_DATABASE_SCHEMA"
 ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
 ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
 ENV_LLM_MODEL = "HINDSIGHT_API_LLM_MODEL"
@@ -46,6 +47,7 @@ ENV_CONSOLIDATION_LLM_BASE_URL = "HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL"
 
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 ENV_EMBEDDINGS_LOCAL_MODEL = "HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL"
+ENV_EMBEDDINGS_LOCAL_FORCE_CPU = "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"
 ENV_EMBEDDINGS_TEI_URL = "HINDSIGHT_API_EMBEDDINGS_TEI_URL"
 ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
@@ -65,6 +67,7 @@ ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
 
 ENV_RERANKER_PROVIDER = "HINDSIGHT_API_RERANKER_PROVIDER"
 ENV_RERANKER_LOCAL_MODEL = "HINDSIGHT_API_RERANKER_LOCAL_MODEL"
+ENV_RERANKER_LOCAL_FORCE_CPU = "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"
 ENV_RERANKER_LOCAL_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT"
 ENV_RERANKER_TEI_URL = "HINDSIGHT_API_RERANKER_TEI_URL"
 ENV_RERANKER_TEI_BATCH_SIZE = "HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE"
@@ -92,6 +95,7 @@ ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
+ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
 ENV_RETAIN_OBSERVATIONS_ASYNC = "HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC"
 
 # Observations settings (consolidated knowledge from facts)
@@ -124,6 +128,7 @@ ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
+DEFAULT_DATABASE_SCHEMA = "public"
 DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODEL = "gpt-5-mini"
 DEFAULT_LLM_MAX_CONCURRENT = 32
@@ -131,11 +136,13 @@ DEFAULT_LLM_TIMEOUT = 120.0  # seconds
 
 DEFAULT_EMBEDDINGS_PROVIDER = "local"
 DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS)
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSION = 384
 
 DEFAULT_RERANKER_PROVIDER = "local"
 DEFAULT_RERANKER_LOCAL_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+DEFAULT_RERANKER_LOCAL_FORCE_CPU = False  # Force CPU mode for local reranker (avoids MPS/XPC issues on macOS)
 DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT = 4  # Limit concurrent CPU-bound reranking to prevent thrashing
 DEFAULT_RERANKER_TEI_BATCH_SIZE = 128
 DEFAULT_RERANKER_TEI_MAX_CONCURRENT = 8
@@ -168,12 +175,13 @@ DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refr
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
-DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise" or "verbose"
-RETAIN_EXTRACTION_MODES = ("concise", "verbose")  # Allowed extraction modes
+DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
+RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom")  # Allowed extraction modes
+DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only used when mode="custom")
 DEFAULT_RETAIN_OBSERVATIONS_ASYNC = False  # Run observation generation async (after retain completes)
 
 # Observations defaults (consolidated knowledge from facts)
-DEFAULT_ENABLE_OBSERVATIONS = False  # Observations disabled by default (experimental)
+DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 
 # Database migrations
@@ -268,6 +276,7 @@ class HindsightConfig:
 
     # Database
     database_url: str
+    database_schema: str
 
     # LLM (default, used as fallback for per-operation config)
     llm_provider: str
@@ -296,6 +305,7 @@ class HindsightConfig:
     # Embeddings
     embeddings_provider: str
     embeddings_local_model: str
+    embeddings_local_force_cpu: bool
     embeddings_tei_url: str | None
     embeddings_openai_base_url: str | None
     embeddings_cohere_base_url: str | None
@@ -303,6 +313,8 @@ class HindsightConfig:
     # Reranker
     reranker_provider: str
     reranker_local_model: str
+    reranker_local_force_cpu: bool
+    reranker_local_max_concurrent: int
     reranker_tei_url: str | None
     reranker_tei_batch_size: int
     reranker_tei_max_concurrent: int
@@ -328,6 +340,7 @@ class HindsightConfig:
     retain_chunk_size: int
     retain_extract_causal_links: bool
     retain_extraction_mode: str
+    retain_custom_instructions: str | None
     retain_observations_async: bool
 
     # Observations settings (consolidated knowledge from facts)
@@ -364,6 +377,7 @@ class HindsightConfig:
         return cls(
             # Database
             database_url=os.getenv(ENV_DATABASE_URL, DEFAULT_DATABASE_URL),
+            database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
             # LLM
             llm_provider=os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER),
             llm_api_key=os.getenv(ENV_LLM_API_KEY),
@@ -387,12 +401,23 @@ class HindsightConfig:
             # Embeddings
             embeddings_provider=os.getenv(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER),
             embeddings_local_model=os.getenv(ENV_EMBEDDINGS_LOCAL_MODEL, DEFAULT_EMBEDDINGS_LOCAL_MODEL),
+            embeddings_local_force_cpu=os.getenv(
+                ENV_EMBEDDINGS_LOCAL_FORCE_CPU, str(DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU)
+            ).lower()
+            in ("true", "1"),
             embeddings_tei_url=os.getenv(ENV_EMBEDDINGS_TEI_URL),
             embeddings_openai_base_url=os.getenv(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None,
             embeddings_cohere_base_url=os.getenv(ENV_EMBEDDINGS_COHERE_BASE_URL) or None,
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
+            reranker_local_force_cpu=os.getenv(
+                ENV_RERANKER_LOCAL_FORCE_CPU, str(DEFAULT_RERANKER_LOCAL_FORCE_CPU)
+            ).lower()
+            in ("true", "1"),
+            reranker_local_max_concurrent=int(
+                os.getenv(ENV_RERANKER_LOCAL_MAX_CONCURRENT, str(DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT))
+            ),
             reranker_tei_url=os.getenv(ENV_RERANKER_TEI_URL),
             reranker_tei_batch_size=int(os.getenv(ENV_RERANKER_TEI_BATCH_SIZE, str(DEFAULT_RERANKER_TEI_BATCH_SIZE))),
             reranker_tei_max_concurrent=int(
@@ -431,6 +456,7 @@ class HindsightConfig:
             retain_extraction_mode=_validate_extraction_mode(
                 os.getenv(ENV_RETAIN_EXTRACTION_MODE, DEFAULT_RETAIN_EXTRACTION_MODE)
             ),
+            retain_custom_instructions=os.getenv(ENV_RETAIN_CUSTOM_INSTRUCTIONS) or DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS,
             retain_observations_async=os.getenv(
                 ENV_RETAIN_OBSERVATIONS_ASYNC, str(DEFAULT_RETAIN_OBSERVATIONS_ASYNC)
             ).lower()
@@ -511,7 +537,7 @@ class HindsightConfig:
 
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""
-        logger.info(f"Database: {self.database_url}")
+        logger.info(f"Database: {self.database_url} (schema: {self.database_schema})")
         logger.info(f"LLM: provider={self.llm_provider}, model={self.llm_model}")
         if self.retain_llm_provider or self.retain_llm_model:
             retain_provider = self.retain_llm_provider or self.llm_provider

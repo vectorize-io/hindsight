@@ -511,6 +511,17 @@ div[class*="codeBlockContent"] .prism-code {
   max-width: 100%;
 }
 
+/* Force blog posts to be wider - aggressive override */
+body[class*="blog"] .container,
+body[class*="blog"] main .container {
+  max-width: 100% !important;
+}
+
+body[class*="blog"] article {
+  max-width: 1200px !important;
+  margin: 0 auto !important;
+}
+
 /* Page title with gradient */
 article h1,
 .markdown h1,
@@ -1245,5 +1256,53 @@ ul[class*="suggestion"] {
 /* Hide action icons */
 [class*="hitAction"] {
   display: none !important;
+}
+
+/* ===== Blog Styling ===== */
+
+/* Blog author text visible in light mode */
+[class*="blogPostAuthor"],
+[class*="blogPostAuthor"] *,
+.avatar__name,
+.avatar__name a,
+.avatar__subtitle,
+[class*="authorName"],
+[class*="blogPostData"] a,
+[class*="blogPostInfo"] a {
+  color: #1e293b !important;
+  -webkit-text-fill-color: #1e293b !important;
+}
+
+/* Blog author text visible in dark mode */
+[data-theme='dark'] [class*="blogPostAuthor"],
+[data-theme='dark'] [class*="blogPostAuthor"] *,
+[data-theme='dark'] .avatar__name,
+[data-theme='dark'] .avatar__name a,
+[data-theme='dark'] .avatar__subtitle,
+[data-theme='dark'] [class*="authorName"],
+[data-theme='dark'] [class*="blogPostData"] a,
+[data-theme='dark'] [class*="blogPostInfo"] a {
+  color: #e2e8f0 !important;
+  -webkit-text-fill-color: #e2e8f0 !important;
+}
+
+/* Blog navbar icon */
+@media (min-width: 997px) {
+  .navbar-item-blog::before {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    content: '';
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23666' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
+
+  [data-theme='dark'] .navbar-item-blog::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cpath fill='%23ccc' d='M216 36H40a20 20 0 0 0-20 20v144a20 20 0 0 0 20 20h176a20 20 0 0 0 20-20V56a20 20 0 0 0-20-20Zm-4 160H44V60h168ZM68 92a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Zm0 36a12 12 0 0 1 12-12h96a12 12 0 0 1 0 24H80a12 12 0 0 1-12-12Z'/%3E%3C/svg%3E");
+  }
 }
 

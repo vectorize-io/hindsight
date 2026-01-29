@@ -433,8 +433,6 @@ async def run_benchmark(
     results_filename: str = "benchmark_results.json",
     context_format: str = "json",
     source_results: str = None,
-    include_mental_models: bool = False,
-    only_mental_models: bool = False,
 ):
     """
     Run the LongMemEval benchmark.
@@ -456,8 +454,6 @@ async def run_benchmark(
         results_filename: Filename for results (default: benchmark_results.json). Directory is fixed to results/.
         context_format: How to format context for answer generation. "json" (raw JSON) or "structured" (human-readable with facts+chunks).
         source_results: Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json.
-        include_mental_models: If True, include mental models in recall results and wait for consolidation after ingestion.
-        only_mental_models: If True, only retrieve mental models (no facts). Implies waiting for consolidation.
     """
     from rich.console import Console
 
@@ -629,10 +625,6 @@ async def run_benchmark(
     answer_generator = LongMemEvalAnswerGenerator(context_format=context_format)
     # Log context format being used
     console.print(f"[blue]Context format: {context_format}[/blue]")
-    if only_mental_models:
-        console.print("[blue]Mental models: ONLY (no facts)[/blue]")
-    elif include_mental_models:
-        console.print("[blue]Mental models: included in recall[/blue]")
 
     answer_evaluator = LLMAnswerEvaluator()
 
@@ -705,7 +697,7 @@ async def run_benchmark(
     # Configuration for single-phase benchmark
     separate_ingestion = False
     clear_per_item = True  # Use unique agent_id per question
-    concurrent_questions = 4 if (include_mental_models or only_mental_models) else 8
+    concurrent_questions = 8
 
     results = await runner.run(
         dataset_path=dataset_path,
@@ -726,8 +718,6 @@ async def run_benchmark(
         max_concurrent_items=max_concurrent_items,  # Parallel instance processing
         output_path=output_path,  # Save results incrementally
         merge_with_existing=merge_with_existing,  # Merge when using --fill, --category, --only-failed, --only-invalid flags or specific question
-        include_mental_models=include_mental_models,  # Include mental models in recall results
-        only_mental_models=only_mental_models,  # Only retrieve mental models (no facts)
     )
 
     # Display results (final save already happened incrementally)
@@ -978,16 +968,6 @@ if __name__ == "__main__":
         default=None,
         help="Source results file to read failed/invalid questions from (for --only-failed/--only-invalid). Defaults to benchmark_results.json if not specified.",
     )
-    parser.add_argument(
-        "--include-mental-models",
-        action="store_true",
-        help="Include mental models in recall results. This waits for consolidation to complete after ingestion and includes mental models in the recall response.",
-    )
-    parser.add_argument(
-        "--only-mental-models",
-        action="store_true",
-        help="Only retrieve mental models (no facts). This waits for consolidation to complete after ingestion and only returns mental models.",
-    )
 
     args = parser.parse_args()
 
@@ -1018,7 +998,5 @@ if __name__ == "__main__":
             results_filename=args.results_filename,
             context_format=args.context_format,
             source_results=args.source_results,
-            include_mental_models=args.include_mental_models,
-            only_mental_models=args.only_mental_models,
         )
     )

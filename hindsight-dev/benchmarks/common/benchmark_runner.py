@@ -15,8 +15,6 @@ The framework supports two answer generation patterns:
 2. Integrated: Answer generator performs its own retrieval (e.g., think API)
    - Indicated by needs_external_search() returning False
    - Skips the search step for efficiency
-
-Optional --include-mental-models flag enables returning mental models in recall results.
 """
 
 import asyncio
@@ -536,8 +534,6 @@ class BenchmarkRunner:
         max_tokens: int = 4096,
         question_date: Optional[datetime] = None,
         question_type: Optional[str] = None,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> Tuple[str, str, List[Dict], Dict[str, Dict]]:
         """
         Answer a question using memory retrieval.
@@ -549,8 +545,6 @@ class BenchmarkRunner:
             max_tokens: Maximum tokens to retrieve
             question_date: Date when the question was asked (for temporal filtering)
             question_type: Question category/type (e.g., 'multi-session', 'temporal-reasoning')
-            include_mental_models: If True, include mental models in recall results
-            only_mental_models: If True, only retrieve mental models (no facts)
 
         Returns:
             Tuple of (answer, reasoning, retrieved_memories, chunks)
@@ -565,26 +559,16 @@ class BenchmarkRunner:
             import time
 
             recall_start_time = time.time()
-            # Build fact_types based on what's requested
-            if only_mental_models:
-                # Only retrieve mental models
-                fact_types = ["mental_model"]
-            elif include_mental_models:
-                # Retrieve facts AND mental models
-                fact_types = ["world", "experience", "mental_model"]
-            else:
-                # Only retrieve facts
-                fact_types = ["world", "experience"]
+            # Use default fact types (no filtering)
             search_result = await self.memory.recall_async(
                 bank_id=agent_id,
                 query=question,
                 budget=budget,
                 max_tokens=max_tokens,
-                fact_type=fact_types,
                 question_date=question_date,
-                include_entities=not only_mental_models,  # Skip entities when only mental models
+                include_entities=True,
                 max_entity_tokens=2048,
-                include_chunks=True,  # Always include chunks (mental models fetch from source memories)
+                include_chunks=True,
                 request_context=RequestContext(),
             )
             recall_time = time.time() - recall_start_time
@@ -641,16 +625,12 @@ class BenchmarkRunner:
         max_tokens: int,
         max_questions: Optional[int] = None,
         semaphore: asyncio.Semaphore = None,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> List[Dict]:
         """
         Evaluate QA task with parallel question processing.
 
         Args:
             semaphore: Semaphore to limit concurrent question processing
-            include_mental_models: If True, include mental models in recall results
-            only_mental_models: If True, only retrieve mental models (no facts)
 
         Returns:
             List of QA results
@@ -695,8 +675,6 @@ class BenchmarkRunner:
                             max_tokens,
                             question_date,
                             category,
-                            include_mental_models,
-                            only_mental_models,
                         )
 
                         # Remove embeddings from retrieved memories to reduce file size
@@ -875,8 +853,6 @@ class BenchmarkRunner:
         question_semaphore: asyncio.Semaphore,
         eval_semaphore_size: int = 8,
         clear_this_agent: bool = True,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> Dict:
         """
         Process a single item (ingest + evaluate).
@@ -884,8 +860,6 @@ class BenchmarkRunner:
         Args:
             clear_this_agent: Whether to clear this agent's data before ingesting.
                              Set to False to skip clearing (e.g., when agent_id is shared and already cleared)
-            include_mental_models: If True, include mental models in recall results and wait for consolidation after ingestion
-            only_mental_models: If True, only retrieve mental models (no facts)
 
         Returns:
             Result dict with metrics
@@ -902,11 +876,10 @@ class BenchmarkRunner:
                 await self.memory.delete_bank(agent_id, request_context=RequestContext())
                 console.print(f"      [green]✓[/green] Cleared '{agent_id}' agent data")
 
-            # Ingest conversation (wait for consolidation if mental models are requested)
+            # Ingest conversation
             step += 1
             console.print(f"  [{step}] Ingesting conversation (batch mode)...")
-            wait_for_consolidation = include_mental_models or only_mental_models
-            num_sessions = await self.ingest_conversation(item, agent_id, wait_for_consolidation=wait_for_consolidation)
+            num_sessions = await self.ingest_conversation(item, agent_id, wait_for_consolidation=False)
             console.print(f"      [green]✓[/green] Ingested {num_sessions} sessions")
         else:
             num_sessions = -1
@@ -923,8 +896,6 @@ class BenchmarkRunner:
             max_tokens,
             max_questions_per_item,
             question_semaphore,
-            include_mental_models,
-            only_mental_models,
         )
 
         # Calculate metrics
@@ -956,8 +927,6 @@ class BenchmarkRunner:
         max_concurrent_items: int = 1,  # Max concurrent items (conversations) to process in parallel
         output_path: Optional[Path] = None,  # Path to save results incrementally
         merge_with_existing: bool = False,  # Whether to merge with existing results
-        include_mental_models: bool = False,  # If True, include mental models in recall results
-        only_mental_models: bool = False,  # If True, only retrieve mental models (no facts)
     ) -> Dict[str, Any]:
         """
         Run the full benchmark evaluation.
@@ -977,8 +946,6 @@ class BenchmarkRunner:
             separate_ingestion_phase: If True, ingest all data first, then evaluate all questions (single agent)
             filln: If True, only process items where the agent has no indexed data yet
             max_concurrent_items: Max concurrent items to process in parallel (requires clear_agent_per_item=True)
-            include_mental_models: If True, include mental models in recall results and wait for consolidation after ingestion.
-            only_mental_models: If True, only retrieve mental models (no facts). Implies waiting for consolidation.
 
         Returns:
             Dict with complete benchmark results
@@ -1020,8 +987,6 @@ class BenchmarkRunner:
                 eval_semaphore_size,
                 output_path,
                 merge_with_existing,
-                include_mental_models,
-                only_mental_models,
             )
         else:
             # Original approach: process each item independently
@@ -1039,8 +1004,6 @@ class BenchmarkRunner:
                 max_concurrent_items,
                 output_path,
                 merge_with_existing,
-                include_mental_models,
-                only_mental_models,
             )
 
     async def _run_single_phase(
@@ -1058,8 +1021,6 @@ class BenchmarkRunner:
         max_concurrent_items: int = 1,
         output_path: Optional[Path] = None,
         merge_with_existing: bool = False,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> Dict[str, Any]:
         """Original single-phase approach: process each item independently."""
         # Create semaphore for question processing
@@ -1081,8 +1042,6 @@ class BenchmarkRunner:
                 max_concurrent_items,
                 output_path,
                 merge_with_existing,
-                include_mental_models,
-                only_mental_models,
             )
         else:
             # Sequential item processing (original behavior)
@@ -1099,8 +1058,6 @@ class BenchmarkRunner:
                 filln,
                 output_path,
                 merge_with_existing,
-                include_mental_models,
-                only_mental_models,
             )
 
         # Calculate overall metrics
@@ -1136,8 +1093,6 @@ class BenchmarkRunner:
         filln: bool,
         output_path: Optional[Path] = None,
         merge_with_existing: bool = False,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> List[Dict]:
         """Process items sequentially (original behavior)."""
         all_results = []
@@ -1185,8 +1140,6 @@ class BenchmarkRunner:
                 question_semaphore,
                 eval_semaphore_size,
                 clear_this_agent,
-                include_mental_models,
-                only_mental_models,
             )
 
             # Replace existing result or append new one
@@ -1218,8 +1171,6 @@ class BenchmarkRunner:
         max_concurrent_items: int,
         output_path: Optional[Path] = None,
         merge_with_existing: bool = False,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> List[Dict]:
         """Process items in parallel (requires unique agent IDs per item)."""
         # Load existing results if merge_with_existing is True
@@ -1264,8 +1215,6 @@ class BenchmarkRunner:
                     question_semaphore,
                     eval_semaphore_size,
                     clear_this_agent=True,  # Always clear for parallel processing
-                    include_mental_models=include_mental_models,
-                    only_mental_models=only_mental_models,
                 )
                 return result
 
@@ -1304,17 +1253,11 @@ class BenchmarkRunner:
         eval_semaphore_size: int,
         output_path: Optional[Path] = None,
         merge_with_existing: bool = False,
-        include_mental_models: bool = False,
-        only_mental_models: bool = False,
     ) -> Dict[str, Any]:
         """
         Two-phase approach: ingest all data into single agent, then evaluate all questions.
 
         More realistic scenario where agent accumulates memories over time.
-
-        Args:
-            include_mental_models: If True, include mental models in recall results and wait for consolidation
-            only_mental_models: If True, only retrieve mental models (no facts)
         """
         # Phase 1: Ingestion
         if not skip_ingestion:
@@ -1350,10 +1293,6 @@ class BenchmarkRunner:
             )
 
             console.print(f"    [green]✓[/green] Ingested {len(all_sessions)} sessions from {len(items)} items")
-
-            # Wait for consolidation if mental models are requested
-            if include_mental_models or only_mental_models:
-                await self._wait_for_consolidation(agent_id)
         else:
             console.print("\n[3] Skipping ingestion (using existing data)")
 
@@ -1380,8 +1319,6 @@ class BenchmarkRunner:
                 max_tokens,
                 max_questions_per_item,
                 question_semaphore,
-                include_mental_models,
-                only_mental_models,
             )
 
             # Calculate metrics

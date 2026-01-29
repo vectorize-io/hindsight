@@ -155,7 +155,6 @@ class LinkExpansionRetriever(GraphRetriever):
                 all_seeds.extend(temporal_seeds)
 
             if not all_seeds:
-                logger.info("[LinkExpansion] No seeds found, returning empty results")
                 return [], timings
 
             seed_ids = list({s.id for s in all_seeds})

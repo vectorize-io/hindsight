@@ -1,0 +1,151 @@
+---
+sidebar_position: 8
+---
+
+# Documents
+
+Track and manage document sources in your memory bank. Documents provide traceability — knowing where memories came from.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import documentsPy from '!!raw-loader!@site/examples/api/documents.py';
+import documentsMjs from '!!raw-loader!@site/examples/api/documents.mjs';
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) and understand [how retain works](./retain).
+:::
+
+## What Are Documents?
+
+Documents are containers for retained content. They help you:
+
+- **Track sources** — Know which PDF, conversation, or file a memory came from
+- **Update content** — Re-retain a document to update its facts
+- **Delete in bulk** — Remove all memories from a document at once
+- **Organize memories** — Group related facts by source
+
+## Chunks
+
+When you retain content, Hindsight splits it into chunks before extracting facts. These chunks are stored alongside the extracted memories, preserving the original text segments.
+
+**Why chunks matter:**
+- **Context preservation** — Chunks contain the raw text that generated facts, useful when you need the exact wording
+- **Richer recall** — Including chunks in recall provides surrounding context for matched facts
+
+:::tip Include Chunks in Recall
+Use `include_chunks=True` in your recall calls to get the original text chunks alongside fact results. See [Recall](./recall) for details.
+:::
+
+## Retain with Document ID
+
+Associate retained content with a document:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-retain" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-retain" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# Retain content with document ID
+hindsight memory retain my-bank "Meeting notes content..." --doc-id notes-2024-03-15
+
+# Batch retain from files
+hindsight memory retain-files my-bank docs/
+```
+
+</TabItem>
+</Tabs>
+
+## Update Documents
+
+Re-retaining with the same document_id **replaces** the old content:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-update" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-update" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# Original
+hindsight memory retain my-bank "Project deadline: March 31" --doc-id project-plan
+
+# Update
+hindsight memory retain my-bank "Project deadline: April 15 (extended)" --doc-id project-plan
+```
+
+</TabItem>
+</Tabs>
+
+## Get Document
+
+Retrieve a document's original text and metadata. This is useful for expanding document context after a recall operation returns memories with document references.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-get" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-get" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+hindsight document get my-bank meeting-2024-03-15
+```
+
+</TabItem>
+</Tabs>
+
+## Delete Document
+
+Remove a document and all its associated memories:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-delete" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-delete" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+hindsight document delete my-bank meeting-2024-03-15
+```
+
+</TabItem>
+</Tabs>
+
+:::warning
+Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
+:::
+
+## Document Response Format
+
+```json
+{
+  "id": "meeting-2024-03-15",
+  "bank_id": "my-bank",
+  "original_text": "Alice presented the Q4 roadmap...",
+  "content_hash": "abc123def456",
+  "memory_unit_count": 12,
+  "created_at": "2024-03-15T14:00:00Z",
+  "updated_at": "2024-03-15T14:00:00Z"
+}
+```
+
+## Next Steps
+
+- [**Operations**](./operations) — Monitor background tasks
+- [**Memory Banks**](./memory-banks) — Configure bank settings
