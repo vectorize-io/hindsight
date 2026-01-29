@@ -242,10 +242,10 @@ export default function (api: MoltbotPluginAPI) {
 
         console.log('[Hindsight] Auto-recall for prompt:', prompt.substring(0, 50));
 
-        // Recall relevant memories
+        // Recall relevant memories (up to 1024 tokens)
         const response = await client.recall({
           query: prompt,
-          limit: 5,
+          max_tokens: 1024,
         });
 
         if (!response.results || response.results.length === 0) {

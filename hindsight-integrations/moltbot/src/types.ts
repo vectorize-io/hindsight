@@ -55,7 +55,7 @@ export interface RetainResponse {
 
 export interface RecallRequest {
   query: string;
-  limit?: number;
+  max_tokens?: number;
 }
 
 export interface RecallResponse {

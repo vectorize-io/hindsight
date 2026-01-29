@@ -63,8 +63,9 @@ export class HindsightClient {
 
   async recall(request: RecallRequest): Promise<RecallResponse> {
     const query = request.query.replace(/'/g, "'\\''"); // Escape single quotes
+    const maxTokens = request.max_tokens || 1024;
 
-    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --output json`;
+    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });
