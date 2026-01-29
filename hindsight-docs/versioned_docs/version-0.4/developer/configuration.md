@@ -20,9 +20,23 @@ The API service handles all memory operations (retain, recall, reflect).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
+| `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
+
+The `DATABASE_SCHEMA` setting allows you to use a custom PostgreSQL schema instead of the default `public` schema. This is useful for:
+- Multi-database setups where you want Hindsight tables in a dedicated schema
+- Hosting platforms (e.g., Supabase) where `public` schema is reserved or shared
+- Organizational preferences for schema naming conventions
+
+```bash
+# Example: Using a custom schema
+export HINDSIGHT_API_DATABASE_URL=postgresql://user:pass@host:5432/dbname
+export HINDSIGHT_API_DATABASE_SCHEMA=hindsight
+```
+
+Migrations will automatically create the schema if it doesn't exist and create all tables in the configured schema.
 
 ### Database Connection Pool
 
@@ -364,6 +378,7 @@ Observations are consolidated knowledge synthesized from facts.
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
+| `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
 | `HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC` | Run observation generation asynchronously (after retain completes) | `false` |
 
 ### Reflect
@@ -439,6 +454,7 @@ export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
 ```bash
 # API Service
 HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight_dev@localhost:5432/hindsight
+# HINDSIGHT_API_DATABASE_SCHEMA=public  # optional, defaults to 'public'
 HINDSIGHT_API_LLM_PROVIDER=groq
 HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
 

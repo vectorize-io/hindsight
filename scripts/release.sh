@@ -144,6 +144,19 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
+# Update documentation version (creates new version or syncs to existing)
+print_info "Updating documentation for version $VERSION..."
+if [ -f "scripts/update-docs-version.sh" ]; then
+    ./scripts/update-docs-version.sh "$VERSION" 2>&1 | grep -E "✓|IMPORTANT|Error" || true
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        print_info "✓ Documentation updated"
+    else
+        print_warn "Failed to update documentation, but continuing..."
+    fi
+else
+    print_warn "update-docs-version.sh not found, skipping docs update"
+fi
+
 # Show changes
 print_info "Changes to be committed:"
 git diff
@@ -161,7 +174,13 @@ fi
 # Commit changes
 print_info "Committing version changes..."
 git add -A
-git commit --no-verify -m "Release v$VERSION
+
+# Extract major.minor and patch for commit message
+MAJOR_MINOR=$(echo "$VERSION" | sed -E 's/^([0-9]+\.[0-9]+)\.[0-9]+$/\1/')
+PATCH_VERSION=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.([0-9]+)$/\1/')
+
+# Build commit message
+COMMIT_MSG="Release v$VERSION
 
 - Update version to $VERSION in all components
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-embed
@@ -170,6 +189,17 @@ git commit --no-verify -m "Release v$VERSION
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
 - Helm chart"
+
+# Add docs update note
+if [ "$PATCH_VERSION" != "0" ]; then
+    COMMIT_MSG="$COMMIT_MSG
+- Sync documentation to version-$MAJOR_MINOR"
+else
+    COMMIT_MSG="$COMMIT_MSG
+- Create documentation version-$MAJOR_MINOR"
+fi
+
+git commit --no-verify -m "$COMMIT_MSG"
 
 # Create tag
 print_info "Creating tag v$VERSION..."
