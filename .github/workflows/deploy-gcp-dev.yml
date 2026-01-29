@@ -2,13 +2,12 @@
 # Triggers on push to develop branch or manual workflow dispatch
 #
 # Pipeline:
-#   1. GHA uploads source to Cloud Build
-#   2. Cloud Build (private pool) builds Docker image
-#   3. Cloud Build pushes to Artifact Registry (internal network)
-#   4. Cloud Build restarts GKE deployment
+#   1. GHA uploads source to Cloud Build (private pool) for build
+#   2. Cloud Build pushes to Artifact Registry (internal network)
+#   3. Separate Cloud Build (default pool) deploys to GKE
 #
 # Required secrets:
-#   GCP_SA_KEY - Service account JSON key with Cloud Build permissions
+#   GCP_SA_KEY - Service account JSON key with Cloud Build + GKE permissions
 #
 # Target registry: us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight
 # Target cluster:  gcp-k8s-xsolla-n8n-prod (us-west2) / namespace: hindsight-dev
@@ -25,10 +24,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
-    # No environment protection - auto-deploy for dev
+    timeout-minutes: 60
 
     permissions:
       contents: read
@@ -44,13 +42,11 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build and Deploy via Cloud Build
+      - name: Build and Push via Cloud Build
         run: |
           cat > /tmp/cloudbuild.yaml <<'EOF'
           steps:
-            # Build Docker image
             - name: 'gcr.io/cloud-builders/docker'
-              id: 'build'
               args:
                 - 'build'
                 - '-t'
@@ -68,23 +64,8 @@ jobs:
                 - '--build-arg'
                 - 'PRELOAD_ML_MODELS=true'
                 - '.'
-
-            # Push all tags
             - name: 'gcr.io/cloud-builders/docker'
-              id: 'push'
               args: ['push', '--all-tags', 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight']
-
-            # Deploy to GKE
-            - name: 'gcr.io/cloud-builders/gke-deploy'
-              id: 'deploy'
-              entrypoint: 'bash'
-              args:
-                - '-c'
-                - |
-                  gcloud container clusters get-credentials gcp-k8s-xsolla-n8n-prod --region=us-west2 --project=xsolla-n8n-prod
-                  kubectl rollout restart deployment/hindsight-current -n hindsight-dev
-                  kubectl rollout status deployment/hindsight-current -n hindsight-dev --timeout=300s
-
           serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
           options:
             logging: CLOUD_LOGGING_ONLY
@@ -97,3 +78,42 @@ jobs:
             --worker-pool=projects/xsolla-n8n-prod/locations/us-west2/workerPools/hindsight-deploy \
             --config=/tmp/cloudbuild.yaml \
             --substitutions=COMMIT_SHA=${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to GKE via Cloud Build
+        run: |
+          cat > /tmp/deploy.yaml <<'EOF'
+          steps:
+            - name: 'gcr.io/cloud-builders/gke-deploy'
+              entrypoint: 'bash'
+              args:
+                - '-c'
+                - |
+                  gcloud container clusters get-credentials gcp-k8s-xsolla-n8n-prod --region=us-west2 --project=xsolla-n8n-prod
+                  kubectl rollout restart deployment/hindsight-current -n hindsight-dev
+                  kubectl rollout status deployment/hindsight-current -n hindsight-dev --timeout=300s
+          serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
+          options:
+            logging: CLOUD_LOGGING_ONLY
+          EOF
+
+          gcloud builds submit --no-source \
+            --project=xsolla-n8n-prod \
+            --region=us-west2 \
+            --config=/tmp/deploy.yaml
