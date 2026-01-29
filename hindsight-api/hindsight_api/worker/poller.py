@@ -132,6 +132,14 @@ class WorkerPoller:
 
     async def _claim_batch_for_schema(self, schema: str | None, limit: int) -> list[ClaimedTask]:
         """Claim tasks from a specific schema."""
+        try:
+            return await self._claim_batch_for_schema_inner(schema, limit)
+        except Exception as e:
+            logger.warning(f"Worker {self._worker_id} failed to claim tasks for schema {schema or 'public'}: {e}")
+            return []
+
+    async def _claim_batch_for_schema_inner(self, schema: str | None, limit: int) -> list[ClaimedTask]:
+        """Inner implementation for claiming tasks from a specific schema."""
         table = fq_table("async_operations", schema)
 
         async with self._pool.acquire() as conn:
@@ -293,20 +301,23 @@ class WorkerPoller:
         total_count = 0
 
         for schema in schemas:
-            table = fq_table("async_operations", schema)
+            try:
+                table = fq_table("async_operations", schema)
 
-            result = await self._pool.execute(
-                f"""
-                UPDATE {table}
-                SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                WHERE status = 'processing' AND worker_id = $1
-                """,
-                self._worker_id,
-            )
+                result = await self._pool.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                    WHERE status = 'processing' AND worker_id = $1
+                    """,
+                    self._worker_id,
+                )
 
-            # Parse "UPDATE N" to get count
-            count = int(result.split()[-1]) if result else 0
-            total_count += count
+                # Parse "UPDATE N" to get count
+                count = int(result.split()[-1]) if result else 0
+                total_count += count
+            except Exception as e:
+                logger.warning(f"Worker {self._worker_id} failed to recover tasks for schema {schema or 'public'}: {e}")
 
         if total_count > 0:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
