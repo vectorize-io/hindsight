@@ -8,12 +8,19 @@ import { fileURLToPath } from 'url';
 let embedManager: HindsightEmbedManager | null = null;
 let client: HindsightClient | null = null;
 
+// Global access for hooks (Moltbot loads hooks separately)
+if (typeof global !== 'undefined') {
+  (global as any).__hindsightClient = {
+    getClient: () => client,
+  };
+}
+
 // Get directory of current module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Default bank name
-const BANK_NAME = 'moltbot-agent';
+const BANK_NAME = 'moltbot';
 
 // Provider mapping: moltbot provider name -> hindsight provider name
 const PROVIDER_MAP: Record<string, string> = {
@@ -105,6 +112,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   return {
     bankMission: config.bankMission,
     embedPort: config.embedPort || 0,
+    daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
   };
 }
 
@@ -127,6 +135,7 @@ export default function (api: MoltbotPluginAPI) {
     if (pluginConfig.bankMission) {
       console.log(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
     }
+    console.log(`[Hindsight] Daemon idle timeout: ${pluginConfig.daemonIdleTimeout}s (0 = never timeout)`);
 
     // Determine port
     const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
@@ -146,7 +155,8 @@ export default function (api: MoltbotPluginAPI) {
             port,
             llmConfig.provider,
             llmConfig.apiKey,
-            llmConfig.model
+            llmConfig.model,
+            pluginConfig.daemonIdleTimeout
           );
 
           // Start the embedded server
@@ -157,9 +167,9 @@ export default function (api: MoltbotPluginAPI) {
           console.log('[Hindsight] Creating HindsightClient...');
           client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model);
 
-          // Use default bank
-          console.log('[Hindsight] Using default bank');
-          client.setBankId('default');
+          // Use moltbot bank
+          console.log(`[Hindsight] Using bank: ${BANK_NAME}`);
+          client.setBankId(BANK_NAME);
 
           console.log('[Hindsight] Service ready');
         } catch (error) {
@@ -189,7 +199,153 @@ export default function (api: MoltbotPluginAPI) {
 
     console.log('[Hindsight] Plugin loaded successfully');
 
-    // Note: Hooks and skills are registered separately by Moltbot via the manifest
+    // Register agent_end hook for auto-retention
+    console.log('[Hindsight] Registering agent_end hook...');
+    // Store session key for retention
+    let currentSessionKey: string | undefined;
+
+    // Auto-recall: Inject relevant memories before agent processes the message
+    api.on('before_agent_start', async (context: any) => {
+      try {
+        // Capture session key
+        if (context.sessionKey) {
+          currentSessionKey = context.sessionKey as string;
+          console.log('[Hindsight] Captured session key:', currentSessionKey);
+        }
+
+        // Get the user's latest message for recall
+        let prompt = context.prompt;
+        if (!prompt || typeof prompt !== 'string' || prompt.length < 5) {
+          return; // Skip very short messages
+        }
+
+        // Extract actual message from Telegram format: [Telegram ... GMT+1] actual message
+        const telegramMatch = prompt.match(/\[Telegram[^\]]+\]\s*(.+)$/);
+        if (telegramMatch) {
+          prompt = telegramMatch[1].trim();
+        }
+
+        if (prompt.length < 5) {
+          return; // Skip very short messages after extraction
+        }
+
+        // Get client from global
+        const clientGlobal = (global as any).__hindsightClient;
+        if (!clientGlobal) {
+          return;
+        }
+
+        const client = clientGlobal.getClient();
+        if (!client) {
+          return;
+        }
+
+        console.log('[Hindsight] Auto-recall for prompt:', prompt.substring(0, 50));
+
+        // Recall relevant memories
+        const response = await client.recall({
+          query: prompt,
+          limit: 5,
+        });
+
+        if (!response.results || response.results.length === 0) {
+          console.log('[Hindsight] No memories found for auto-recall');
+          return;
+        }
+
+        // Format memories for injection
+        const memories = response.results
+          .map((result: any, idx: number) => {
+            const score = result.score ? ` (relevance: ${result.score.toFixed(2)})` : '';
+            return `${idx + 1}. ${result.content}${score}`;
+          })
+          .join('\n\n');
+
+        const contextMessage = `<hindsight-context>
+You have access to long-term memory from previous conversations. Here are relevant memories:
+
+${memories}
+
+Use this context naturally when relevant to the conversation. Don't mention "memory" or "recall" unless specifically asked about past conversations.
+</hindsight-context>`;
+
+        console.log(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories`);
+
+        // Inject context before the user message
+        return { prependContext: contextMessage };
+      } catch (error) {
+        console.error('[Hindsight] Auto-recall error:', error);
+        return;
+      }
+    });
+
+    api.on('agent_end', async (event: any) => {
+      try {
+        console.log('[Hindsight Hook] agent_end triggered');
+
+        // Check event success and messages
+        if (!event.success || !Array.isArray(event.messages) || event.messages.length === 0) {
+          console.log('[Hindsight Hook] Skipping: success:', event.success, 'messages:', event.messages?.length);
+          return;
+        }
+
+        // Get client from global
+        const clientGlobal = (global as any).__hindsightClient;
+        if (!clientGlobal) {
+          console.warn('[Hindsight] Client global not found, skipping retain');
+          return;
+        }
+
+        const client = clientGlobal.getClient();
+        if (!client) {
+          console.warn('[Hindsight] Client not initialized, skipping retain');
+          return;
+        }
+
+        // Format messages into a transcript
+        const transcript = event.messages
+          .map((msg: any) => {
+            const role = msg.role || 'unknown';
+            let content = '';
+
+            // Handle different content formats
+            if (typeof msg.content === 'string') {
+              content = msg.content;
+            } else if (Array.isArray(msg.content)) {
+              content = msg.content
+                .filter((block: any) => block.type === 'text')
+                .map((block: any) => block.text)
+                .join('\n');
+            }
+
+            return `[role: ${role}]\n${content}\n[${role}:end]`;
+          })
+          .join('\n\n');
+
+        if (!transcript.trim() || transcript.length < 10) {
+          console.log('[Hindsight Hook] Transcript too short, skipping');
+          return;
+        }
+
+        // Use session key as document ID
+        const documentId = currentSessionKey || 'default-session';
+
+        // Retain to Hindsight
+        await client.retain({
+          content: transcript,
+          document_id: documentId,
+          metadata: {
+            retained_at: new Date().toISOString(),
+            message_count: event.messages.length,
+          },
+        });
+
+        console.log(`[Hindsight] Retained ${event.messages.length} messages for session ${documentId}`);
+      } catch (error) {
+        console.error('[Hindsight] Error retaining messages:', error);
+      }
+    });
+    console.log('[Hindsight] Hook registered');
   } catch (error) {
     console.error('[Hindsight] Plugin loading error:', error);
     if (error instanceof Error) {

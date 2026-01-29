@@ -12,12 +12,14 @@ export class HindsightEmbedManager {
   private llmProvider: string;
   private llmApiKey: string;
   private llmModel?: string;
+  private daemonIdleTimeout: number;
 
   constructor(
     port: number,
     llmProvider: string,
     llmApiKey: string,
-    llmModel?: string
+    llmModel?: string,
+    daemonIdleTimeout: number = 0 // Default: never timeout
   ) {
     this.port = 8889; // hindsight-embed uses fixed port 8889
     this.baseUrl = `http://127.0.0.1:8889`;
@@ -25,6 +27,7 @@ export class HindsightEmbedManager {
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
+    this.daemonIdleTimeout = daemonIdleTimeout;
   }
 
   async start(): Promise<void> {
@@ -35,6 +38,7 @@ export class HindsightEmbedManager {
       ...process.env,
       HINDSIGHT_EMBED_LLM_PROVIDER: this.llmProvider,
       HINDSIGHT_EMBED_LLM_API_KEY: this.llmApiKey,
+      HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: this.daemonIdleTimeout.toString(),
     };
 
     if (this.llmModel) {

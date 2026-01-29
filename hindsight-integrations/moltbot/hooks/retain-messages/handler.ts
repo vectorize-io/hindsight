@@ -2,13 +2,6 @@
 
 import type { HookHandler } from 'moltbot/plugin-sdk';
 
-// Get client from module state
-let getClient: (() => any) | null = null;
-
-export function setClientGetter(getter: () => any): void {
-  getClient = getter;
-}
-
 const handler: HookHandler = async (event) => {
   // Only process tool_result_persist and command:new events
   if (
@@ -19,12 +12,14 @@ const handler: HookHandler = async (event) => {
   }
 
   try {
-    if (!getClient) {
-      console.warn('[Hindsight] Client getter not set, skipping retain');
+    // Get client from global (set by main plugin)
+    const clientGlobal = (global as any).__hindsightClient;
+    if (!clientGlobal) {
+      console.warn('[Hindsight] Client global not found, skipping retain');
       return;
     }
 
-    const client = getClient();
+    const client = clientGlobal.getClient();
     if (!client) {
       console.warn('[Hindsight] Client not initialized, skipping retain');
       return;

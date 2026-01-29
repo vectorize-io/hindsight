@@ -3,6 +3,7 @@
 export interface MoltbotPluginAPI {
   config: MoltbotConfig;
   registerService(config: ServiceConfig): void;
+  on(event: string, handler: (context: any) => void | Promise<void | { prependContext?: string }>): void;
   // Add more as needed
 }
 
@@ -29,6 +30,7 @@ export interface MoltbotConfig {
 export interface PluginConfig {
   bankMission?: string;
   embedPort?: number;
+  daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
 }
 
 export interface ServiceConfig {

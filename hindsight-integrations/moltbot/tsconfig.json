@@ -14,5 +14,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "hooks", "skills"]
+  "exclude": ["node_modules", "dist", "skills"]
 }

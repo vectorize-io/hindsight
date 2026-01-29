@@ -25,7 +25,7 @@ rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
 # Copy files
-cp -r dist package.json clawdbot.plugin.json moltbot.plugin.json skills hooks README.md "$INSTALL_DIR/"
+cp -r dist package.json clawdbot.plugin.json skills hooks README.md "$INSTALL_DIR/"
 
 # Install dependencies in deployed location
 echo "📥 Installing dependencies..."

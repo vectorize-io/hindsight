@@ -44,15 +44,15 @@ export class HindsightClient {
     const content = request.content.replace(/'/g, "'\\''"); // Escape single quotes
     const docId = request.document_id || 'conversation';
 
-    const cmd = `uvx hindsight-embed memory retain ${this.bankId} '${content}' --document-id '${docId}'`;
+    const cmd = `uvx hindsight-embed memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });
-      console.log(`[Hindsight] Retained: ${stdout.trim()}`);
+      console.log(`[Hindsight] Retained (async): ${stdout.trim()}`);
 
       // Return a simple response
       return {
-        message: 'Memory retained successfully',
+        message: 'Memory queued for background processing',
         document_id: docId,
         memory_unit_ids: [],
       };
@@ -63,21 +63,25 @@ export class HindsightClient {
 
   async recall(request: RecallRequest): Promise<RecallResponse> {
     const query = request.query.replace(/'/g, "'\\''"); // Escape single quotes
-    const limit = request.limit || 10;
 
-    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --limit ${limit} --format json`;
+    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --output json`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });
 
-      // Parse JSON output
-      const results = JSON.parse(stdout);
+      // Parse JSON output - returns { entities: {...}, results: [...] }
+      const response = JSON.parse(stdout);
+      const results = response.results || [];
 
       return {
         results: results.map((r: any) => ({
-          content: r.content || r.text || '',
-          score: r.score || r.relevance || 1.0,
-          metadata: r.metadata || {},
+          content: r.text || r.content || '',
+          score: 1.0, // CLI doesn't return scores
+          metadata: {
+            document_id: r.document_id,
+            chunk_id: r.chunk_id,
+            ...r.metadata,
+          },
         })),
       };
     } catch (error) {

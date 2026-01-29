@@ -7,7 +7,10 @@
   "type": "module",
   "clawdbot": {
     "extensions": [
-      "dist/index.js"
+      "./dist/index.js"
+    ],
+    "hooks": [
+      "hooks/retain-messages"
     ]
   },
   "keywords": [
@@ -28,7 +31,7 @@
   },
   "files": [
     "dist",
-    "moltbot.plugin.json",
+    "clawdbot.plugin.json",
     "skills",
     "hooks",
     "README.md"
