@@ -61,7 +61,7 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -97,6 +97,14 @@ export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 
+# Vertex AI (Google Cloud)
+export HINDSIGHT_API_LLM_PROVIDER=vertexai
+export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
+export HINDSIGHT_API_LLM_VERTEXAI_REGION=us-central1
+# Optional: use ADC (gcloud auth application-default login) or provide service account key:
+# export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/service-account-key.json
+
 # Ollama (local, no API key)
 export HINDSIGHT_API_LLM_PROVIDER=ollama
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
@@ -113,6 +121,56 @@ export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name
 ```
+
+#### Vertex AI Setup
+
+Google Cloud's Vertex AI provides OpenAI-compatible endpoints for Gemini models. Hindsight supports two authentication methods:
+
+**Prerequisites:**
+- GCP project with Vertex AI API enabled
+- IAM role `roles/aiplatform.user` for your credentials
+
+**Environment Variables:**
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID` | Your GCP project ID | Yes |
+| `HINDSIGHT_API_LLM_VERTEXAI_REGION` | GCP region (e.g., `us-central1`) | No (default: `us-central1`) |
+| `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY` | Path to service account JSON key file | No (uses ADC if not set) |
+
+**Authentication Methods:**
+
+1. **Application Default Credentials (ADC)** - Recommended for development
+   ```bash
+   # Setup ADC
+   gcloud auth application-default login
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   ```
+
+2. **Service Account Key** - Recommended for production
+   ```bash
+   # Create service account and download key
+   gcloud iam service-accounts create hindsight-api
+   gcloud projects add-iam-policy-binding your-project-id \
+     --member="serviceAccount:hindsight-api@your-project-id.iam.gserviceaccount.com" \
+     --role="roles/aiplatform.user"
+   gcloud iam service-accounts keys create key.json \
+     --iam-account=hindsight-api@your-project-id.iam.gserviceaccount.com
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
+   ```
+
+**Authentication Priority:** Hindsight tries ADC first, then falls back to service account key file if configured.
+
+**Token Management:** Access tokens expire after 60 minutes. Hindsight automatically refreshes tokens every 50 minutes in the background.
 
 ### Per-Operation LLM Configuration
 

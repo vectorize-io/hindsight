@@ -16,6 +16,15 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
+# Vertex AI imports (conditional)
+try:
+    import google.auth
+    from google.oauth2 import service_account
+
+    VERTEXAI_AVAILABLE = True
+except ImportError:
+    VERTEXAI_AVAILABLE = False
+
 from ..config import (
     DEFAULT_LLM_MAX_CONCURRENT,
     DEFAULT_LLM_TIMEOUT,
@@ -88,13 +97,16 @@ class LLMProvider:
         self.groq_service_tier = groq_service_tier or os.getenv(ENV_LLM_GROQ_SERVICE_TIER, "auto")
 
         # Validate provider
-        valid_providers = ["openai", "groq", "ollama", "gemini", "anthropic", "lmstudio", "mock"]
+        valid_providers = ["openai", "groq", "ollama", "gemini", "anthropic", "lmstudio", "vertexai", "mock"]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
 
         # Mock provider tracking (for testing)
         self._mock_calls: list[dict] = []
         self._mock_response: Any = None
+
+        # Vertex AI token refresher
+        self._vertexai_refresher: Any = None
 
         # Set default base URLs
         if not self.base_url:
@@ -105,8 +117,65 @@ class LLMProvider:
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
 
-        # Validate API key (not needed for ollama, lmstudio, or mock)
-        if self.provider not in ("ollama", "lmstudio", "mock") and not self.api_key:
+        # Handle Vertex AI provider
+        if self.provider == "vertexai":
+            if not VERTEXAI_AVAILABLE:
+                raise ValueError("Vertex AI requires 'google-auth' package. Install with: pip install google-auth")
+
+            from ..config import get_config
+
+            config = get_config()
+
+            project_id = config.llm_vertexai_project_id
+            if not project_id:
+                raise ValueError(
+                    "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID is required for Vertex AI provider. "
+                    "Set it to your GCP project ID."
+                )
+
+            region = config.llm_vertexai_region or "us-central1"
+            service_account_key = config.llm_vertexai_service_account_key
+
+            # Try ADC first
+            credentials = None
+            auth_method = None
+
+            try:
+                credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                auth_method = "ADC"
+                logger.info("Vertex AI: Using Application Default Credentials")
+            except google.auth.exceptions.DefaultCredentialsError:
+                logger.debug("Vertex AI: ADC not available, trying service account")
+
+            # Fall back to service account key file
+            if credentials is None and service_account_key:
+                try:
+                    credentials = service_account.Credentials.from_service_account_file(
+                        service_account_key,
+                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                    )
+                    auth_method = "Service Account"
+                    logger.info(f"Vertex AI: Using service account key: {service_account_key}")
+                except Exception as e:
+                    logger.error(f"Vertex AI: Failed to load service account key: {e}")
+
+            if credentials is None:
+                raise ValueError(
+                    "Vertex AI authentication failed. Either:\n"
+                    "  1. Set up ADC: gcloud auth application-default login\n"
+                    "  2. Set HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY to path of service account JSON key"
+                )
+
+            # Initialize token refresher
+            from .vertexai_token_refresher import VertexAITokenRefresher
+
+            self._vertexai_refresher = VertexAITokenRefresher(credentials, project_id, region)
+            self.base_url = self._vertexai_refresher.get_base_url()
+
+            logger.info(f"Vertex AI: project={project_id}, region={region}, auth={auth_method}")
+
+        # Validate API key (not needed for ollama, lmstudio, vertexai, or mock)
+        if self.provider not in ("ollama", "lmstudio", "vertexai", "mock") and not self.api_key:
             raise ValueError(f"API key not found for {self.provider}")
 
         # Get timeout config (set HINDSIGHT_API_LLM_TIMEOUT for local LLMs that need longer timeouts)
@@ -132,6 +201,31 @@ class LLMProvider:
             if self.timeout:
                 anthropic_kwargs["timeout"] = self.timeout
             self._anthropic_client = AsyncAnthropic(**anthropic_kwargs)
+        elif self.provider == "vertexai":
+            # Custom transport for token injection
+            class TokenInjectingTransport(httpx.AsyncHTTPTransport):
+                def __init__(self, refresher, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self._refresher = refresher
+
+                async def handle_async_request(self, request):
+                    token = self._refresher.get_token()
+                    request.headers["Authorization"] = f"Bearer {token}"
+                    return await super().handle_async_request(request)
+
+            transport = TokenInjectingTransport(self._vertexai_refresher)
+            client_kwargs = {
+                "api_key": "dummy",  # Required by AsyncOpenAI but unused (we inject token via transport)
+                "base_url": self.base_url,
+                "max_retries": 0,
+                "http_client": httpx.AsyncClient(transport=transport),
+            }
+            if self.timeout:
+                client_kwargs["timeout"] = self.timeout
+            self._client = AsyncOpenAI(**client_kwargs)
+
+            # Start background refresh
+            self._vertexai_refresher.start_refresh_task()
         elif self.provider in ("ollama", "lmstudio"):
             # Use dummy key if not provided for local
             api_key = self.api_key or "local"
@@ -1503,6 +1597,12 @@ class LLMProvider:
     def clear_mock_calls(self) -> None:
         """Clear the recorded mock calls."""
         self._mock_calls = []
+
+    async def cleanup(self) -> None:
+        """Clean up resources (e.g., stop token refresh tasks)."""
+        if self._vertexai_refresher is not None:
+            await self._vertexai_refresher.stop()
+            logger.debug("Vertex AI token refresher stopped")
 
     @classmethod
     def for_memory(cls) -> "LLMProvider":
