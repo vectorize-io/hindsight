@@ -166,81 +166,9 @@ class LocalSTEmbeddings(Embeddings):
         self._dimension = self._model.get_sentence_embedding_dimension()
         logger.info(f"Embeddings: local provider initialized (dim: {self._dimension})")
 
-    def _is_xpc_error(self, error: Exception) -> bool:
-        """
-        Check if an error is an XPC connection error (macOS daemon issue).
-
-        On macOS, long-running daemons can lose XPC connections to system services
-        when the process is idle for extended periods.
-        """
-        error_str = str(error).lower()
-        return "xpc_error_connection_invalid" in error_str or "xpc error" in error_str
-
-    def _reinitialize_model_sync(self) -> None:
-        """
-        Clear and reinitialize the embedding model synchronously.
-
-        This is used to recover from XPC errors on macOS where the
-        PyTorch/MPS backend loses its connection to system services.
-        """
-        logger.warning(f"Reinitializing embedding model {self.model_name} due to backend error")
-
-        # Clear existing model
-        self._model = None
-
-        # Force garbage collection to free resources
-        import gc
-
-        import torch
-
-        gc.collect()
-
-        # If using CUDA/MPS, clear the cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            try:
-                torch.mps.empty_cache()
-            except AttributeError:
-                pass  # Method might not exist in all PyTorch versions
-
-        # Reinitialize the model (inline version of initialize() but synchronous)
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for LocalSTEmbeddings. "
-                "Install it with: pip install sentence-transformers"
-            )
-
-        # Determine device based on hardware availability
-        if self.force_cpu:
-            device = "cpu"
-        else:
-            # Wrap in try-except to gracefully handle any device detection issues
-            device = "cpu"  # Default to CPU
-            try:
-                has_gpu = torch.cuda.is_available() or (
-                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-                )
-                if has_gpu:
-                    device = None  # Let sentence-transformers auto-detect GPU/MPS
-            except Exception as e:
-                logger.warning(f"Failed to detect GPU/MPS during reinit, falling back to CPU: {e}")
-
-        self._model = SentenceTransformer(
-            self.model_name,
-            device=device,
-            model_kwargs={"low_cpu_mem_usage": False},
-        )
-
-        logger.info("Embeddings: local provider reinitialized successfully")
-
     def encode(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for a list of texts.
-
-        Automatically recovers from XPC errors on macOS by reinitializing the model.
 
         Args:
             texts: List of text strings to encode
@@ -251,26 +179,8 @@ class LocalSTEmbeddings(Embeddings):
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
-        # Try encoding with automatic recovery from XPC errors
-        max_retries = 1
-        for attempt in range(max_retries + 1):
-            try:
-                embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-                return [emb.tolist() for emb in embeddings]
-            except Exception as e:
-                # Check if this is an XPC error (macOS daemon issue)
-                if self._is_xpc_error(e) and attempt < max_retries:
-                    logger.warning(f"XPC error detected in embedding generation (attempt {attempt + 1}): {e}")
-                    try:
-                        self._reinitialize_model_sync()
-                        logger.info("Model reinitialized successfully, retrying embedding generation")
-                        continue
-                    except Exception as reinit_error:
-                        logger.error(f"Failed to reinitialize model: {reinit_error}")
-                        raise Exception(f"Failed to recover from XPC error: {str(e)}")
-                else:
-                    # Not an XPC error or out of retries
-                    raise
+        embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        return [emb.tolist() for emb in embeddings]
 
 
 class RemoteTEIEmbeddings(Embeddings):
