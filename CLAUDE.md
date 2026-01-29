@@ -43,6 +43,10 @@ cd hindsight-control-plane && npm run dev
 ### Documentation Site (Docusaurus)
 ```bash
 ./scripts/dev/start-docs.sh
+
+# Update docs version (automatically syncs for patch, creates new for minor/major)
+./scripts/update-docs-version.sh 0.4.2  # Patch: syncs to version-0.4
+./scripts/update-docs-version.sh 0.5.0  # Minor: creates version-0.5
 ```
 
 ### Generating Clients/OpenAPI
@@ -152,6 +156,31 @@ Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
    # Run on a specific tenant schema
    uv run hindsight-admin run-db-migration --schema tenant_xyz
    ```
+
+## Release Process
+
+### Documentation Versioning
+
+Hindsight uses Docusaurus versioned docs. The live site shows versioned docs (e.g., `version-0.4`) while `docs/` contains the "next" unreleased version.
+
+**How it works:**
+- `./scripts/release.sh` automatically handles documentation versioning
+- **Patch releases (0.4.1, 0.4.2):** Syncs `docs/` → `versioned_docs/version-0.4/` (updates existing)
+- **Minor/major releases (0.5.0):** Creates new `versioned_docs/version-0.5/` snapshot (freezes docs)
+
+**Manual docs update (if needed):**
+```bash
+./scripts/update-docs-version.sh 0.4.2  # Syncs to version-0.4
+./scripts/update-docs-version.sh 0.5.0  # Creates version-0.5
+```
+
+**Release checklist:**
+1. Merge all PRs for the release
+2. Run `./scripts/release.sh X.Y.Z`
+   - Script automatically handles version updates in all components
+   - Automatically syncs/creates documentation version
+   - Creates git tag and pushes
+3. GitHub Actions will deploy docs automatically
 
 ## Key Conventions
 
