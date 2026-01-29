@@ -2,11 +2,10 @@
 # Triggers on push to main branch or manual workflow dispatch
 #
 # Pipeline:
-#   1. GHA triggers Cloud Build (no source upload)
-#   2. Cloud Build clones repo from GitHub
-#   3. Cloud Build (private pool) builds Docker image
-#   4. Cloud Build pushes to Artifact Registry (internal network)
-#   5. Cloud Build restarts GKE deployment
+#   1. GHA uploads source to Cloud Build
+#   2. Cloud Build (private pool) builds Docker image
+#   3. Cloud Build pushes to Artifact Registry (internal network)
+#   4. Cloud Build restarts GKE deployment
 #
 # Required secrets:
 #   GCP_SA_KEY - Service account JSON key with Cloud Build permissions
@@ -35,6 +34,8 @@ jobs:
       contents: read
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -47,16 +48,6 @@ jobs:
         run: |
           cat > /tmp/cloudbuild.yaml <<'EOF'
           steps:
-            # Clone repository
-            - name: 'gcr.io/cloud-builders/git'
-              id: 'clone'
-              args: ['clone', '--depth=1', '--branch=main', 'https://github.com/xsolla/hindsight-agentic-memory.git', '.']
-
-            # Checkout specific commit
-            - name: 'gcr.io/cloud-builders/git'
-              id: 'checkout'
-              args: ['checkout', '${{ github.sha }}']
-
             # Build Docker image
             - name: 'gcr.io/cloud-builders/docker'
               id: 'build'
@@ -65,7 +56,7 @@ jobs:
                 - '-t'
                 - 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:latest'
                 - '-t'
-                - 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:${{ github.sha }}'
+                - 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:$COMMIT_SHA'
                 - '-f'
                 - 'docker/standalone/Dockerfile'
                 - '--build-arg'
@@ -97,12 +88,12 @@ jobs:
           serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
           options:
             logging: CLOUD_LOGGING_ONLY
-            # NOTE: machineType not allowed with worker pools - pool defines machine config
           timeout: '3600s'
           EOF
 
-          gcloud builds submit --no-source \
+          gcloud builds submit \
             --project=xsolla-n8n-prod \
             --region=us-west2 \
             --worker-pool=projects/xsolla-n8n-prod/locations/us-west2/workerPools/hindsight-deploy \
-            --config=/tmp/cloudbuild.yaml
+            --config=/tmp/cloudbuild.yaml \
+            --substitutions=COMMIT_SHA=${{ github.sha }}
