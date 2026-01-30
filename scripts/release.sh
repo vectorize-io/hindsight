@@ -144,16 +144,6 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
-# Update Moltbot plugin
-MOLTBOT_PLUGIN_PKG="hindsight-integrations/moltbot/package.json"
-if [ -f "$MOLTBOT_PLUGIN_PKG" ]; then
-    print_info "Updating $MOLTBOT_PLUGIN_PKG"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$MOLTBOT_PLUGIN_PKG"
-    rm "${MOLTBOT_PLUGIN_PKG}.bak"
-else
-    print_warn "File $MOLTBOT_PLUGIN_PKG not found, skipping"
-fi
-
 # Update documentation version (creates new version or syncs to existing)
 print_info "Updating documentation for version $VERSION..."
 if [ -f "scripts/update-docs-version.sh" ]; then
@@ -196,7 +186,6 @@ COMMIT_MSG="Release v$VERSION
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-embed
 - Python client: hindsight-clients/python
 - TypeScript client: hindsight-clients/typescript
-- Moltbot plugin: hindsight-integrations/moltbot
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
 - Helm chart"
