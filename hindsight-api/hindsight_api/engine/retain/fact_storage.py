@@ -8,16 +8,10 @@ import json
 import logging
 
 from ..memory_engine import fq_table
+from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_text(text: str | None) -> str | None:
-    """Remove null bytes that break PostgreSQL UTF-8 encoding."""
-    if text is None:
-        return None
-    return text.replace("\x00", "")
 
 
 async def insert_facts_batch(
