@@ -189,8 +189,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'sdks/integrations/moltbot',
-          label: 'Moltbot',
+          id: 'sdks/integrations/openclawd',
+          label: 'OpenClawd',
         },
         {
           type: 'doc',
