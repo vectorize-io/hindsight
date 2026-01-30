@@ -1020,6 +1020,81 @@ class TestDynamicTenantDiscovery:
         for task in claimed:
             assert task.schema is None
 
+    @pytest.mark.asyncio
+    async def test_poller_with_custom_schema(self, pool):
+        """Test that poller uses custom schema when schema parameter is provided."""
+        from hindsight_api.worker import WorkerPoller
+
+        # Create a custom schema for testing
+        test_schema = "test_custom_schema"
+
+        try:
+            # Create schema and copy table structure
+            await pool.execute(f'CREATE SCHEMA IF NOT EXISTS "{test_schema}"')
+            await pool.execute(
+                f"""
+                CREATE TABLE "{test_schema}".async_operations (
+                    LIKE public.async_operations INCLUDING ALL
+                )
+                """
+            )
+
+            # Create pending tasks in the custom schema
+            bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+            task_ids = []
+            for i in range(3):
+                op_id = uuid.uuid4()
+                task_ids.append(str(op_id))
+                payload = json.dumps({"type": "test_task", "index": i, "bank_id": bank_id})
+                await pool.execute(
+                    f"""
+                    INSERT INTO "{test_schema}".async_operations (operation_id, bank_id, operation_type, status, task_payload)
+                    VALUES ($1, $2, 'test', 'pending', $3::jsonb)
+                    """,
+                    op_id,
+                    bank_id,
+                    payload,
+                )
+
+            # Create poller with custom schema
+            poller = WorkerPoller(
+                pool=pool,
+                worker_id="test-worker-custom-schema",
+                executor=lambda x: None,
+                schema=test_schema,
+            )
+
+            # Claim tasks
+            claimed = await poller.claim_batch()
+            assert len(claimed) == 3, f"Expected 3 tasks, got {len(claimed)}"
+
+            # All tasks should have schema=test_schema
+            claimed_ids = []
+            for task in claimed:
+                assert task.schema == test_schema, f"Expected schema '{test_schema}', got '{task.schema}'"
+                claimed_ids.append(task.operation_id)
+
+            # Verify claimed tasks match what we inserted
+            assert set(claimed_ids) == set(task_ids)
+
+            # Verify tasks are marked as processing in the custom schema
+            rows = await pool.fetch(
+                f"""
+                SELECT operation_id, status, worker_id
+                FROM "{test_schema}".async_operations
+                WHERE operation_id = ANY($1)
+                """,
+                [uuid.UUID(tid) for tid in task_ids],
+            )
+            assert len(rows) == 3
+            for row in rows:
+                assert row["status"] == "processing"
+                assert row["worker_id"] == "test-worker-custom-schema"
+
+        finally:
+            # Clean up: drop the custom schema
+            await pool.execute(f'DROP SCHEMA IF EXISTS "{test_schema}" CASCADE')
+
 
 async def test_worker_fire_and_forget_nonblocking(pool, clean_operations):
     """

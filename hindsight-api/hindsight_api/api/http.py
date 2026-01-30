@@ -1398,13 +1398,18 @@ def create_app(
 
         # Start worker poller if enabled (standalone mode)
         if config.worker_enabled and memory._pool is not None:
+            from ..config import DEFAULT_DATABASE_SCHEMA
+
             worker_id = config.worker_id or socket.gethostname()
+            # Convert default schema to None for SQL compatibility (no schema prefix)
+            schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
             poller = WorkerPoller(
                 pool=memory._pool,
                 worker_id=worker_id,
                 executor=memory.execute_task,
                 poll_interval_ms=config.worker_poll_interval_ms,
                 max_retries=config.worker_max_retries,
+                schema=schema,
                 tenant_extension=getattr(memory, "_tenant_extension", None),
                 max_slots=config.worker_max_slots,
                 consolidation_max_slots=config.worker_consolidation_max_slots,
