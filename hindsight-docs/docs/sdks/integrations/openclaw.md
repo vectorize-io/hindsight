@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # OpenClaw
 
-Local-first, persistent memory for [OpenClaw](https://openclaw.ai) agents using [Hindsight](https://vectorize.io/hindsight).
+Local, long term memory for [OpenClaw](https://openclaw.ai) agents using [Hindsight](https://vectorize.io/hindsight).
 
 This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a standalone daemon that bundles Hindsight's memory engine (API + PostgreSQL) into a single command. Everything runs locally on your machine, reuses the LLM you're already paying for, and costs nothing extra. The plugin automatically manages the daemon lifecycle and provides hooks for seamless memory capture and recall.
 
@@ -47,14 +47,19 @@ Auto-recall solves this by injecting relevant memories automatically before ever
 ```json
 <hindsight_memories>
 [
-  {
-    "content": "User prefers JSON responses for technical data",
-    "score": 0.95,
-    "metadata": {
-      "document_id": "session-abc123",
-      "chunk_id": "chunk-1"
+ {
+    {
+      "chunk_id": "openclawd_default-session_12",
+      "context": "",
+      "document_id": "default-session",
+      "id": "5f55f684-e6f5-46e3-9f5c-043bdf005511",
+      "mentioned_at": "2026-01-30T11:07:33.211396+00:00",
+      "occurred_end": "2025-01-29T23:14:30+00:00",
+      "occurred_start": "2025-01-29T23:14:30+00:00",
+      "tags": [],
+      "text": "Nicolò Boschi attended an OpenAI devday last year and found it cool. | When: 2025-01-30 | Involving: Nicolò Boschi",
+      "type": "world"
     }
-  }
 ]
 </hindsight_memories>
 ```
@@ -294,40 +299,3 @@ tail -f /tmp/clawdbot/clawdbot-*.log | grep Hindsight
 # [Hindsight Hook] agent_end triggered
 # [Hindsight] Retained X messages for session ...
 ```
-
-## Development
-
-```bash
-# Clone repo
-git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/openclaw
-
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Run tests
-npm test
-
-# Install locally
-npm run build && ./install.sh
-```
-
-## Requirements
-
-- **Node.js** 22+
-- **OpenClaw** (Clawdbot) with plugin support
-- **uv/uvx** for running `hindsight-embed`
-- **LLM API key** (OpenAI, Anthropic, etc.)
-
-## License
-
-MIT
-
-## Links
-
-- [Hindsight Documentation](https://vectorize.io/hindsight)
-- [OpenClaw Documentation](https://openclaw.ai)
-- [GitHub Repository](https://github.com/vectorize-io/hindsight)
