@@ -4,7 +4,9 @@ sidebar_position: 4
 
 # OpenClawd
 
-Biomimetic long-term memory for [OpenClawd](https://openclawd.com) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
+Biomimetic long-term memory for [OpenClawd](https://openclawd.ai) using [Hindsight](https://vectorize.io/hindsight).
+
+This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a standalone daemon that bundles Hindsight's memory engine (API + PostgreSQL) into a single command. The plugin automatically manages the daemon lifecycle and provides hooks for seamless memory capture and recall.
 
 ## Quick Start
 
@@ -107,7 +109,7 @@ Optional settings in `~/.clawdbot/clawdbot.json`:
 {
   "plugins": {
     "entries": {
-      "hindsight-openclawd-plugin": {
+      "hindsight-openclawd": {
         "enabled": true,
         "config": {
           "daemonIdleTimeout": 0
@@ -122,6 +124,7 @@ Optional settings in `~/.clawdbot/clawdbot.json`:
 - `daemonIdleTimeout` (number, default: `0`) - Seconds before daemon shuts down from inactivity (0 = never)
 - `embedPort` (number, default: auto) - Port for embedded server
 - `bankMission` (string, default: none) - Custom context for the memory bank
+- `embedVersion` (string, default: `"latest"`) - hindsight-embed version to use (e.g., `"latest"`, `"0.4.2"`, or leave empty for latest). Use this to pin a specific version if latest is broken.
 
 ## Supported LLM Providers
 
@@ -166,7 +169,55 @@ tail -f ~/.hindsight/daemon.log
 
 **Check memories in database:**
 ```bash
-uvx hindsight-embed memory recall openclawd "pizza" --output json
+uvx hindsight-embed@latest memory recall openclawd "pizza" --output json
+```
+
+## Inspecting Memories
+
+The plugin uses `hindsight-embed` daemon which provides CLI commands for inspection:
+
+**View daemon logs:**
+```bash
+uvx hindsight-embed@latest daemon logs
+# Or follow logs in real-time:
+tail -f ~/.hindsight/daemon.log
+```
+
+**Open web UI:**
+```bash
+uvx hindsight-embed@latest ui
+# Opens browser to http://localhost:8890
+# Browse memories, facts, entities, and relationships
+```
+
+**List memory banks:**
+```bash
+uvx hindsight-embed@latest bank list
+# Shows all banks including 'openclawd'
+```
+
+**Query memories:**
+```bash
+# Search memories
+uvx hindsight-embed@latest memory recall openclawd "user preferences" --output json
+
+# View recent memories
+uvx hindsight-embed@latest memory list openclawd --limit 10
+
+# Export all memories
+uvx hindsight-embed@latest memory export openclawd --output memories.json
+```
+
+**Inspect facts and entities:**
+```bash
+# List extracted facts
+uvx hindsight-embed@latest fact list openclawd
+
+# List entities
+uvx hindsight-embed@latest entity list openclawd
+
+# Show entity relationships
+uvx hindsight-embed@latest entity graph openclawd
 ```
 
 ## Troubleshooting
@@ -183,10 +234,10 @@ clawdbot plugins install @vectorize-io/hindsight-openclawd
 **Daemon not starting?**
 ```bash
 # Check daemon status
-uvx hindsight-embed daemon status
+uvx hindsight-embed@latest daemon status
 
 # Manually start
-uvx hindsight-embed daemon start
+uvx hindsight-embed@latest daemon start
 
 # View logs
 tail -f ~/.hindsight/daemon.log
@@ -246,5 +297,5 @@ MIT
 ## Links
 
 - [Hindsight Documentation](https://vectorize.io/hindsight)
-- [OpenClawd Documentation](https://openclawd.com)
+- [OpenClawd Documentation](https://openclawd.ai)
 - [GitHub Repository](https://github.com/vectorize-io/hindsight)

@@ -31,6 +31,7 @@ export interface PluginConfig {
   bankMission?: string;
   embedPort?: number;
   daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
+  embedVersion?: string; // hindsight-embed version (default: "latest")
 }
 
 export interface ServiceConfig {

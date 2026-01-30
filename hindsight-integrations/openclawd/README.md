@@ -1,6 +1,6 @@
 # Hindsight Memory Plugin for OpenClawd
 
-Biomimetic long-term memory for [OpenClawd](https://openclawd.com) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
+Biomimetic long-term memory for [OpenClawd](https://openclawd.ai) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ For full documentation, configuration options, troubleshooting, and development 
 ## Links
 
 - [Hindsight Documentation](https://vectorize.io/hindsight)
-- [OpenClawd Documentation](https://openclawd.com)
+- [OpenClawd Documentation](https://openclawd.ai)
 - [GitHub Repository](https://github.com/vectorize-io/hindsight)
 
 ## License

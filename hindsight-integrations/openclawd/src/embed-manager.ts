@@ -13,13 +13,15 @@ export class HindsightEmbedManager {
   private llmApiKey: string;
   private llmModel?: string;
   private daemonIdleTimeout: number;
+  private embedVersion: string;
 
   constructor(
     port: number,
     llmProvider: string,
     llmApiKey: string,
     llmModel?: string,
-    daemonIdleTimeout: number = 0 // Default: never timeout
+    daemonIdleTimeout: number = 0, // Default: never timeout
+    embedVersion: string = 'latest' // Default: latest
   ) {
     this.port = 8889; // hindsight-embed uses fixed port 8889
     this.baseUrl = `http://127.0.0.1:8889`;
@@ -28,6 +30,7 @@ export class HindsightEmbedManager {
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
     this.daemonIdleTimeout = daemonIdleTimeout;
+    this.embedVersion = embedVersion || 'latest';
   }
 
   async start(): Promise<void> {
@@ -46,9 +49,10 @@ export class HindsightEmbedManager {
     }
 
     // Start hindsight-embed daemon (it manages itself)
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
     const startDaemon = spawn(
       'uvx',
-      ['hindsight-embed', 'daemon', 'start'],
+      [embedPackage, 'daemon', 'start'],
       {
         env,
         stdio: 'pipe',
@@ -93,7 +97,8 @@ export class HindsightEmbedManager {
   async stop(): Promise<void> {
     console.log('[Hindsight] Stopping hindsight-embed daemon...');
 
-    const stopDaemon = spawn('uvx', ['hindsight-embed', 'daemon', 'stop'], {
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const stopDaemon = spawn('uvx', [embedPackage, 'daemon', 'stop'], {
       stdio: 'pipe',
     });
 

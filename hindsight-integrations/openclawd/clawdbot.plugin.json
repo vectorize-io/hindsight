@@ -18,6 +18,11 @@
       "bankMission": {
         "type": "string",
         "description": "Custom mission/context for the memory bank"
+      },
+      "embedVersion": {
+        "type": "string",
+        "description": "hindsight-embed version to use (e.g. 'latest', '0.4.2', or empty for latest)",
+        "default": "latest"
       }
     },
     "additionalProperties": false
@@ -34,6 +39,10 @@
     "bankMission": {
       "label": "Bank Mission",
       "placeholder": "Custom context for what this agent does..."
+    },
+    "embedVersion": {
+      "label": "Hindsight Embed Version",
+      "placeholder": "latest (or pin to specific version like 0.4.2)"
     }
   }
 }

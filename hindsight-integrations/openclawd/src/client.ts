@@ -15,11 +15,13 @@ export class HindsightClient {
   private llmProvider: string;
   private llmApiKey: string;
   private llmModel?: string;
+  private embedVersion: string;
 
-  constructor(llmProvider: string, llmApiKey: string, llmModel?: string) {
+  constructor(llmProvider: string, llmApiKey: string, llmModel?: string, embedVersion: string = 'latest') {
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
+    this.embedVersion = embedVersion || 'latest';
   }
 
   setBankId(bankId: string): void {
@@ -44,7 +46,8 @@ export class HindsightClient {
     const content = request.content.replace(/'/g, "'\\''"); // Escape single quotes
     const docId = request.document_id || 'conversation';
 
-    const cmd = `uvx hindsight-embed memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const cmd = `uvx ${embedPackage} memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });
@@ -65,7 +68,8 @@ export class HindsightClient {
     const query = request.query.replace(/'/g, "'\\''"); // Escape single quotes
     const maxTokens = request.max_tokens || 1024;
 
-    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const cmd = `uvx ${embedPackage} memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });

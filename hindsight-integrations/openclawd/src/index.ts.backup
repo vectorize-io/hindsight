@@ -119,7 +119,6 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     bankMission: config.bankMission,
     embedPort: config.embedPort || 0,
     daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
-    embedVersion: config.embedVersion || 'latest',
   };
 }
 
@@ -159,8 +158,7 @@ export default function (api: MoltbotPluginAPI) {
           llmConfig.provider,
           llmConfig.apiKey,
           llmConfig.model,
-          pluginConfig.daemonIdleTimeout,
-          pluginConfig.embedVersion
+          pluginConfig.daemonIdleTimeout
         );
 
         // Start the embedded server
@@ -169,7 +167,7 @@ export default function (api: MoltbotPluginAPI) {
 
         // Initialize client
         console.log('[Hindsight] Creating HindsightClient...');
-        client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
+        client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model);
 
         // Use moltbot bank
         console.log(`[Hindsight] Using bank: ${BANK_NAME}`);
@@ -275,12 +273,21 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        // Format memories as JSON with all fields from recall
-        const memoriesJson = JSON.stringify(response.results, null, 2);
+        // Format memories for injection
+        const memories = response.results
+          .map((result: any, idx: number) => {
+            const score = result.score ? ` (relevance: ${result.score.toFixed(2)})` : '';
+            return `${idx + 1}. ${result.content}${score}`;
+          })
+          .join('\n\n');
 
-        const contextMessage = `<hindsight_memories>
-${memoriesJson}
-</hindsight_memories>`;
+        const contextMessage = `<hindsight-context>
+You have access to long-term memory from previous conversations. Here are relevant memories:
+
+${memories}
+
+Use this context naturally when relevant to the conversation. Don't mention "memory" or "recall" unless specifically asked about past conversations.
+</hindsight-context>`;
 
         console.log(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories`);
 
