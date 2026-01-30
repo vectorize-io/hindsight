@@ -759,6 +759,10 @@ async def _extract_facts_from_chunk(
 
     # Build user message with metadata and chunk content in a clear format
     # Format event_date with day of week for better temporal reasoning
+    # Handle both datetime objects and ISO string formats (from deserialized async tasks)
+    from .orchestrator import parse_datetime_flexible
+
+    event_date = parse_datetime_flexible(event_date)
     event_date_formatted = event_date.strftime("%A, %B %d, %Y")  # e.g., "Monday, June 10, 2024"
     user_message = f"""Extract facts from the following text chunk.
 
@@ -1346,6 +1350,8 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
 
     Modifies facts in place.
     """
+    from .orchestrator import parse_datetime_flexible
+
     # Group facts by content_index
     current_content_idx = 0
     content_fact_start = 0
@@ -1360,10 +1366,10 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
         fact_position = i - content_fact_start
         offset = timedelta(seconds=fact_position * SECONDS_PER_FACT)
 
-        # Apply offset to all temporal fields
+        # Apply offset to all temporal fields (handle both datetime objects and ISO strings)
         if fact.occurred_start:
-            fact.occurred_start = fact.occurred_start + offset
+            fact.occurred_start = parse_datetime_flexible(fact.occurred_start) + offset
         if fact.occurred_end:
-            fact.occurred_end = fact.occurred_end + offset
+            fact.occurred_end = parse_datetime_flexible(fact.occurred_end) + offset
         if fact.mentioned_at:
-            fact.mentioned_at = fact.mentioned_at + offset
+            fact.mentioned_at = parse_datetime_flexible(fact.mentioned_at) + offset

@@ -1174,3 +1174,58 @@ async def test_retain_with_multiple_timestamps(api_client, test_bank_id):
     data = response.json()
     assert data["success"] is True
     assert data["items_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_retain_with_timestamp_async_complete_processing(api_client, test_bank_id):
+    """Test that async retain with timestamp completes full processing including fact extraction."""
+    # Submit async retain with timestamp
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The quarterly meeting was held on January 30th 2026",
+                    "context": "meetings",
+                    "timestamp": "2026-01-30T11:45:00Z"
+                }
+            ],
+            "async": True
+        }
+    )
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    data = response.json()
+    assert data["success"] is True
+    assert data["async"] is True
+    operation_id = data["operation_id"]
+    
+    # Wait for async processing to complete (poll operation status)
+    max_wait_seconds = 30
+    poll_interval = 0.5
+    elapsed = 0
+    operation_completed = False
+    
+    while elapsed < max_wait_seconds:
+        response = await api_client.get(f"/v1/default/banks/{test_bank_id}/operations/{operation_id}")
+        if response.status_code == 200:
+            op_status = response.json()
+            if op_status.get("status") == "completed":
+                operation_completed = True
+                break
+            elif op_status.get("status") == "failed":
+                raise AssertionError(f"Operation failed: {op_status.get('error_message')}")
+        
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    
+    assert operation_completed, f"Async operation did not complete within {max_wait_seconds} seconds"
+    
+    # Verify memories were actually stored
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/memories/list",
+        params={"limit": 10}
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) > 0, "Should have stored memories after async processing"
