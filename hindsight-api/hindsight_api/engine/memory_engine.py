@@ -1571,16 +1571,16 @@ class MemoryEngine(MemoryEngineInterface):
         if fact_type is None:
             fact_type = list(VALID_RECALL_FACT_TYPES)
 
-        # Validate fact types early
+        # Filter out 'opinion' early (deprecated, silently ignore)
+        fact_type = [ft for ft in fact_type if ft != "opinion"]
+
+        # Validate fact types
         invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
         if invalid_types:
             raise ValueError(
                 f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
                 f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
             )
-
-        # Filter out 'opinion' - opinions are no longer returned from recall
-        fact_type = [ft for ft in fact_type if ft != "opinion"]
         if not fact_type:
             # All requested types were opinions - return empty result
             return RecallResultModel(results=[], entities={}, chunks={})
