@@ -1178,7 +1178,7 @@ export type RecallRequest = {
   /**
    * Types
    *
-   * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified. Note: 'opinion' is accepted but ignored (opinions are excluded from recall).
+   * List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.
    */
   types?: Array<string> | null;
   budget?: Budget;

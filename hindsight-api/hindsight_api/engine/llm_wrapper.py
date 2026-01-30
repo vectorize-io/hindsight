@@ -150,7 +150,7 @@ class LLMProvider:
             # Strip google/ prefix from model name — native SDK uses bare names
             # e.g. "google/gemini-2.0-flash-lite-001" -> "gemini-2.0-flash-lite-001"
             if self.model.startswith("google/"):
-                self.model = self.model[len("google/"):]
+                self.model = self.model[len("google/") :]
 
             logger.info(
                 f"Vertex AI: project={self._vertexai_project_id}, region={self._vertexai_region}, "

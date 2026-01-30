@@ -236,9 +236,6 @@ export const getMemory = <ThrowOnError extends boolean = false>(
  * The type parameter is optional and must be one of:
  * - `world`: General knowledge about people, places, events, and things that happen
  * - `experience`: Memories about experience, conversations, actions taken, and tasks performed
- * - `opinion`: The bank's formed beliefs, perspectives, and viewpoints
- *
- * Set `include_entities=true` to get entity observations alongside recall results.
  */
 export const recallMemories = <ThrowOnError extends boolean = false>(
   options: Options<RecallMemoriesData, ThrowOnError>,
@@ -266,8 +263,7 @@ export const recallMemories = <ThrowOnError extends boolean = false>(
  * 2. Retrieves world facts relevant to the query
  * 3. Retrieves existing opinions (bank's perspectives)
  * 4. Uses LLM to formulate a contextual answer
- * 5. Extracts and stores any new opinions formed
- * 6. Returns plain text answer, the facts used, and new opinions
+ * 5. Returns plain text answer and the facts used
  */
 export const reflect = <ThrowOnError extends boolean = false>(
   options: Options<ReflectData, ThrowOnError>,
