@@ -4,7 +4,7 @@
 # Pipeline:
 #   1. GHA uploads source to Cloud Build (private pool) for build
 #   2. Cloud Build pushes to Artifact Registry (internal network)
-#   3. Separate Cloud Build (default pool) deploys to GKE
+#   3. Cloud Build deploys to GKE via Connect Gateway (Fleet)
 #
 # Required secrets:
 #   GCP_SA_KEY - Service account JSON key with Cloud Build + GKE permissions
@@ -98,16 +98,17 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy to GKE via Cloud Build
+      - name: Deploy to GKE via Cloud Build (Connect Gateway)
         run: |
           cat > /tmp/deploy.yaml <<'EOF'
           steps:
-            - name: 'gcr.io/cloud-builders/gke-deploy'
+            - name: 'gcr.io/cloud-builders/gcloud'
               entrypoint: 'bash'
               args:
                 - '-c'
                 - |
-                  gcloud container clusters get-credentials gcp-k8s-xsolla-n8n-prod --region=us-west2 --project=xsolla-n8n-prod
+                  # Use Connect Gateway (Fleet) to access private GKE cluster
+                  gcloud container fleet memberships get-credentials gcp-k8s-xsolla-n8n-prod --project=xsolla-n8n-prod
                   kubectl rollout restart deployment/hindsight-current -n hindsight
                   kubectl rollout status deployment/hindsight-current -n hindsight --timeout=300s
           serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
