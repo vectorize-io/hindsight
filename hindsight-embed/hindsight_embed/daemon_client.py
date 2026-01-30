@@ -28,9 +28,6 @@ CLI_INSTALL_DIRS = [
 ]
 CLI_INSTALLER_URL = "https://hindsight.vectorize.io/get-cli"
 
-# GitHub releases for direct CLI binary downloads
-GITHUB_CLI_RELEASE_URL = "https://github.com/vectorize-io/hindsight/releases/download/v{version}/hindsight-{platform}-{arch}"
-
 
 def _find_hindsight_api_command() -> list[str]:
     """Find the command to run hindsight-api."""
@@ -219,12 +216,10 @@ def is_cli_installed() -> bool:
 
 def install_cli() -> bool:
     """
-    Install the hindsight CLI using the official installer or direct download.
+    Install the hindsight CLI using the official installer.
 
     Returns True if installation succeeded.
     """
-    import platform
-    import stat
     import subprocess
     import sys
 
@@ -234,84 +229,18 @@ def install_cli() -> bool:
     cli_version = os.getenv("HINDSIGHT_EMBED_CLI_VERSION", __version__)
 
     print(f"Installing hindsight CLI (version {cli_version})...")
-
-    # Detect platform and architecture
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-
-    # Map to GitHub release naming
-    if system == "darwin":
-        platform_name = "darwin"
-    elif system == "linux":
-        platform_name = "linux"
-    else:
-        print(f"Unsupported platform: {system}", file=sys.stderr)
-        print("Falling back to installer script...", file=sys.stderr)
-        return _install_cli_via_script()
-
-    if machine in ("x86_64", "amd64"):
-        arch = "amd64"
-    elif machine in ("arm64", "aarch64"):
-        arch = "arm64"
-    else:
-        print(f"Unsupported architecture: {machine}", file=sys.stderr)
-        print("Falling back to installer script...", file=sys.stderr)
-        return _install_cli_via_script()
-
-    # Download from GitHub releases
-    download_url = GITHUB_CLI_RELEASE_URL.format(version=cli_version, platform=platform_name, arch=arch)
-    install_dir = CLI_INSTALL_DIRS[0]  # Use first location
-    install_dir.mkdir(parents=True, exist_ok=True)
-    binary_path = install_dir / "hindsight"
-
-    print(f"  Download URL: {download_url}")
-    print(f"  Install path: {binary_path}")
-
-    try:
-        # Download binary
-        result = subprocess.run(
-            ["curl", "-fsSL", "-o", str(binary_path), download_url],
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            print(f"CLI download failed (exit code {result.returncode}):", file=sys.stderr)
-            if result.stderr:
-                print(f"  stderr: {result.stderr}", file=sys.stderr)
-            print("Falling back to installer script...", file=sys.stderr)
-            return _install_cli_via_script()
-
-        # Make executable
-        binary_path.chmod(binary_path.stat().st_mode | stat.S_IEXEC)
-
-        # Verify it works
-        verify_result = subprocess.run([str(binary_path), "--version"], capture_output=True, text=True)
-        if verify_result.returncode == 0:
-            print(f"CLI installed successfully to {binary_path}")
-            return True
-        else:
-            print("CLI binary verification failed", file=sys.stderr)
-            return False
-
-    except Exception as e:
-        print(f"CLI installation failed: {e}", file=sys.stderr)
-        return False
-
-
-def _install_cli_via_script() -> bool:
-    """Fallback: Install CLI via the installer script (no version control)."""
-    import subprocess
-    import sys
-
-    print("Installing via installer script...")
     print(f"  Installer URL: {CLI_INSTALLER_URL}")
 
     try:
+        # Download and run installer with version env var
+        env = os.environ.copy()
+        env["HINDSIGHT_CLI_VERSION"] = cli_version
+
         result = subprocess.run(
             ["bash", "-c", f"curl -fsSL {CLI_INSTALLER_URL} | bash"],
             capture_output=True,
             text=True,
+            env=env,
         )
 
         if result.returncode != 0:
@@ -328,6 +257,12 @@ def _install_cli_via_script() -> bool:
             return True
         else:
             print("CLI installation completed but binary not found", file=sys.stderr)
+            print(f"  stdout: {result.stdout}", file=sys.stderr)
+            print(f"  stderr: {result.stderr}", file=sys.stderr)
+            # Check known locations
+            for install_dir in CLI_INSTALL_DIRS:
+                binary = install_dir / "hindsight"
+                print(f"  Checking {binary}: exists={binary.exists()}", file=sys.stderr)
             return False
 
     except Exception as e:

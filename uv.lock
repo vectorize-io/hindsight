@@ -1295,7 +1295,7 @@ wheels = [
 
 [[package]]
 name = "hindsight-all"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "hindsight" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1319,7 +1319,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-api"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "hindsight-api" }
 dependencies = [
     { name = "aiohttp" },
@@ -1449,7 +1449,7 @@ dev = [
 
 [[package]]
 name = "hindsight-client"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "hindsight-clients/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -1483,7 +1483,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-dev"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "hindsight-dev" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1529,7 +1529,7 @@ dev = [
 
 [[package]]
 name = "hindsight-embed"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "hindsight-embed" }
 dependencies = [
     { name = "httpx" },

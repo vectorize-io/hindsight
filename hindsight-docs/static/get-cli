@@ -3,6 +3,7 @@ set -e
 
 # Hindsight CLI installer
 # Usage: curl -fsSL https://hindsight.vectorize.io/get-cli | bash
+# Or with specific version: HINDSIGHT_CLI_VERSION=0.4.3 curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 
 REPO_URL="https://github.com/vectorize-io/hindsight"
 INSTALL_DIR="${HINDSIGHT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -169,9 +170,18 @@ main() {
     platform=$(detect_platform)
     print_info "Detected platform: $platform"
 
-    # Get latest version
-    version=$(get_latest_version)
-    print_info "Latest version: $version"
+    # Get version (from env var or latest)
+    if [[ -n "$HINDSIGHT_CLI_VERSION" ]]; then
+        version="$HINDSIGHT_CLI_VERSION"
+        # Add 'v' prefix if not present (GitHub releases use v-prefix)
+        if [[ ! "$version" =~ ^v ]]; then
+            version="v${version}"
+        fi
+        print_info "Using specified version: $version"
+    else
+        version=$(get_latest_version)
+        print_info "Latest version: $version"
+    fi
 
     # Download binary
     tmp_file=$(download_binary "$platform" "$version")

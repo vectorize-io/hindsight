@@ -18,7 +18,7 @@ Environment variables:
     HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: Optional. Seconds before daemon auto-exits when idle (default: 300).
     HINDSIGHT_EMBED_API_VERSION: Optional. hindsight-api version to use (default: matches embed version).
                                  Note: Only applies when starting daemon. To change version, stop daemon first.
-    HINDSIGHT_EMBED_CLI_VERSION: Optional. hindsight CLI version to install (default: matches embed version).
+    HINDSIGHT_EMBED_CLI_VERSION: Optional. hindsight CLI version to install (default: {embed_version}).
 """
 
 import argparse

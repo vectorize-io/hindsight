@@ -272,10 +272,10 @@ export default function (api: MoltbotPluginAPI) {
 
         console.log('[Hindsight] Auto-recall for prompt:', prompt.substring(0, 50));
 
-        // Recall relevant memories (up to 1024 tokens)
+        // Recall relevant memories (up to 512 tokens)
         const response = await client.recall({
           query: prompt,
-          max_tokens: 1024,
+          max_tokens: 512,
         });
 
         if (!response.results || response.results.length === 0) {
@@ -287,7 +287,10 @@ export default function (api: MoltbotPluginAPI) {
         const memoriesJson = JSON.stringify(response.results, null, 2);
 
         const contextMessage = `<hindsight_memories>
+Relevant memories from past conversations (score 1=highest, prioritize recent when conflicting):
 ${memoriesJson}
+
+User message: ${prompt}
 </hindsight_memories>`;
 
         console.log(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories`);
