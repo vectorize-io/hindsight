@@ -2,24 +2,21 @@
 sidebar_position: 4
 ---
 
-# Moltbot (Clawdbot)
+# OpenClawd
 
-Biomimetic long-term memory for [Moltbot](https://molt.bot) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
+Biomimetic long-term memory for [OpenClawd](https://openclawd.com) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context.
 
 ## Quick Start
 
 ```bash
-# 1. Install the plugin
-npm install -g @vectorize-io/hindsight-moltbot-plugin
-
-# 2. Configure your LLM provider
+# 1. Configure your LLM provider
 export OPENAI_API_KEY="sk-your-key"
 clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
-# 3. Enable the plugin
-clawdbot plugins enable hindsight-memory
+# 2. Install and enable the plugin
+clawdbot plugins install @vectorize-io/hindsight-openclawd
 
-# 4. Start Moltbot
+# 3. Start OpenClawd
 clawdbot gateway
 ```
 
@@ -39,10 +36,10 @@ Before each agent response, relevant memories are **automatically injected**:
 - Injected into context with `<hindsight-context>` tags
 - Agent seamlessly uses past context
 
-## Understanding Moltbot Concepts
+## Understanding OpenClawd Concepts
 
 ### Plugins
-Extensions that add functionality to Moltbot. This Hindsight plugin:
+Extensions that add functionality to OpenClawd. This Hindsight plugin:
 - Runs a background service (manages `hindsight-embed` daemon)
 - Registers hooks (automatic event handlers)
 
@@ -57,7 +54,7 @@ Think of hooks as "forced automation" - they always run.
 
 ```
 ┌─────────────────────────────────────────┐
-│  Moltbot Gateway                        │
+│  OpenClawd Gateway                        │
 │                                         │
 │  ┌───────────────────────────────────┐ │
 │  │  Hindsight Plugin                 │ │
@@ -81,24 +78,21 @@ Think of hooks as "forced automation" - they always run.
 ### Prerequisites
 
 - **Node.js** 22+
-- **Moltbot** (Clawdbot) with plugin support
+- **OpenClawd** (Clawdbot) with plugin support
 - **uv/uvx** for running `hindsight-embed`
 - **LLM API key** (OpenAI, Anthropic, etc.)
 
 ### Setup
 
 ```bash
-# 1. Install the plugin
-npm install -g @vectorize-io/hindsight-moltbot-plugin
-
-# 2. Configure your LLM provider
+# 1. Configure your LLM provider
 export OPENAI_API_KEY="sk-your-key"
 clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
-# 3. Enable the plugin
-clawdbot plugins enable hindsight-memory
+# 2. Install and enable the plugin
+clawdbot plugins install @vectorize-io/hindsight-openclawd
 
-# 4. Start Moltbot
+# 3. Start OpenClawd
 clawdbot gateway
 ```
 
@@ -113,7 +107,7 @@ Optional settings in `~/.clawdbot/clawdbot.json`:
 {
   "plugins": {
     "entries": {
-      "hindsight-memory": {
+      "hindsight-openclawd-plugin": {
         "enabled": true,
         "config": {
           "daemonIdleTimeout": 0
@@ -156,7 +150,7 @@ clawdbot plugins list | grep hindsight
 ```
 
 **Test auto-recall:**
-Send a message on any Moltbot channel (Telegram, Slack, etc.):
+Send a message on any OpenClawd channel (Telegram, Slack, etc.):
 ```
 User: My name is John and I love pizza
 Bot: Got it! I'll remember that.
@@ -172,7 +166,7 @@ tail -f ~/.hindsight/daemon.log
 
 **Check memories in database:**
 ```bash
-uvx hindsight-embed memory recall moltbot "pizza" --output json
+uvx hindsight-embed memory recall openclawd "pizza" --output json
 ```
 
 ## Troubleshooting
@@ -180,11 +174,10 @@ uvx hindsight-embed memory recall moltbot "pizza" --output json
 **Plugin not loading?**
 ```bash
 # Check plugin installation
-npm list -g @vectorize-io/hindsight-moltbot-plugin
+clawdbot plugins list | grep -i hindsight
 
 # Reinstall if needed
-npm install -g @vectorize-io/hindsight-moltbot-plugin
-clawdbot plugins enable hindsight-memory
+clawdbot plugins install @vectorize-io/hindsight-openclawd
 ```
 
 **Daemon not starting?**
@@ -224,7 +217,7 @@ tail -f /tmp/clawdbot/clawdbot-*.log | grep Hindsight
 ```bash
 # Clone repo
 git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/moltbot
+cd hindsight/hindsight-integrations/openclawd
 
 # Install dependencies
 npm install
@@ -242,7 +235,7 @@ npm run build && ./install.sh
 ## Requirements
 
 - **Node.js** 22+
-- **Moltbot** (Clawdbot) with plugin support
+- **OpenClawd** (Clawdbot) with plugin support
 - **uv/uvx** for running `hindsight-embed`
 - **LLM API key** (OpenAI, Anthropic, etc.)
 
@@ -253,5 +246,5 @@ MIT
 ## Links
 
 - [Hindsight Documentation](https://vectorize.io/hindsight)
-- [Moltbot Documentation](https://docs.molt.bot)
+- [OpenClawd Documentation](https://openclawd.com)
 - [GitHub Repository](https://github.com/vectorize-io/hindsight)

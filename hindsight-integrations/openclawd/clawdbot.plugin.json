@@ -1,0 +1,39 @@
+{
+  "id": "hindsight-openclawd",
+  "name": "Hindsight Memory",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "daemonIdleTimeout": {
+        "type": "number",
+        "description": "Seconds before daemon shuts down from inactivity (0 = never)",
+        "default": 0
+      },
+      "embedPort": {
+        "type": "number",
+        "description": "Port for hindsight-embed server (auto-assigned if not specified)",
+        "default": 0
+      },
+      "bankMission": {
+        "type": "string",
+        "description": "Custom mission/context for the memory bank"
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "daemonIdleTimeout": {
+      "label": "Daemon Idle Timeout",
+      "placeholder": "0 (never timeout)"
+    },
+    "embedPort": {
+      "label": "Embed Server Port",
+      "placeholder": "0 (auto-assign)"
+    },
+    "bankMission": {
+      "label": "Bank Mission",
+      "placeholder": "Custom context for what this agent does..."
+    }
+  }
+}
