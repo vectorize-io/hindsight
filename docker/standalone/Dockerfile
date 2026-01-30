@@ -185,6 +185,7 @@ print('Downloading embedding model...'); \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
+print('Downloading tiktoken encoding...'); import tiktoken; tiktoken.get_encoding('cl100k_base'); \
 print('Models cached successfully')" && break; \
       if [ $i -lt $MAX_RETRIES ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
@@ -310,6 +311,7 @@ print('Downloading embedding model...'); \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
+print('Downloading tiktoken encoding...'); import tiktoken; tiktoken.get_encoding('cl100k_base'); \
 print('Models cached successfully')" && break; \
       if [ $i -lt $MAX_RETRIES ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
