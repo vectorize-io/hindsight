@@ -2,9 +2,9 @@
 sidebar_position: 4
 ---
 
-# OpenClawd
+# OpenClaw
 
-Local-first, persistent memory for [OpenClawd](https://openclawd.ai) agents using [Hindsight](https://vectorize.io/hindsight).
+Local-first, persistent memory for [OpenClaw](https://openclaw.ai) agents using [Hindsight](https://vectorize.io/hindsight).
 
 This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a standalone daemon that bundles Hindsight's memory engine (API + PostgreSQL) into a single command. Everything runs locally on your machine, reuses the LLM you're already paying for, and costs nothing extra. The plugin automatically manages the daemon lifecycle and provides hooks for seamless memory capture and recall.
 
@@ -16,9 +16,9 @@ export OPENAI_API_KEY="sk-your-key"
 clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
 # 2. Install and enable the plugin
-clawdbot plugins install @vectorize-io/hindsight-openclawd
+clawdbot plugins install @vectorize-io/hindsight-openclaw
 
-# 3. Start OpenClawd
+# 3. Start OpenClaw
 clawdbot gateway
 ```
 
@@ -61,10 +61,10 @@ Auto-recall solves this by injecting relevant memories automatically before ever
 
 The agent sees past context automatically without needing to remember to remember. This approach trades token cost for reliability - but for conversational agents, spending 500 tokens on auto-injected context is better than ignoring 10,000 stored facts because the model didn't call a tool.
 
-## Understanding OpenClawd Concepts
+## Understanding OpenClaw Concepts
 
 ### Plugins
-Extensions that add functionality to OpenClawd. This Hindsight plugin:
+Extensions that add functionality to OpenClaw. This Hindsight plugin:
 - Runs a background service (manages `hindsight-embed` daemon)
 - Registers hooks (automatic event handlers)
 
@@ -79,7 +79,7 @@ Think of hooks as "forced automation" - they always run.
 
 ```
 ┌─────────────────────────────────────────┐
-│  OpenClawd Gateway                        │
+│  OpenClaw Gateway                        │
 │                                         │
 │  ┌───────────────────────────────────┐ │
 │  │  Hindsight Plugin                 │ │
@@ -95,11 +95,11 @@ Think of hooks as "forced automation" - they always run.
        uvx hindsight-embed
        • Daemon on port 8889
        • PostgreSQL (pg0://hindsight-embed)
-       • Bank: 'openclawd' (isolated within shared database)
+       • Bank: 'openclaw' (isolated within shared database)
        • Fact extraction
 ```
 
-**Database Architecture:** All banks share a single pg0 database instance (`pg0://hindsight-embed`). Bank isolation happens within the database via separate tables/schemas per bank ID. The 'openclawd' bank is automatically created when the plugin stores its first memory.
+**Database Architecture:** All banks share a single pg0 database instance (`pg0://hindsight-embed`). Bank isolation happens within the database via separate tables/schemas per bank ID. The 'openclaw' bank is automatically created when the plugin stores its first memory.
 
 **Local-First Design:**
 - **Your data stays local**: All conversations, facts, and relationships stored in PostgreSQL on your machine
@@ -113,7 +113,7 @@ Think of hooks as "forced automation" - they always run.
 ### Prerequisites
 
 - **Node.js** 22+
-- **OpenClawd** (Clawdbot) with plugin support
+- **OpenClaw** (Clawdbot) with plugin support
 - **uv/uvx** for running `hindsight-embed`
 - **LLM API key** (OpenAI, Anthropic, etc.)
 
@@ -125,9 +125,9 @@ export OPENAI_API_KEY="sk-your-key"
 clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
 # 2. Install and enable the plugin
-clawdbot plugins install @vectorize-io/hindsight-openclawd
+clawdbot plugins install @vectorize-io/hindsight-openclaw
 
-# 3. Start OpenClawd
+# 3. Start OpenClaw
 clawdbot gateway
 ```
 
@@ -142,7 +142,7 @@ Optional settings in `~/.clawdbot/clawdbot.json`:
 {
   "plugins": {
     "entries": {
-      "hindsight-openclawd": {
+      "hindsight-openclaw": {
         "enabled": true,
         "config": {
           "daemonIdleTimeout": 0
@@ -185,7 +185,7 @@ clawdbot plugins list | grep hindsight
 ```
 
 **Test auto-recall:**
-Send a message on any OpenClawd channel (Telegram, Slack, etc.):
+Send a message on any OpenClaw channel (Telegram, Slack, etc.):
 ```
 User: My name is John and I love pizza
 Bot: Got it! I'll remember that.
@@ -201,7 +201,7 @@ tail -f ~/.hindsight/daemon.log
 
 **Check memories in database:**
 ```bash
-uvx hindsight-embed@latest memory recall openclawd "pizza" --output json
+uvx hindsight-embed@latest memory recall openclaw "pizza" --output json
 ```
 
 ## Inspecting Memories
@@ -225,31 +225,31 @@ uvx hindsight-embed@latest ui
 **List memory banks:**
 ```bash
 uvx hindsight-embed@latest bank list
-# Shows all banks including 'openclawd'
+# Shows all banks including 'openclaw'
 ```
 
 **Query memories:**
 ```bash
 # Search memories
-uvx hindsight-embed@latest memory recall openclawd "user preferences" --output json
+uvx hindsight-embed@latest memory recall openclaw "user preferences" --output json
 
 # View recent memories
-uvx hindsight-embed@latest memory list openclawd --limit 10
+uvx hindsight-embed@latest memory list openclaw --limit 10
 
 # Export all memories
-uvx hindsight-embed@latest memory export openclawd --output memories.json
+uvx hindsight-embed@latest memory export openclaw --output memories.json
 ```
 
 **Inspect facts and entities:**
 ```bash
 # List extracted facts
-uvx hindsight-embed@latest fact list openclawd
+uvx hindsight-embed@latest fact list openclaw
 
 # List entities
-uvx hindsight-embed@latest entity list openclawd
+uvx hindsight-embed@latest entity list openclaw
 
 # Show entity relationships
-uvx hindsight-embed@latest entity graph openclawd
+uvx hindsight-embed@latest entity graph openclaw
 ```
 
 ## Troubleshooting
@@ -260,7 +260,7 @@ uvx hindsight-embed@latest entity graph openclawd
 clawdbot plugins list | grep -i hindsight
 
 # Reinstall if needed
-clawdbot plugins install @vectorize-io/hindsight-openclawd
+clawdbot plugins install @vectorize-io/hindsight-openclaw
 ```
 
 **Daemon not starting?**
@@ -300,7 +300,7 @@ tail -f /tmp/clawdbot/clawdbot-*.log | grep Hindsight
 ```bash
 # Clone repo
 git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/openclawd
+cd hindsight/hindsight-integrations/openclaw
 
 # Install dependencies
 npm install
@@ -318,7 +318,7 @@ npm run build && ./install.sh
 ## Requirements
 
 - **Node.js** 22+
-- **OpenClawd** (Clawdbot) with plugin support
+- **OpenClaw** (Clawdbot) with plugin support
 - **uv/uvx** for running `hindsight-embed`
 - **LLM API key** (OpenAI, Anthropic, etc.)
 
@@ -329,5 +329,5 @@ MIT
 ## Links
 
 - [Hindsight Documentation](https://vectorize.io/hindsight)
-- [OpenClawd Documentation](https://openclawd.ai)
+- [OpenClaw Documentation](https://openclaw.ai)
 - [GitHub Repository](https://github.com/vectorize-io/hindsight)

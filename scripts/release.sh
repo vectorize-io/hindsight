@@ -144,14 +144,14 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
-# Update OpenClawd integration
-OPENCLAWD_PKG="hindsight-integrations/openclawd/package.json"
-if [ -f "$OPENCLAWD_PKG" ]; then
-    print_info "Updating $OPENCLAWD_PKG"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$OPENCLAWD_PKG"
-    rm "${OPENCLAWD_PKG}.bak"
+# Update OpenClaw integration
+OPENCLAW_PKG="hindsight-integrations/openclaw/package.json"
+if [ -f "$OPENCLAW_PKG" ]; then
+    print_info "Updating $OPENCLAW_PKG"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$OPENCLAW_PKG"
+    rm "${OPENCLAW_PKG}.bak"
 else
-    print_warn "File $OPENCLAWD_PKG not found, skipping"
+    print_warn "File $OPENCLAW_PKG not found, skipping"
 fi
 
 # Update documentation version (creates new version or syncs to existing)
@@ -198,7 +198,7 @@ COMMIT_MSG="Release v$VERSION
 - TypeScript client: hindsight-clients/typescript
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
-- OpenClawd integration: hindsight-integrations/openclawd
+- OpenClaw integration: hindsight-integrations/openclaw
 - Helm chart"
 
 # Add docs update note

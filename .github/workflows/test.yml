@@ -82,7 +82,7 @@ jobs:
     - name: Build TypeScript client
       run: npm run build --workspace=hindsight-clients/typescript
 
-  build-openclawd-integration:
+  build-openclaw-integration:
     runs-on: ubuntu-latest
 
     steps:
@@ -94,15 +94,15 @@ jobs:
         node-version: '22'
 
     - name: Install dependencies
-      working-directory: ./hindsight-integrations/openclawd
+      working-directory: ./hindsight-integrations/openclaw
       run: npm ci
 
     - name: Run tests
-      working-directory: ./hindsight-integrations/openclawd
+      working-directory: ./hindsight-integrations/openclaw
       run: npm test
 
     - name: Build
-      working-directory: ./hindsight-integrations/openclawd
+      working-directory: ./hindsight-integrations/openclaw
       run: npm run build
 
   build-control-plane:

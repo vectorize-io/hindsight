@@ -189,8 +189,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'sdks/integrations/openclawd',
-          label: 'OpenClawd',
+          id: 'sdks/integrations/openclaw',
+          label: 'OpenClaw',
         },
         {
           type: 'doc',

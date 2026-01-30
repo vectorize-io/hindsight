@@ -29,13 +29,13 @@ For full release details, see [GitHub Releases](https://github.com/vectorize-io/
 
 **Other**
 
-- Rename the default bot/user identity from "moltbot" to "openclawd". ([`728ce13`](https://github.com/vectorize-io/hindsight/commit/728ce13))
+- Rename the default bot/user identity from "moltbot" to "openclaw". ([`728ce13`](https://github.com/vectorize-io/hindsight/commit/728ce13))
 
 ## [0.4.2](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.2)
 
 **Features**
 
-- Added Clawdbot/Moltbot/OpenClawd integration. ([`12e9a3d`](https://github.com/vectorize-io/hindsight/commit/12e9a3d))
+- Added Clawdbot/Moltbot/OpenClaw integration. ([`12e9a3d`](https://github.com/vectorize-io/hindsight/commit/12e9a3d))
 
 **Improvements**
 

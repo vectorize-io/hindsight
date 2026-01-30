@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Default bank name
-const BANK_NAME = 'openclawd';
+const BANK_NAME = 'openclaw';
 
 // Provider mapping: moltbot provider name -> hindsight provider name
 const PROVIDER_MAP: Record<string, string> = {
@@ -114,7 +114,7 @@ function detectLLMConfig(api: MoltbotPluginAPI): {
 }
 
 function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
-  const config = api.config.plugins?.entries?.['hindsight-openclawd']?.config || {};
+  const config = api.config.plugins?.entries?.['hindsight-openclaw']?.config || {};
   const defaultMission = 'You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance.';
 
   return {
@@ -173,7 +173,7 @@ export default function (api: MoltbotPluginAPI) {
         console.log('[Hindsight] Creating HindsightClient...');
         client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
 
-        // Use openclawd bank
+        // Use openclaw bank
         console.log(`[Hindsight] Using bank: ${BANK_NAME}`);
         client.setBankId(BANK_NAME);
 
