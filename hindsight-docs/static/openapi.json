@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.1.0"
+    "version": "0.4.2"
   },
   "paths": {
     "/health": {
@@ -6212,7 +6212,7 @@
         "title": "VersionResponse",
         "description": "Response model for the version/info endpoint.",
         "example": {
-          "api_version": "1.0.0",
+          "api_version": "0.4.0",
           "features": {
             "mcp": true,
             "observations": false,

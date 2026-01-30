@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 DAEMON_PORT = 8889
 DAEMON_URL = f"http://127.0.0.1:{DAEMON_PORT}"
 DAEMON_STARTUP_TIMEOUT = 180  # seconds - needs to be long for first run (downloads dependencies)
-DAEMON_IDLE_TIMEOUT = 300  # 5 minutes - auto-exit after idle
+# Default idle timeout: 5 minutes - users can override with HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT env var
+DEFAULT_DAEMON_IDLE_TIMEOUT = 300
 
 # CLI paths - check multiple locations
 CLI_INSTALL_DIRS = [
@@ -75,7 +76,10 @@ def _start_daemon(config: dict) -> bool:
     env["HINDSIGHT_API_DATABASE_URL"] = f"pg0://hindsight-embed-{bank_id}"
     env["HINDSIGHT_API_LOG_LEVEL"] = "info"
 
-    cmd = _find_hindsight_api_command() + ["--daemon", "--idle-timeout", str(DAEMON_IDLE_TIMEOUT)]
+    # Get idle timeout from environment or use default
+    idle_timeout = int(os.getenv("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
+
+    cmd = _find_hindsight_api_command() + ["--daemon", "--idle-timeout", str(idle_timeout)]
 
     # Create log directory
     log_dir = Path.home() / ".hindsight"

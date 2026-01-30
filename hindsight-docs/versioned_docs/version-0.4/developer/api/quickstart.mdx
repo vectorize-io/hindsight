@@ -1,0 +1,109 @@
+---
+sidebar_position: 0
+---
+
+# Quick Start
+
+Get up and running with Hindsight in 60 seconds.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import quickstartPy from '!!raw-loader!@site/examples/api/quickstart.py';
+import quickstartMjs from '!!raw-loader!@site/examples/api/quickstart.mjs';
+import quickstartSh from '!!raw-loader!@site/examples/api/quickstart.sh';
+
+## Start the API Server
+
+<Tabs>
+<TabItem value="pip" label="pip (API only)">
+
+```bash
+pip install hindsight-api
+export OPENAI_API_KEY=sk-xxx
+export HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY
+
+hindsight-api
+```
+
+API available at [http://localhost:8888](http://localhost:8888/docs)
+
+</TabItem>
+<TabItem value="docker" label="Docker (Full Experience)">
+
+```bash
+
+export OPENAI_API_KEY=sk-xxx
+
+docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
+  -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
+  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
+```
+
+- **API**: http://localhost:8888
+- **Control Plane** (Web UI): http://localhost:9999
+
+</TabItem>
+</Tabs>
+
+:::tip LLM Provider
+Hindsight requires an LLM with structured output support. Recommended: **Groq** with `gpt-oss-20b` for fast, cost-effective inference.
+See [LLM Providers](/developer/models#llm) for more details.
+:::
+
+---
+
+## Use the Client
+
+<Tabs>
+<TabItem value="python" label="Python">
+
+```bash
+pip install hindsight-client
+```
+
+<CodeSnippet code={quickstartPy} section="quickstart-full" language="python" />
+
+</TabItem>
+<TabItem value="node" label="Node.js">
+
+```bash
+npm install @vectorize-io/hindsight-client
+```
+
+<CodeSnippet code={quickstartMjs} section="quickstart-full" language="javascript" />
+
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+curl -fsSL https://hindsight.vectorize.io/get-cli | bash
+```
+
+<CodeSnippet code={quickstartSh} section="quickstart-full" language="bash" />
+
+</TabItem>
+</Tabs>
+
+---
+
+## What's Happening
+
+| Operation | What it does |
+|-----------|--------------|
+| **Retain** | Content is processed, facts are extracted, entities are identified and linked in a knowledge graph |
+| **Recall** | Four search strategies (semantic, keyword, graph, temporal) run in parallel to find relevant memories |
+| **Reflect** | Retrieved memories are used to generate a disposition-aware response |
+
+---
+
+## Next Steps
+
+- [**Retain**](./retain) — Advanced options for storing memories
+- [**Recall**](./recall) — Search and retrieval strategies
+- [**Reflect**](./reflect) — Disposition-aware reasoning
+- [**Memory Banks**](./memory-banks) — Configure disposition and mission
+- [**Server Deployment**](/developer/installation) — Docker Compose, Helm, and production setup

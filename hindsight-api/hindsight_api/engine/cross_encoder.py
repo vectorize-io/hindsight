@@ -20,6 +20,7 @@ from ..config import (
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_LITELLM_MODEL,
+    DEFAULT_RERANKER_LOCAL_FORCE_CPU,
     DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_PROVIDER,
@@ -33,6 +34,7 @@ from ..config import (
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
     ENV_RERANKER_LITELLM_MODEL,
+    ENV_RERANKER_LOCAL_FORCE_CPU,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
     ENV_RERANKER_PROVIDER,
@@ -99,7 +101,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
     _executor: ThreadPoolExecutor | None = None
     _max_concurrent: int = 4  # Limit concurrent CPU-bound reranking calls
 
-    def __init__(self, model_name: str | None = None, max_concurrent: int = 4):
+    def __init__(self, model_name: str | None = None, max_concurrent: int = 4, force_cpu: bool = False):
         """
         Initialize local SentenceTransformers cross-encoder.
 
@@ -108,8 +110,11 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                        Default: cross-encoder/ms-marco-MiniLM-L-6-v2
             max_concurrent: Maximum concurrent reranking calls (default: 2).
                            Higher values may cause CPU thrashing under load.
+            force_cpu: Force CPU mode (avoids MPS/XPC issues on macOS in daemon mode).
+                      Default: False
         """
         self.model_name = model_name or DEFAULT_RERANKER_LOCAL_MODEL
+        self.force_cpu = force_cpu
         self._model = None
         LocalSTCrossEncoder._max_concurrent = max_concurrent
 
@@ -139,13 +144,23 @@ class LocalSTCrossEncoder(CrossEncoderModel):
         # after loading, which conflicts with accelerate's device_map handling.
         import torch
 
-        # Check for GPU (CUDA) or Apple Silicon (MPS)
-        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-
-        if has_gpu:
-            device = None  # Let sentence-transformers auto-detect GPU/MPS
-        else:
+        # Force CPU mode if configured (used in daemon mode to avoid MPS/XPC issues on macOS)
+        if self.force_cpu:
             device = "cpu"
+            logger.info("Reranker: forcing CPU mode (HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=1)")
+        else:
+            # Check for GPU (CUDA) or Apple Silicon (MPS)
+            # Wrap in try-except to gracefully handle any device detection issues
+            # (e.g., in CI environments or when PyTorch is built without GPU support)
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
         self._model = CrossEncoder(
             self.model_name,
@@ -162,6 +177,11 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             logger.info(f"Reranker: local provider initialized (max_concurrent={LocalSTCrossEncoder._max_concurrent})")
         else:
             logger.info("Reranker: local provider initialized (using existing executor)")
+
+    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Synchronous prediction wrapper for thread pool execution."""
+        scores = self._model.predict(pairs, show_progress_bar=False)
+        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -180,11 +200,11 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
         # Use dedicated executor - limited workers naturally limits concurrency
         loop = asyncio.get_event_loop()
-        scores = await loop.run_in_executor(
+        return await loop.run_in_executor(
             LocalSTCrossEncoder._executor,
-            lambda: self._model.predict(pairs, show_progress_bar=False),
+            self._predict_sync,
+            pairs,
         )
-        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
 
 
 class RemoteTEICrossEncoder(CrossEncoderModel):
@@ -594,7 +614,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
             return
 
         try:
-            from flashrank import Ranker  # type: ignore[import-untyped]
+            from flashrank import Ranker
         except ImportError:
             raise ImportError("flashrank is required for FlashRankCrossEncoder. Install it with: pip install flashrank")
 
@@ -621,7 +641,7 @@ class FlashRankCrossEncoder(CrossEncoderModel):
 
     def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Synchronous predict - processes each query group."""
-        from flashrank import RerankRequest  # type: ignore[import-untyped]
+        from flashrank import RerankRequest
 
         if not pairs:
             return []
@@ -783,29 +803,33 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
 
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
-    Create a CrossEncoderModel instance based on environment variables.
+    Create a CrossEncoderModel instance based on configuration.
 
-    See hindsight_api.config for environment variable names and defaults.
+    Reads configuration via get_config() to ensure consistency across the codebase.
 
     Returns:
         Configured CrossEncoderModel instance
     """
-    provider = os.environ.get(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER).lower()
+    from ..config import get_config
+
+    config = get_config()
+    provider = config.reranker_provider.lower()
 
     if provider == "tei":
-        url = os.environ.get(ENV_RERANKER_TEI_URL)
+        url = config.reranker_tei_url
         if not url:
             raise ValueError(f"{ENV_RERANKER_TEI_URL} is required when {ENV_RERANKER_PROVIDER} is 'tei'")
-        batch_size = int(os.environ.get(ENV_RERANKER_TEI_BATCH_SIZE, str(DEFAULT_RERANKER_TEI_BATCH_SIZE)))
-        max_concurrent = int(os.environ.get(ENV_RERANKER_TEI_MAX_CONCURRENT, str(DEFAULT_RERANKER_TEI_MAX_CONCURRENT)))
-        return RemoteTEICrossEncoder(base_url=url, batch_size=batch_size, max_concurrent=max_concurrent)
-    elif provider == "local":
-        model = os.environ.get(ENV_RERANKER_LOCAL_MODEL)
-        model_name = model or DEFAULT_RERANKER_LOCAL_MODEL
-        max_concurrent = int(
-            os.environ.get(ENV_RERANKER_LOCAL_MAX_CONCURRENT, str(DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT))
+        return RemoteTEICrossEncoder(
+            base_url=url,
+            batch_size=config.reranker_tei_batch_size,
+            max_concurrent=config.reranker_tei_max_concurrent,
         )
-        return LocalSTCrossEncoder(model_name=model_name, max_concurrent=max_concurrent)
+    elif provider == "local":
+        return LocalSTCrossEncoder(
+            model_name=config.reranker_local_model,
+            max_concurrent=config.reranker_local_max_concurrent,
+            force_cpu=config.reranker_local_force_cpu,
+        )
     elif provider == "cohere":
         api_key = os.environ.get(ENV_COHERE_API_KEY)
         if not api_key:

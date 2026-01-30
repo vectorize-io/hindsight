@@ -183,20 +183,24 @@ def main():
 
         from ..extensions import TenantExtension, load_extension
 
+        # Load tenant extension BEFORE creating MemoryEngine so it can
+        # set correct schema context during task execution. Without this,
+        # _authenticate_tenant sees no extension and resets schema to "public",
+        # causing worker writes to land in the wrong schema.
+        tenant_extension = load_extension("TENANT", TenantExtension)
+
         # Initialize MemoryEngine
         # Workers use SyncTaskBackend because they execute tasks directly,
         # they don't need to store tasks (they poll from DB)
         memory = MemoryEngine(
             run_migrations=False,  # Workers don't run migrations
             task_backend=SyncTaskBackend(),
+            tenant_extension=tenant_extension,
         )
 
         await memory.initialize()
 
         print(f"Database connected: {config.database_url}")
-
-        # Load tenant extension for dynamic schema discovery
-        tenant_extension = load_extension("TENANT", TenantExtension)
 
         if tenant_extension:
             print("Tenant extension loaded - schemas will be discovered dynamically on each poll")

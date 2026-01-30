@@ -1,0 +1,27 @@
+---
+sidebar_position: 1
+---
+
+import RecipeCarousel from '@site/src/components/RecipeCarousel';
+
+# Cookbook
+
+Practical patterns, recipes, and complete applications for building with Hindsight.
+
+<RecipeCarousel
+  title="Recipes"
+  items={[
+    { title: "Hindsight Quickstart", href: "/cookbook/recipes/quickstart" },
+    { title: "Per-User Memory", href: "/cookbook/recipes/per-user-memory" },
+    { title: "Support Agent with Shared Knowledge", href: "/cookbook/recipes/support-agent-shared-knowledge" },
+    { title: "Memory with LiteLLM", href: "/cookbook/recipes/litellm-memory-demo" },
+    { title: "Routing Tool Learning", href: "/cookbook/recipes/tool-learning-demo" }
+  ]}
+/>
+
+<RecipeCarousel
+  title="Applications"
+  items={[
+    { title: "OpenAI Agent + Hindsight Memory Integration", href: "/cookbook/applications/openai-fitness-coach" }
+  ]}
+/>

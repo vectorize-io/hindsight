@@ -20,9 +20,23 @@ The API service handles all memory operations (retain, recall, reflect).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
+| `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
 
 If not provided, the server uses embedded `pg0` — convenient for development but not recommended for production.
+
+The `DATABASE_SCHEMA` setting allows you to use a custom PostgreSQL schema instead of the default `public` schema. This is useful for:
+- Multi-database setups where you want Hindsight tables in a dedicated schema
+- Hosting platforms (e.g., Supabase) where `public` schema is reserved or shared
+- Organizational preferences for schema naming conventions
+
+```bash
+# Example: Using a custom schema
+export HINDSIGHT_API_DATABASE_URL=postgresql://user:pass@host:5432/dbname
+export HINDSIGHT_API_DATABASE_SCHEMA=hindsight
+```
+
+Migrations will automatically create the schema if it doesn't exist and create all tables in the configured schema.
 
 ### Database Connection Pool
 
@@ -47,11 +61,14 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
 | `HINDSIGHT_API_LLM_MAX_CONCURRENT` | Max concurrent LLM requests | `32` |
+| `HINDSIGHT_API_LLM_MAX_RETRIES` | Max retry attempts for LLM API calls | `10` |
+| `HINDSIGHT_API_LLM_INITIAL_BACKOFF` | Initial retry backoff in seconds (exponential backoff) | `1.0` |
+| `HINDSIGHT_API_LLM_MAX_BACKOFF` | Max retry backoff cap in seconds | `60.0` |
 | `HINDSIGHT_API_LLM_TIMEOUT` | LLM request timeout in seconds | `120` |
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 
@@ -80,6 +97,14 @@ export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 
+# Vertex AI (Google Cloud)
+export HINDSIGHT_API_LLM_PROVIDER=vertexai
+export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
+export HINDSIGHT_API_LLM_VERTEXAI_REGION=us-central1
+# Optional: use ADC (gcloud auth application-default login) or provide service account key:
+# export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/service-account-key.json
+
 # Ollama (local, no API key)
 export HINDSIGHT_API_LLM_PROVIDER=ollama
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
@@ -97,6 +122,56 @@ export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name
 ```
 
+#### Vertex AI Setup
+
+Google Cloud's Vertex AI provides OpenAI-compatible endpoints for Gemini models. Hindsight supports two authentication methods:
+
+**Prerequisites:**
+- GCP project with Vertex AI API enabled
+- IAM role `roles/aiplatform.user` for your credentials
+
+**Environment Variables:**
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID` | Your GCP project ID | Yes |
+| `HINDSIGHT_API_LLM_VERTEXAI_REGION` | GCP region (e.g., `us-central1`) | No (default: `us-central1`) |
+| `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY` | Path to service account JSON key file | No (uses ADC if not set) |
+
+**Authentication Methods:**
+
+1. **Application Default Credentials (ADC)** - Recommended for development
+   ```bash
+   # Setup ADC
+   gcloud auth application-default login
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   ```
+
+2. **Service Account Key** - Recommended for production
+   ```bash
+   # Create service account and download key
+   gcloud iam service-accounts create hindsight-api
+   gcloud projects add-iam-policy-binding your-project-id \
+     --member="serviceAccount:hindsight-api@your-project-id.iam.gserviceaccount.com" \
+     --role="roles/aiplatform.user"
+   gcloud iam service-accounts keys create key.json \
+     --iam-account=hindsight-api@your-project-id.iam.gserviceaccount.com
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
+   ```
+
+**Authentication Priority:** Hindsight tries ADC first, then falls back to service account key file if configured.
+
+**Token Management:** Access tokens expire after 60 minutes. Hindsight automatically refreshes tokens every 50 minutes in the background.
+
 ### Per-Operation LLM Configuration
 
 Different memory operations have different requirements. **Retain** (fact extraction) benefits from models with strong structured output capabilities, while **Reflect** (reasoning/response generation) can use lighter, faster models. Configure separate LLM models for each operation to optimize for cost and performance.
@@ -107,14 +182,29 @@ Different memory operations have different requirements. **Retain** (fact extrac
 | `HINDSIGHT_API_RETAIN_LLM_API_KEY` | API key for retain LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_RETAIN_LLM_MODEL` | Model for retain operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_RETAIN_LLM_BASE_URL` | Base URL for retain LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
+| `HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT` | Max concurrent requests for retain | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES` | Max retries for retain | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
+| `HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF` | Initial backoff for retain retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
+| `HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF` | Max backoff cap for retain retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
+| `HINDSIGHT_API_RETAIN_LLM_TIMEOUT` | Timeout for retain requests (seconds) | Falls back to `HINDSIGHT_API_LLM_TIMEOUT` |
 | `HINDSIGHT_API_REFLECT_LLM_PROVIDER` | LLM provider for reflect operations | Falls back to `HINDSIGHT_API_LLM_PROVIDER` |
 | `HINDSIGHT_API_REFLECT_LLM_API_KEY` | API key for reflect LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_REFLECT_LLM_MODEL` | Model for reflect operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_REFLECT_LLM_BASE_URL` | Base URL for reflect LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
+| `HINDSIGHT_API_REFLECT_LLM_MAX_CONCURRENT` | Max concurrent requests for reflect | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES` | Max retries for reflect | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
+| `HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF` | Initial backoff for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
+| `HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF` | Max backoff cap for reflect retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | Timeout for reflect requests (seconds) | Falls back to `HINDSIGHT_API_LLM_TIMEOUT` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER` | LLM provider for observation consolidation | Falls back to `HINDSIGHT_API_LLM_PROVIDER` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY` | API key for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_API_KEY` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_MODEL` | Model for consolidation operations | Falls back to `HINDSIGHT_API_LLM_MODEL` |
 | `HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL` | Base URL for consolidation LLM | Falls back to `HINDSIGHT_API_LLM_BASE_URL` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_CONCURRENT` | Max concurrent requests for consolidation | Falls back to `HINDSIGHT_API_LLM_MAX_CONCURRENT` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_RETRIES` | Max retries for consolidation | Falls back to `HINDSIGHT_API_LLM_MAX_RETRIES` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_INITIAL_BACKOFF` | Initial backoff for consolidation retries (seconds) | Falls back to `HINDSIGHT_API_LLM_INITIAL_BACKOFF` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_MAX_BACKOFF` | Max backoff cap for consolidation retries (seconds) | Falls back to `HINDSIGHT_API_LLM_MAX_BACKOFF` |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT` | Timeout for consolidation requests (seconds) | Falls back to `HINDSIGHT_API_LLM_TIMEOUT` |
 
 :::tip When to Use Per-Operation Config
 - **Retain**: Use models with strong structured output (e.g., GPT-4o, Claude) for accurate fact extraction
@@ -137,6 +227,25 @@ export HINDSIGHT_API_RETAIN_LLM_MODEL=gpt-4o
 export HINDSIGHT_API_REFLECT_LLM_PROVIDER=groq
 export HINDSIGHT_API_REFLECT_LLM_API_KEY=gsk_xxxxxxxxxxxx
 export HINDSIGHT_API_REFLECT_LLM_MODEL=llama-3.3-70b-versatile
+```
+
+**Example: Tuning Retry Behavior for Rate-Limited APIs**
+
+```bash
+# For Anthropic with tight rate limits (10k output tokens/minute)
+export HINDSIGHT_API_LLM_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
+
+# Reduce concurrent requests for retain to avoid rate limits
+export HINDSIGHT_API_RETAIN_LLM_MAX_CONCURRENT=3
+
+# Fail faster with fewer retries
+export HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES=3
+
+# Or increase backoff times to wait out rate limit windows
+export HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF=2.0  # Start at 2s instead of 1s
+export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1min
 ```
 
 ### Embeddings
@@ -319,7 +428,8 @@ Controls the retain (memory ingestion) pipeline.
 |----------|-------------|---------|
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
-| `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise` (selective, fewer high-quality facts) or `verbose` (detailed, more facts) | `concise` |
+| `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, or `custom` | `concise` |
+| `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Custom extraction guidelines (only used when mode is `custom`) | - |
 | `HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS` | Extract causal relationships between facts | `true` |
 
 #### Extraction Modes
@@ -330,14 +440,40 @@ The extraction mode controls how aggressively facts are extracted from content:
 
 - **`verbose`**: Detailed extraction that captures every piece of information with maximum verbosity. Produces more facts with extensive detail but slower performance and higher token usage.
 
+- **`custom`**: Inject your own extraction guidelines while keeping the structural parts of the prompt (output format, coreference resolution, temporal handling, etc.) intact. Useful for A/B testing different extraction strategies or domain-specific customization.
+
+**Example: Custom Extraction Mode**
+
+```bash
+# Set mode to custom
+export HINDSIGHT_API_RETAIN_EXTRACTION_MODE=custom
+
+# Define custom guidelines (multi-line is fine)
+export HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS="ONLY extract facts that are:
+✅ Technical decisions and their rationale
+✅ Architecture patterns and design choices
+✅ Performance metrics and benchmarks
+✅ Code reviews and feedback
+
+DO NOT extract:
+❌ Generic greetings or pleasantries
+❌ Process chatter (\"let me check\", \"one moment\")
+❌ Repeated information already captured
+
+CONSOLIDATE related technical discussions into ONE fact when possible.
+
+Ask yourself: 'Would this technical context be useful in 6 months?' If no, skip it."
+```
+
 ### Observations (Experimental)
 
-Observations are consolidated knowledge synthesized from facts. This feature is experimental and disabled by default.
+Observations are consolidated knowledge synthesized from facts.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `false` |
+| `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
+| `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
 | `HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC` | Run observation generation asynchronously (after retain completes) | `false` |
 
 ### Reflect
@@ -413,6 +549,7 @@ export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
 ```bash
 # API Service
 HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight_dev@localhost:5432/hindsight
+# HINDSIGHT_API_DATABASE_SCHEMA=public  # optional, defaults to 'public'
 HINDSIGHT_API_LLM_PROVIDER=groq
 HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
 

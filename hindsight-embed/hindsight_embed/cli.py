@@ -15,6 +15,7 @@ Environment variables:
     HINDSIGHT_EMBED_LLM_PROVIDER: Optional. LLM provider (default: "openai").
     HINDSIGHT_EMBED_LLM_MODEL: Optional. LLM model (default: "gpt-4o-mini").
     HINDSIGHT_EMBED_BANK_ID: Optional. Memory bank ID (default: "default").
+    HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: Optional. Seconds before daemon auto-exits when idle (default: 300).
 """
 
 import argparse
@@ -158,6 +159,15 @@ def _do_configure_from_env():
         f.write(f"HINDSIGHT_EMBED_BANK_ID={bank_id}\n")
         if api_key:
             f.write(f"HINDSIGHT_EMBED_LLM_API_KEY={api_key}\n")
+
+        # Force CPU mode for embeddings/reranker on macOS to avoid MPS/XPC crashes in daemon mode
+        # On Linux, users can set these to 0 to use CUDA if available
+        import platform
+
+        if platform.system() == "Darwin":  # macOS
+            f.write("\n# Daemon settings (macOS: force CPU to avoid MPS/XPC issues)\n")
+            f.write("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=1\n")
+            f.write("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=1\n")
 
     CONFIG_FILE.chmod(0o600)
 
@@ -323,6 +333,15 @@ def _do_configure_interactive():
         f.write(f"HINDSIGHT_EMBED_BANK_ID={bank_id}\n")
         if api_key:
             f.write(f"HINDSIGHT_EMBED_LLM_API_KEY={api_key}\n")
+
+        # Force CPU mode for embeddings/reranker on macOS to avoid MPS/XPC crashes in daemon mode
+        # On Linux, users can set these to 0 to use CUDA if available
+        import platform
+
+        if platform.system() == "Darwin":  # macOS
+            f.write("\n# Daemon settings (macOS: force CPU to avoid MPS/XPC issues)\n")
+            f.write("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=1\n")
+            f.write("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=1\n")
 
     CONFIG_FILE.chmod(0o600)
 

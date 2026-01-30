@@ -77,6 +77,22 @@ for package in "${PYTHON_PACKAGES[@]}"; do
     fi
 done
 
+# Update __version__ in Python __init__.py files
+PYTHON_INIT_FILES=(
+    "hindsight-api/hindsight_api/__init__.py"
+    "hindsight-embed/hindsight_embed/__init__.py"
+    "hindsight-clients/python/hindsight_client_api/__init__.py"
+)
+for init_file in "${PYTHON_INIT_FILES[@]}"; do
+    if [ -f "$init_file" ]; then
+        print_info "Updating __version__ in $init_file"
+        sed -i.bak "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" "$init_file"
+        rm "${init_file}.bak"
+    else
+        print_warn "File $init_file not found, skipping"
+    fi
+done
+
 # Update Rust CLI
 CARGO_FILE="hindsight-cli/Cargo.toml"
 if [ -f "$CARGO_FILE" ]; then
@@ -128,6 +144,19 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
+# Update documentation version (creates new version or syncs to existing)
+print_info "Updating documentation for version $VERSION..."
+if [ -f "scripts/update-docs-version.sh" ]; then
+    ./scripts/update-docs-version.sh "$VERSION" 2>&1 | grep -E "✓|IMPORTANT|Error" || true
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        print_info "✓ Documentation updated"
+    else
+        print_warn "Failed to update documentation, but continuing..."
+    fi
+else
+    print_warn "update-docs-version.sh not found, skipping docs update"
+fi
+
 # Show changes
 print_info "Changes to be committed:"
 git diff
@@ -145,7 +174,13 @@ fi
 # Commit changes
 print_info "Committing version changes..."
 git add -A
-git commit --no-verify -m "Release v$VERSION
+
+# Extract major.minor and patch for commit message
+MAJOR_MINOR=$(echo "$VERSION" | sed -E 's/^([0-9]+\.[0-9]+)\.[0-9]+$/\1/')
+PATCH_VERSION=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.([0-9]+)$/\1/')
+
+# Build commit message
+COMMIT_MSG="Release v$VERSION
 
 - Update version to $VERSION in all components
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-embed
@@ -154,6 +189,17 @@ git commit --no-verify -m "Release v$VERSION
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
 - Helm chart"
+
+# Add docs update note
+if [ "$PATCH_VERSION" != "0" ]; then
+    COMMIT_MSG="$COMMIT_MSG
+- Sync documentation to version-$MAJOR_MINOR"
+else
+    COMMIT_MSG="$COMMIT_MSG
+- Create documentation version-$MAJOR_MINOR"
+fi
+
+git commit --no-verify -m "$COMMIT_MSG"
 
 # Create tag
 print_info "Creating tag v$VERSION..."

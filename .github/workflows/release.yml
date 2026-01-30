@@ -139,6 +139,55 @@ jobs:
         path: hindsight-clients/typescript/*.tgz
         retention-days: 1
 
+  release-moltbot-integration:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/moltbot
+      run: npm ci
+
+    - name: Build
+      working-directory: ./hindsight-integrations/moltbot
+      run: npm run build
+
+    - name: Publish to npm
+      working-directory: ./hindsight-integrations/moltbot
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack for GitHub release
+      working-directory: ./hindsight-integrations/moltbot
+      run: npm pack
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: moltbot-integration
+        path: hindsight-integrations/moltbot/*.tgz
+        retention-days: 1
+
   release-control-plane:
     runs-on: ubuntu-latest
     environment: npm
@@ -366,7 +415,7 @@ jobs:
 
   create-github-release:
     runs-on: ubuntu-latest
-    needs: [release-python-packages, release-typescript-client, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
+    needs: [release-python-packages, release-typescript-client, release-moltbot-integration, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
     permissions:
       contents: write
 
@@ -388,6 +437,12 @@ jobs:
       with:
         name: typescript-client
         path: ./artifacts/typescript-client
+
+    - name: Download Moltbot Integration
+      uses: actions/download-artifact@v4
+      with:
+        name: moltbot-integration
+        path: ./artifacts/moltbot-integration
 
     - name: Download Control Plane
       uses: actions/download-artifact@v4
@@ -430,6 +485,8 @@ jobs:
         cp artifacts/python-packages/hindsight-embed/dist/* release-assets/ || true
         # TypeScript client
         cp artifacts/typescript-client/*.tgz release-assets/ || true
+        # Moltbot Integration
+        cp artifacts/moltbot-integration/*.tgz release-assets/ || true
         # Control Plane
         cp artifacts/control-plane/*.tgz release-assets/ || true
         # Rust CLI binaries

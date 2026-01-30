@@ -1,0 +1,168 @@
+---
+sidebar_position: 3
+---
+
+# Reflect
+
+Generate disposition-aware responses using an agentic reasoning loop.
+
+When you call **reflect**, Hindsight runs an **agentic loop** that:
+1. **Autonomously searches** for relevant information using multiple tools
+2. **Applies** the bank's disposition traits to shape the reasoning style
+3. **Generates** a grounded answer with citations to the sources used
+
+The agent has access to hierarchical retrieval tools (mental models → observations → raw facts) and decides what information it needs to answer your query.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import reflectPy from '!!raw-loader!@site/examples/api/reflect.py';
+import reflectMjs from '!!raw-loader!@site/examples/api/reflect.mjs';
+import reflectSh from '!!raw-loader!@site/examples/api/reflect.sh';
+
+:::info How Reflect Works
+Learn about disposition-driven reasoning in the [Reflect Architecture](/developer/reflect) guide.
+:::
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Basic Usage
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-basic" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-basic" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-basic" language="bash" />
+</TabItem>
+</Tabs>
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | required | Question or prompt |
+| `budget` | string | "low" | Budget level: `low`, `mid`, `high` (see below) |
+| `max_tokens` | int | 4096 | Maximum tokens for the final response |
+| `response_schema` | object | None | JSON Schema for [structured output](#structured-output) |
+| `tags` | list | None | Filter memories by tags during reflection |
+| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
+| `trace` | bool | false | Include detailed agent trace in response |
+
+### Budget
+
+The `budget` parameter controls the research depth — how thoroughly the agent explores before answering:
+
+| Budget | Research Depth | Use Case |
+|--------|----------------|----------|
+| `low` | Shallow | Quick answers, simple lookups. Prioritizes speed over completeness. |
+| `mid` | Moderate | Balanced exploration. Checks multiple sources when warranted. |
+| `high` | Deep | Comprehensive analysis. Explores all knowledge levels, uses multiple query variations. |
+
+Use `high` for complex questions that require synthesizing information from multiple sources or verifying facts across different retrieval levels.
+
+### Max Tokens
+
+The `max_tokens` parameter limits the length of the final generated response. This does not affect how much the agent can retrieve during the agentic loop — only the final answer length.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-with-params" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-with-params" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Disposition Influence
+
+The bank's disposition affects reflect responses:
+
+| Trait | Low (1) | High (5) |
+|-------|---------|----------|
+| **Skepticism** | Trusting, accepts claims | Questions and doubts claims |
+| **Literalism** | Flexible interpretation | Exact, literal interpretation |
+| **Empathy** | Detached, fact-focused | Considers emotional context |
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-disposition" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-disposition" language="javascript" />
+</TabItem>
+</Tabs>
+
+## Citations
+
+The response includes a `based_on` field that shows which sources were used:
+
+- `based_on.memories` — Memory facts (world, experience) that were retrieved and cited
+- `based_on.mental_models` — User-curated mental models that were used
+- `based_on.directives` — Directives that were enforced
+
+**Important:** Only IDs that were actually retrieved during the agent loop can be cited. The agent validates citations to prevent hallucinated references.
+
+This enables:
+- **Transparency** — users see exactly which sources informed the answer
+- **Verification** — check if the response is grounded in actual memories
+- **Debugging** — use `trace=True` for detailed tool call logs
+
+## Structured Output
+
+For applications that need to process responses programmatically, you can request structured output by providing a JSON Schema via `response_schema`. When provided, the response includes a `structured_output` field with the LLM response parsed according to the schema. The `text` field will be empty since only a single LLM call is made for efficiency.
+
+The easiest way to define a schema is using **Pydantic models**:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-structured-output" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={reflectMjs} section="reflect-structured-output" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={reflectSh} section="reflect-structured-output" language="bash" />
+</TabItem>
+</Tabs>
+
+| Use Case | Why Structured Output Helps |
+|----------|----------------------------|
+| **Decision pipelines** | Parse recommendations into workflow systems |
+| **Dashboards** | Extract confidence scores, risk factors for visualization |
+| **Multi-agent systems** | Pass structured data between agents |
+| **Auditing** | Log structured decisions with clear reasoning |
+
+**Tips:**
+- Use Pydantic's `model_json_schema()` for type-safe schema generation
+- Use `model_validate()` to parse the response back into your Pydantic model
+- Keep schemas focused — extract only what you need
+- Use `Optional` fields for data that may not always be available
+
+## Filter by Tags
+
+Like [recall](./recall#filter-by-tags), reflect supports tag filtering to scope which memories are considered during reasoning. This is essential for multi-user scenarios where reflection should only consider memories relevant to a specific user.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={reflectPy} section="reflect-with-tags" language="python" />
+</TabItem>
+</Tabs>
+
+The `tags_match` parameter works the same as in recall:
+
+| Mode | Behavior |
+|------|----------|
+| `any` | OR matching, includes untagged memories |
+| `all` | AND matching, includes untagged memories |
+| `any_strict` | OR matching, excludes untagged memories |
+| `all_strict` | AND matching, excludes untagged memories |
+
+See [Retain API](./retain#tagging-memories) for how to tag memories and [Recall API](./recall#filter-by-tags) for more details on tag matching modes.

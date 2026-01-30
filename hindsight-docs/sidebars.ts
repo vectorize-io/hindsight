@@ -189,6 +189,11 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'sdks/integrations/moltbot',
+          label: 'Moltbot',
+        },
+        {
+          type: 'doc',
           id: 'sdks/integrations/skills',
           label: 'Skills',
         },
@@ -244,13 +249,6 @@ const sidebars: SidebarsConfig = {
           label: 'OpenAI Agent + Hindsight Memory Integration',
         }
       ],
-    },
-  ],
-  changelogSidebar: [
-    {
-      type: 'doc',
-      id: 'changelog/index',
-      label: 'Changelog',
     },
   ],
 };

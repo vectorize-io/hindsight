@@ -114,7 +114,6 @@ These traits only affect the `reflect` operation, not `recall`.
 - [**Recall**](/developer/api/recall) — Search and retrieve memories
 - [**Reflect**](/developer/api/reflect) — Reason with disposition
 - [**Memory Banks**](/developer/api/memory-banks) — Configure disposition and background
-- [**Entities**](/developer/api/entities) — Track people, places, and concepts
 - [**Documents**](/developer/api/documents) — Manage document sources
 - [**Operations**](/developer/api/operations) — Monitor async tasks
 

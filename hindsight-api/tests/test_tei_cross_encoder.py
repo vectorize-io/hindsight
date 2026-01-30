@@ -527,6 +527,7 @@ class TestRemoteTEICrossEncoderConfig:
         """Test creating encoder from environment variables."""
         import os
 
+        from hindsight_api.config import clear_config_cache
         from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 
         with patch.dict(
@@ -538,12 +539,15 @@ class TestRemoteTEICrossEncoderConfig:
                 "HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT": "16",
             },
         ):
+            clear_config_cache()  # Clear cache to pick up patched env vars
             encoder = create_cross_encoder_from_env()
 
             assert isinstance(encoder, RemoteTEICrossEncoder)
             assert encoder.base_url == "http://test:9000"
             assert encoder.batch_size == 256
             assert encoder.max_concurrent == 16
+
+        clear_config_cache()  # Clear cache after test
 
 
 # ============================================================================

@@ -500,6 +500,8 @@ pub fn delete(
 pub fn consolidate(
     client: &ApiClient,
     bank_id: &str,
+    wait: bool,
+    poll_interval: u64,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -517,17 +519,82 @@ pub fn consolidate(
 
     match response {
         Ok(result) => {
+            let operation_id = result.operation_id.clone();
+
             if output_format == OutputFormat::Pretty {
                 ui::print_success("Consolidation triggered");
-                println!("  {} {}", ui::dim("Operation ID:"), result.operation_id);
+                println!("  {} {}", ui::dim("Operation ID:"), operation_id);
                 if result.deduplicated {
                     println!("  {} {}", ui::dim("Note:"), "Reusing existing pending consolidation task");
                 }
-                println!();
-                println!("{}", ui::dim("Use 'hindsight operation get' to check the operation status."));
             } else {
                 output::print_output(&result, output_format)?;
             }
+
+            if !wait {
+                if output_format == OutputFormat::Pretty {
+                    println!();
+                    println!("{}", ui::dim("Use --wait to poll for completion, or 'hindsight operation get' to check status."));
+                }
+                return Ok(());
+            }
+
+            // Poll for completion
+            if output_format == OutputFormat::Pretty {
+                println!();
+                println!("{}", ui::dim(&format!("Polling every {}s for completion...", poll_interval)));
+            }
+
+            let start = std::time::Instant::now();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(poll_interval));
+                let elapsed = start.elapsed().as_secs();
+
+                let ops_result = client.list_operations(bank_id, verbose);
+                match ops_result {
+                    Ok(ops) => {
+                        // Find the operation by ID
+                        let op = ops.operations.iter().find(|o| o.id == operation_id);
+
+                        match op.map(|o| o.status.as_str()) {
+                            Some("completed") => {
+                                if output_format == OutputFormat::Pretty {
+                                    ui::print_success(&format!("Consolidation completed ({}s)", elapsed));
+                                }
+                                break;
+                            }
+                            Some("failed") => {
+                                let error_msg = op
+                                    .and_then(|o| o.error_message.as_ref())
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("Unknown error");
+                                if output_format == OutputFormat::Pretty {
+                                    ui::print_error(&format!("Consolidation failed: {}", error_msg));
+                                }
+                                std::process::exit(1);
+                            }
+                            Some(status) => {
+                                if output_format == OutputFormat::Pretty {
+                                    println!("  ⏳ {} ({}s elapsed)", status, elapsed);
+                                }
+                            }
+                            None => {
+                                if output_format == OutputFormat::Pretty {
+                                    ui::print_warning(&format!("Operation {} not found in list", operation_id));
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if output_format == OutputFormat::Pretty {
+                            ui::print_error(&format!("Failed to check operation status: {}", e));
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+
             Ok(())
         }
         Err(e) => Err(e),

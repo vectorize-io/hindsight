@@ -40,7 +40,7 @@ class EmbeddedPostgres:
             # Only set port if explicitly specified
             if self.port is not None:
                 kwargs["port"] = self.port
-            self._pg0 = Pg0(**kwargs)  # type: ignore[invalid-argument-type] - dict kwargs
+            self._pg0 = Pg0(**kwargs)
         return self._pg0
 
     async def start(self, max_retries: int = 5, retry_delay: float = 4.0) -> str:

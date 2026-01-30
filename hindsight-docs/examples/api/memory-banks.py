@@ -43,6 +43,17 @@ client.create_bank(
 # [/docs:bank-mission]
 
 
+# [docs:bank-background]
+# Legacy snippet for v0.3 docs (background renamed to mission in v0.4)
+client.create_bank(
+    bank_id="legacy-bank",
+    name="Legacy Example",
+    mission="""I'm a personal assistant helping a software engineer. I should track their
+    project preferences, coding style, and technology choices."""
+)
+# [/docs:bank-background]
+
+
 # [docs:bank-with-disposition]
 client.create_bank(
     bank_id="architect-bank",

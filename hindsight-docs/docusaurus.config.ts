@@ -66,7 +66,6 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/vectorize-io/hindsight/tree/main/hindsight-docs/',
           routeBasePath: '/',
           // Only show "next" version in development or when INCLUDE_CURRENT_VERSION=true
           // In production, only show released versions from versions.json
@@ -97,7 +96,14 @@ const config: Config = {
             return config;
           })(),
         },
-        blog: false,
+        blog: {
+          showReadingTime: true,
+          blogTitle: 'Hindsight Blog',
+          blogDescription: 'Updates, insights, and deep dives into agent memory',
+          postsPerPage: 10,
+          blogSidebarTitle: 'Recent posts',
+          blogSidebarCount: 'ALL',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -151,7 +157,8 @@ const config: Config = {
       {
         hashed: true,
         docsRouteBasePath: '/',
-        indexBlog: false,
+        indexBlog: true,
+        blogRouteBasePath: '/blog',
         highlightSearchTermsOnTargetPage: false,
       },
     ],
@@ -207,8 +214,13 @@ const config: Config = {
           className: 'navbar-item-cookbook',
         },
         {
-          type: 'doc',
-          docId: 'changelog/index',
+          to: '/blog',
+          position: 'left',
+          label: 'Blog',
+          className: 'navbar-item-blog',
+        },
+        {
+          to: '/changelog',
           position: 'left',
           label: 'Changelog',
           className: 'navbar-item-changelog',

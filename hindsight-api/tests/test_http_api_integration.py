@@ -1063,3 +1063,38 @@ async def test_retain_async_no_usage(api_client):
 
     # Usage should be None for async operations
     assert result.get("usage") is None, "Async retain should not include usage"
+
+
+@pytest.mark.asyncio
+async def test_version_endpoint_returns_correct_version(api_client):
+    """Test that the /version endpoint returns the correct API version.
+
+    The version should match the __version__ defined in hindsight_api.__init__.py
+    and should not be a hardcoded string.
+    """
+    from hindsight_api import __version__
+
+    # Call the /version endpoint
+    response = await api_client.get("/version")
+    assert response.status_code == 200
+    result = response.json()
+
+    # Verify response structure
+    assert "api_version" in result, "Response should include 'api_version' field"
+    assert "features" in result, "Response should include 'features' field"
+
+    # Verify the version matches the package version
+    assert result["api_version"] == __version__, (
+        f"API version should be {__version__}, got {result['api_version']}"
+    )
+
+    # Verify features field structure
+    features = result["features"]
+    assert "observations" in features
+    assert "mcp" in features
+    assert "worker" in features
+    assert isinstance(features["observations"], bool)
+    assert isinstance(features["mcp"], bool)
+    assert isinstance(features["worker"], bool)
+
+    print(f"Version endpoint returned: api_version={result['api_version']}, features={features}")

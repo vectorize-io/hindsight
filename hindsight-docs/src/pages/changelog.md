@@ -1,5 +1,5 @@
 ---
-sidebar_position: 1
+hide_table_of_contents: true
 ---
 
 # Changelog
@@ -8,7 +8,28 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
-## [0.3.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.3.0)
+## [0.4.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.0)
+
+**Observations**, **Mental Models**, new **Agentic Reflect** and Directives, read the [announcement](/blog/learning-capabilities).
+
+**Features**
+
+- Added support for providing a custom prompt for memory extraction. ([`3172e99`](https://github.com/vectorize-io/hindsight/commit/3172e99))
+- Expanded the LiteLLM integration with async retain/reflect support, cleaner API, and support for tags/mission (including passing API keys correctly). ([`1d4879a`](https://github.com/vectorize-io/hindsight/commit/1d4879a))
+- Added a new worker service to run background tasks at scale. ([`4c79240`](https://github.com/vectorize-io/hindsight/commit/4c79240))
+- MCP retain now supports timestamps. ([`b378f68`](https://github.com/vectorize-io/hindsight/commit/b378f68))
+- Added support for installing skills via `npx add-skill`. ([`ec22317`](https://github.com/vectorize-io/hindsight/commit/ec22317))
+
+**Improvements**
+
+- CLI retain-files now accepts more file types. ([`1eeced3`](https://github.com/vectorize-io/hindsight/commit/1eeced3))
+
+**Bug Fixes**
+
+- Fixed a macOS crash in the embed daemon caused by an XPC connection issue. ([`e5fc6ee`](https://github.com/vectorize-io/hindsight/commit/e5fc6ee))
+- Fixed occasional extraction in the wrong language. ([`87d4a36`](https://github.com/vectorize-io/hindsight/commit/87d4a36))
+- Fixed PyTorch model initialization issues that could cause startup failures (meta tensor/init problems). ([`ddaa5f5`](https://github.com/vectorize-io/hindsight/commit/ddaa5f5))
+
 
 **Features**
 

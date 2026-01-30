@@ -69,7 +69,7 @@ async def tool_search_mental_models(
         next_param += 1
 
     if exclude_ids:
-        filters += f" AND id != ALL(${next_param}::uuid[])"
+        filters += f" AND id != ALL(${next_param}::text[])"
         params.append(exclude_ids)
         next_param += 1
 

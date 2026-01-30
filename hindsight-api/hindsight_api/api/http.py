@@ -1323,7 +1323,7 @@ class VersionResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "api_version": "1.0.0",
+                "api_version": "0.4.0",
                 "features": {
                     "observations": False,
                     "mcp": True,
@@ -1567,11 +1567,12 @@ def _register_routes(app: FastAPI):
         Returns version info and feature flags that can be used by clients
         to determine which capabilities are available.
         """
+        from hindsight_api import __version__
         from hindsight_api.config import get_config
 
         config = get_config()
         return VersionResponse(
-            api_version="1.0.0",
+            api_version=__version__,
             features=FeaturesInfo(
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,

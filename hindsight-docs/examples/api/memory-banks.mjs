@@ -39,6 +39,16 @@ await client.createBank('financial-advisor', {
 // [/docs:bank-mission]
 
 
+// [docs:bank-background]
+// Legacy snippet for v0.3 docs (background renamed to mission in v0.4)
+await client.createBank('legacy-bank', {
+    name: 'Legacy Example',
+    mission: `I'm a personal assistant helping a software engineer. I should track their
+    project preferences, coding style, and technology choices.`
+});
+// [/docs:bank-background]
+
+
 // =============================================================================
 // Cleanup (not shown in docs)
 // =============================================================================

@@ -1,0 +1,141 @@
+---
+sidebar_position: 2
+---
+
+# Main Methods
+
+Hindsight provides three core operations: **retain**, **recall**, and **reflect**.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import mainMethodsPy from '!!raw-loader!@site/examples/api/main-methods.py';
+import mainMethodsMjs from '!!raw-loader!@site/examples/api/main-methods.mjs';
+
+:::tip Prerequisites
+Make sure you've [installed Hindsight](../installation) and completed the [Quick Start](./quickstart).
+:::
+
+## Retain: Store Information
+
+Store conversations, documents, and facts into a memory bank.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mainMethodsPy} section="main-retain" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mainMethodsMjs} section="main-retain" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# Store a single fact
+hindsight retain my-bank "Alice joined Google in March 2024 as a Senior ML Engineer"
+
+# Store from a file
+hindsight retain my-bank --file conversation.txt --context "Daily standup"
+
+# Store multiple files
+hindsight retain my-bank --files docs/*.md
+```
+
+</TabItem>
+</Tabs>
+
+**What happens:** Content is processed by an LLM to extract rich facts, identify entities, and build connections in a knowledge graph.
+
+**See:** [Retain Details](./retain) for advanced options and parameters.
+
+---
+
+## Recall: Search Memories
+
+Search for relevant memories using multi-strategy retrieval.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mainMethodsPy} section="main-recall" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mainMethodsMjs} section="main-recall" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# Basic search
+hindsight recall my-bank "What does Alice do at Google?"
+
+# Search with options
+hindsight recall my-bank "What happened last spring?" \
+    --budget high \
+    --max-tokens 8192 \
+    --fact-type world
+
+# Verbose output (shows weights and sources)
+hindsight recall my-bank "Tell me about Alice" -v
+```
+
+</TabItem>
+</Tabs>
+
+**What happens:** Four search strategies (semantic, keyword, graph, temporal) run in parallel, results are fused and reranked.
+
+**See:** [Recall Details](./recall) for tuning quality vs latency.
+
+---
+
+## Reflect: Reason with Disposition
+
+Generate disposition-aware responses using memories and observations.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mainMethodsPy} section="main-reflect" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mainMethodsMjs} section="main-reflect" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# Basic reflect
+hindsight reflect my-bank "Should we adopt TypeScript for our backend?"
+
+# Verbose output (shows sources and observations)
+hindsight reflect my-bank "What are Alice's strengths for the team lead role?" -v
+
+# With higher reasoning budget
+hindsight reflect my-bank "Analyze our tech stack" --budget high
+```
+
+</TabItem>
+</Tabs>
+
+**What happens:** Memories and observations are recalled, bank disposition is applied, and the LLM reasons through the evidence to generate a response.
+
+**See:** [Reflect Details](./reflect) for disposition configuration.
+
+---
+
+## Comparison
+
+| Feature | Retain | Recall | Reflect |
+|---------|--------|--------|---------|
+| **Purpose** | Store information | Find information | Reason about information |
+| **Input** | Raw text/documents | Search query | Question/prompt |
+| **Output** | Memory IDs | Ranked facts + observations | Reasoned response |
+| **Uses LLM** | Yes (extraction) | No | Yes (generation) |
+| **Uses observations** | No | Yes | Yes |
+| **Disposition** | No | No | Yes |
+
+---
+
+## Next Steps
+
+- [**Retain**](./retain) — Advanced options for storing memories
+- [**Recall**](./recall) — Tuning search quality and performance
+- [**Reflect**](./reflect) — Configuring disposition
+- [**Memory Banks**](./memory-banks) — Managing memory bank disposition

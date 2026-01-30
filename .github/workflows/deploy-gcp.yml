@@ -1,27 +1,33 @@
-# Build, push Docker image to GCP Artifact Registry, and deploy to GKE
+# Build and Deploy Hindsight to GCP via Cloud Build
 # Triggers on push to main branch or manual workflow dispatch
 #
+# Pipeline:
+#   1. GHA uploads source to Cloud Build (private pool) for build
+#   2. Cloud Build pushes to Artifact Registry (internal network)
+#   3. Cloud Build deploys to GKE via Connect Gateway (Fleet)
+#
 # Required secrets:
-#   GCP_SA_KEY - Service account JSON key with Artifact Registry Writer + Container Developer roles
+#   GCP_SA_KEY - Service account JSON key with Cloud Build + GKE permissions
 #
 # Target registry: us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight
 # Target cluster:  gcp-k8s-xsolla-n8n-prod (us-west2) / namespace: hindsight
 
-name: Build, Push and Deploy to GCP
+name: Build and Deploy to GCP
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 concurrency:
   group: deploy-gcp-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment: production
 
     permissions:
       contents: read
@@ -29,49 +35,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Free disk space - standalone image is ~9GB with ML models
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      # Login to GCP Artifact Registry using service account key
-      - name: Login to Artifact Registry
-        uses: docker/login-action@v3
-        with:
-          registry: us-docker.pkg.dev
-          username: _json_key
-          password: ${{ secrets.GCP_SA_KEY }}
+      - name: Build and Push via Cloud Build
+        run: |
+          cat > /tmp/cloudbuild.yaml <<'EOF'
+          steps:
+            - name: 'gcr.io/cloud-builders/docker'
+              args:
+                - 'build'
+                - '-t'
+                - 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:latest'
+                - '-t'
+                - 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:$COMMIT_SHA'
+                - '-f'
+                - 'docker/standalone/Dockerfile'
+                - '--build-arg'
+                - 'INCLUDE_API=true'
+                - '--build-arg'
+                - 'INCLUDE_CP=true'
+                - '--build-arg'
+                - 'INCLUDE_LOCAL_MODELS=true'
+                - '--build-arg'
+                - 'PRELOAD_ML_MODELS=true'
+                - '.'
+            - name: 'gcr.io/cloud-builders/docker'
+              args: ['push', '--all-tags', 'us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight']
+          serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
+          options:
+            logging: CLOUD_LOGGING_ONLY
+          timeout: '3600s'
+          EOF
 
-      - name: Build and Push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/standalone/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:latest
-            us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:${{ github.sha }}
-          build-args: |
-            INCLUDE_API=true
-            INCLUDE_CP=true
-            INCLUDE_LOCAL_MODELS=true
-            PRELOAD_ML_MODELS=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          gcloud builds submit \
+            --project=xsolla-n8n-prod \
+            --region=us-west2 \
+            --worker-pool=projects/xsolla-n8n-prod/locations/us-west2/workerPools/hindsight-deploy \
+            --config=/tmp/cloudbuild.yaml \
+            --substitutions=COMMIT_SHA=${{ github.sha }}
 
   deploy:
-    needs: build-and-push
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
@@ -85,14 +95,28 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: gcp-k8s-xsolla-n8n-prod
-          location: us-west2
-          project_id: xsolla-n8n-prod
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy to GKE
+      - name: Deploy to GKE via Cloud Build (Connect Gateway)
         run: |
-          kubectl rollout restart deployment/hindsight-current -n hindsight
-          kubectl rollout status deployment/hindsight-current -n hindsight --timeout=300s
+          cat > /tmp/deploy.yaml <<'EOF'
+          steps:
+            - name: 'gcr.io/cloud-builders/gcloud'
+              entrypoint: 'bash'
+              args:
+                - '-c'
+                - |
+                  # Use Connect Gateway (Fleet) to access private GKE cluster
+                  gcloud container fleet memberships get-credentials gcp-k8s-xsolla-n8n-prod --project=xsolla-n8n-prod
+                  kubectl rollout restart deployment/hindsight-current -n hindsight
+                  kubectl rollout status deployment/hindsight-current -n hindsight --timeout=300s
+          serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
+          options:
+            logging: CLOUD_LOGGING_ONLY
+          EOF
+
+          gcloud builds submit --no-source \
+            --project=xsolla-n8n-prod \
+            --region=us-west2 \
+            --config=/tmp/deploy.yaml

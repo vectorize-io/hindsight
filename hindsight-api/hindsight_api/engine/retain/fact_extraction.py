@@ -432,34 +432,15 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
 # FACT EXTRACTION PROMPTS
 # =============================================================================
 
-# Concise extraction prompt (default) - selective, high-quality facts
-CONCISE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
+# Base prompt template (shared by concise and custom modes)
+# Uses {extraction_guidelines} placeholder for mode-specific instructions
+_BASE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
 
 LANGUAGE REQUIREMENT: Detect the language of the input text. All extracted facts, entity names, descriptions, and other output MUST be in the SAME language as the input. Do not translate to another language.
 
 {fact_types_instruction}
 
-══════════════════════════════════════════════════════════════════════════
-SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
-══════════════════════════════════════════════════════════════════════════
-
-ONLY extract facts that are:
-✅ Personal info: names, relationships, roles, background
-✅ Preferences: likes, dislikes, habits, interests (e.g., "Alice likes coffee")
-✅ Significant events: milestones, decisions, achievements, changes
-✅ Plans/goals: future intentions, deadlines, commitments
-✅ Expertise: skills, knowledge, certifications, experience
-✅ Important context: projects, problems, constraints
-✅ Sensory/emotional details: feelings, sensations, perceptions that provide context
-✅ Observations: descriptions of people, places, things with specific details
-
-DO NOT extract:
-❌ Generic greetings: "how are you", "hello", pleasantries without substance
-❌ Pure filler: "thanks", "sounds good", "ok", "got it", "sure"
-❌ Process chatter: "let me check", "one moment", "I'll look into it"
-❌ Repeated info: if already stated, don't extract again
-
-CONSOLIDATE related statements into ONE fact when possible.
+{extraction_guidelines}
 
 ══════════════════════════════════════════════════════════════════════════
 FACT FORMAT - BE CONCISE
@@ -507,7 +488,33 @@ ENTITIES
 ══════════════════════════════════════════════════════════════════════════
 
 Include: people names, organizations, places, key objects, abstract concepts (career, friendship, etc.)
-Always include "user" when fact is about the user.
+Always include "user" when fact is about the user.{examples}"""
+
+# Concise mode guidelines
+_CONCISE_GUIDELINES = """══════════════════════════════════════════════════════════════════════════
+SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
+══════════════════════════════════════════════════════════════════════════
+
+ONLY extract facts that are:
+✅ Personal info: names, relationships, roles, background
+✅ Preferences: likes, dislikes, habits, interests (e.g., "Alice likes coffee")
+✅ Significant events: milestones, decisions, achievements, changes
+✅ Plans/goals: future intentions, deadlines, commitments
+✅ Expertise: skills, knowledge, certifications, experience
+✅ Important context: projects, problems, constraints
+✅ Sensory/emotional details: feelings, sensations, perceptions that provide context
+✅ Observations: descriptions of people, places, things with specific details
+
+DO NOT extract:
+❌ Generic greetings: "how are you", "hello", pleasantries without substance
+❌ Pure filler: "thanks", "sounds good", "ok", "got it", "sure"
+❌ Process chatter: "let me check", "one moment", "I'll look into it"
+❌ Repeated info: if already stated, don't extract again
+
+CONSOLIDATE related statements into ONE fact when possible."""
+
+# Concise mode examples
+_CONCISE_EXAMPLES = """
 
 ══════════════════════════════════════════════════════════════════════════
 EXAMPLES
@@ -532,6 +539,20 @@ QUALITY OVER QUANTITY
 ══════════════════════════════════════════════════════════════════════════
 
 Ask: "Would this be useful to recall in 6 months?" If no, skip it."""
+
+# Assembled concise prompt (backward compatible - exact same output as before)
+CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
+    fact_types_instruction="{fact_types_instruction}",
+    extraction_guidelines=_CONCISE_GUIDELINES,
+    examples=_CONCISE_EXAMPLES,
+)
+
+# Custom prompt uses same base but without examples
+CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
+    fact_types_instruction="{fact_types_instruction}",
+    extraction_guidelines="{custom_instructions}",
+    examples="",  # No examples for custom mode
+)
 
 
 # Verbose extraction prompt - detailed, comprehensive facts (legacy mode)
@@ -680,6 +701,12 @@ async def _extract_facts_from_chunk(
     Note: event_date parameter is kept for backward compatibility but not used in prompt.
     The LLM extracts temporal information from the context string instead.
     """
+    import logging
+
+    from openai import BadRequestError
+
+    logger = logging.getLogger(__name__)
+
     memory_bank_context = f"\n- Your name: {agent_name}" if agent_name and extract_opinions else ""
 
     # Determine which fact types to extract based on the flag
@@ -698,13 +725,27 @@ async def _extract_facts_from_chunk(
     extract_causal_links = config.retain_extract_causal_links
 
     # Select base prompt based on extraction mode
-    if extraction_mode == "verbose":
+    if extraction_mode == "custom":
+        # Custom mode: inject user-provided guidelines
+        if not config.retain_custom_instructions:
+            logger.warning(
+                "extraction_mode='custom' but HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS not set. "
+                "Falling back to 'concise' mode."
+            )
+            base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
+            prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+        else:
+            base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
+            prompt = base_prompt.format(
+                fact_types_instruction=fact_types_instruction,
+                custom_instructions=config.retain_custom_instructions,
+            )
+    elif extraction_mode == "verbose":
         base_prompt = VERBOSE_FACT_EXTRACTION_PROMPT
+        prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
     else:
         base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
-
-    # Format the prompt with fact types instruction
-    prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+        prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
 
     # Build the full prompt with or without causal relationships section
     # Select appropriate response schema based on extraction mode and causal links
@@ -716,12 +757,6 @@ async def _extract_facts_from_chunk(
             response_schema = FactExtractionResponse
     else:
         response_schema = FactExtractionResponseNoCausal
-
-    import logging
-
-    from openai import BadRequestError
-
-    logger = logging.getLogger(__name__)
 
     # Retry logic for JSON validation errors
     max_retries = 2
@@ -747,12 +782,28 @@ Text:
     usage = TokenUsage()  # Track cumulative usage across retries
     for attempt in range(max_retries):
         try:
+            # Use retain-specific overrides if set, otherwise fall back to global LLM config
+            max_retries = (
+                config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
+            )
+            initial_backoff = (
+                config.retain_llm_initial_backoff
+                if config.retain_llm_initial_backoff is not None
+                else config.llm_initial_backoff
+            )
+            max_backoff = (
+                config.retain_llm_max_backoff if config.retain_llm_max_backoff is not None else config.llm_max_backoff
+            )
+
             extraction_response_json, call_usage = await llm_config.call(
                 messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 response_format=response_schema,
                 scope="memory_extract_facts",
                 temperature=0.1,
                 max_completion_tokens=config.retain_max_completion_tokens,
+                max_retries=max_retries,
+                initial_backoff=initial_backoff,
+                max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
                 return_usage=True,
             )

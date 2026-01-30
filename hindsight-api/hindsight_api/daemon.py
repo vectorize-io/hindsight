@@ -52,7 +52,10 @@ class IdleTimeoutMiddleware:
                 logger.info(f"Idle timeout reached ({self.idle_timeout}s), shutting down daemon")
                 # Give a moment for any in-flight requests
                 await asyncio.sleep(1)
-                os._exit(0)
+                # Send SIGTERM to ourselves to trigger graceful shutdown
+                import signal
+
+                os.kill(os.getpid(), signal.SIGTERM)
 
 
 class DaemonLock:

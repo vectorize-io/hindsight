@@ -275,3 +275,88 @@ class TestReflectUsesReflectLLMConfig:
 
         # Verify it's different from the retain config
         assert engine._reflect_llm_config.model != engine._retain_llm_config.model
+
+
+class TestRetryAndBackoffConfiguration:
+    """Test retry and backoff configuration options."""
+
+    def test_global_retry_backoff_config_defaults(self):
+        """Test that global retry/backoff settings have correct defaults."""
+        from hindsight_api.config import get_config
+
+        config = get_config()
+
+        # Verify global defaults
+        assert config.llm_max_retries == 10
+        assert config.llm_initial_backoff == 1.0
+        assert config.llm_max_backoff == 60.0
+
+    def test_per_operation_retry_backoff_config_from_env(self):
+        """Test that per-operation retry/backoff settings are loaded from environment."""
+        from hindsight_api.config import clear_config_cache
+
+        # Set per-operation overrides
+        os.environ["HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES"] = "3"
+        os.environ["HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF"] = "2.0"
+        os.environ["HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF"] = "120.0"
+        os.environ["HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES"] = "5"
+        os.environ["HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF"] = "1.5"
+        os.environ["HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF"] = "90.0"
+
+        try:
+            clear_config_cache()
+            from hindsight_api.config import get_config
+
+            config = get_config()
+
+            # Verify retain overrides
+            assert config.retain_llm_max_retries == 3
+            assert config.retain_llm_initial_backoff == 2.0
+            assert config.retain_llm_max_backoff == 120.0
+
+            # Verify reflect overrides
+            assert config.reflect_llm_max_retries == 5
+            assert config.reflect_llm_initial_backoff == 1.5
+            assert config.reflect_llm_max_backoff == 90.0
+
+            # Verify global defaults remain unchanged
+            assert config.llm_max_retries == 10
+            assert config.llm_initial_backoff == 1.0
+            assert config.llm_max_backoff == 60.0
+        finally:
+            # Clean up
+            os.environ.pop("HINDSIGHT_API_RETAIN_LLM_MAX_RETRIES", None)
+            os.environ.pop("HINDSIGHT_API_RETAIN_LLM_INITIAL_BACKOFF", None)
+            os.environ.pop("HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF", None)
+            os.environ.pop("HINDSIGHT_API_REFLECT_LLM_MAX_RETRIES", None)
+            os.environ.pop("HINDSIGHT_API_REFLECT_LLM_INITIAL_BACKOFF", None)
+            os.environ.pop("HINDSIGHT_API_REFLECT_LLM_MAX_BACKOFF", None)
+            clear_config_cache()
+
+    def test_per_operation_retry_backoff_fallback_to_global(self):
+        """Test that per-operation settings fall back to global when not set."""
+        from hindsight_api.config import clear_config_cache, get_config
+
+        # Set only global values
+        os.environ["HINDSIGHT_API_LLM_MAX_RETRIES"] = "7"
+        os.environ["HINDSIGHT_API_LLM_INITIAL_BACKOFF"] = "3.0"
+        os.environ["HINDSIGHT_API_LLM_MAX_BACKOFF"] = "180.0"
+
+        try:
+            clear_config_cache()
+            config = get_config()
+
+            # Per-operation should be None (will fall back to global at runtime)
+            assert config.retain_llm_max_retries is None
+            assert config.retain_llm_initial_backoff is None
+            assert config.retain_llm_max_backoff is None
+
+            # Global values should be set
+            assert config.llm_max_retries == 7
+            assert config.llm_initial_backoff == 3.0
+            assert config.llm_max_backoff == 180.0
+        finally:
+            os.environ.pop("HINDSIGHT_API_LLM_MAX_RETRIES", None)
+            os.environ.pop("HINDSIGHT_API_LLM_INITIAL_BACKOFF", None)
+            os.environ.pop("HINDSIGHT_API_LLM_MAX_BACKOFF", None)
+            clear_config_cache()

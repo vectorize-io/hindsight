@@ -170,31 +170,56 @@ def main():
     if args.log_level != config.log_level:
         config = HindsightConfig(
             database_url=config.database_url,
+            database_schema=config.database_schema,
             llm_provider=config.llm_provider,
             llm_api_key=config.llm_api_key,
             llm_model=config.llm_model,
             llm_base_url=config.llm_base_url,
             llm_max_concurrent=config.llm_max_concurrent,
+            llm_max_retries=config.llm_max_retries,
+            llm_initial_backoff=config.llm_initial_backoff,
+            llm_max_backoff=config.llm_max_backoff,
             llm_timeout=config.llm_timeout,
+            llm_vertexai_project_id=config.llm_vertexai_project_id,
+            llm_vertexai_region=config.llm_vertexai_region,
+            llm_vertexai_service_account_key=config.llm_vertexai_service_account_key,
             retain_llm_provider=config.retain_llm_provider,
             retain_llm_api_key=config.retain_llm_api_key,
             retain_llm_model=config.retain_llm_model,
             retain_llm_base_url=config.retain_llm_base_url,
+            retain_llm_max_concurrent=config.retain_llm_max_concurrent,
+            retain_llm_max_retries=config.retain_llm_max_retries,
+            retain_llm_initial_backoff=config.retain_llm_initial_backoff,
+            retain_llm_max_backoff=config.retain_llm_max_backoff,
+            retain_llm_timeout=config.retain_llm_timeout,
             reflect_llm_provider=config.reflect_llm_provider,
             reflect_llm_api_key=config.reflect_llm_api_key,
             reflect_llm_model=config.reflect_llm_model,
             reflect_llm_base_url=config.reflect_llm_base_url,
+            reflect_llm_max_concurrent=config.reflect_llm_max_concurrent,
+            reflect_llm_max_retries=config.reflect_llm_max_retries,
+            reflect_llm_initial_backoff=config.reflect_llm_initial_backoff,
+            reflect_llm_max_backoff=config.reflect_llm_max_backoff,
+            reflect_llm_timeout=config.reflect_llm_timeout,
             consolidation_llm_provider=config.consolidation_llm_provider,
             consolidation_llm_api_key=config.consolidation_llm_api_key,
             consolidation_llm_model=config.consolidation_llm_model,
             consolidation_llm_base_url=config.consolidation_llm_base_url,
+            consolidation_llm_max_concurrent=config.consolidation_llm_max_concurrent,
+            consolidation_llm_max_retries=config.consolidation_llm_max_retries,
+            consolidation_llm_initial_backoff=config.consolidation_llm_initial_backoff,
+            consolidation_llm_max_backoff=config.consolidation_llm_max_backoff,
+            consolidation_llm_timeout=config.consolidation_llm_timeout,
             embeddings_provider=config.embeddings_provider,
             embeddings_local_model=config.embeddings_local_model,
+            embeddings_local_force_cpu=config.embeddings_local_force_cpu,
             embeddings_tei_url=config.embeddings_tei_url,
             embeddings_openai_base_url=config.embeddings_openai_base_url,
             embeddings_cohere_base_url=config.embeddings_cohere_base_url,
             reranker_provider=config.reranker_provider,
             reranker_local_model=config.reranker_local_model,
+            reranker_local_force_cpu=config.reranker_local_force_cpu,
+            reranker_local_max_concurrent=config.reranker_local_max_concurrent,
             reranker_tei_url=config.reranker_tei_url,
             reranker_tei_batch_size=config.reranker_tei_batch_size,
             reranker_tei_max_concurrent=config.reranker_tei_max_concurrent,
@@ -213,9 +238,11 @@ def main():
             retain_chunk_size=config.retain_chunk_size,
             retain_extract_causal_links=config.retain_extract_causal_links,
             retain_extraction_mode=config.retain_extraction_mode,
+            retain_custom_instructions=config.retain_custom_instructions,
             retain_observations_async=config.retain_observations_async,
             enable_observations=config.enable_observations,
             consolidation_batch_size=config.consolidation_batch_size,
+            consolidation_max_tokens=config.consolidation_max_tokens,
             skip_llm_verification=config.skip_llm_verification,
             lazy_reranker=config.lazy_reranker,
             run_migrations_on_startup=config.run_migrations_on_startup,
@@ -340,6 +367,7 @@ def main():
     # Start idle checker in daemon mode
     if idle_middleware is not None:
         # Start the idle checker in a background thread with its own event loop
+        import logging
         import threading
 
         def run_idle_checker():
@@ -350,12 +378,12 @@ def main():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(idle_middleware._check_idle())
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"Idle checker error: {e}", exc_info=True)
 
         threading.Thread(target=run_idle_checker, daemon=True).start()
 
-    uvicorn.run(**uvicorn_config)  # type: ignore[invalid-argument-type] - dict kwargs
+    uvicorn.run(**uvicorn_config)
 
 
 if __name__ == "__main__":

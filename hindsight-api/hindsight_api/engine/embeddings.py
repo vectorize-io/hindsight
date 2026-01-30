@@ -18,6 +18,7 @@ import httpx
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
+    DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
@@ -26,6 +27,7 @@ from ..config import (
     ENV_EMBEDDINGS_COHERE_BASE_URL,
     ENV_EMBEDDINGS_COHERE_MODEL,
     ENV_EMBEDDINGS_LITELLM_MODEL,
+    ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
     ENV_EMBEDDINGS_OPENAI_BASE_URL,
@@ -92,15 +94,18 @@ class LocalSTEmbeddings(Embeddings):
     The embedding dimension is auto-detected from the model.
     """
 
-    def __init__(self, model_name: str | None = None):
+    def __init__(self, model_name: str | None = None, force_cpu: bool = False):
         """
         Initialize local SentenceTransformers embeddings.
 
         Args:
             model_name: Name of the SentenceTransformer model to use.
                        Default: BAAI/bge-small-en-v1.5
+            force_cpu: Force CPU mode (avoids MPS/XPC issues on macOS in daemon mode).
+                      Default: False
         """
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
+        self.force_cpu = force_cpu
         self._model = None
         self._dimension: int | None = None
 
@@ -134,13 +139,23 @@ class LocalSTEmbeddings(Embeddings):
         # which can cause issues when accelerate is installed but no GPU is available.
         import torch
 
-        # Check for GPU (CUDA) or Apple Silicon (MPS)
-        has_gpu = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-
-        if has_gpu:
-            device = None  # Let sentence-transformers auto-detect GPU/MPS
-        else:
+        # Force CPU mode if configured (used in daemon mode to avoid MPS/XPC issues on macOS)
+        if self.force_cpu:
             device = "cpu"
+            logger.info("Embeddings: forcing CPU mode")
+        else:
+            # Check for GPU (CUDA) or Apple Silicon (MPS)
+            # Wrap in try-except to gracefully handle any device detection issues
+            # (e.g., in CI environments or when PyTorch is built without GPU support)
+            device = "cpu"  # Default to CPU
+            try:
+                has_gpu = torch.cuda.is_available() or (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                )
+                if has_gpu:
+                    device = None  # Let sentence-transformers auto-detect GPU/MPS
+            except Exception as e:
+                logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
         self._model = SentenceTransformer(
             self.model_name,
@@ -163,6 +178,7 @@ class LocalSTEmbeddings(Embeddings):
         """
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+
         embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
 
@@ -529,7 +545,7 @@ class CohereEmbeddings(Embeddings):
                 model=self.model,
                 input_type=self.input_type,
             )
-            if response.embeddings:
+            if response.embeddings and isinstance(response.embeddings, list):
                 self._dimension = len(response.embeddings[0])
 
         logger.info(f"Embeddings: Cohere provider initialized (model: {self.model}, dim: {self._dimension})")
@@ -686,24 +702,28 @@ class LiteLLMEmbeddings(Embeddings):
 
 def create_embeddings_from_env() -> Embeddings:
     """
-    Create an Embeddings instance based on environment variables.
+    Create an Embeddings instance based on configuration.
 
-    See hindsight_api.config for environment variable names and defaults.
+    Reads configuration via get_config() to ensure consistency across the codebase.
 
     Returns:
         Configured Embeddings instance
     """
-    provider = os.environ.get(ENV_EMBEDDINGS_PROVIDER, DEFAULT_EMBEDDINGS_PROVIDER).lower()
+    from ..config import get_config
+
+    config = get_config()
+    provider = config.embeddings_provider.lower()
 
     if provider == "tei":
-        url = os.environ.get(ENV_EMBEDDINGS_TEI_URL)
+        url = config.embeddings_tei_url
         if not url:
             raise ValueError(f"{ENV_EMBEDDINGS_TEI_URL} is required when {ENV_EMBEDDINGS_PROVIDER} is 'tei'")
         return RemoteTEIEmbeddings(base_url=url)
     elif provider == "local":
-        model = os.environ.get(ENV_EMBEDDINGS_LOCAL_MODEL)
-        model_name = model or DEFAULT_EMBEDDINGS_LOCAL_MODEL
-        return LocalSTEmbeddings(model_name=model_name)
+        return LocalSTEmbeddings(
+            model_name=config.embeddings_local_model,
+            force_cpu=config.embeddings_local_force_cpu,
+        )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
         api_key = os.environ.get(ENV_EMBEDDINGS_OPENAI_API_KEY) or os.environ.get(ENV_LLM_API_KEY)

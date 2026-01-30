@@ -8,7 +8,18 @@ populated from the summary for backwards compatibility.
 import pytest
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api import RequestContext
+from hindsight_api.config import get_config
 from datetime import datetime, timezone
+
+
+@pytest.fixture
+def disable_observations():
+    """Disable observations for a specific test."""
+    config = get_config()
+    original_value = config.enable_observations
+    config.enable_observations = False
+    yield
+    config.enable_observations = original_value
 
 
 @pytest.mark.asyncio
@@ -370,12 +381,12 @@ async def test_get_entity_state(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_observation_fact_type_in_database(memory, request_context):
+async def test_observation_fact_type_in_database(memory, request_context, disable_observations):
     """
-    Test that observations are NOT stored as memory_units with fact_type='observation'.
+    Test that when observations are disabled, no observation records are created.
 
-    NOTE: Observations are now handled via mental models, not as memory_units
-    or entity summaries.
+    When enable_observations=False, consolidation does not run and no
+    memory_units with fact_type='observation' should exist.
     """
     bank_id = f"test_obs_db_{datetime.now(timezone.utc).timestamp()}"
 

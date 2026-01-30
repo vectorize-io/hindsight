@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api"
-version = "0.3.0"
+version = "0.4.2"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,7 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.41b0",
     "dateparser>=1.2.2",
     "google-genai>=1.0.0",
+    "google-auth>=2.0.0",
     "anthropic>=0.40.0",
     "typer>=0.9.0",
     "cohere>=5.0.0",
@@ -140,6 +141,11 @@ known-third-party = ["alembic"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv]
+# Allow uv to search all configured indexes for packages, not just the first one
+# This prevents dependency resolution failures when using pytorch index + PyPI
+index-strategy = "unsafe-best-match"
 
 [tool.ty]
 # Type checking configuration

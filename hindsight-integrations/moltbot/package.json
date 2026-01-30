@@ -1,0 +1,58 @@
+{
+  "name": "@vectorize-io/hindsight-moltbot-plugin",
+  "version": "0.1.0",
+  "description": "Hindsight memory plugin for Moltbot - biomimetic long-term memory with fact extraction",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "clawdbot": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "hooks": [
+      "hooks/retain-messages"
+    ]
+  },
+  "keywords": [
+    "moltbot",
+    "clawdbot",
+    "memory",
+    "ai",
+    "agent",
+    "hindsight",
+    "long-term-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/moltbot"
+  },
+  "files": [
+    "dist",
+    "clawdbot.plugin.json",
+    "hooks",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/ui": "^4.0.18",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
