@@ -519,9 +519,10 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_ENABLED` | Enable internal worker in API process | `true` |
 | `HINDSIGHT_API_WORKER_ID` | Unique worker identifier | hostname |
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
-| `HINDSIGHT_API_WORKER_BATCH_SIZE` | Tasks to claim per poll cycle | `10` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
+| `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker | `10` |
+| `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Maximum concurrent consolidation tasks per worker | `2` |
 
 ### Performance Optimization
 

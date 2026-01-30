@@ -156,7 +156,6 @@ class TestWorkerPoller:
             pool=pool,
             worker_id="test-worker-1",
             executor=mock_executor,
-            batch_size=10,
         )
 
         claimed = await poller.claim_batch()
@@ -177,8 +176,8 @@ class TestWorkerPoller:
             assert row["worker_id"] == "test-worker-1"
 
     @pytest.mark.asyncio
-    async def test_claim_batch_respects_batch_size(self, pool, clean_operations):
-        """Test that claim_batch respects the batch_size limit."""
+    async def test_claim_batch_respects_max_slots(self, pool, clean_operations):
+        """Test that claim_batch respects the max_slots limit."""
         from hindsight_api.worker import WorkerPoller
 
         # Create 10 pending tasks
@@ -196,12 +195,11 @@ class TestWorkerPoller:
                 payload,
             )
 
-        # Claim with batch_size=3
         poller = WorkerPoller(
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=3,
+            max_slots=3,  # Limit to 3 concurrent tasks
         )
 
         claimed = await poller.claim_batch()
@@ -238,11 +236,14 @@ class TestWorkerPoller:
             executor=mock_executor,
         )
 
-        # Execute the task
+        # Execute the task (fire-and-forget)
         task_dict = json.loads(payload)
         claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
         await poller.execute_task(claimed_task)
 
+        # Wait for background task to complete
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Task did not complete within timeout"
         assert len(executed) == 1
 
         # Verify task is marked as completed
@@ -283,10 +284,14 @@ class TestWorkerPoller:
             max_retries=3,
         )
 
-        # Execute (should fail and retry)
+        # Execute (should fail and retry) - fire-and-forget
         task_dict = json.loads(payload)
         claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
         await poller.execute_task(claimed_task)
+
+        # Wait for background task to complete
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Task did not complete within timeout"
 
         # Verify task is back to pending with incremented retry_count
         row = await pool.fetchrow(
@@ -327,10 +332,14 @@ class TestWorkerPoller:
             max_retries=3,
         )
 
-        # Execute (should fail permanently)
+        # Execute (should fail permanently) - fire-and-forget
         task_dict = json.loads(payload)
         claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
         await poller.execute_task(claimed_task)
+
+        # Wait for background task to complete
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Task did not complete within timeout"
 
         # Verify task is marked as failed
         row = await pool.fetchrow(
@@ -388,7 +397,6 @@ class TestWorkerPoller:
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=10,
         )
 
         claimed = await poller.claim_batch()
@@ -440,7 +448,6 @@ class TestWorkerPoller:
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=10,
         )
 
         claimed = await poller.claim_batch()
@@ -607,7 +614,6 @@ class TestConcurrentWorkers:
                 pool=pool,
                 worker_id=worker_id,
                 executor=lambda x: None,
-                batch_size=5,  # Each worker tries to claim 5
             )
             claimed = await poller.claim_batch()
             workers_claimed[worker_id] = [task.operation_id for task in claimed]
@@ -680,7 +686,6 @@ class TestConcurrentWorkers:
             pool=pool,
             worker_id="new-worker",
             executor=lambda x: None,
-            batch_size=10,
         )
 
         claimed = await poller.claim_batch()
@@ -879,7 +884,6 @@ class TestDynamicTenantDiscovery:
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=10,
             tenant_extension=mock_extension,
         )
 
@@ -946,7 +950,6 @@ class TestDynamicTenantDiscovery:
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=10,
             tenant_extension=dynamic_extension,
         )
 
@@ -1008,7 +1011,6 @@ class TestDynamicTenantDiscovery:
             pool=pool,
             worker_id="test-worker-1",
             executor=lambda x: None,
-            batch_size=10,
         )
 
         claimed = await poller.claim_batch()
@@ -1017,3 +1019,198 @@ class TestDynamicTenantDiscovery:
         # All tasks should have schema=None (public)
         for task in claimed:
             assert task.schema is None
+
+
+async def test_worker_fire_and_forget_nonblocking(pool, clean_operations):
+    """
+    Test that worker continues polling while tasks run (fire-and-forget pattern).
+
+    This test verifies the FIX: With the old blocking behavior, the worker would
+    wait for all tasks in a batch to complete before claiming more. This test
+    would FAIL with the old code because tasks 3-4 wouldn't be claimed until
+    tasks 1-2 complete. With fire-and-forget, tasks 3-4 are claimed immediately.
+    """
+    from hindsight_api.worker.poller import WorkerPoller
+
+    task_started = {}  # operation_id -> Event (set when task starts)
+    task_canfinish = {}  # operation_id -> Event (wait before finishing)
+
+    async def blocking_executor(task_dict: dict):
+        op_id = task_dict["operation_id"]
+        # Signal that this task has started
+        started = asyncio.Event()
+        task_started[op_id] = started
+        started.set()
+
+        # Block until we're told to finish
+        finish = asyncio.Event()
+        task_canfinish[op_id] = finish
+        await finish.wait()
+
+    poller = WorkerPoller(
+        pool=pool,
+        worker_id="test-worker",
+        executor=blocking_executor,
+        poll_interval_ms=50,  # Fast polling
+        max_slots=10,
+        consolidation_max_slots=2,
+    )
+
+    bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+
+    # Submit initial 2 tasks
+    task_ids = []
+    for i in range(2):
+        op_id = uuid.uuid4()
+        task_ids.append(str(op_id))
+        payload = json.dumps({"type": "test", "operation_type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'retain', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+    poll_task = asyncio.create_task(poller.run())
+
+    try:
+        # Wait for first 2 tasks to start executing (but not finish)
+        for i in range(100):  # Try for up to 1 second
+            if len(task_started) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(task_started) == 2, f"Expected 2 tasks started, got {len(task_started)}"
+
+        # Verify tasks are in_flight
+        async with poller._in_flight_lock:
+            assert poller._in_flight_count == 2
+
+        # NOW submit 2 more tasks WHILE the first 2 are still running
+        for i in range(2):
+            op_id = uuid.uuid4()
+            task_ids.append(str(op_id))
+            payload = json.dumps({"type": "test", "operation_type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+            await pool.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+                VALUES ($1, $2, 'retain', 'pending', $3::jsonb)
+                """,
+                op_id,
+                bank_id,
+                payload,
+            )
+
+        # KEY ASSERTION: Worker should claim tasks 3-4 WITHOUT waiting for 1-2 to finish
+        # This would FAIL with the old blocking behavior
+        for i in range(100):  # Try for up to 1 second
+            if len(task_started) >= 4:
+                break
+            await asyncio.sleep(0.01)
+
+        assert len(task_started) == 4, (
+            f"Fire-and-forget FAILED: Expected 4 tasks started, got {len(task_started)}. "
+            "This means the worker blocked waiting for the first batch to complete."
+        )
+
+        # Verify all 4 tasks are in-flight
+        async with poller._in_flight_lock:
+            assert poller._in_flight_count == 4
+
+        # Clean up: allow all tasks to finish
+        for event in task_canfinish.values():
+            event.set()
+
+    finally:
+        # Ensure cleanup
+        for event in task_canfinish.values():
+            event.set()
+        await poller.shutdown_graceful(timeout=2.0)
+        try:
+            await asyncio.wait_for(poll_task, timeout=1.0)
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_worker_slot_limits_enforced(pool, clean_operations):
+    """Test that worker respects max_slots and won't exceed the limit."""
+    from hindsight_api.worker.poller import WorkerPoller
+
+    tasks_started = set()
+    task_events = {}
+
+    async def controlled_executor(task_dict: dict):
+        op_id = task_dict["operation_id"]
+        tasks_started.add(op_id)
+        event = asyncio.Event()
+        task_events[op_id] = event
+        await event.wait()
+
+    poller = WorkerPoller(
+        pool=pool,
+        worker_id="test-worker",
+        executor=controlled_executor,
+        poll_interval_ms=50,
+        max_slots=3,  # Only allow 3 concurrent tasks
+        consolidation_max_slots=1,
+    )
+
+    # Submit 10 tasks
+    bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+    for i in range(10):
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test", "operation_type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'retain', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+    poll_task = asyncio.create_task(poller.run())
+
+    try:
+        # Wait for slots to fill
+        for i in range(100):
+            if len(tasks_started) >= 3:
+                break
+            await asyncio.sleep(0.01)
+
+        # Should have claimed exactly 3 tasks (slot limit)
+        assert len(tasks_started) == 3
+
+        # Wait to ensure no additional tasks are claimed
+        for i in range(30):
+            await asyncio.sleep(0.01)
+        assert len(tasks_started) == 3, "Worker exceeded slot limit!"
+
+        # Release tasks one by one and verify remaining are claimed
+        completed = 0
+        while completed < 10 and len(tasks_started) < 10:
+            # Release the next batch
+            events_to_release = list(task_events.values())[completed:completed+3]
+            for event in events_to_release:
+                event.set()
+            completed += len(events_to_release)
+
+            # Wait for new tasks to be claimed
+            for i in range(100):
+                if len(tasks_started) >= min(completed + 3, 10):
+                    break
+                await asyncio.sleep(0.01)
+
+        assert len(tasks_started) == 10
+
+    finally:
+        for event in task_events.values():
+            event.set()
+        await poller.shutdown_graceful(timeout=2.0)
+        try:
+            await asyncio.wait_for(poll_task, timeout=1.0)
+        except asyncio.CancelledError:
+            pass

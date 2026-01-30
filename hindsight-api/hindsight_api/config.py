@@ -143,8 +143,9 @@ ENV_WORKER_ENABLED = "HINDSIGHT_API_WORKER_ENABLED"
 ENV_WORKER_ID = "HINDSIGHT_API_WORKER_ID"
 ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
-ENV_WORKER_BATCH_SIZE = "HINDSIGHT_API_WORKER_BATCH_SIZE"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
+ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
+ENV_WORKER_CONSOLIDATION_MAX_SLOTS = "HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS"
 
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
@@ -229,8 +230,9 @@ DEFAULT_WORKER_ENABLED = True  # API runs worker by default (standalone mode)
 DEFAULT_WORKER_ID = None  # Will use hostname if not specified
 DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
-DEFAULT_WORKER_BATCH_SIZE = 10  # Tasks to claim per poll cycle
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
+DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
+DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS = 2  # Max concurrent consolidation tasks per worker
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
@@ -419,8 +421,9 @@ class HindsightConfig:
     worker_id: str | None
     worker_poll_interval_ms: int
     worker_max_retries: int
-    worker_batch_size: int
     worker_http_port: int
+    worker_max_slots: int
+    worker_consolidation_max_slots: int
 
     # Reflect agent settings
     reflect_max_iterations: int
@@ -582,8 +585,11 @@ class HindsightConfig:
             worker_id=os.getenv(ENV_WORKER_ID) or DEFAULT_WORKER_ID,
             worker_poll_interval_ms=int(os.getenv(ENV_WORKER_POLL_INTERVAL_MS, str(DEFAULT_WORKER_POLL_INTERVAL_MS))),
             worker_max_retries=int(os.getenv(ENV_WORKER_MAX_RETRIES, str(DEFAULT_WORKER_MAX_RETRIES))),
-            worker_batch_size=int(os.getenv(ENV_WORKER_BATCH_SIZE, str(DEFAULT_WORKER_BATCH_SIZE))),
             worker_http_port=int(os.getenv(ENV_WORKER_HTTP_PORT, str(DEFAULT_WORKER_HTTP_PORT))),
+            worker_max_slots=int(os.getenv(ENV_WORKER_MAX_SLOTS, str(DEFAULT_WORKER_MAX_SLOTS))),
+            worker_consolidation_max_slots=int(
+                os.getenv(ENV_WORKER_CONSOLIDATION_MAX_SLOTS, str(DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS))
+            ),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
         )

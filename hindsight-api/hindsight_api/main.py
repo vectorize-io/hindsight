@@ -253,8 +253,9 @@ def main():
             worker_id=config.worker_id,
             worker_poll_interval_ms=config.worker_poll_interval_ms,
             worker_max_retries=config.worker_max_retries,
-            worker_batch_size=config.worker_batch_size,
             worker_http_port=config.worker_http_port,
+            worker_max_slots=config.worker_max_slots,
+            worker_consolidation_max_slots=config.worker_consolidation_max_slots,
             reflect_max_iterations=config.reflect_max_iterations,
             mental_model_refresh_concurrency=config.mental_model_refresh_concurrency,
         )
