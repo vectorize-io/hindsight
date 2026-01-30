@@ -7,13 +7,13 @@ Biomimetic long-term memory for [OpenClaw](https://openclaw.ai) using [Hindsight
 ```bash
 # 1. Configure your LLM provider
 export OPENAI_API_KEY="sk-your-key"
-clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
+openclaw config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
 # 2. Install and enable the plugin
-clawdbot plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install @vectorize-io/hindsight-openclaw
 
 # 3. Start OpenClaw
-clawdbot gateway
+openclaw gateway
 ```
 
 That's it! The plugin will automatically start capturing and recalling memories.

@@ -25,7 +25,7 @@ export class HindsightEmbedManager {
   ) {
     this.port = 8889; // hindsight-embed uses fixed port 8889
     this.baseUrl = `http://127.0.0.1:8889`;
-    this.embedDir = join(homedir(), '.clawdbot', 'hindsight-embed');
+    this.embedDir = join(homedir(), '.openclaw', 'hindsight-embed');
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;

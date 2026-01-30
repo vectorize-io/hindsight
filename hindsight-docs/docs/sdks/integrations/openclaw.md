@@ -13,13 +13,13 @@ This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a 
 ```bash
 # 1. Configure your LLM provider
 export OPENAI_API_KEY="sk-your-key"
-clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
+openclaw config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
 # 2. Install and enable the plugin
-clawdbot plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install @vectorize-io/hindsight-openclaw
 
 # 3. Start OpenClaw
-clawdbot gateway
+openclaw gateway
 ```
 
 That's it! The plugin will automatically start capturing and recalling memories.
@@ -118,7 +118,7 @@ Think of hooks as "forced automation" - they always run.
 ### Prerequisites
 
 - **Node.js** 22+
-- **OpenClaw** (Clawdbot) with plugin support
+- **OpenClaw** with plugin support
 - **uv/uvx** for running `hindsight-embed`
 - **LLM API key** (OpenAI, Anthropic, etc.)
 
@@ -127,13 +127,13 @@ Think of hooks as "forced automation" - they always run.
 ```bash
 # 1. Configure your LLM provider
 export OPENAI_API_KEY="sk-your-key"
-clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
+openclaw config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 
 # 2. Install and enable the plugin
-clawdbot plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install @vectorize-io/hindsight-openclaw
 
 # 3. Start OpenClaw
-clawdbot gateway
+openclaw gateway
 ```
 
 On first start, `uvx` will automatically download `hindsight-embed` (no manual installation needed).
@@ -141,7 +141,7 @@ On first start, `uvx` will automatically download `hindsight-embed` (no manual i
 
 ## Configuration
 
-Optional settings in `~/.clawdbot/clawdbot.json`:
+Optional settings in `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -178,14 +178,14 @@ The plugin auto-detects your configured provider and API key:
 Configure with:
 ```bash
 export OPENAI_API_KEY="sk-your-key"
-clawdbot config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
+openclaw config set 'agents.defaults.models."openai/gpt-4o-mini"' '{}'
 ```
 
 ## Verification
 
 **Check if plugin is loaded:**
 ```bash
-clawdbot plugins list | grep hindsight
+openclaw plugins list | grep hindsight
 # Should show: ✓ enabled │ Hindsight Memory │ ...
 ```
 
@@ -262,10 +262,10 @@ uvx hindsight-embed@latest entity graph openclaw
 **Plugin not loading?**
 ```bash
 # Check plugin installation
-clawdbot plugins list | grep -i hindsight
+openclaw plugins list | grep -i hindsight
 
 # Reinstall if needed
-clawdbot plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install @vectorize-io/hindsight-openclaw
 ```
 
 **Daemon not starting?**
@@ -293,7 +293,7 @@ echo $OPENAI_API_KEY
 **Memories not being stored?**
 ```bash
 # Check gateway logs for auto-capture
-tail -f /tmp/clawdbot/clawdbot-*.log | grep Hindsight
+tail -f /tmp/openclaw/openclaw-*.log | grep Hindsight
 
 # Should see:
 # [Hindsight Hook] agent_end triggered

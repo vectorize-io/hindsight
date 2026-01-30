@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "clawdbot": {
+  "openclaw": {
     "extensions": [
       "./dist/index.js"
     ]
@@ -27,7 +27,7 @@
   },
   "files": [
     "dist",
-    "clawdbot.plugin.json",
+    "openclaw.plugin.json",
     "README.md"
   ],
   "scripts": {

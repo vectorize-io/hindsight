@@ -107,8 +107,8 @@ function detectLLMConfig(api: MoltbotPluginAPI): {
     `Please set one of these environment variables:\n${keyInstructions}\n\n` +
     `You can set them in your shell profile (~/.zshrc or ~/.bashrc):\n` +
     `  export ANTHROPIC_API_KEY="your-key-here"\n\n` +
-    `Or run Moltbot with the environment variable:\n` +
-    `  ANTHROPIC_API_KEY="your-key" clawdbot start\n\n` +
+    `Or run OpenClaw with the environment variable:\n` +
+    `  ANTHROPIC_API_KEY="your-key" openclaw gateway\n\n` +
     `Alternatively, configure ollama provider which doesn't require an API key.`
   );
 }
