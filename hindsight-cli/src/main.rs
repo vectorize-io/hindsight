@@ -260,6 +260,14 @@ enum BankCommands {
     Consolidate {
         /// Bank ID
         bank_id: String,
+
+        /// Wait for consolidation to complete (poll for status)
+        #[arg(long)]
+        wait: bool,
+
+        /// Poll interval in seconds (only used with --wait)
+        #[arg(long, default_value = "10")]
+        poll_interval: u64,
     },
 
     /// Clear all observations for a bank
@@ -440,6 +448,10 @@ enum DocumentCommands {
         /// Search query to filter documents
         #[arg(short = 'q', long)]
         query: Option<String>,
+
+        /// Filter by date (yesterday, today, YYYY-MM-DD, or all)
+        #[arg(short = 'd', long)]
+        date: Option<String>,
 
         /// Maximum number of results
         #[arg(short = 'l', long, default_value = "100")]
@@ -754,8 +766,8 @@ fn run() -> Result<()> {
             BankCommands::Delete { bank_id, yes } => {
                 commands::bank::delete(&client, &bank_id, yes, verbose, output_format)
             }
-            BankCommands::Consolidate { bank_id } => {
-                commands::bank::consolidate(&client, &bank_id, verbose, output_format)
+            BankCommands::Consolidate { bank_id, wait, poll_interval } => {
+                commands::bank::consolidate(&client, &bank_id, wait, poll_interval, verbose, output_format)
             }
             BankCommands::ClearObservations { bank_id, yes } => {
                 commands::bank::clear_observations(&client, &bank_id, yes, verbose, output_format)
@@ -792,8 +804,8 @@ fn run() -> Result<()> {
 
         // Document commands
         Commands::Document(doc_cmd) => match doc_cmd {
-            DocumentCommands::List { bank_id, query, limit, offset } => {
-                commands::document::list(&client, &bank_id, query, limit, offset, verbose, output_format)
+            DocumentCommands::List { bank_id, query, date, limit, offset } => {
+                commands::document::list(&client, &bank_id, query, date, limit, offset, verbose, output_format)
             }
             DocumentCommands::Get { bank_id, document_id } => {
                 commands::document::get(&client, &bank_id, &document_id, verbose, output_format)
