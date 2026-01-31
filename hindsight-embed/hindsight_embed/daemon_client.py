@@ -76,7 +76,10 @@ def _start_daemon(config: dict) -> bool:
         env["HINDSIGHT_API_LLM_MODEL"] = config["llm_model"]
 
     # Use single shared pg0 database for all banks (banks are isolated within the database)
-    env["HINDSIGHT_API_DATABASE_URL"] = "pg0://hindsight-embed"
+    # Allow override via HINDSIGHT_API_DATABASE_URL for external PostgreSQL
+    # (e.g. when running as root where embedded pg0 cannot use initdb)
+    if "HINDSIGHT_API_DATABASE_URL" not in env:
+        env["HINDSIGHT_API_DATABASE_URL"] = "pg0://hindsight-embed"
     env["HINDSIGHT_API_LOG_LEVEL"] = "info"
 
     # Get idle timeout from environment or use default
