@@ -1432,6 +1432,12 @@ def create_app(
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
 
+        # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
+        tenant_extension = memory.tenant_extension
+        if tenant_extension:
+            await tenant_extension.on_startup()
+            logging.info("Tenant extension started")
+
         # Call HTTP extension startup hook
         if http_extension:
             await http_extension.on_startup()
@@ -1449,6 +1455,11 @@ def create_app(
                 except asyncio.CancelledError:
                     pass
             logging.info("Worker poller stopped")
+
+        # Call tenant extension shutdown hook
+        if tenant_extension:
+            await tenant_extension.on_shutdown()
+            logging.info("Tenant extension stopped")
 
         # Call HTTP extension shutdown hook
         if http_extension:

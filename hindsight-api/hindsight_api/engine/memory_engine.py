@@ -466,6 +466,11 @@ class MemoryEngine(MemoryEngineInterface):
             tenant_extension = DefaultTenantExtension(config={})
         self._tenant_extension = tenant_extension
 
+    @property
+    def tenant_extension(self) -> "TenantExtension | None":
+        """The configured tenant extension, if any."""
+        return self._tenant_extension
+
     async def _validate_operation(self, validation_coro) -> None:
         """
         Run validation if an operation validator is configured.
