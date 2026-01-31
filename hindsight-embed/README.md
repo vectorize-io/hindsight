@@ -12,7 +12,7 @@ This package provides a simple CLI for storing and recalling memories using Hind
 2. **Subsequent commands**: Near-instant responses (~1-2s) since daemon is already running
 3. **Auto-shutdown**: Daemon automatically exits after 5 minutes of inactivity
 
-The daemon runs on `localhost:8889` and uses an embedded PostgreSQL database (pg0) - everything stays local on your machine.
+The daemon runs on `localhost:8888` and uses an embedded PostgreSQL database (pg0) - everything stays local on your machine.
 
 ## Installation
 
@@ -121,8 +121,31 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 | `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
 | `HINDSIGHT_EMBED_LLM_MODEL` | LLM model | `gpt-4o-mini` |
 | `HINDSIGHT_EMBED_BANK_ID` | Default memory bank ID (optional, used when not specified in CLI) | `default` |
+| `HINDSIGHT_EMBED_API_URL` | Use external API server instead of starting local daemon | None (starts local daemon) |
+| `HINDSIGHT_EMBED_API_TOKEN` | Authentication token for external API (sent as Bearer token) | None |
+| `HINDSIGHT_EMBED_API_DATABASE_URL` | Database URL for daemon | `pg0://hindsight-embed` |
+| `HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT` | Seconds before daemon auto-exits when idle | `300` |
 
-**Note:** All banks share a single pg0 database (`pg0://hindsight-embed`). Bank isolation happens within the database via the `bank_id` parameter passed to CLI commands.
+**Using an External API Server:**
+
+To connect to an existing Hindsight API server instead of starting the local daemon:
+
+```bash
+export HINDSIGHT_EMBED_API_URL=http://your-server:8000
+export HINDSIGHT_EMBED_API_TOKEN=your-api-token  # Optional, if API requires auth
+hindsight-embed memory recall default "query"
+```
+
+**Custom Database:**
+
+To use an external PostgreSQL database instead of the embedded pg0 database (useful when running as root or in containerized environments):
+
+```bash
+export HINDSIGHT_EMBED_API_DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+hindsight-embed daemon start
+```
+
+**Note:** All banks share a single database. Bank isolation happens within the database via the `bank_id` parameter passed to CLI commands.
 
 ### Files
 

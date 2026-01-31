@@ -22,6 +22,7 @@ packages = ["hindsight_embed"]
 dev = [
     "ruff>=0.8.0",
     "ty>=0.0.1",
+    "pytest>=8.0.0",
 ]
 
 [tool.ruff]
