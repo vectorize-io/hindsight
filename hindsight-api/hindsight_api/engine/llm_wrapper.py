@@ -340,8 +340,10 @@ class LLMProvider:
             }
 
             # Check if model supports reasoning parameter (o1, o3, gpt-5 families)
+            # Note: gpt-5.2 family doesn't support reasoning_effort parameter
             model_lower = self.model.lower()
-            is_reasoning_model = any(x in model_lower for x in ["gpt-5", "o1", "o3", "deepseek"])
+            is_gpt52_model = "gpt-5.2" in model_lower
+            is_reasoning_model = any(x in model_lower for x in ["gpt-5", "o1", "o3", "deepseek"]) and not is_gpt52_model
 
             # For GPT-4 and GPT-4.1 models, cap max_completion_tokens to 32000
             # For GPT-4o models, cap to 16384

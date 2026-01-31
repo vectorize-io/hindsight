@@ -19,6 +19,7 @@ MODEL_MATRIX = [
     ("openai", "gpt-5-nano"),
     ("openai", "gpt-5"),
     ("openai", "gpt-5.2"),
+    ("openai", "gpt-5.2-chat-latest"),
     # Groq models
     ("groq", "openai/gpt-oss-120b"),
     ("groq", "openai/gpt-oss-20b"),

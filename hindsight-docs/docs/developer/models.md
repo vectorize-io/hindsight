@@ -33,6 +33,7 @@ The following models have been tested and verified to work correctly with Hindsi
 | Provider | Model |
 |----------|-------|
 | **OpenAI** | `gpt-5.2` |
+| **OpenAI** | `gpt-5.2-chat-latest` |
 | **OpenAI** | `gpt-5` |
 | **OpenAI** | `gpt-5-mini` |
 | **OpenAI** | `gpt-5-nano` |
