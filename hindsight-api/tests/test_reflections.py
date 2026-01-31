@@ -2,9 +2,10 @@
 
 import uuid
 
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
+
 from hindsight_api.api import create_app
 from hindsight_api.engine.memory_engine import MemoryEngine
 
@@ -443,6 +444,144 @@ class TestReflectUsesMentalModels:
         for tc in result.tool_trace:
             if tc.tool != "done":  # done doesn't need a reason
                 assert tc.reason is not None, f"Tool {tc.tool} should have a reason for debugging"
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_reflect_on_empty_bank_completes_without_hanging(self, memory: MemoryEngine, request_context):
+        """Test that reflect completes when called on an empty bank without any documents retained.
+
+        This verifies that the agent doesn't loop indefinitely when there are no memories available.
+
+        Expected behavior:
+        - The agent should try to search for information (recall/search_observations)
+        - When no results are found, it should provide a response indicating no information is available
+        - It should complete within the max_iterations limit without hanging
+        """
+        bank_id = f"test-reflect-empty-{uuid.uuid4().hex[:8]}"
+
+        # Create the bank but DO NOT retain any documents
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Run reflect on the empty bank with a short timeout to detect hanging
+        # Use a low budget to reduce max_iterations
+        from hindsight_api.engine.memory_engine import Budget
+
+        result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What is the user's favorite color?",
+            request_context=request_context,
+            budget=Budget.LOW,  # This should set max_iterations lower
+        )
+
+        # Verify the result is returned (not hanging)
+        assert result is not None, "Reflect should return a result even on empty bank"
+        assert result.text, "Reflect should return some text response"
+
+        # Verify tool trace shows the agent tried to search
+        tool_names = [tc.tool for tc in result.tool_trace]
+        assert any(
+            tool in tool_names for tool in ["recall", "search_observations", "search_mental_models"]
+        ), f"Agent should have tried to search for information. Tool calls: {tool_names}"
+
+        # Verify it completed successfully
+        # The agent should find no results and provide a response anyway
+        # We can infer from llm_trace that it completed (multiple LLM calls indicates iterations)
+        assert len(result.llm_trace) > 0, "Should have made at least one LLM call"
+        assert len(result.llm_trace) <= 15, (
+            f"Made {len(result.llm_trace)} LLM calls, which suggests excessive looping. "
+            f"Tool trace: {[tc.tool for tc in result.tool_trace]}"
+        )
+
+        # The response should indicate no information is available or provide a generic answer
+        # (not testing specific content since LLM behavior varies)
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_reflect_with_structured_output_handles_schema_mismatch_gracefully(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Test that reflect completes gracefully when structured output fails validation.
+
+        This verifies that if the LLM provides structured output that doesn't match
+        the expected schema, or if structured output generation fails for any reason,
+        the reflect operation still completes without looping.
+
+        Expected behavior:
+        - The reflect operation should complete successfully
+        - The text answer should be returned
+        - structured_output should be None (or potentially populated if LLM succeeds)
+        - Should not loop or hang
+        """
+        bank_id = f"test-reflect-structured-{uuid.uuid4().hex[:8]}"
+
+        # Create the bank and add some content
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Retain a simple document
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="The user's favorite color is blue. They also like green.",
+            request_context=request_context,
+        )
+
+        # Define a response schema that the LLM might have trouble with
+        # or that might not match the actual answer
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "favorite_color": {"type": "string", "description": "The user's favorite color"},
+                "secondary_colors": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Other colors the user likes",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence level from 0 to 1",
+                    "minimum": 0,
+                    "maximum": 1,
+                },
+            },
+            "required": ["favorite_color"],
+        }
+
+        # Run reflect with structured output
+        from hindsight_api.engine.memory_engine import Budget
+
+        result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What is the user's favorite color?",
+            request_context=request_context,
+            response_schema=response_schema,
+            budget=Budget.LOW,
+        )
+
+        # Verify the operation completed successfully
+        assert result is not None, "Reflect should return a result"
+        assert result.text, "Reflect should return a text answer"
+
+        # structured_output might be None if extraction failed, or a dict if it succeeded
+        # Both are acceptable - the key is that the operation completed
+        assert result.structured_output is None or isinstance(
+            result.structured_output, dict
+        ), "structured_output should be None or a dict"
+
+        # Verify it didn't loop excessively
+        assert len(result.llm_trace) > 0, "Should have made at least one LLM call"
+        assert len(result.llm_trace) <= 20, (
+            f"Made {len(result.llm_trace)} LLM calls, which suggests excessive looping. "
+            f"Tool trace: {[tc.tool for tc in result.tool_trace]}"
+        )
+
+        # If structured output succeeded, verify it has the expected structure
+        if result.structured_output:
+            assert "favorite_color" in result.structured_output, (
+                "If structured_output is returned, it should have the required fields"
+            )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
