@@ -6,7 +6,7 @@ sidebar_position: 4
 
 Local, long term memory for [OpenClaw](https://openclaw.ai) agents using [Hindsight](https://vectorize.io/hindsight).
 
-This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a standalone daemon that bundles Hindsight's memory engine (API + PostgreSQL) into a single command. Everything runs locally on your machine, reuses the LLM you're already paying for, and costs nothing extra. The plugin automatically manages the daemon lifecycle and provides hooks for seamless memory capture and recall.
+This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a standalone daemon that bundles Hindsight's memory engine (API + PostgreSQL) into a single command. Everything runs locally on your machine, reuses the LLM you're already paying for, and costs nothing extra.
 
 ## Quick Start
 
@@ -40,7 +40,7 @@ openclaw plugins install @vectorize-io/hindsight-openclaw
 openclaw gateway
 ```
 
-That's it! The plugin will automatically:
+The plugin will automatically:
 - Start a local Hindsight daemon (port 8888)
 - Capture conversations after each turn
 - Inject relevant memories before agent responses
@@ -49,163 +49,15 @@ That's it! The plugin will automatically:
 
 ## How It Works
 
-### Auto-Capture (Hooks)
-Every conversation is **automatically stored** after each turn:
-- Extracts facts, entities, and relationships
-- Processes in background (non-blocking)
-- Stores in PostgreSQL via embedded `hindsight-api`
+**Auto-Capture:** Every conversation is automatically stored after each turn. Facts, entities, and relationships are extracted in the background.
 
-### Auto-Recall (Before Agent Start)
-Before each agent response, relevant memories are **automatically injected**:
-- Relevant memories retrieved (up to 1024 tokens)
-- Injected into context with `<hindsight_memories>` tags (JSON format with metadata)
-- Agent seamlessly uses past context
+**Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens). The agent uses past context without needing to call tools.
 
-## Why Auto-Recall?
-
-Traditional memory systems give agents a `search_memory` tool - the model must decide when to call it. In practice, models don't use memory tools consistently. They lack reliable self-awareness about what they should remember to check.
-
-Auto-recall solves this by injecting relevant memories automatically before every agent turn. Memories are formatted as JSON with full metadata:
-
-```json
-<hindsight_memories>
-[
- {
-    {
-      "chunk_id": "openclawd_default-session_12",
-      "context": "",
-      "document_id": "default-session",
-      "id": "5f55f684-e6f5-46e3-9f5c-043bdf005511",
-      "mentioned_at": "2026-01-30T11:07:33.211396+00:00",
-      "occurred_end": "2025-01-29T23:14:30+00:00",
-      "occurred_start": "2025-01-29T23:14:30+00:00",
-      "tags": [],
-      "text": "Nicolò Boschi attended an OpenAI devday last year and found it cool. | When: 2025-01-30 | Involving: Nicolò Boschi",
-      "type": "world"
-    }
-]
-</hindsight_memories>
-```
-
-The agent sees past context automatically without needing to remember to remember. This approach trades token cost for reliability - but for conversational agents, spending 500 tokens on auto-injected context is better than ignoring 10,000 stored facts because the model didn't call a tool.
-
-## Understanding OpenClaw Concepts
-
-### Plugins
-Extensions that add functionality to OpenClaw. This Hindsight plugin:
-- Runs a background service (manages `hindsight-embed` daemon)
-- Registers hooks (automatic event handlers)
-
-### Hooks
-Automatic event handlers that run without agent involvement:
-- **`before_agent_start`**: Auto-recall - injects memories before agent processes message
-- **`agent_end`**: Auto-capture - stores conversation after agent responds
-
-Think of hooks as "forced automation" - they always run.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  OpenClaw Gateway                         │
-│                                         │
-│  ┌───────────────────────────────────┐ │
-│  │  Hindsight Plugin                 │ │
-│  │                                   │ │
-│  │  • Service: Manages daemon       │ │
-│  │  • Hook: before_agent_start      │ │
-│  │    → Auto-recall (1024 tokens)   │ │
-│  │  • Hook: agent_end               │ │
-│  │    → Auto-capture                │ │
-│  └───────────────────────────────────┘ │
-└─────────────────────────────────────────┘
-                  ↓
-       uvx hindsight-embed
-       • Daemon on port 8888
-       • PostgreSQL (pg0://hindsight-embed)
-       • Bank: 'openclaw' (isolated within shared database)
-       • Fact extraction
-```
-
-**Database Architecture:** All banks share a single pg0 database instance (`pg0://hindsight-embed`). Bank isolation happens within the database via separate tables/schemas per bank ID. The 'openclaw' bank is automatically created when the plugin stores its first memory.
-
-**Local-First Design:**
-- **Your data stays local**: All conversations, facts, and relationships stored in PostgreSQL on your machine
-- **No additional costs**: Reuses your configured LLM provider (OpenAI, Anthropic, Gemini, Groq, Ollama) - no separate memory API charges
-- **No vendor lock-in**: Standard PostgreSQL storage, export anytime with `hindsight-embed memory export`
-- **Works offline**: With Ollama, the entire stack (agent + memory + LLM) runs offline
-- **Zero infrastructure setup**: No database deployment, connection strings, or credential management - everything handled automatically
-
-## Installation
-
-### Prerequisites
-
-- **Node.js** 22+
-- **OpenClaw** with plugin support
-- **uv/uvx** for running `hindsight-embed`
-- **LLM API key** (OpenAI, Anthropic, etc.)
-
-### Setup
-
-```bash
-# 1. Set LLM credentials for Hindsight
-export OPENAI_API_KEY="sk-your-key"
-
-# 2. Install and enable the plugin
-openclaw plugins install @vectorize-io/hindsight-openclaw
-
-# 3. Start OpenClaw
-openclaw gateway
-```
-
-On first start, `uvx` will automatically download `hindsight-embed` (no manual installation needed).
-
-## LLM Configuration for Memory
-
-The Hindsight plugin needs an LLM to extract facts from conversations. This is **separate from your main OpenClaw agent** and runs in the background.
-
-### Simple: Auto-Detect from API Key
-
-Just set one of these environment variables:
-
-| Provider | Env Var | Default Model |
-|----------|---------|---------------|
-| **OpenAI** | `OPENAI_API_KEY=sk-...` | `gpt-4o-mini` |
-| **Anthropic** | `ANTHROPIC_API_KEY=...` | `claude-3-5-haiku-20241022` |
-| **Gemini** | `GEMINI_API_KEY=...` | `gemini-2.5-flash` |
-| **Groq** | `GROQ_API_KEY=...` | `openai/gpt-oss-20b` |
-
-**Example:**
-```bash
-export GEMINI_API_KEY="your-gemini-key"
-openclaw gateway
-# Plugin auto-detects Gemini and uses gemini-2.5-flash for memory
-```
-
-### Advanced: Explicit Configuration
-
-Override the provider, model, or use custom endpoints:
-
-```bash
-# Set all three for full control
-export HINDSIGHT_API_LLM_PROVIDER=openai
-export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
-export HINDSIGHT_API_LLM_API_KEY=sk-your-key
-
-# Optional: custom base URL (OpenRouter, Azure, vLLM, etc.)
-export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1
-```
-
-**When to use explicit config:**
-- **Different model than auto-detect default** - Override `HINDSIGHT_API_LLM_MODEL`
-- **OpenRouter or OpenAI-compatible providers** - Set `HINDSIGHT_API_LLM_BASE_URL`
-- **Free models** - Use OpenRouter with free models (see examples below)
-- **Ollama (local)** - Set `HINDSIGHT_API_LLM_PROVIDER=ollama`
-
-**Important:** To use a custom base URL, you **must** set `HINDSIGHT_API_LLM_BASE_URL`. The plugin does NOT read provider-specific base URLs like `OPENAI_BASE_URL`.
-
+Traditional memory systems give agents a `search_memory` tool - but models don't use it consistently. Auto-recall solves this by injecting memories automatically before every turn.
 
 ## Configuration
+
+### Plugin Settings
 
 Optional settings in `~/.openclaw/openclaw.json`:
 
@@ -216,7 +68,8 @@ Optional settings in `~/.openclaw/openclaw.json`:
       "hindsight-openclaw": {
         "enabled": true,
         "config": {
-          "daemonIdleTimeout": 0
+          "daemonIdleTimeout": 0,
+          "embedVersion": "latest"
         }
       }
     }
@@ -225,243 +78,138 @@ Optional settings in `~/.openclaw/openclaw.json`:
 ```
 
 **Options:**
-- `daemonIdleTimeout` (number, default: `0`) - Seconds before daemon shuts down from inactivity (0 = never)
-- `bankMission` (string, default: auto-generated) - Custom context for the memory bank. Defaults to: "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
-- `embedVersion` (string, default: `"latest"`) - hindsight-embed version to use (e.g., `"latest"`, `"0.4.2"`, or leave empty for latest). Use this to pin a specific version if latest is broken.
+- `daemonIdleTimeout` - Seconds before daemon shuts down from inactivity (default: `0` = never)
+- `embedVersion` - hindsight-embed version (default: `"latest"`)
+- `bankMission` - Custom context for the memory bank (optional)
 
-### Using an External Hindsight API
+### LLM Configuration
 
-To connect to an existing Hindsight API server instead of running the local daemon, set environment variables before starting OpenClaw:
+The plugin auto-detects your LLM provider from these environment variables:
+
+| Provider | Env Var | Default Model |
+|----------|---------|---------------|
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-20241022` |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` |
+
+**Override with explicit config:**
 
 ```bash
-# Connect to external API server
-export HINDSIGHT_EMBED_API_URL=http://your-server:8000
-export HINDSIGHT_EMBED_API_TOKEN=your-api-token  # Optional, if API requires auth
+export HINDSIGHT_API_LLM_PROVIDER=openai
+export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
+export HINDSIGHT_API_LLM_API_KEY=sk-your-key
 
-# Optional: custom database for shared deployment
-export HINDSIGHT_EMBED_API_DATABASE_URL=postgresql://user:pass@db.example.com:5432/hindsight
-
-# Start OpenClaw (will use external API instead of local daemon)
-openclaw gateway
+# Optional: custom base URL (OpenRouter, Azure, vLLM, etc.)
+export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-This is useful for:
-- **Shared memory across multiple OpenClaw instances** - Multiple bots accessing the same memory database
-- **Production deployments** - Separate memory service for better resource management
-- **VPS/Docker environments** - When running as root (embedded pg0 won't work)
-
-**Note:** When using an external API, the plugin will not manage the daemon lifecycle. You must ensure the API server is running before starting OpenClaw.
-
-## Configuration Reference
-
-### Env Var Priority
-
-1. **`HINDSIGHT_API_LLM_*`** - Explicit overrides (highest priority)
-2. **`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.** - Auto-detection
-
-If both are set, explicit config wins.
-
-### Supported Providers
-
-| Provider | Auto-Detect | Default Model | Notes |
-|----------|-------------|---------------|-------|
-| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o-mini` | Fast, cheap, great for memory |
-| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-20241022` | Fast Haiku model |
-| **Gemini** | `GEMINI_API_KEY` | `gemini-2.5-flash` | Free tier available |
-| **Groq** | `GROQ_API_KEY` | `openai/gpt-oss-20b` | Very fast, free tier |
-| **Ollama** | - | `llama3.2` | Local, set `HINDSIGHT_API_LLM_PROVIDER=ollama` |
-
-## Using OpenRouter (Free Models!)
-
-[OpenRouter](https://openrouter.ai) gives you access to 200+ models with a single API key, including **many free models**.
-
-### Example: Free Model (xiaomi/mimo-v2-flash)
+**Example: Free OpenRouter model**
 
 ```bash
-# Step 1: Set explicit Hindsight config
 export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_MODEL=xiaomi/mimo-v2-flash  # FREE!
 export HINDSIGHT_API_LLM_API_KEY=sk-or-v1-your-openrouter-key
 export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1
+```
 
-# Step 2: Start OpenClaw
+### External API (Advanced)
+
+To use an existing Hindsight API server instead of the local daemon:
+
+```bash
+export HINDSIGHT_EMBED_API_URL=http://your-server:8000
+export HINDSIGHT_EMBED_API_TOKEN=your-api-token  # Optional, if API requires auth
+
 openclaw gateway
 ```
 
-### Example: Auto-Detect with Custom Endpoint
-
-```bash
-# Auto-detect from OPENAI_API_KEY, but route through OpenRouter
-export OPENAI_API_KEY=sk-or-v1-your-openrouter-key
-export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1
-# Uses gpt-4o-mini (default) via OpenRouter
-
-openclaw gateway
-```
-
-### Other Free OpenRouter Models
-
-```bash
-# Meta Llama 3.2 3B (free)
-export HINDSIGHT_API_LLM_MODEL=meta-llama/llama-3.2-3b-instruct:free
-
-# Qwen 2.5 7B (free)
-export HINDSIGHT_API_LLM_MODEL=qwen/qwen-2.5-7b-instruct:free
-
-# Mistral 7B (free)
-export HINDSIGHT_API_LLM_MODEL=mistralai/mistral-7b-instruct:free
-```
-
-See all free models at: https://openrouter.ai/models?order=newest&supported_parameters=tools&max_price=0
-
-## Other OpenAI-Compatible Providers
-
-The same configuration works for any OpenAI-compatible endpoint:
-
-| Provider | Base URL | Notes |
-|----------|----------|-------|
-| **Azure OpenAI** | `https://your-resource.openai.azure.com` | Microsoft's hosted OpenAI |
-| **vLLM** | `http://localhost:8000/v1` | Self-hosted inference |
-| **Text Generation Inference (TGI)** | `http://localhost:8080/v1` | Hugging Face inference |
-| **LM Studio** | `http://localhost:1234/v1` | Local models with OpenAI API |
-
-**Example (vLLM):**
-```bash
-export HINDSIGHT_API_LLM_PROVIDER=openai
-export HINDSIGHT_API_LLM_MODEL=meta-llama/Meta-Llama-3-8B-Instruct
-export HINDSIGHT_API_LLM_API_KEY=dummy  # vLLM doesn't need a real key
-export HINDSIGHT_API_LLM_BASE_URL=http://localhost:8000/v1
-```
-
-## Verification
-
-**Check if plugin is loaded:**
-```bash
-openclaw plugins list | grep hindsight
-# Should show: ✓ enabled │ Hindsight Memory │ ...
-```
-
-**Verify LLM config on startup:**
-Look for this in OpenClaw gateway logs:
-```
-[Hindsight] ✓ Using provider: openai, model: gpt-4o-mini (OPENAI_API_KEY env var)
-```
-
-**Test auto-recall:**
-Send a message on any OpenClaw channel (Telegram, Slack, etc.):
-```
-User: My name is John and I love pizza
-Bot: Got it! I'll remember that.
-
-User: What do I like to eat?
-Bot: You love pizza!  # ← Used auto-recall
-```
-
-**View daemon logs:**
-```bash
-tail -f ~/.hindsight/daemon.log
-```
-
-**Check memories in database:**
-```bash
-uvx hindsight-embed@latest memory recall openclaw "pizza" --output json
-```
+Useful for shared memory across multiple OpenClaw instances or production deployments.
 
 ## Inspecting Memories
 
-The plugin uses `hindsight-embed` daemon which provides CLI commands for inspection:
+### Check Configuration
 
-**View daemon logs:**
+View the daemon config that was written by the plugin:
+
 ```bash
-uvx hindsight-embed@latest daemon logs
-# Or follow logs in real-time:
+cat ~/.hindsight/embed
+```
+
+This shows the LLM provider, model, and other settings the daemon is using.
+
+### Check Daemon Status
+
+```bash
+# Check if daemon is running
+uvx hindsight-embed@latest daemon status
+
+# View daemon logs
 tail -f ~/.hindsight/daemon.log
 ```
 
-**Open web UI:**
-```bash
-uvx hindsight-embed@latest ui
-# Opens browser to http://localhost:8890
-# Browse memories, facts, entities, and relationships
-```
+### Query Memories
 
-**List memory banks:**
-```bash
-uvx hindsight-embed@latest bank list
-# Shows all banks including 'openclaw'
-```
-
-**Query memories:**
 ```bash
 # Search memories
-uvx hindsight-embed@latest memory recall openclaw "user preferences" --output json
+uvx hindsight-embed@latest memory recall openclaw "user preferences"
 
 # View recent memories
 uvx hindsight-embed@latest memory list openclaw --limit 10
 
-# Export all memories
-uvx hindsight-embed@latest memory export openclaw --output memories.json
-```
-
-**Inspect facts and entities:**
-```bash
-# List extracted facts
-uvx hindsight-embed@latest fact list openclaw
-
-# List entities
-uvx hindsight-embed@latest entity list openclaw
-
-# Show entity relationships
-uvx hindsight-embed@latest entity graph openclaw
+# Open web UI
+uvx hindsight-embed@latest ui
 ```
 
 ## Troubleshooting
 
-**Plugin not loading?**
+### Plugin not loading
+
 ```bash
-# Check plugin installation
-openclaw plugins list | grep -i hindsight
+openclaw plugins list | grep hindsight
+# Should show: ✓ enabled │ Hindsight Memory │ ...
 
 # Reinstall if needed
 openclaw plugins install @vectorize-io/hindsight-openclaw
 ```
 
-**Daemon not starting?**
+### Daemon not starting
+
 ```bash
 # Check daemon status
 uvx hindsight-embed@latest daemon status
 
-# Manually start
-uvx hindsight-embed@latest daemon start
-
-# View logs
+# View logs for errors
 tail -f ~/.hindsight/daemon.log
+
+# Check configuration
+cat ~/.hindsight/embed
 ```
 
-**No API key error?**
+### No API key error
+
+Make sure you've set one of the provider API keys:
+
 ```bash
-# Option 1: Set standard provider env var (auto-detect)
-echo 'export OPENAI_API_KEY="sk-your-key"' >> ~/.zshrc
-source ~/.zshrc
-
-# Option 2: Set explicit Hindsight config
-echo 'export HINDSIGHT_API_LLM_PROVIDER=openai' >> ~/.zshrc
-echo 'export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini' >> ~/.zshrc
-echo 'export HINDSIGHT_API_LLM_API_KEY=sk-your-key' >> ~/.zshrc
-source ~/.zshrc
-
-# Verify
-echo $OPENAI_API_KEY
+export OPENAI_API_KEY="sk-your-key"
 # or
-env | grep HINDSIGHT_API_LLM
+export ANTHROPIC_API_KEY="your-key"
+
+# Verify it's set
+echo $OPENAI_API_KEY
 ```
 
-**Memories not being stored?**
+### Verify it's working
+
+Check gateway logs for memory operations:
+
 ```bash
-# Check gateway logs for auto-capture
 tail -f /tmp/openclaw/openclaw-*.log | grep Hindsight
 
-# Should see:
-# [Hindsight Hook] agent_end triggered
+# Should see on startup:
+# [Hindsight] ✓ Using provider: openai, model: gpt-4o-mini
+
+# Should see after conversations:
 # [Hindsight] Retained X messages for session ...
+# [Hindsight] Auto-recall: Injecting X memories
 ```
