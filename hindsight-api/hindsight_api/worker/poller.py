@@ -99,11 +99,13 @@ class WorkerPoller:
         self._in_flight_by_type: dict[str, int] = {}
 
     async def _get_schemas(self) -> list[str | None]:
-        """Get list of schemas to poll. Returns [None] for public schema."""
+        """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
         if self._tenant_extension is not None:
+            from ..config import DEFAULT_DATABASE_SCHEMA
+
             tenants = await self._tenant_extension.list_tenants()
-            # Convert "public" to None for SQL compatibility, keep others as-is
-            return [t.schema if t.schema != "public" else None for t in tenants]
+            # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
+            return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
         # Single schema mode
         return [self._schema]
 
@@ -194,7 +196,9 @@ class WorkerPoller:
         try:
             return await self._claim_batch_for_schema_inner(schema, limit, consolidation_limit)
         except Exception as e:
-            logger.warning(f"Worker {self._worker_id} failed to claim tasks for schema {schema or 'public'}: {e}")
+            # Format schema for logging: custom schemas in quotes, None as-is
+            schema_display = f'"{schema}"' if schema else str(schema)
+            logger.warning(f"Worker {self._worker_id} failed to claim tasks for schema {schema_display}: {e}")
             return []
 
     async def _claim_batch_for_schema_inner(
@@ -418,7 +422,9 @@ class WorkerPoller:
                 count = int(result.split()[-1]) if result else 0
                 total_count += count
             except Exception as e:
-                logger.warning(f"Worker {self._worker_id} failed to recover tasks for schema {schema or 'public'}: {e}")
+                # Format schema for logging: custom schemas in quotes, None as-is
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(f"Worker {self._worker_id} failed to recover tasks for schema {schema_display}: {e}")
 
         if total_count > 0:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
@@ -457,7 +463,8 @@ class WorkerPoller:
                             consolidation_count += 1
 
                     types_str = ", ".join(f"{k}:{v}" for k, v in task_types.items())
-                    schemas_str = ", ".join(s or "public" for s in schemas_seen)
+                    # Display None as "default" in logs
+                    schemas_str = ", ".join(s if s else "default" for s in schemas_seen)
                     logger.info(
                         f"Worker {self._worker_id} claimed {len(tasks)} tasks "
                         f"({consolidation_count} consolidation): {types_str} (schemas: {schemas_str})"
@@ -591,7 +598,8 @@ class WorkerPoller:
                     other_workers.append(f"{wid}:{cnt}")
             others_str = ", ".join(other_workers) if other_workers else "none"
 
-            schemas_str = ", ".join(s or "public" for s in schemas)
+            # Display None as "default" in logs
+            schemas_str = ", ".join(s if s else "default" for s in schemas)
             logger.info(
                 f"[WORKER_STATS] worker={self._worker_id} "
                 f"slots={in_flight}/{self._max_slots} (consolidation={consolidation_count}/{self._consolidation_max_slots}) | "

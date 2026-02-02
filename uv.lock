@@ -1295,7 +1295,7 @@ wheels = [
 
 [[package]]
 name = "hindsight-all"
-version = "0.4.6"
+version = "0.4.7"
 source = { editable = "hindsight" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1319,7 +1319,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-api"
-version = "0.4.6"
+version = "0.4.7"
 source = { editable = "hindsight-api" }
 dependencies = [
     { name = "aiohttp" },
@@ -1449,7 +1449,7 @@ dev = [
 
 [[package]]
 name = "hindsight-client"
-version = "0.4.6"
+version = "0.4.7"
 source = { editable = "hindsight-clients/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -1483,7 +1483,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "hindsight-dev"
-version = "0.4.6"
+version = "0.4.7"
 source = { editable = "hindsight-dev" }
 dependencies = [
     { name = "hindsight-api" },
@@ -1529,7 +1529,7 @@ dev = [
 
 [[package]]
 name = "hindsight-embed"
-version = "0.4.6"
+version = "0.4.7"
 source = { editable = "hindsight-embed" }
 dependencies = [
     { name = "httpx" },
@@ -1537,6 +1537,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -1546,6 +1547,7 @@ requires-dist = [{ name = "httpx", specifier = ">=0.27.0" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pytest", specifier = ">=8.0.0" },
     { name = "ruff", specifier = ">=0.8.0" },
     { name = "ty", specifier = ">=0.0.1" },
 ]

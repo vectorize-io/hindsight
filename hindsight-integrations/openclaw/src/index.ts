@@ -28,88 +28,81 @@ const __dirname = dirname(__filename);
 // Default bank name
 const BANK_NAME = 'openclaw';
 
-// Provider mapping: moltbot provider name -> hindsight provider name
-const PROVIDER_MAP: Record<string, string> = {
-  anthropic: 'anthropic',
-  openai: 'openai',
-  'openai-codex': 'openai',
-  gemini: 'gemini',
-  groq: 'groq',
-  ollama: 'ollama',
-};
+// Provider detection from standard env vars
+const PROVIDER_DETECTION = [
+  { name: 'openai', keyEnv: 'OPENAI_API_KEY', defaultModel: 'gpt-4o-mini' },
+  { name: 'anthropic', keyEnv: 'ANTHROPIC_API_KEY', defaultModel: 'claude-3-5-haiku-20241022' },
+  { name: 'gemini', keyEnv: 'GEMINI_API_KEY', defaultModel: 'gemini-2.5-flash' },
+  { name: 'groq', keyEnv: 'GROQ_API_KEY', defaultModel: 'openai/gpt-oss-20b' },
+  { name: 'ollama', keyEnv: '', defaultModel: 'llama3.2' },
+];
 
-// Environment variable mapping
-const ENV_KEY_MAP: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  'openai-codex': 'OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  groq: 'GROQ_API_KEY',
-  ollama: '', // No key needed for local ollama
-};
-
-function detectLLMConfig(api: MoltbotPluginAPI): {
+function detectLLMConfig(): {
   provider: string;
   apiKey: string;
   model?: string;
-  envKey?: string;
+  baseUrl?: string;
+  source: string;
 } {
-  // Get models from config (agents.defaults.models is a dictionary of models)
-  const models = api.config.agents?.defaults?.models;
-  if (!models || Object.keys(models).length === 0) {
-    throw new Error(
-      'No models configured in Moltbot. Please configure at least one model in agents.defaults.models'
-    );
+  // Override values from HINDSIGHT_API_LLM_* env vars (highest priority)
+  const overrideProvider = process.env.HINDSIGHT_API_LLM_PROVIDER;
+  const overrideModel = process.env.HINDSIGHT_API_LLM_MODEL;
+  const overrideKey = process.env.HINDSIGHT_API_LLM_API_KEY;
+  const overrideBaseUrl = process.env.HINDSIGHT_API_LLM_BASE_URL;
+
+  // If provider is explicitly set, use that (with overrides)
+  if (overrideProvider) {
+    if (!overrideKey && overrideProvider !== 'ollama') {
+      throw new Error(
+        `HINDSIGHT_API_LLM_PROVIDER is set to "${overrideProvider}" but HINDSIGHT_API_LLM_API_KEY is not set.\n` +
+        `Please set: export HINDSIGHT_API_LLM_API_KEY=your-api-key`
+      );
+    }
+
+    const providerInfo = PROVIDER_DETECTION.find(p => p.name === overrideProvider);
+    return {
+      provider: overrideProvider,
+      apiKey: overrideKey || '',
+      model: overrideModel || (providerInfo?.defaultModel),
+      baseUrl: overrideBaseUrl,
+      source: 'HINDSIGHT_API_LLM_PROVIDER override',
+    };
   }
 
-  // Try all configured models to find one with an available API key
-  const configuredModels = Object.keys(models);
+  // Auto-detect from standard provider env vars
+  for (const providerInfo of PROVIDER_DETECTION) {
+    const apiKey = providerInfo.keyEnv ? process.env[providerInfo.keyEnv] : '';
 
-  for (const modelKey of configuredModels) {
-    const [moltbotProvider, ...modelParts] = modelKey.split('/');
-    const model = modelParts.join('/');
-    const hindsightProvider = PROVIDER_MAP[moltbotProvider];
-
-    if (!hindsightProvider) {
-      continue; // Skip unsupported providers
+    // Skip ollama in auto-detection (must be explicitly requested)
+    if (providerInfo.name === 'ollama') {
+      continue;
     }
 
-    const envKey = ENV_KEY_MAP[moltbotProvider];
-    const apiKey = envKey ? process.env[envKey] || '' : '';
-
-    // For ollama, no key is needed
-    if (hindsightProvider === 'ollama') {
-      return { provider: hindsightProvider, apiKey: '', model, envKey: '' };
-    }
-
-    // If we found a key, use this provider
     if (apiKey) {
-      return { provider: hindsightProvider, apiKey, model, envKey };
+      return {
+        provider: providerInfo.name,
+        apiKey,
+        model: overrideModel || providerInfo.defaultModel,
+        baseUrl: overrideBaseUrl, // Only use explicit HINDSIGHT_API_LLM_BASE_URL
+        source: `auto-detected from ${providerInfo.keyEnv}`,
+      };
     }
   }
 
-  // No API keys found for any provider - show helpful error
-  const configuredProviders = configuredModels
-    .map(m => m.split('/')[0])
-    .filter(p => PROVIDER_MAP[p]);
-
-  const keyInstructions = configuredProviders
-    .map(p => {
-      const envVar = ENV_KEY_MAP[p];
-      return envVar ? `  • ${envVar} (for ${p})` : null;
-    })
-    .filter(Boolean)
-    .join('\n');
-
+  // No configuration found - show helpful error
   throw new Error(
-    `No API keys found for Hindsight memory plugin.\n\n` +
-    `Configured providers in Moltbot: ${configuredProviders.join(', ')}\n\n` +
-    `Please set one of these environment variables:\n${keyInstructions}\n\n` +
-    `You can set them in your shell profile (~/.zshrc or ~/.bashrc):\n` +
-    `  export ANTHROPIC_API_KEY="your-key-here"\n\n` +
-    `Or run OpenClaw with the environment variable:\n` +
-    `  ANTHROPIC_API_KEY="your-key" openclaw gateway\n\n` +
-    `Alternatively, configure ollama provider which doesn't require an API key.`
+    `No LLM configuration found for Hindsight memory plugin.\n\n` +
+    `Option 1: Set a standard provider API key (auto-detect):\n` +
+    `  export OPENAI_API_KEY=sk-your-key        # Uses gpt-4o-mini\n` +
+    `  export ANTHROPIC_API_KEY=your-key       # Uses claude-3-5-haiku\n` +
+    `  export GEMINI_API_KEY=your-key          # Uses gemini-2.0-flash-exp\n` +
+    `  export GROQ_API_KEY=your-key            # Uses llama-3.3-70b-versatile\n\n` +
+    `Option 2: Override with Hindsight-specific config:\n` +
+    `  export HINDSIGHT_API_LLM_PROVIDER=openai\n` +
+    `  export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n` +
+    `  export HINDSIGHT_API_LLM_API_KEY=sk-your-key\n` +
+    `  export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1  # Optional\n\n` +
+    `Tip: Use a cheap/fast model for memory extraction (e.g., gpt-4o-mini, claude-3-5-haiku, or free models on OpenRouter)`
   );
 }
 
@@ -129,14 +122,17 @@ export default function (api: MoltbotPluginAPI) {
   try {
     console.log('[Hindsight] Plugin loading...');
 
-    // Detect LLM configuration from Moltbot
+    // Detect LLM configuration from environment
     console.log('[Hindsight] Detecting LLM config...');
-    const llmConfig = detectLLMConfig(api);
+    const llmConfig = detectLLMConfig();
+
+    const baseUrlInfo = llmConfig.baseUrl ? `, base URL: ${llmConfig.baseUrl}` : '';
+    const modelInfo = llmConfig.model || 'default';
 
     if (llmConfig.provider === 'ollama') {
-      console.log(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${llmConfig.model || 'default'} (no API key required)`);
+      console.log(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source})`);
     } else {
-      console.log(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${llmConfig.model || 'default'} (API key: ${llmConfig.envKey})`);
+      console.log(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source}${baseUrlInfo})`);
     }
 
     console.log('[Hindsight] Getting plugin config...');
@@ -161,6 +157,7 @@ export default function (api: MoltbotPluginAPI) {
           llmConfig.provider,
           llmConfig.apiKey,
           llmConfig.model,
+          llmConfig.baseUrl,
           pluginConfig.daemonIdleTimeout,
           pluginConfig.embedVersion
         );
@@ -198,9 +195,62 @@ export default function (api: MoltbotPluginAPI) {
     api.registerService({
       id: 'hindsight-memory',
       async start() {
+        console.log('[Hindsight] Service start called - checking daemon health...');
+
         // Wait for background init if still pending
-        console.log('[Hindsight] Service start called - ensuring initialization complete...');
-        if (initPromise) await initPromise;
+        if (initPromise) {
+          try {
+            await initPromise;
+          } catch (error) {
+            console.error('[Hindsight] Initial initialization failed:', error);
+            // Continue to health check below
+          }
+        }
+
+        // Check if daemon is actually healthy (handles SIGUSR1 restart case)
+        if (embedManager && isInitialized) {
+          const healthy = await embedManager.checkHealth();
+          if (healthy) {
+            console.log('[Hindsight] Daemon is healthy');
+            return;
+          }
+
+          console.log('[Hindsight] Daemon is not responding - reinitializing...');
+          // Reset state for reinitialization
+          embedManager = null;
+          client = null;
+          isInitialized = false;
+        }
+
+        // Reinitialize if needed (fresh start or recovery from dead daemon)
+        if (!isInitialized) {
+          console.log('[Hindsight] Reinitializing daemon...');
+          const llmConfig = detectLLMConfig();
+          const pluginConfig = getPluginConfig(api);
+          const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
+
+          embedManager = new HindsightEmbedManager(
+            port,
+            llmConfig.provider,
+            llmConfig.apiKey,
+            llmConfig.model,
+            llmConfig.baseUrl,
+            pluginConfig.daemonIdleTimeout,
+            pluginConfig.embedVersion
+          );
+
+          await embedManager.start();
+
+          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
+          client.setBankId(BANK_NAME);
+
+          if (pluginConfig.bankMission) {
+            await client.setBankMission(pluginConfig.bankMission);
+          }
+
+          isInitialized = true;
+          console.log('[Hindsight] Reinitialization complete');
+        }
       },
 
       async stop() {

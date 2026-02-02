@@ -12,6 +12,7 @@ export class HindsightEmbedManager {
   private llmProvider: string;
   private llmApiKey: string;
   private llmModel?: string;
+  private llmBaseUrl?: string;
   private daemonIdleTimeout: number;
   private embedVersion: string;
 
@@ -20,15 +21,17 @@ export class HindsightEmbedManager {
     llmProvider: string,
     llmApiKey: string,
     llmModel?: string,
+    llmBaseUrl?: string,
     daemonIdleTimeout: number = 0, // Default: never timeout
     embedVersion: string = 'latest' // Default: latest
   ) {
-    this.port = 8889; // hindsight-embed uses fixed port 8889
-    this.baseUrl = `http://127.0.0.1:8889`;
+    this.port = 8888; // hindsight-embed daemon uses same port as API
+    this.baseUrl = `http://127.0.0.1:8888`;
     this.embedDir = join(homedir(), '.openclaw', 'hindsight-embed');
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
+    this.llmBaseUrl = llmBaseUrl;
     this.daemonIdleTimeout = daemonIdleTimeout;
     this.embedVersion = embedVersion || 'latest';
   }
@@ -46,6 +49,17 @@ export class HindsightEmbedManager {
 
     if (this.llmModel) {
       env['HINDSIGHT_EMBED_LLM_MODEL'] = this.llmModel;
+    }
+
+    // Pass through base URL for OpenAI-compatible providers (OpenRouter, etc.)
+    if (this.llmBaseUrl) {
+      env['HINDSIGHT_API_LLM_BASE_URL'] = this.llmBaseUrl;
+    }
+
+    // On macOS, force CPU for embeddings/reranker to avoid MPS/Metal issues in daemon mode
+    if (process.platform === 'darwin') {
+      env['HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU'] = '1';
+      env['HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU'] = '1';
     }
 
     // Write env vars to ~/.hindsight/config.env for daemon persistence
@@ -149,6 +163,15 @@ export class HindsightEmbedManager {
     return this.process !== null;
   }
 
+  async checkHealth(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/health`, { signal: AbortSignal.timeout(2000) });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   private async writeConfigEnv(env: NodeJS.ProcessEnv): Promise<void> {
     const hindsightDir = join(homedir(), '.hindsight');
     const embedConfigPath = join(hindsightDir, 'embed');
@@ -167,6 +190,7 @@ export class HindsightEmbedManager {
         const trimmed = line.trim();
         if (trimmed && !trimmed.startsWith('#') &&
             !trimmed.startsWith('HINDSIGHT_EMBED_LLM_') &&
+            !trimmed.startsWith('HINDSIGHT_API_LLM_') &&
             !trimmed.startsWith('HINDSIGHT_EMBED_BANK_ID') &&
             !trimmed.startsWith('HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT')) {
           extraSettings.push(line);
@@ -193,8 +217,19 @@ export class HindsightEmbedManager {
     if (env.HINDSIGHT_EMBED_LLM_API_KEY) {
       configLines.push(`HINDSIGHT_EMBED_LLM_API_KEY=${env.HINDSIGHT_EMBED_LLM_API_KEY}`);
     }
+    if (env.HINDSIGHT_API_LLM_BASE_URL) {
+      configLines.push(`HINDSIGHT_API_LLM_BASE_URL=${env.HINDSIGHT_API_LLM_BASE_URL}`);
+    }
     if (env.HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT) {
       configLines.push(`HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=${env.HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT}`);
+    }
+
+    // Add platform-specific config (macOS FORCE_CPU flags)
+    if (env.HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU) {
+      configLines.push(`HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=${env.HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU}`);
+    }
+    if (env.HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU) {
+      configLines.push(`HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=${env.HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU}`);
     }
 
     // Add extra settings if they exist

@@ -15,7 +15,7 @@ import httpx  # Used only for health check
 
 logger = logging.getLogger(__name__)
 
-DAEMON_PORT = 8889
+DAEMON_PORT = 8888
 DAEMON_URL = f"http://127.0.0.1:{DAEMON_PORT}"
 DAEMON_STARTUP_TIMEOUT = 180  # seconds - needs to be long for first run (downloads dependencies)
 # Default idle timeout: 5 minutes - users can override with HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT env var
@@ -76,8 +76,24 @@ def _start_daemon(config: dict) -> bool:
         env["HINDSIGHT_API_LLM_MODEL"] = config["llm_model"]
 
     # Use single shared pg0 database for all banks (banks are isolated within the database)
-    env["HINDSIGHT_API_DATABASE_URL"] = "pg0://hindsight-embed"
+    # Allow override via HINDSIGHT_EMBED_API_DATABASE_URL for external PostgreSQL
+    # (e.g. when running as root where embedded pg0 cannot use initdb)
+    if "HINDSIGHT_EMBED_API_DATABASE_URL" not in env:
+        env["HINDSIGHT_API_DATABASE_URL"] = "pg0://hindsight-embed"
+    else:
+        # Pass through the embed-specific env var to the daemon as the standard API env var
+        env["HINDSIGHT_API_DATABASE_URL"] = env["HINDSIGHT_EMBED_API_DATABASE_URL"]
     env["HINDSIGHT_API_LOG_LEVEL"] = "info"
+
+    # On macOS, force CPU for embeddings/reranker to avoid MPS/Metal/XPC issues in daemon mode
+    # Only set if not already configured by user
+    import platform
+
+    if platform.system() == "Darwin":
+        if "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU" not in env:
+            env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
+        if "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU" not in env:
+            env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
 
     # Get idle timeout from environment or use default
     idle_timeout = int(os.getenv("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
@@ -282,7 +298,7 @@ def run_cli(args: list[str], config: dict) -> int:
     """
     Run the hindsight CLI with the given arguments.
 
-    Ensures daemon is running and passes the API URL.
+    Ensures daemon is running (unless HINDSIGHT_API_URL is already set) and passes the API URL.
 
     Args:
         args: CLI arguments (e.g., ["memory", "retain", "bank", "content"])
@@ -303,14 +319,29 @@ def run_cli(args: list[str], config: dict) -> int:
         print("Error: hindsight CLI not found", file=sys.stderr)
         return 1
 
-    # Ensure daemon is running
-    if not ensure_daemon_running(config):
-        print("Error: Failed to start daemon", file=sys.stderr)
-        return 1
-
-    # Build environment with API URL pointing to daemon
+    # Build environment
     env = os.environ.copy()
-    env["HINDSIGHT_API_URL"] = DAEMON_URL
+
+    # Check if user wants to use external API
+    api_url = env.get("HINDSIGHT_EMBED_API_URL")
+
+    if not api_url:
+        # No external API specified - ensure our daemon is running
+        if not ensure_daemon_running(config):
+            print("Error: Failed to start daemon", file=sys.stderr)
+            return 1
+        api_url = DAEMON_URL
+    else:
+        # Using external API - skip daemon startup
+        logger.debug(f"Using external API at {api_url}")
+
+    # Set the API URL for the CLI (using the standard HINDSIGHT_API_URL var that the CLI expects)
+    env["HINDSIGHT_API_URL"] = api_url
+
+    # Pass through API token if set (using the standard HINDSIGHT_API_KEY var that the CLI expects)
+    api_token = env.get("HINDSIGHT_EMBED_API_TOKEN")
+    if api_token:
+        env["HINDSIGHT_API_KEY"] = api_token
 
     # Run CLI
     try:

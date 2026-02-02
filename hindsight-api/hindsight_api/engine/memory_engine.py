@@ -597,7 +597,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext(internal=True)
+        # Restore tenant_id/api_key_id from task payload so extensions can
+        # attribute the mental_model_refresh operation to the correct org.
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+        )
 
         # Get the current mental model to get source_query
         mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=internal_context)
@@ -640,6 +646,42 @@ class MemoryEngine(MemoryEngineInterface):
             reflect_response=reflect_response,
             request_context=internal_context,
         )
+
+        # Call post-operation hook if validator is configured
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelRefreshResult
+
+            # Count facts and mental models from based_on
+            facts_used = 0
+            mental_models_used = 0
+            if reflect_result.based_on:
+                for fact_type, facts in reflect_result.based_on.items():
+                    if facts:
+                        if fact_type == "mental_models":
+                            mental_models_used += len(facts)
+                        else:
+                            facts_used += len(facts)
+
+            # Estimate tokens
+            query_tokens = len(source_query) // 4 if source_query else 0
+            output_tokens = len(generated_content) // 4 if generated_content else 0
+            context_tokens = 0  # refresh doesn't use additional context
+
+            result_ctx = MentalModelRefreshResult(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=internal_context,
+                query_tokens=query_tokens,
+                output_tokens=output_tokens,
+                context_tokens=context_tokens,
+                facts_used=facts_used,
+                mental_models_used=mental_models_used,
+                success=True,
+            )
+            try:
+                await self._operation_validator.on_mental_model_refresh_complete(result_ctx)
+            except Exception as hook_err:
+                logger.warning(f"Post-mental-model-refresh hook error (non-fatal): {hook_err}")
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
 
@@ -5482,13 +5524,21 @@ class MemoryEngine(MemoryEngineInterface):
         if not mental_model:
             raise ValueError(f"Mental model {mental_model_id} not found in bank {bank_id}")
 
+        # Pass tenant_id and api_key_id through task payload so the worker
+        # can provide request context to extension hooks.
+        task_payload: dict[str, Any] = {
+            "mental_model_id": mental_model_id,
+        }
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
         return await self._submit_async_operation(
             bank_id=bank_id,
             operation_type="refresh_mental_model",
             task_type="refresh_mental_model",
-            task_payload={
-                "mental_model_id": mental_model_id,
-            },
+            task_payload=task_payload,
             result_metadata={"mental_model_id": mental_model_id, "name": mental_model["name"]},
             dedupe_by_bank=False,
         )

@@ -15,7 +15,7 @@ Zero-configuration local memory system with automatic daemon management. Perfect
 1. **First command triggers startup**: When you run any `hindsight-embed` command, it checks if a local daemon is running
 2. **Auto-daemon management**: If no daemon exists, it automatically spawns `hindsight-api --daemon` in the background
 3. **Embedded database**: The daemon uses `pg0` (embedded PostgreSQL) — no separate database installation required
-4. **Command forwarding**: Your command is forwarded to the local daemon via HTTP (localhost:8889)
+4. **Command forwarding**: Your command is forwarded to the local daemon via HTTP (localhost:8888)
 5. **Auto-shutdown**: After 5 minutes of inactivity (configurable), the daemon gracefully shuts down to free resources
 
 **Key features:**
@@ -23,7 +23,7 @@ Zero-configuration local memory system with automatic daemon management. Perfect
 - **Zero setup** — One `configure` command and you're ready
 - **Automatic lifecycle** — Daemon starts on-demand, stops when idle
 - **Isolated storage** — Each bank gets its own embedded PostgreSQL database
-- **Local-only** — Binds to `127.0.0.1:8889`, not accessible from network
+- **Local-only** — Binds to `127.0.0.1:8888`, not accessible from network
 - **Production-grade engine** — Uses the same memory engine as the full API service
 
 Think of it as SQLite for long-term memory — all the power of Hindsight without managing servers.
@@ -209,7 +209,7 @@ hindsight-embed daemon logs -f
 
 Common issues:
 - **Missing API key**: Set `HINDSIGHT_EMBED_LLM_API_KEY`
-- **Port conflict**: Another service using port 8889
+- **Port conflict**: Another service using port 8888
 - **Permissions**: Check `~/.hindsight/` directory permissions
 
 ### Daemon Exits Immediately

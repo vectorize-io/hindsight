@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Synced with upstream v0.4.7
+  - Mental model extension hooks (pre/post validation for billing/quota)
+  - hindsight-embed external API support (connect to remote servers)
+  - OpenClaw fixes (port, daemon recovery, OpenRouter, macOS crashes)
+  - Our PRs merged: null bytes sanitization (#238), tiktoken preload (#249)
+  - Worker default schema fix for multi-tenant setups
 - Synced with upstream v0.4.6
   - Bug fixes: deadlock in worker polling, retain async timestamp issues
   - OpenClaw: moltbot → openclaw rename with config setup

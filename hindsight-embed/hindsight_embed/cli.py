@@ -15,6 +15,9 @@ Environment variables:
     HINDSIGHT_EMBED_LLM_PROVIDER: Optional. LLM provider (default: "openai").
     HINDSIGHT_EMBED_LLM_MODEL: Optional. LLM model (default: "gpt-4o-mini").
     HINDSIGHT_EMBED_BANK_ID: Optional. Memory bank ID (default: "default").
+    HINDSIGHT_EMBED_API_URL: Optional. Use external API server instead of starting local daemon.
+    HINDSIGHT_EMBED_API_TOKEN: Optional. Authentication token for external API (sent as Bearer token).
+    HINDSIGHT_EMBED_API_DATABASE_URL: Optional. Database URL for daemon (default: "pg0://hindsight-embed").
     HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: Optional. Seconds before daemon auto-exits when idle (default: 300).
     HINDSIGHT_EMBED_API_VERSION: Optional. hindsight-api version to use (default: matches embed version).
                                  Note: Only applies when starting daemon. To change version, stop daemon first.

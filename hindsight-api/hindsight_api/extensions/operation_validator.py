@@ -196,6 +196,57 @@ class ConsolidateResult:
     error: str | None = None
 
 
+# =============================================================================
+# Mental Model Contexts
+# =============================================================================
+
+
+@dataclass
+class MentalModelGetContext:
+    """Context for a mental model GET operation validation (pre-operation)."""
+
+    bank_id: str
+    mental_model_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
+class MentalModelRefreshContext:
+    """Context for a mental model refresh/create operation validation (pre-operation)."""
+
+    bank_id: str
+    mental_model_id: str | None  # None for create (not yet assigned)
+    request_context: "RequestContext"
+
+
+@dataclass
+class MentalModelGetResult:
+    """Result context for post-mental-model-GET hook."""
+
+    bank_id: str
+    mental_model_id: str
+    request_context: "RequestContext"
+    output_tokens: int  # tokens in the returned content
+    success: bool = True
+    error: str | None = None
+
+
+@dataclass
+class MentalModelRefreshResult:
+    """Result context for post-mental-model-refresh hook."""
+
+    bank_id: str
+    mental_model_id: str
+    request_context: "RequestContext"
+    query_tokens: int  # tokens in source_query
+    output_tokens: int  # tokens in generated content
+    context_tokens: int  # tokens in context (if any)
+    facts_used: int  # facts referenced in based_on
+    mental_models_used: int  # mental models referenced in based_on
+    success: bool = True
+    error: str | None = None
+
+
 class OperationValidatorExtension(Extension, ABC):
     """
     Validates and hooks into retain/recall/reflect/consolidate operations.
@@ -398,6 +449,84 @@ class OperationValidatorExtension(Extension, ABC):
                 - processed: Number of memories processed
                 - created: Number of mental models created
                 - updated: Number of mental models updated
+                - success: Whether the operation succeeded
+                - error: Error message (if failed)
+        """
+        pass
+
+    # =========================================================================
+    # Mental Model - Pre-operation validation hook (optional - override to implement)
+    # =========================================================================
+
+    async def validate_mental_model_get(self, ctx: MentalModelGetContext) -> ValidationResult:
+        """
+        Validate a mental model GET operation before execution.
+
+        Override to implement custom validation logic for mental model retrieval.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - mental_model_id: Mental model identifier
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def validate_mental_model_refresh(self, ctx: MentalModelRefreshContext) -> ValidationResult:
+        """
+        Validate a mental model refresh/create operation before execution.
+
+        Override to implement custom validation logic for mental model refresh.
+
+        Args:
+            ctx: Context containing:
+                - bank_id: Bank identifier
+                - mental_model_id: Mental model identifier (None for create)
+                - request_context: Request context with auth info
+
+        Returns:
+            ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    # =========================================================================
+    # Mental Model - Post-operation hooks (optional - override to implement)
+    # =========================================================================
+
+    async def on_mental_model_get_complete(self, result: MentalModelGetResult) -> None:
+        """
+        Called after a mental model GET operation completes (success or failure).
+
+        Override to implement post-operation logic such as tracking or audit logging.
+
+        Args:
+            result: Result context containing:
+                - bank_id: Bank identifier
+                - mental_model_id: Mental model identifier
+                - output_tokens: Token count of the returned content
+                - success: Whether the operation succeeded
+                - error: Error message (if failed)
+        """
+        pass
+
+    async def on_mental_model_refresh_complete(self, result: MentalModelRefreshResult) -> None:
+        """
+        Called after a mental model refresh operation completes (success or failure).
+
+        Override to implement post-operation logic such as tracking or audit logging.
+
+        Args:
+            result: Result context containing:
+                - bank_id: Bank identifier
+                - mental_model_id: Mental model identifier
+                - query_tokens: Tokens in source_query
+                - output_tokens: Tokens in generated content
+                - context_tokens: Tokens in context
+                - facts_used: Number of facts referenced
+                - mental_models_used: Number of mental models referenced
                 - success: Whether the operation succeeded
                 - error: Error message (if failed)
         """
