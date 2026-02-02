@@ -160,9 +160,17 @@ def do_configure(args):
 
 def _do_configure_from_env():
     """Non-interactive configuration from environment variables (for CI)."""
-    # Check for required environment variables
-    api_key = os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    # Check for required environment variables (support both HINDSIGHT_API_ and HINDSIGHT_EMBED_ prefixes)
+    api_key = (
+        os.environ.get("HINDSIGHT_API_LLM_API_KEY")
+        or os.environ.get("HINDSIGHT_EMBED_LLM_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+    )
+    provider = (
+        os.environ.get("HINDSIGHT_API_LLM_PROVIDER")
+        or os.environ.get("HINDSIGHT_EMBED_LLM_PROVIDER")
+        or "openai"
+    )
 
     if provider not in PROVIDER_DEFAULTS:
         print(
@@ -182,7 +190,11 @@ def _do_configure_from_env():
         print(f"  HINDSIGHT_API_LLM_MODEL=<model>  # optional, default: {default_model}", file=sys.stderr)
         return 1
 
-    model = os.environ.get("HINDSIGHT_API_LLM_MODEL", default_model)
+    model = (
+        os.environ.get("HINDSIGHT_API_LLM_MODEL")
+        or os.environ.get("HINDSIGHT_EMBED_LLM_MODEL")
+        or default_model
+    )
     bank_id = os.environ.get("HINDSIGHT_EMBED_BANK_ID", "default")
 
     print()
