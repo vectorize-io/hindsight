@@ -37,7 +37,7 @@ const PROVIDER_DETECTION = [
   { name: 'ollama', keyEnv: '', defaultModel: 'llama3.2' },
 ];
 
-function detectLLMConfig(): {
+function detectLLMConfig(pluginConfig?: PluginConfig): {
   provider: string;
   apiKey: string;
   model?: string;
@@ -50,7 +50,7 @@ function detectLLMConfig(): {
   const overrideKey = process.env.HINDSIGHT_API_LLM_API_KEY;
   const overrideBaseUrl = process.env.HINDSIGHT_API_LLM_BASE_URL;
 
-  // If provider is explicitly set, use that (with overrides)
+  // Priority 1: If provider is explicitly set via env var, use that
   if (overrideProvider) {
     if (!overrideKey && overrideProvider !== 'ollama') {
       throw new Error(
@@ -69,7 +69,37 @@ function detectLLMConfig(): {
     };
   }
 
-  // Auto-detect from standard provider env vars
+  // Priority 2: Plugin config llmProvider/llmModel
+  if (pluginConfig?.llmProvider) {
+    const providerInfo = PROVIDER_DETECTION.find(p => p.name === pluginConfig.llmProvider);
+
+    // Resolve API key: llmApiKeyEnv > provider's standard keyEnv
+    let apiKey = '';
+    if (pluginConfig.llmApiKeyEnv) {
+      apiKey = process.env[pluginConfig.llmApiKeyEnv] || '';
+    } else if (providerInfo?.keyEnv) {
+      apiKey = process.env[providerInfo.keyEnv] || '';
+    }
+
+    if (!apiKey && pluginConfig.llmProvider !== 'ollama') {
+      const keySource = pluginConfig.llmApiKeyEnv || providerInfo?.keyEnv || 'unknown';
+      throw new Error(
+        `Plugin config llmProvider is set to "${pluginConfig.llmProvider}" but no API key found.\n` +
+        `Expected env var: ${keySource}\n` +
+        `Set the env var or use llmApiKeyEnv in plugin config to specify a custom env var name.`
+      );
+    }
+
+    return {
+      provider: pluginConfig.llmProvider,
+      apiKey,
+      model: pluginConfig.llmModel || overrideModel || providerInfo?.defaultModel,
+      baseUrl: overrideBaseUrl,
+      source: 'plugin config',
+    };
+  }
+
+  // Priority 3: Auto-detect from standard provider env vars
   for (const providerInfo of PROVIDER_DETECTION) {
     const apiKey = providerInfo.keyEnv ? process.env[providerInfo.keyEnv] : '';
 
@@ -97,7 +127,9 @@ function detectLLMConfig(): {
     `  export ANTHROPIC_API_KEY=your-key       # Uses claude-3-5-haiku\n` +
     `  export GEMINI_API_KEY=your-key          # Uses gemini-2.0-flash-exp\n` +
     `  export GROQ_API_KEY=your-key            # Uses llama-3.3-70b-versatile\n\n` +
-    `Option 2: Override with Hindsight-specific config:\n` +
+    `Option 2: Set llmProvider in openclaw.json plugin config:\n` +
+    `  "llmProvider": "openai", "llmModel": "gpt-4o-mini"\n\n` +
+    `Option 3: Override with Hindsight-specific env vars:\n` +
     `  export HINDSIGHT_API_LLM_PROVIDER=openai\n` +
     `  export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n` +
     `  export HINDSIGHT_API_LLM_API_KEY=sk-your-key\n` +
@@ -115,6 +147,9 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     embedPort: config.embedPort || 0,
     daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
     embedVersion: config.embedVersion || 'latest',
+    llmProvider: config.llmProvider,
+    llmModel: config.llmModel,
+    llmApiKeyEnv: config.llmApiKeyEnv,
   };
 }
 
@@ -122,9 +157,13 @@ export default function (api: MoltbotPluginAPI) {
   try {
     console.log('[Hindsight] Plugin loading...');
 
-    // Detect LLM configuration from environment
+    // Get plugin config first (needed for LLM detection)
+    console.log('[Hindsight] Getting plugin config...');
+    const pluginConfig = getPluginConfig(api);
+
+    // Detect LLM configuration (env vars > plugin config > auto-detect)
     console.log('[Hindsight] Detecting LLM config...');
-    const llmConfig = detectLLMConfig();
+    const llmConfig = detectLLMConfig(pluginConfig);
 
     const baseUrlInfo = llmConfig.baseUrl ? `, base URL: ${llmConfig.baseUrl}` : '';
     const modelInfo = llmConfig.model || 'default';
@@ -134,9 +173,6 @@ export default function (api: MoltbotPluginAPI) {
     } else {
       console.log(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source}${baseUrlInfo})`);
     }
-
-    console.log('[Hindsight] Getting plugin config...');
-    const pluginConfig = getPluginConfig(api);
     if (pluginConfig.bankMission) {
       console.log(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
     }
@@ -225,8 +261,8 @@ export default function (api: MoltbotPluginAPI) {
         // Reinitialize if needed (fresh start or recovery from dead daemon)
         if (!isInitialized) {
           console.log('[Hindsight] Reinitializing daemon...');
-          const llmConfig = detectLLMConfig();
           const pluginConfig = getPluginConfig(api);
+          const llmConfig = detectLLMConfig(pluginConfig);
           const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
 
           embedManager = new HindsightEmbedManager(
