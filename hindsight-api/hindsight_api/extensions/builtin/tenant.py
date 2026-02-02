@@ -29,7 +29,8 @@ class DefaultTenantExtension(TenantExtension):
     def __init__(self, config: dict[str, str]):
         super().__init__(config)
         # Cache the schema at initialization for consistency
-        self._schema = get_config().database_schema
+        # Support explicit schema override via config, otherwise use environment
+        self._schema = config.get("schema", get_config().database_schema)
 
     async def authenticate(self, context: RequestContext) -> TenantContext:
         """Return configured schema without any authentication."""

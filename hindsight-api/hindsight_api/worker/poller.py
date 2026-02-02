@@ -88,7 +88,9 @@ class WorkerPoller:
         if tenant_extension is None:
             from ..extensions.builtin.tenant import DefaultTenantExtension
 
-            tenant_extension = DefaultTenantExtension(config={})
+            # Pass schema parameter to DefaultTenantExtension if explicitly provided
+            config = {"schema": schema} if schema else {}
+            tenant_extension = DefaultTenantExtension(config=config)
         self._tenant_extension = tenant_extension
         self._max_slots = max_slots
         self._consolidation_max_slots = consolidation_max_slots
