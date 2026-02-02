@@ -102,6 +102,11 @@ Main operations:
 - **Recall**: Retrieve memories via 4 parallel strategies (semantic, BM25, graph, temporal) + reranking
 - **Reflect**: Disposition-aware reasoning using memories and mental models.
 
+### Extensions (hindsight-api/hindsight_api/extensions/)
+- `operation_validator.py`: Hooks for billing/quota validation in SaaS deployments
+  - `validate_mental_model_get/refresh`: Pre-operation validation (can reject)
+  - `on_mental_model_get/refresh_complete`: Post-operation hooks with token counts
+
 ### Database
 PostgreSQL with pgvector. Schema managed via Alembic migrations in `hindsight-api/hindsight_api/alembic/`. Migrations run automatically on API startup.
 

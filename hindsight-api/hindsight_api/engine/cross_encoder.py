@@ -9,10 +9,60 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, TypeVar
 
 import httpx
+
+T = TypeVar("T")
+
+
+def _retry_model_load(
+    func: Callable[[], T],
+    model_type: str,
+    max_retries: int = 3,
+    initial_delay: float = 10.0,
+) -> T:
+    """
+    Retry a model loading function with exponential backoff.
+
+    This handles transient network issues during model downloads (e.g., VPN instability,
+    HuggingFace Hub rate limits, or connection drops during model verification).
+
+    Args:
+        func: The function to call (should return the loaded model)
+        model_type: Human-readable model type for logging (e.g., "CrossEncoder")
+        max_retries: Maximum number of retry attempts (default: 3)
+        initial_delay: Initial delay in seconds, doubles each retry (default: 10.0)
+
+    Returns:
+        The result of func() on success
+
+    Raises:
+        The last exception if all retries fail
+    """
+    delay = initial_delay
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                logger.warning(
+                    f"{model_type} initialization failed (attempt {attempt}/{max_retries}): {e}. "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"{model_type} initialization failed after {max_retries} attempts: {e}")
+
+    raise last_error
+
 
 from ..config import (
     DEFAULT_LITELLM_API_BASE,
@@ -162,10 +212,14 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             except Exception as e:
                 logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
-        self._model = CrossEncoder(
-            self.model_name,
-            device=device,
-            model_kwargs={"low_cpu_mem_usage": False},
+        # Retry model loading to handle transient network issues (VPN instability, HuggingFace Hub issues)
+        self._model = _retry_model_load(
+            lambda: CrossEncoder(
+                self.model_name,
+                device=device,
+                model_kwargs={"low_cpu_mem_usage": False},
+            ),
+            model_type="CrossEncoder",
         )
 
         # Initialize shared executor (limited workers naturally limits concurrency)
