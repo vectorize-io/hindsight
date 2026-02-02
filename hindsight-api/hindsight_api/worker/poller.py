@@ -100,14 +100,11 @@ class WorkerPoller:
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
-        if self._tenant_extension is not None:
-            from ..config import DEFAULT_DATABASE_SCHEMA
+        from ..config import DEFAULT_DATABASE_SCHEMA
 
-            tenants = await self._tenant_extension.list_tenants()
-            # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
-            return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
-        # Single schema mode
-        return [self._schema]
+        tenants = await self._tenant_extension.list_tenants()
+        # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
+        return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
 
     async def _get_available_slots(self) -> tuple[int, int]:
         """

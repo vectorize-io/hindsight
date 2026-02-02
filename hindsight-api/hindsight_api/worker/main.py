@@ -222,15 +222,30 @@ def main():
         # Create the HTTP app for metrics/health
         app = create_worker_app(poller, memory)
 
-        # Setup signal handlers for graceful shutdown
+        # Setup signal handlers for graceful shutdown using asyncio
         shutdown_requested = asyncio.Event()
+        force_exit = False
 
-        def signal_handler(signum, frame):
-            print(f"\nReceived signal {signum}, initiating graceful shutdown...")
-            shutdown_requested.set()
+        loop = asyncio.get_event_loop()
 
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        def signal_handler():
+            nonlocal force_exit
+            if shutdown_requested.is_set():
+                # Second signal = force exit
+                print("\nReceived second signal, forcing immediate exit...")
+                force_exit = True
+                # Restore default handler so third signal kills process
+                loop.remove_signal_handler(signal.SIGINT)
+                loop.remove_signal_handler(signal.SIGTERM)
+                sys.exit(1)
+            else:
+                print("\nReceived shutdown signal, initiating graceful shutdown...")
+                print("(Press Ctrl+C again to force immediate exit)")
+                shutdown_requested.set()
+
+        # Use asyncio's signal handlers which work properly with the event loop
+        loop.add_signal_handler(signal.SIGINT, signal_handler)
+        loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
         # Create uvicorn config and server
         uvicorn_config = uvicorn.Config(
@@ -249,7 +264,10 @@ def main():
         print(f"Worker started. Metrics available at http://{args.http_host}:{args.http_port}/metrics")
 
         # Wait for shutdown signal
-        await shutdown_requested.wait()
+        try:
+            await shutdown_requested.wait()
+        except KeyboardInterrupt:
+            print("\nReceived interrupt, initiating graceful shutdown...")
 
         # Graceful shutdown
         print("Shutting down HTTP server...")

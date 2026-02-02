@@ -459,7 +459,11 @@ class MemoryEngine(MemoryEngineInterface):
         # Store operation validator extension (optional)
         self._operation_validator = operation_validator
 
-        # Store tenant extension (optional)
+        # Store tenant extension (always set, use default if none provided)
+        if tenant_extension is None:
+            from ..extensions.builtin.tenant import DefaultTenantExtension
+
+            tenant_extension = DefaultTenantExtension(config={})
         self._tenant_extension = tenant_extension
 
     async def _validate_operation(self, validation_coro) -> None:
@@ -497,22 +501,18 @@ class MemoryEngine(MemoryEngineInterface):
         Raises:
             AuthenticationError: If authentication fails or request_context is missing when required.
         """
-        if self._tenant_extension is None:
-            _current_schema.set("public")
-            return "public"
-
         from hindsight_api.extensions import AuthenticationError
 
         if request_context is None:
-            raise AuthenticationError("RequestContext is required when tenant extension is configured")
+            raise AuthenticationError("RequestContext is required")
 
         # For internal/background operations (e.g., worker tasks), skip extension authentication.
         # The task was already authenticated at submission time, and execute_task sets _current_schema
-        # from the task's _schema field. For public schema tasks, _current_schema keeps its default "public".
+        # from the task's _schema field.
         if request_context.internal:
             return _current_schema.get()
 
-        # Let AuthenticationError propagate - HTTP layer will convert to 401
+        # Authenticate through tenant extension (always set, may be default no-auth extension)
         tenant_context = await self._tenant_extension.authenticate(request_context)
 
         _current_schema.set(tenant_context.schema_name)
@@ -943,22 +943,21 @@ class MemoryEngine(MemoryEngineInterface):
             # Use configured database schema for migrations (defaults to "public")
             run_migrations(self.db_url, schema=get_config().database_schema)
 
-            # Migrate all existing tenant schemas (if multi-tenant)
-            if self._tenant_extension is not None:
-                try:
-                    tenants = await self._tenant_extension.list_tenants()
-                    if tenants:
-                        logger.info(f"Running migrations on {len(tenants)} tenant schemas...")
-                        for tenant in tenants:
-                            schema = tenant.schema
-                            if schema and schema != "public":
-                                try:
-                                    run_migrations(self.db_url, schema=schema)
-                                except Exception as e:
-                                    logger.warning(f"Failed to migrate tenant schema {schema}: {e}")
-                        logger.info("Tenant schema migrations completed")
-                except Exception as e:
-                    logger.warning(f"Failed to run tenant schema migrations: {e}")
+            # Migrate all tenant schemas
+            try:
+                tenants = await self._tenant_extension.list_tenants()
+                if tenants:
+                    logger.info(f"Running migrations on {len(tenants)} tenant schemas...")
+                    for tenant in tenants:
+                        schema = tenant.schema
+                        if schema and schema != "public":
+                            try:
+                                run_migrations(self.db_url, schema=schema)
+                            except Exception as e:
+                                logger.warning(f"Failed to migrate tenant schema {schema}: {e}")
+                    logger.info("Tenant schema migrations completed")
+            except Exception as e:
+                logger.warning(f"Failed to run tenant schema migrations: {e}")
 
             # Ensure embedding column dimension matches the model's dimension
             # This is done after migrations and after embeddings.initialize()

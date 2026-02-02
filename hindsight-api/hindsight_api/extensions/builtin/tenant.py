@@ -5,6 +5,41 @@ from hindsight_api.extensions.tenant import AuthenticationError, Tenant, TenantC
 from hindsight_api.models import RequestContext
 
 
+class DefaultTenantExtension(TenantExtension):
+    """
+    Default single-tenant extension with no authentication.
+
+    This is the default extension used when no tenant extension is configured.
+    It provides single-tenant behavior using the configured schema from
+    HINDSIGHT_API_DATABASE_SCHEMA (defaults to 'public').
+
+    Features:
+    - No authentication required (passes all requests)
+    - Uses configured schema from environment
+    - Perfect for single-tenant deployments without auth
+
+    Configuration:
+        HINDSIGHT_API_DATABASE_SCHEMA=your-schema (optional, defaults to 'public')
+
+    This is automatically enabled by default. To use custom authentication,
+    configure a different tenant extension:
+        HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+    """
+
+    def __init__(self, config: dict[str, str]):
+        super().__init__(config)
+        # Cache the schema at initialization for consistency
+        self._schema = get_config().database_schema
+
+    async def authenticate(self, context: RequestContext) -> TenantContext:
+        """Return configured schema without any authentication."""
+        return TenantContext(schema_name=self._schema)
+
+    async def list_tenants(self) -> list[Tenant]:
+        """Return configured schema for single-tenant setup."""
+        return [Tenant(schema=self._schema)]
+
+
 class ApiKeyTenantExtension(TenantExtension):
     """
     Built-in tenant extension that validates API key against an environment variable.
