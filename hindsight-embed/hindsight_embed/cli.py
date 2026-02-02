@@ -769,7 +769,7 @@ def do_profile_command(args: list[str]) -> int:
         if profile_exists and not merge:
             display_name = profile_name or "default"
             print(f"Error: Profile '{display_name}' already exists.", file=sys.stderr)
-            print(f"  Use --merge to update the profile, or delete it first with:", file=sys.stderr)
+            print("  Use --merge to update the profile, or delete it first with:", file=sys.stderr)
             print(f"  hindsight-embed profile delete {display_name}", file=sys.stderr)
             return 1
 
