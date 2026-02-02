@@ -50,11 +50,11 @@ def test_explicit_model_overrides_provider_default():
     try:
         clear_config_cache()
         os.environ["HINDSIGHT_API_LLM_PROVIDER"] = "anthropic"
-        os.environ["HINDSIGHT_API_LLM_MODEL"] = "claude-opus-4-5-20251101"
+        os.environ["HINDSIGHT_API_LLM_MODEL"] = "claude-sonnet-4-5-20250929"
 
         config = HindsightConfig.from_env()
         assert config.llm_provider == "anthropic"
-        assert config.llm_model == "claude-opus-4-5-20251101", "Explicit model should override default"
+        assert config.llm_model == "claude-sonnet-4-5-20250929", "Explicit model should override default"
 
     finally:
         clear_config_cache()
@@ -93,12 +93,12 @@ def test_per_operation_provider_default_model():
         config = HindsightConfig.from_env()
 
         # Global LLM should use OpenAI default
-        assert config.llm_model == "gpt-5-mini", f"Expected gpt-5-mini, got {config.llm_model}"
+        assert config.llm_model == "o3-mini", f"Expected o3-mini, got {config.llm_model}"
 
         # Retain should use Anthropic default
         assert (
-            config.retain_llm_model == "claude-sonnet-4-20250514"
-        ), f"Expected claude-sonnet-4-20250514, got {config.retain_llm_model}"
+            config.retain_llm_model == "claude-haiku-4-5-20251001"
+        ), f"Expected claude-haiku-4-5-20251001, got {config.retain_llm_model}"
 
     finally:
         clear_config_cache()

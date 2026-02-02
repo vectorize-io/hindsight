@@ -53,37 +53,37 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 
 | Provider | Default Model |
 |----------|--------------|
-| `openai` | `gpt-5-mini` |
-| `anthropic` | `claude-sonnet-4-20250514` |
+| `openai` | `o3-mini` |
+| `anthropic` | `claude-haiku-4-5-20251001` |
 | `gemini` | `gemini-2.5-flash` |
 | `groq` | `openai/gpt-oss-120b` |
 | `ollama` | `gemma3:12b` |
 | `lmstudio` | `local-model` |
 | `vertexai` | `gemini-2.0-flash-001` |
-| `openai-codex` | `o3-mini` |
-| `claude-code` | `claude-sonnet-4-20250514` |
+| `openai-codex` | `gpt-5.2-codex` |
+| `claude-code` | `claude-sonnet-4-5-20250929` |
 
 **Example:** Setting just the provider uses its default model:
 ```bash
-# Uses claude-sonnet-4-20250514 automatically
+# Uses claude-haiku-4-5-20251001 automatically
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 ```
 
 You can override the default by explicitly setting `HINDSIGHT_API_LLM_MODEL`:
 ```bash
-# Override to use Opus instead
+# Override to use Sonnet instead
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
-export HINDSIGHT_API_LLM_MODEL=claude-opus-4-5-20251101
+export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
 ```
 
 This also applies to per-operation overrides:
 ```bash
-# Global: OpenAI gpt-5-mini (default)
+# Global: OpenAI o3-mini (default)
 export HINDSIGHT_API_LLM_PROVIDER=openai
 
-# Retain: Anthropic claude-sonnet-4-20250514 (default)
+# Retain: Anthropic claude-haiku-4-5-20251001 (default)
 export HINDSIGHT_API_RETAIN_LLM_PROVIDER=anthropic
 ```
 
