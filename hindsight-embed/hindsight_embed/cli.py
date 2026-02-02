@@ -398,6 +398,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
 
     # Force CPU mode for embeddings/reranker on macOS to avoid MPS/XPC crashes in daemon mode
     import platform
+
     if platform.system() == "Darwin":  # macOS
         config_dict["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
         config_dict["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
@@ -405,6 +406,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
     if profile_name:
         # Create named profile
         from .profile_manager import ProfileManager
+
         pm = ProfileManager()
         try:
             pm.create_profile(profile_name, port, config_dict)
@@ -623,7 +625,7 @@ def _do_configure_profile_with_env(profile_name: str, port: int, env_vars: list[
     print(f"  \033[2mPort:\033[0m {port}")
     print()
     print("  \033[2mUse with:\033[0m")
-    print(f'    \033[36mhindsight-embed daemon start --profile {profile_name}\033[0m')
+    print(f"    \033[36mhindsight-embed daemon start --profile {profile_name}\033[0m")
     print(f'    \033[36mhindsight-embed --profile {profile_name} memory recall default "query"\033[0m')
     print()
 
@@ -664,7 +666,9 @@ def do_profile_command(args: list[str]) -> int:
 
     # List command
     list_parser = subparsers.add_parser("list", help="List all profiles")
-    list_parser.add_argument("-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)")
+    list_parser.add_argument(
+        "-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)"
+    )
 
     # Create command
     create_parser = subparsers.add_parser("create", help="Create a new profile")
@@ -695,7 +699,9 @@ def do_profile_command(args: list[str]) -> int:
 
     # Show command
     show_parser = subparsers.add_parser("show", help="Show current active profile")
-    show_parser.add_argument("-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)")
+    show_parser.add_argument(
+        "-o", "--output", choices=["text", "json"], default="text", help="Output format (text or json)"
+    )
 
     try:
         parsed_args = parser.parse_args(args)
@@ -711,18 +717,21 @@ def do_profile_command(args: list[str]) -> int:
         if parsed_args.output == "json":
             # JSON output
             import json
+
             profiles_data = []
             for profile in profiles:
                 config_path = str(CONFIG_DIR / "profiles" / f"{profile.name}.env") if profile.name else str(CONFIG_FILE)
-                profiles_data.append({
-                    "name": profile.name or "default",
-                    "port": profile.port,
-                    "config": config_path,
-                    "created_at": profile.created_at,
-                    "last_used": profile.last_used,
-                    "is_active": profile.is_active,
-                    "daemon_running": profile.daemon_running,
-                })
+                profiles_data.append(
+                    {
+                        "name": profile.name or "default",
+                        "port": profile.port,
+                        "config": config_path,
+                        "created_at": profile.created_at,
+                        "last_used": profile.last_used,
+                        "is_active": profile.is_active,
+                        "daemon_running": profile.daemon_running,
+                    }
+                )
             print(json.dumps(profiles_data, indent=2))
             return 0
 
@@ -1003,6 +1012,7 @@ def do_profile_command(args: list[str]) -> int:
         if parsed_args.output == "json":
             # JSON output
             import json
+
             data = {
                 "name": display_name,
                 "source": source,
