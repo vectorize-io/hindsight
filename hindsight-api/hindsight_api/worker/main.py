@@ -200,15 +200,20 @@ def main():
         if tenant_extension:
             print("Tenant extension loaded - schemas will be discovered dynamically on each poll")
         else:
-            print("No tenant extension configured, using public schema only")
+            print(f"No tenant extension configured, using schema: {config.database_schema}")
 
         # Create a single poller that handles all schemas dynamically
+        # Convert default schema to None for SQL compatibility (no schema prefix)
+        from hindsight_api.config import DEFAULT_DATABASE_SCHEMA
+
+        schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
         poller = WorkerPoller(
             pool=memory._pool,
             worker_id=args.worker_id,
             executor=memory.execute_task,
             poll_interval_ms=args.poll_interval,
             max_retries=args.max_retries,
+            schema=schema,
             tenant_extension=tenant_extension,
             max_slots=config.worker_max_slots,
             consolidation_max_slots=config.worker_consolidation_max_slots,

@@ -15,7 +15,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Default daemon configuration
-DEFAULT_DAEMON_PORT = 8889
+DEFAULT_DAEMON_PORT = 8888
 DEFAULT_IDLE_TIMEOUT = 0  # 0 = no auto-exit (hindsight-embed passes its own timeout)
 LOCKFILE_PATH = Path.home() / ".hindsight" / "daemon.lock"
 DAEMON_LOG_PATH = Path.home() / ".hindsight" / "daemon.log"

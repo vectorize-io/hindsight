@@ -24,6 +24,11 @@ from hindsight_api.extensions.operation_validator import (
     # Consolidation operation
     ConsolidateContext,
     ConsolidateResult,
+    # Mental Model operations
+    MentalModelGetContext,
+    MentalModelGetResult,
+    MentalModelRefreshContext,
+    MentalModelRefreshResult,
     # Core operations
     OperationValidationError,
     OperationValidatorExtension,
@@ -65,6 +70,11 @@ __all__ = [
     # Operation Validator - Consolidation
     "ConsolidateContext",
     "ConsolidateResult",
+    # Operation Validator - Mental Model
+    "MentalModelGetContext",
+    "MentalModelGetResult",
+    "MentalModelRefreshContext",
+    "MentalModelRefreshResult",
     # Tenant/Auth
     "ApiKeyTenantExtension",
     "AuthenticationError",

@@ -209,7 +209,7 @@ echo "PASS: Memory recalled with JSON format successfully"
 # Test 5: Check daemon is running
 echo ""
 echo "Test 5: Verifying daemon is running..."
-if curl -s http://127.0.0.1:8889/health | grep -q "healthy"; then
+if curl -s http://127.0.0.1:8888/health | grep -q "healthy"; then
     echo "PASS: Daemon is running and healthy"
 else
     echo "FAIL: Daemon is not running"

@@ -183,20 +183,6 @@ else
     fi
 fi
 
-# Show changes
-print_info "Changes to be committed:"
-git diff
-
-# Confirm changes
-echo
-read -p "Do you want to commit these changes and create tag v$VERSION? (y/n) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    print_error "Release cancelled. Rolling back changes..."
-    git checkout .
-    exit 1
-fi
-
 # Commit changes
 print_info "Committing version changes..."
 git add -A
