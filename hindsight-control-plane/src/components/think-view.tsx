@@ -368,31 +368,6 @@ export function ThinkView() {
                 </CardContent>
               </Card>
 
-              {/* New Opinions Formed */}
-              {result.new_opinions && result.new_opinions.length > 0 && (
-                <Card className="border-green-200 dark:border-green-800">
-                  <CardHeader className="bg-green-50 dark:bg-green-950">
-                    <CardTitle className="flex items-center gap-2">
-                      <Sparkles className="w-5 h-5" />
-                      New Opinions Formed
-                    </CardTitle>
-                    <CardDescription>New beliefs generated from this interaction</CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-6">
-                    <div className="space-y-3">
-                      {result.new_opinions.map((opinion: any, i: number) => (
-                        <div key={i} className="p-3 bg-muted rounded-lg border border-border">
-                          <div className="font-semibold text-foreground">{opinion.text}</div>
-                          <div className="text-sm text-muted-foreground mt-1">
-                            Confidence: {opinion.confidence?.toFixed(2)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Directive */}
               <Card className="border-blue-200 dark:border-blue-800">
                 <CardHeader className="py-4">

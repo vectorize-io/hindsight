@@ -19,7 +19,6 @@ async def extract_facts(
     context: str = "",
     llm_config: "LLMConfig" = None,
     agent_name: str = None,
-    extract_opinions: bool = False,
 ) -> tuple[list["Fact"], list[tuple[str, int]]]:
     """
     Extract semantic facts from text using LLM.
@@ -36,7 +35,6 @@ async def extract_facts(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Optional agent name to help identify agent-related facts
-        extract_opinions: If True, extract ONLY opinions. If False, extract world and agent facts (no opinions)
 
     Returns:
         Tuple of (facts, chunks) where:
@@ -55,7 +53,6 @@ async def extract_facts(
         context=context,
         llm_config=llm_config,
         agent_name=agent_name,
-        extract_opinions=extract_opinions,
     )
 
     if not facts:

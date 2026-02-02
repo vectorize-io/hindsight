@@ -167,6 +167,11 @@
           "type": "doc",
           "id": "sdks/cli",
           "label": "CLI"
+        },
+        {
+          "type": "doc",
+          "id": "sdks/embed",
+          "label": "Embedded SDK"
         }
       ]
     },
@@ -184,6 +189,11 @@
           "type": "doc",
           "id": "sdks/integrations/litellm",
           "label": "LiteLLM"
+        },
+        {
+          "type": "doc",
+          "id": "sdks/integrations/openclaw",
+          "label": "OpenClaw"
         },
         {
           "type": "doc",

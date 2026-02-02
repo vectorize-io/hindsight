@@ -58,7 +58,6 @@ async def test_fact_extraction_basic_analysis(llm_config):
         llm_config=llm_config,
         agent_name="test-agent",
         context="Friday Standup meeting",
-        extract_opinions=False,
     )
 
     duration = time.time() - start_time

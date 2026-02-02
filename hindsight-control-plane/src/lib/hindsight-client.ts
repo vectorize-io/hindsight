@@ -33,10 +33,8 @@ export const hindsightClient = new HindsightClient({
 export const lowLevelClient = createClient(
   createConfig({
     baseUrl: DATAPLANE_URL,
-    headers: DATAPLANE_API_KEY
-      ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` }
-      : undefined,
-  }),
+    headers: DATAPLANE_API_KEY ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` } : undefined,
+  })
 );
 
 /**

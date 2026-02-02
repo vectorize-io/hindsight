@@ -61,7 +61,7 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -97,6 +97,14 @@ export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 
+# Vertex AI (Google Cloud - uses native genai SDK)
+export HINDSIGHT_API_LLM_PROVIDER=vertexai
+export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
+export HINDSIGHT_API_LLM_VERTEXAI_REGION=us-central1
+# Optional: use ADC (gcloud auth application-default login) or provide service account key:
+# export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/service-account-key.json
+
 # Ollama (local, no API key)
 export HINDSIGHT_API_LLM_PROVIDER=ollama
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
@@ -113,6 +121,57 @@ export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name
 ```
+
+#### Vertex AI Setup
+
+Google Cloud's Vertex AI provides access to Gemini models via the native Google GenAI SDK. Hindsight supports two authentication methods:
+
+**Prerequisites:**
+- GCP project with Vertex AI API enabled
+- IAM role `roles/aiplatform.user` for your credentials
+
+**Environment Variables:**
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID` | Your GCP project ID | Yes |
+| `HINDSIGHT_API_LLM_VERTEXAI_REGION` | GCP region (e.g., `us-central1`) | No (default: `us-central1`) |
+| `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY` | Path to service account JSON key file | No (uses ADC if not set) |
+
+**Authentication Methods:**
+
+1. **Application Default Credentials (ADC)** - Recommended for development
+   ```bash
+   # Setup ADC
+   gcloud auth application-default login
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   ```
+
+2. **Service Account Key** - Recommended for production
+   ```bash
+   # Create service account and download key
+   gcloud iam service-accounts create hindsight-api
+   gcloud projects add-iam-policy-binding your-project-id \
+     --member="serviceAccount:hindsight-api@your-project-id.iam.gserviceaccount.com" \
+     --role="roles/aiplatform.user"
+   gcloud iam service-accounts keys create key.json \
+     --iam-account=hindsight-api@your-project-id.iam.gserviceaccount.com
+
+   # Configure Hindsight
+   export HINDSIGHT_API_LLM_PROVIDER=vertexai
+   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
+   export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
+   ```
+
+**Notes:**
+- Model names can optionally include the `google/` prefix (e.g., `google/gemini-2.0-flash-001`) - it will be stripped automatically
+- The native SDK handles token refresh automatically
+- Uses service account credentials if provided, otherwise falls back to ADC
 
 ### Per-Operation LLM Configuration
 
@@ -416,7 +475,6 @@ Observations are consolidated knowledge synthesized from facts.
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
-| `HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC` | Run observation generation asynchronously (after retain completes) | `false` |
 
 ### Reflect
 
@@ -424,14 +482,28 @@ Observations are consolidated knowledge synthesized from facts.
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
 
-### Local MCP Server
+### MCP Server
 
-Configuration for the local MCP server (`hindsight-local-mcp` command).
+Configuration for MCP server endpoints.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
+| `HINDSIGHT_API_MCP_AUTH_TOKEN` | Bearer token for MCP authentication (optional) | - |
 | `HINDSIGHT_API_MCP_LOCAL_BANK_ID` | Memory bank ID for local MCP | `mcp` |
 | `HINDSIGHT_API_MCP_INSTRUCTIONS` | Additional instructions appended to retain/recall tool descriptions | - |
+
+**MCP Authentication:**
+
+By default, the MCP endpoint is open. For production deployments, set `HINDSIGHT_API_MCP_AUTH_TOKEN` to require Bearer token authentication:
+
+```bash
+export HINDSIGHT_API_MCP_AUTH_TOKEN=your-secret-token
+```
+
+Clients must then include the token in the `Authorization` header. See [MCP Server documentation](./mcp-server.md#authentication) for details.
+
+**Local MCP instructions:**
 
 ```bash
 # Example: instruct MCP to also store assistant actions
@@ -447,9 +519,10 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_ENABLED` | Enable internal worker in API process | `true` |
 | `HINDSIGHT_API_WORKER_ID` | Unique worker identifier | hostname |
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
-| `HINDSIGHT_API_WORKER_BATCH_SIZE` | Tasks to claim per poll cycle | `10` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
+| `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker | `10` |
+| `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Maximum concurrent consolidation tasks per worker | `2` |
 
 ### Performance Optimization
 

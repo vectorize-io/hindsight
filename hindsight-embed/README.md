@@ -120,7 +120,9 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 | `HINDSIGHT_EMBED_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`) | Required |
 | `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
 | `HINDSIGHT_EMBED_LLM_MODEL` | LLM model | `gpt-4o-mini` |
-| `HINDSIGHT_EMBED_BANK_ID` | Memory bank ID | `default` |
+| `HINDSIGHT_EMBED_BANK_ID` | Default memory bank ID (optional, used when not specified in CLI) | `default` |
+
+**Note:** All banks share a single pg0 database (`pg0://hindsight-embed`). Bank isolation happens within the database via the `bank_id` parameter passed to CLI commands.
 
 ### Files
 

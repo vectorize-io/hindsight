@@ -8,6 +8,61 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [0.4.3](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.3)
+
+**Features**
+
+- Add Vertex AI as a supported LLM provider. ([`c2ac7d0`](https://github.com/vectorize-io/hindsight/commit/c2ac7d0), [`49ae55a`](https://github.com/vectorize-io/hindsight/commit/49ae55a))
+- Add Bearer token authentication for MCP and propagate tenant authentication across MCP requests. ([`0da77ce`](https://github.com/vectorize-io/hindsight/commit/0da77ce))
+
+**Improvements**
+
+- CLI: add a --wait flag for consolidate and a --date filter for listing documents. ([`ff20bf9`](https://github.com/vectorize-io/hindsight/commit/ff20bf9))
+
+**Bug Fixes**
+
+- Fix worker polling deadlocks to prevent background processing from stalling. ([`f4f86e3`](https://github.com/vectorize-io/hindsight/commit/f4f86e3))
+- Improve reliability of Docker builds by retrying ML model downloads. ([`ecc590c`](https://github.com/vectorize-io/hindsight/commit/ecc590c))
+- Fix tenant authentication handling for internal background tasks and ensure the control-plane forwards required auth to the dataplane. ([`03bf13e`](https://github.com/vectorize-io/hindsight/commit/03bf13e))
+- Ensure tenant database migrations run at startup and workers use the correct tenant schema context. ([`657fe02`](https://github.com/vectorize-io/hindsight/commit/657fe02))
+- Fix control-plane graph endpoint errors when upstream data is missing. ([`751f99a`](https://github.com/vectorize-io/hindsight/commit/751f99a))
+
+**Other**
+
+- Rename the default bot/user identity from "moltbot" to "openclaw". ([`728ce13`](https://github.com/vectorize-io/hindsight/commit/728ce13))
+
+## [0.4.2](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.2)
+
+**Features**
+
+- Added Clawdbot/Moltbot/OpenClaw integration. ([`12e9a3d`](https://github.com/vectorize-io/hindsight/commit/12e9a3d))
+
+**Improvements**
+
+- Added additional configuration options to control LLM retry behavior. ([`3f211f0`](https://github.com/vectorize-io/hindsight/commit/3f211f0))
+- Added real-time logs showing a detailed timing breakdown during consolidation runs. ([`8781c9f`](https://github.com/vectorize-io/hindsight/commit/8781c9f))
+
+**Bug Fixes**
+
+- Fixed hindsight-embed crashing on macOS. ([`c16ccc2`](https://github.com/vectorize-io/hindsight/commit/c16ccc2))
+
+## [0.4.1](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.1)
+
+**Features**
+
+- Added support for using a non-default PostgreSQL schema by default. ([`2b72e1f`](https://github.com/vectorize-io/hindsight/commit/2b72e1f))
+
+**Improvements**
+
+- Improved memory consolidation performance (benchmarking and optimizations). ([`b43ef98`](https://github.com/vectorize-io/hindsight/commit/b43ef98))
+
+**Bug Fixes**
+
+- Fixed the /version endpoint returning an incorrect version. ([`cfcc23c`](https://github.com/vectorize-io/hindsight/commit/cfcc23c))
+- Fixed mental model search failing due to UUID type mismatch after text-ID migration. ([`94cc0a1`](https://github.com/vectorize-io/hindsight/commit/94cc0a1))
+- Added safer PyTorch device detection to prevent crashes on some environments. ([`67c4788`](https://github.com/vectorize-io/hindsight/commit/67c4788))
+- Fixed Python packages exposing an incorrect __version__ value. ([`fccbdfe`](https://github.com/vectorize-io/hindsight/commit/fccbdfe))
+
 ## [0.4.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.0)
 
 **Observations**, **Mental Models**, new **Agentic Reflect** and Directives, read the [announcement](/blog/learning-capabilities).

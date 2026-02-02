@@ -170,6 +170,11 @@ const sidebars: SidebarsConfig = {
           id: 'sdks/cli',
           label: 'CLI',
         },
+        {
+          type: 'doc',
+          id: 'sdks/embed',
+          label: 'Embedded SDK',
+        },
       ],
     },
     {
@@ -189,8 +194,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'sdks/integrations/moltbot',
-          label: 'Moltbot',
+          id: 'sdks/integrations/openclaw',
+          label: 'OpenClaw',
         },
         {
           type: 'doc',

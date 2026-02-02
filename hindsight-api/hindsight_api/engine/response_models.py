@@ -263,7 +263,6 @@ class ReflectResult(BaseModel):
                         }
                     ],
                 },
-                "new_opinions": ["Machine learning has great potential in healthcare"],
                 "structured_output": {"summary": "ML in healthcare", "confidence": 0.9},
                 "usage": {"input_tokens": 1500, "output_tokens": 500, "total_tokens": 2000},
             }
@@ -272,9 +271,8 @@ class ReflectResult(BaseModel):
 
     text: str = Field(description="The formulated answer text")
     based_on: dict[str, Any] = Field(
-        description="Facts used to formulate the answer, organized by type (world, experience, opinion, mental_models, directives)"
+        description="Facts used to formulate the answer, organized by type (world, experience, mental_models, directives)"
     )
-    new_opinions: list[str] = Field(default_factory=list, description="List of newly formed opinions during reflection")
     structured_output: dict[str, Any] | None = Field(
         default=None,
         description="Structured output parsed according to the provided response schema. Only present when response_schema was provided.",
@@ -295,24 +293,6 @@ class ReflectResult(BaseModel):
         default_factory=list,
         description="Directive mental models that were applied during this reflection.",
     )
-
-
-class Opinion(BaseModel):
-    """
-    An opinion with confidence score.
-
-    Opinions represent the bank's formed perspectives on topics,
-    with a confidence level indicating strength of belief.
-    """
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"text": "Machine learning has great potential in healthcare", "confidence": 0.85}
-        }
-    )
-
-    text: str = Field(description="The opinion text")
-    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
 
 
 class EntityObservation(BaseModel):

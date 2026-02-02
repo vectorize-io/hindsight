@@ -93,6 +93,34 @@ uv run ty check hindsight_api  # Type check
 3. Run tests to ensure nothing breaks
 4. Submit a PR with a clear description of changes
 
+## Release Process
+
+The project uses `scripts/release.sh` for creating releases. This script automates the entire release workflow:
+
+1. Bumps version in all components (API, clients, CLI, control plane, Helm)
+2. **Regenerates OpenAPI spec and client SDKs** (Python, TypeScript, Rust)
+3. Updates documentation versioning
+4. Creates a commit and git tag
+5. Pushes to GitHub (triggers CI/CD to publish packages)
+
+### Usage
+
+```bash
+./scripts/release.sh <version>
+```
+
+**Example:**
+```bash
+./scripts/release.sh 0.5.0
+```
+
+### Important for Developers
+
+- During development, version bumps in `__init__.py` do NOT require client regeneration
+- Clients are only regenerated during releases
+- Do not manually run `./scripts/generate-clients.sh` unless testing generation changes
+- Client version comments will reflect the API version from the latest release
+
 ## Reporting Issues
 
 Open an issue on GitHub with:

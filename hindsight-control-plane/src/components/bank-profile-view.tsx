@@ -130,21 +130,21 @@ const TRAIT_LABELS: Record<
   skepticism: {
     label: "Skepticism",
     shortLabel: "S",
-    description: "How skeptical vs trusting when forming opinions",
+    description: "How skeptical vs trusting when forming observations",
     lowLabel: "Trusting",
     highLabel: "Skeptical",
   },
   literalism: {
     label: "Literalism",
     shortLabel: "L",
-    description: "How literally to interpret information when forming opinions",
+    description: "How literally to interpret information when forming observations",
     lowLabel: "Flexible",
     highLabel: "Literal",
   },
   empathy: {
     label: "Empathy",
     shortLabel: "E",
-    description: "How much to consider emotional context when forming opinions",
+    description: "How much to consider emotional context when forming observations",
     lowLabel: "Detached",
     highLabel: "Empathetic",
   },
@@ -718,7 +718,9 @@ export function BankProfileView() {
               <Brain className="w-5 h-5 text-primary" />
               Disposition Profile
             </CardTitle>
-            <CardDescription>Traits that shape how opinions are formed via Reflect</CardDescription>
+            <CardDescription>
+              Traits that shape how observations are formed via Reflect
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {profile && (

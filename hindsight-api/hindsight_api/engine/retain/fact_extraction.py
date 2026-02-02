@@ -57,21 +57,25 @@ def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
     return None
 
 
-def _sanitize_text(text: str) -> str:
+def _sanitize_text(text: str | None) -> str | None:
     """
-    Sanitize text by removing invalid Unicode surrogate characters.
+    Sanitize text by removing characters that break downstream systems.
 
-    Surrogate characters (U+D800 to U+DFFF) are used in UTF-16 encoding
-    but cannot be encoded in UTF-8. They can appear in Python strings
-    from improperly decoded data (e.g., from JavaScript or broken files).
+    Removes:
+    - Null bytes (\\x00): Invalid in PostgreSQL UTF-8 encoding
+    - Unicode surrogates (U+D800-U+DFFF): Invalid in UTF-8, break LLM APIs
 
-    This function removes unpaired surrogates to prevent UnicodeEncodeError
-    when the text is sent to the LLM API.
+    Surrogate characters are used in UTF-16 encoding but cannot be encoded
+    in UTF-8. They can appear in Python strings from improperly decoded data
+    (e.g., from JavaScript or broken files). Null bytes commonly appear in
+    OCR output, PDF extraction, or copy-paste from binary sources.
     """
+    if text is None:
+        return None
     if not text:
         return text
-    # Remove surrogate characters (U+D800 to U+DFFF) using regex
-    # These are invalid in UTF-8 and cause encoding errors
+    # Remove null bytes and surrogate characters
+    text = text.replace("\x00", "")
     return re.sub(r"[\ud800-\udfff]", "", text)
 
 
@@ -693,7 +697,6 @@ async def _extract_facts_from_chunk(
     context: str,
     llm_config: "LLMConfig",
     agent_name: str = None,
-    extract_opinions: bool = False,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a single chunk (internal helper for parallel processing).
@@ -707,17 +710,9 @@ async def _extract_facts_from_chunk(
 
     logger = logging.getLogger(__name__)
 
-    memory_bank_context = f"\n- Your name: {agent_name}" if agent_name and extract_opinions else ""
-
-    # Determine which fact types to extract based on the flag
+    # Determine which fact types to extract
     # Note: We use "assistant" in the prompt but convert to "bank" for storage
-    if extract_opinions:
-        # Opinion extraction uses a separate prompt (not this one)
-        fact_types_instruction = "Extract ONLY 'opinion' type facts (formed opinions, beliefs, and perspectives). DO NOT extract 'world' or 'assistant' facts."
-    else:
-        fact_types_instruction = (
-            "Extract ONLY 'world' and 'assistant' type facts. DO NOT extract opinions - those are extracted separately."
-        )
+    fact_types_instruction = "Extract ONLY 'world' and 'assistant' type facts."
 
     # Check config for extraction mode and causal link extraction
     config = get_config()
@@ -768,9 +763,12 @@ async def _extract_facts_from_chunk(
 
     # Build user message with metadata and chunk content in a clear format
     # Format event_date with day of week for better temporal reasoning
+    # Handle both datetime objects and ISO string formats (from deserialized async tasks)
+    from .orchestrator import parse_datetime_flexible
+
+    event_date = parse_datetime_flexible(event_date)
     event_date_formatted = event_date.strftime("%A, %B %d, %Y")  # e.g., "Monday, June 10, 2024"
     user_message = f"""Extract facts from the following text chunk.
-{memory_bank_context}
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_formatted} ({event_date.isoformat()})
@@ -1029,7 +1027,6 @@ async def _extract_facts_with_auto_split(
     context: str,
     llm_config: LLMConfig,
     agent_name: str = None,
-    extract_opinions: bool = False,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
     Extract facts from a chunk with automatic splitting if output exceeds token limits.
@@ -1045,7 +1042,6 @@ async def _extract_facts_with_auto_split(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Optional agent name (memory owner)
-        extract_opinions: If True, extract ONLY opinions. If False, extract world and agent facts (no opinions)
 
     Returns:
         Tuple of (facts list, token usage) extracted from the chunk (possibly from sub-chunks)
@@ -1064,7 +1060,6 @@ async def _extract_facts_with_auto_split(
             context=context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
     except OutputTooLongError:
         # Output exceeded token limits - split the chunk in half and retry
@@ -1109,7 +1104,6 @@ async def _extract_facts_with_auto_split(
                 context=context,
                 llm_config=llm_config,
                 agent_name=agent_name,
-                extract_opinions=extract_opinions,
             ),
             _extract_facts_with_auto_split(
                 chunk=second_half,
@@ -1119,7 +1113,6 @@ async def _extract_facts_with_auto_split(
                 context=context,
                 llm_config=llm_config,
                 agent_name=agent_name,
-                extract_opinions=extract_opinions,
             ),
         ]
 
@@ -1143,7 +1136,6 @@ async def extract_facts_from_text(
     llm_config: LLMConfig,
     agent_name: str,
     context: str = "",
-    extract_opinions: bool = False,
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
     Extract semantic facts from conversational or narrative text using LLM.
@@ -1160,7 +1152,6 @@ async def extract_facts_from_text(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Agent name (memory owner)
-        extract_opinions: If True, extract ONLY opinions. If False, extract world and bank facts (no opinions)
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -1188,7 +1179,6 @@ async def extract_facts_from_text(
             context=context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
         for i, chunk in enumerate(chunks)
     ]
@@ -1220,7 +1210,7 @@ SECONDS_PER_FACT = 10
 
 
 async def extract_facts_from_contents(
-    contents: list[RetainContent], llm_config, agent_name: str, extract_opinions: bool = False
+    contents: list[RetainContent], llm_config, agent_name: str
 ) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
@@ -1235,7 +1225,6 @@ async def extract_facts_from_contents(
         contents: List of RetainContent objects to process
         llm_config: LLM configuration for fact extraction
         agent_name: Name of the agent (for agent-related fact detection)
-        extract_opinions: If True, extract only opinions; otherwise world/bank facts
 
     Returns:
         Tuple of (extracted_facts, chunks_metadata, usage)
@@ -1254,7 +1243,6 @@ async def extract_facts_from_contents(
             context=item.context,
             llm_config=llm_config,
             agent_name=agent_name,
-            extract_opinions=extract_opinions,
         )
         fact_extraction_tasks.append(task)
 
@@ -1366,6 +1354,8 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
 
     Modifies facts in place.
     """
+    from .orchestrator import parse_datetime_flexible
+
     # Group facts by content_index
     current_content_idx = 0
     content_fact_start = 0
@@ -1380,10 +1370,10 @@ def _add_temporal_offsets(facts: list[ExtractedFactType], contents: list[RetainC
         fact_position = i - content_fact_start
         offset = timedelta(seconds=fact_position * SECONDS_PER_FACT)
 
-        # Apply offset to all temporal fields
+        # Apply offset to all temporal fields (handle both datetime objects and ISO strings)
         if fact.occurred_start:
-            fact.occurred_start = fact.occurred_start + offset
+            fact.occurred_start = parse_datetime_flexible(fact.occurred_start) + offset
         if fact.occurred_end:
-            fact.occurred_end = fact.occurred_end + offset
+            fact.occurred_end = parse_datetime_flexible(fact.occurred_end) + offset
         if fact.mentioned_at:
-            fact.mentioned_at = fact.mentioned_at + offset
+            fact.mentioned_at = parse_datetime_flexible(fact.mentioned_at) + offset

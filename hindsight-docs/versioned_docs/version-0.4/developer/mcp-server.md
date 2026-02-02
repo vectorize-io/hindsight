@@ -25,6 +25,47 @@ To disable the MCP server, set the environment variable:
 export HINDSIGHT_API_MCP_ENABLED=false
 ```
 
+## Authentication
+
+By default, the MCP endpoint is **open** for local development. For production deployments, enable authentication with a Bearer token:
+
+```bash
+export HINDSIGHT_API_MCP_AUTH_TOKEN=your-secret-token
+```
+
+When authentication is enabled, all MCP requests must include a valid `Authorization` header:
+
+**Claude Desktop config** (`.claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "hindsight": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-http-client", "http://localhost:8888/mcp/alice/"],
+      "env": {
+        "HTTP_HEADERS": "{\"Authorization\": \"Bearer your-secret-token\"}"
+      }
+    }
+  }
+}
+```
+
+**Claude Code config:**
+```bash
+claude mcp add --transport http hindsight http://localhost:8888/mcp/alice/ \
+  --header "Authorization: Bearer your-secret-token"
+```
+
+**Direct HTTP request:**
+```bash
+curl -X POST http://localhost:8888/mcp/alice/ \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+```
+
+If the token is missing or invalid, requests will receive a `401 Unauthorized` response.
+
 ## Per-Bank Endpoints
 
 Unlike traditional MCP servers where tools require explicit identifiers, Hindsight uses **per-bank endpoints**. The `bank_id` is part of the URL path, so tools don't need to specify which bank to use—it's implicit from the connection.

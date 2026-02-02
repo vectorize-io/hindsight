@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       console.error("Graph API error:", response.error);
       return NextResponse.json(
         { error: response.error || "Failed to fetch graph data" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 

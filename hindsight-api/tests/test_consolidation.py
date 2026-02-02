@@ -346,11 +346,11 @@ class TestConsolidationIntegration:
         or when one directly updates another (e.g., location change).
 
         Given:
-        - "Nicolò lives in Italy"
-        - "Nicolò moved to the US recently" (updates the living location)
+        - "Alex lives in Italy"
+        - "Alex moved to the US recently" (updates the living location)
 
         The second fact should UPDATE the first, not create a separate observation.
-        But unrelated facts like "Nicolò works at Vectorize" should stay separate.
+        But unrelated facts like "Alex works at Vectorize" should stay separate.
         """
         bank_id = f"test-consolidation-merge-{uuid.uuid4().hex[:8]}"
 
@@ -360,14 +360,14 @@ class TestConsolidationIntegration:
         # Retain a memory about living location
         await memory.retain_async(
             bank_id=bank_id,
-            content="Nicolò lives in Italy.",
+            content="Alex lives in Italy.",
             request_context=request_context,
         )
 
         # Retain an unrelated memory (different topic - should NOT merge)
         await memory.retain_async(
             bank_id=bank_id,
-            content="Nicolò works at Vectorize as an engineer.",
+            content="Alex works at Vectorize as an engineer.",
             request_context=request_context,
         )
 
@@ -384,7 +384,7 @@ class TestConsolidationIntegration:
         # Add a memory that UPDATES the living location (should merge with first)
         await memory.retain_async(
             bank_id=bank_id,
-            content="Nicolò recently moved to the United States.",
+            content="Alex recently moved to the United States.",
             request_context=request_context,
         )
 
@@ -485,9 +485,9 @@ class TestConsolidationIntegration:
         they should be merged into ONE observation that captures the change.
 
         Example:
-        - "Nicolò loves pizza"
-        - "Nicolò hates pizza"
-        → Should become: "Nicolò used to love pizza but now hates it" (or similar)
+        - "Alex loves pizza"
+        - "Alex hates pizza"
+        → Should become: "Alex used to love pizza but now hates it" (or similar)
         """
         bank_id = f"test-consolidation-contradict-{uuid.uuid4().hex[:8]}"
 
@@ -497,7 +497,7 @@ class TestConsolidationIntegration:
         # Add initial fact
         await memory.retain_async(
             bank_id=bank_id,
-            content="Nicolò loves pizza.",
+            content="Alex loves pizza.",
             request_context=request_context,
         )
 
@@ -515,7 +515,7 @@ class TestConsolidationIntegration:
         # Add contradicting fact (same person, same topic, opposite sentiment)
         await memory.retain_async(
             bank_id=bank_id,
-            content="Nicolò hates pizza.",
+            content="Alex hates pizza.",
             request_context=request_context,
         )
 

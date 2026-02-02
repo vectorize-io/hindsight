@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.4.2"
+    "version": "0.4.6"
   },
   "paths": {
     "/health": {
@@ -343,7 +343,7 @@
           "Memory"
         ],
         "summary": "Recall memory",
-        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe type parameter is optional and must be one of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n- `opinion`: The bank's formed beliefs, perspectives, and viewpoints\n\nSet `include_entities=true` to get entity observations alongside recall results.",
+        "description": "Recall memory using semantic similarity and spreading activation.\n\nThe type parameter is optional and must be one of:\n- `world`: General knowledge about people, places, events, and things that happen\n- `experience`: Memories about experience, conversations, actions taken, and tasks performed",
         "operationId": "recall_memories",
         "parameters": [
           {
@@ -412,7 +412,7 @@
           "Memory"
         ],
         "summary": "Reflect and generate answer",
-        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Extracts and stores any new opinions formed\n6. Returns plain text answer, the facts used, and new opinions",
+        "description": "Reflect and formulate an answer using bank identity, world facts, and opinions.\n\nThis endpoint:\n1. Retrieves experience (conversations and events)\n2. Retrieves world facts relevant to the query\n3. Retrieves existing opinions (bank's perspectives)\n4. Uses LLM to formulate a contextual answer\n5. Returns plain text answer and the facts used",
         "operationId": "reflect",
         "parameters": [
           {
@@ -4948,7 +4948,7 @@
               }
             ],
             "title": "Types",
-            "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified. Note: 'opinion' is accepted but ignored (opinions are excluded from recall)."
+            "description": "List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified."
           },
           "budget": {
             "$ref": "#/components/schemas/Budget",

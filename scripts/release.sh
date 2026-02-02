@@ -144,6 +144,16 @@ else
     print_warn "File $TYPESCRIPT_CLIENT_PKG not found, skipping"
 fi
 
+# Update OpenClaw integration
+OPENCLAW_PKG="hindsight-integrations/openclaw/package.json"
+if [ -f "$OPENCLAW_PKG" ]; then
+    print_info "Updating $OPENCLAW_PKG"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$OPENCLAW_PKG"
+    rm "${OPENCLAW_PKG}.bak"
+else
+    print_warn "File $OPENCLAW_PKG not found, skipping"
+fi
+
 # Update documentation version (creates new version or syncs to existing)
 print_info "Updating documentation for version $VERSION..."
 if [ -f "scripts/update-docs-version.sh" ]; then
@@ -155,6 +165,22 @@ if [ -f "scripts/update-docs-version.sh" ]; then
     fi
 else
     print_warn "update-docs-version.sh not found, skipping docs update"
+fi
+
+# Regenerate OpenAPI spec and clients with new version
+print_info "Regenerating OpenAPI spec and client SDKs..."
+if ./scripts/generate-openapi.sh && ./scripts/generate-clients.sh; then
+    print_info "✓ OpenAPI spec and clients regenerated"
+else
+    print_error "Failed to regenerate clients"
+    print_warn "You may need to fix this manually before committing"
+    read -p "Continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_error "Release cancelled. Rolling back changes..."
+        git checkout .
+        exit 1
+    fi
 fi
 
 # Show changes
@@ -183,11 +209,13 @@ PATCH_VERSION=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.([0-9]+)$/\1/')
 COMMIT_MSG="Release v$VERSION
 
 - Update version to $VERSION in all components
+- Regenerate OpenAPI spec and client SDKs
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-embed
 - Python client: hindsight-clients/python
 - TypeScript client: hindsight-clients/typescript
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
+- OpenClaw integration: hindsight-integrations/openclaw
 - Helm chart"
 
 # Add docs update note

@@ -469,7 +469,6 @@ async def test_mixed_language_entities(memory, request_context):
             budget=Budget.MID,
             max_tokens=1000,
             fact_type=["world"],
-            include_entities=True,
             request_context=request_context,
         )
 

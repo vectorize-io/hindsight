@@ -105,9 +105,6 @@ class LLMProvider:
         self._mock_calls: list[dict] = []
         self._mock_response: Any = None
 
-        # Vertex AI token refresher
-        self._vertexai_refresher: Any = None
-
         # Set default base URLs
         if not self.base_url:
             if self.provider == "groq":
@@ -117,62 +114,48 @@ class LLMProvider:
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
 
-        # Handle Vertex AI provider
-        if self.provider == "vertexai":
-            if not VERTEXAI_AVAILABLE:
-                raise ValueError("Vertex AI requires 'google-auth' package. Install with: pip install google-auth")
+        # Vertex AI config — stored for client creation below
+        self._vertexai_project_id: str | None = None
+        self._vertexai_region: str | None = None
+        self._vertexai_credentials: Any = None
 
+        if self.provider == "vertexai":
             from ..config import get_config
 
             config = get_config()
 
-            project_id = config.llm_vertexai_project_id
-            if not project_id:
+            self._vertexai_project_id = config.llm_vertexai_project_id
+            if not self._vertexai_project_id:
                 raise ValueError(
                     "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID is required for Vertex AI provider. "
                     "Set it to your GCP project ID."
                 )
 
-            region = config.llm_vertexai_region or "us-central1"
+            self._vertexai_region = config.llm_vertexai_region or "us-central1"
             service_account_key = config.llm_vertexai_service_account_key
 
-            # Try ADC first
-            credentials = None
-            auth_method = None
-
-            try:
-                credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-                auth_method = "ADC"
-                logger.info("Vertex AI: Using Application Default Credentials")
-            except google.auth.exceptions.DefaultCredentialsError:
-                logger.debug("Vertex AI: ADC not available, trying service account")
-
-            # Fall back to service account key file
-            if credentials is None and service_account_key:
-                try:
-                    credentials = service_account.Credentials.from_service_account_file(
-                        service_account_key,
-                        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            # Load explicit service account credentials if provided
+            if service_account_key:
+                if not VERTEXAI_AVAILABLE:
+                    raise ValueError(
+                        "Vertex AI service account auth requires 'google-auth' package. "
+                        "Install with: pip install google-auth"
                     )
-                    auth_method = "Service Account"
-                    logger.info(f"Vertex AI: Using service account key: {service_account_key}")
-                except Exception as e:
-                    logger.error(f"Vertex AI: Failed to load service account key: {e}")
-
-            if credentials is None:
-                raise ValueError(
-                    "Vertex AI authentication failed. Either:\n"
-                    "  1. Set up ADC: gcloud auth application-default login\n"
-                    "  2. Set HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY to path of service account JSON key"
+                self._vertexai_credentials = service_account.Credentials.from_service_account_file(
+                    service_account_key,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 )
+                logger.info(f"Vertex AI: Using service account key: {service_account_key}")
 
-            # Initialize token refresher
-            from .vertexai_token_refresher import VertexAITokenRefresher
+            # Strip google/ prefix from model name — native SDK uses bare names
+            # e.g. "google/gemini-2.0-flash-lite-001" -> "gemini-2.0-flash-lite-001"
+            if self.model.startswith("google/"):
+                self.model = self.model[len("google/") :]
 
-            self._vertexai_refresher = VertexAITokenRefresher(credentials, project_id, region)
-            self.base_url = self._vertexai_refresher.get_base_url()
-
-            logger.info(f"Vertex AI: project={project_id}, region={region}, auth={auth_method}")
+            logger.info(
+                f"Vertex AI: project={self._vertexai_project_id}, region={self._vertexai_region}, "
+                f"model={self.model}, auth={'service_account' if service_account_key else 'ADC'}"
+            )
 
         # Validate API key (not needed for ollama, lmstudio, vertexai, or mock)
         if self.provider not in ("ollama", "lmstudio", "vertexai", "mock") and not self.api_key:
@@ -202,30 +185,16 @@ class LLMProvider:
                 anthropic_kwargs["timeout"] = self.timeout
             self._anthropic_client = AsyncAnthropic(**anthropic_kwargs)
         elif self.provider == "vertexai":
-            # Custom transport for token injection
-            class TokenInjectingTransport(httpx.AsyncHTTPTransport):
-                def __init__(self, refresher, *args, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    self._refresher = refresher
-
-                async def handle_async_request(self, request):
-                    token = self._refresher.get_token()
-                    request.headers["Authorization"] = f"Bearer {token}"
-                    return await super().handle_async_request(request)
-
-            transport = TokenInjectingTransport(self._vertexai_refresher)
+            # Native genai SDK with Vertex AI — handles ADC automatically,
+            # or uses explicit service account credentials if provided
             client_kwargs = {
-                "api_key": "dummy",  # Required by AsyncOpenAI but unused (we inject token via transport)
-                "base_url": self.base_url,
-                "max_retries": 0,
-                "http_client": httpx.AsyncClient(transport=transport),
+                "vertexai": True,
+                "project": self._vertexai_project_id,
+                "location": self._vertexai_region,
             }
-            if self.timeout:
-                client_kwargs["timeout"] = self.timeout
-            self._client = AsyncOpenAI(**client_kwargs)
-
-            # Start background refresh
-            self._vertexai_refresher.start_refresh_task()
+            if self._vertexai_credentials is not None:
+                client_kwargs["credentials"] = self._vertexai_credentials
+            self._gemini_client = genai.Client(**client_kwargs)
         elif self.provider in ("ollama", "lmstudio"):
             # Use dummy key if not provided for local
             api_key = self.api_key or "local"
@@ -317,8 +286,8 @@ class LLMProvider:
                     return_usage,
                 )
 
-            # Handle Gemini provider separately
-            if self.provider == "gemini":
+            # Handle Gemini and Vertex AI providers (both use native genai SDK)
+            if self.provider in ("gemini", "vertexai"):
                 return await self._call_gemini(
                     messages,
                     response_format,
@@ -682,8 +651,8 @@ class LLMProvider:
                     messages, tools, max_completion_tokens, max_retries, initial_backoff, max_backoff, start_time, scope
                 )
 
-            # Handle Gemini (convert to Gemini tool format)
-            if self.provider == "gemini":
+            # Handle Gemini and Vertex AI (convert to Gemini tool format)
+            if self.provider in ("gemini", "vertexai"):
                 return await self._call_with_tools_gemini(
                     messages, tools, max_retries, initial_backoff, max_backoff, start_time, scope
                 )
@@ -1603,10 +1572,8 @@ class LLMProvider:
         self._mock_calls = []
 
     async def cleanup(self) -> None:
-        """Clean up resources (e.g., stop token refresh tasks)."""
-        if self._vertexai_refresher is not None:
-            await self._vertexai_refresher.stop()
-            logger.debug("Vertex AI token refresher stopped")
+        """Clean up resources."""
+        pass
 
     @classmethod
     def for_memory(cls) -> "LLMProvider":

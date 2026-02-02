@@ -97,9 +97,9 @@ export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
 
-# Vertex AI (Google Cloud)
+# Vertex AI (Google Cloud - uses native genai SDK)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai
-export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
 export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-gcp-project-id
 export HINDSIGHT_API_LLM_VERTEXAI_REGION=us-central1
 # Optional: use ADC (gcloud auth application-default login) or provide service account key:
@@ -124,7 +124,7 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 
 #### Vertex AI Setup
 
-Google Cloud's Vertex AI provides OpenAI-compatible endpoints for Gemini models. Hindsight supports two authentication methods:
+Google Cloud's Vertex AI provides access to Gemini models via the native Google GenAI SDK. Hindsight supports two authentication methods:
 
 **Prerequisites:**
 - GCP project with Vertex AI API enabled
@@ -147,7 +147,7 @@ Google Cloud's Vertex AI provides OpenAI-compatible endpoints for Gemini models.
 
    # Configure Hindsight
    export HINDSIGHT_API_LLM_PROVIDER=vertexai
-   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
    export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
    ```
 
@@ -163,14 +163,15 @@ Google Cloud's Vertex AI provides OpenAI-compatible endpoints for Gemini models.
 
    # Configure Hindsight
    export HINDSIGHT_API_LLM_PROVIDER=vertexai
-   export HINDSIGHT_API_LLM_MODEL=google/gemini-2.0-flash-001
+   export HINDSIGHT_API_LLM_MODEL=gemini-2.0-flash-001
    export HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=your-project-id
    export HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json
    ```
 
-**Authentication Priority:** Hindsight tries ADC first, then falls back to service account key file if configured.
-
-**Token Management:** Access tokens expire after 60 minutes. Hindsight automatically refreshes tokens every 50 minutes in the background.
+**Notes:**
+- Model names can optionally include the `google/` prefix (e.g., `google/gemini-2.0-flash-001`) - it will be stripped automatically
+- The native SDK handles token refresh automatically
+- Uses service account credentials if provided, otherwise falls back to ADC
 
 ### Per-Operation LLM Configuration
 
@@ -474,7 +475,6 @@ Observations are consolidated knowledge synthesized from facts.
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
-| `HINDSIGHT_API_RETAIN_OBSERVATIONS_ASYNC` | Run observation generation asynchronously (after retain completes) | `false` |
 
 ### Reflect
 
@@ -482,14 +482,28 @@ Observations are consolidated knowledge synthesized from facts.
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
 
-### Local MCP Server
+### MCP Server
 
-Configuration for the local MCP server (`hindsight-local-mcp` command).
+Configuration for MCP server endpoints.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `HINDSIGHT_API_MCP_ENABLED` | Enable MCP server at `/mcp/{bank_id}/` | `true` |
+| `HINDSIGHT_API_MCP_AUTH_TOKEN` | Bearer token for MCP authentication (optional) | - |
 | `HINDSIGHT_API_MCP_LOCAL_BANK_ID` | Memory bank ID for local MCP | `mcp` |
 | `HINDSIGHT_API_MCP_INSTRUCTIONS` | Additional instructions appended to retain/recall tool descriptions | - |
+
+**MCP Authentication:**
+
+By default, the MCP endpoint is open. For production deployments, set `HINDSIGHT_API_MCP_AUTH_TOKEN` to require Bearer token authentication:
+
+```bash
+export HINDSIGHT_API_MCP_AUTH_TOKEN=your-secret-token
+```
+
+Clients must then include the token in the `Authorization` header. See [MCP Server documentation](./mcp-server.md#authentication) for details.
+
+**Local MCP instructions:**
 
 ```bash
 # Example: instruct MCP to also store assistant actions
@@ -505,9 +519,10 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_ENABLED` | Enable internal worker in API process | `true` |
 | `HINDSIGHT_API_WORKER_ID` | Unique worker identifier | hostname |
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
-| `HINDSIGHT_API_WORKER_BATCH_SIZE` | Tasks to claim per poll cycle | `10` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
+| `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker | `10` |
+| `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Maximum concurrent consolidation tasks per worker | `2` |
 
 ### Performance Optimization
 

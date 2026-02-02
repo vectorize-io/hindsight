@@ -15,15 +15,35 @@ export class HindsightClient {
   private llmProvider: string;
   private llmApiKey: string;
   private llmModel?: string;
+  private embedVersion: string;
 
-  constructor(llmProvider: string, llmApiKey: string, llmModel?: string) {
+  constructor(llmProvider: string, llmApiKey: string, llmModel?: string, embedVersion: string = 'latest') {
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
+    this.embedVersion = embedVersion || 'latest';
   }
 
   setBankId(bankId: string): void {
     this.bankId = bankId;
+  }
+
+  async setBankMission(mission: string): Promise<void> {
+    if (!mission || mission.trim().length === 0) {
+      return;
+    }
+
+    const escapedMission = mission.replace(/'/g, "'\\''"); // Escape single quotes
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const cmd = `uvx ${embedPackage} bank mission ${this.bankId} '${escapedMission}'`;
+
+    try {
+      const { stdout } = await execAsync(cmd, { env: this.getEnv() });
+      console.log(`[Hindsight] Bank mission set: ${stdout.trim()}`);
+    } catch (error) {
+      // Don't fail if mission set fails - bank might not exist yet, will be created on first retain
+      console.warn(`[Hindsight] Could not set bank mission (bank may not exist yet): ${error}`);
+    }
   }
 
   private getEnv(): Record<string, string> {
@@ -44,7 +64,8 @@ export class HindsightClient {
     const content = request.content.replace(/'/g, "'\\''"); // Escape single quotes
     const docId = request.document_id || 'conversation';
 
-    const cmd = `uvx hindsight-embed memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const cmd = `uvx ${embedPackage} memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });
@@ -65,7 +86,8 @@ export class HindsightClient {
     const query = request.query.replace(/'/g, "'\\''"); // Escape single quotes
     const maxTokens = request.max_tokens || 1024;
 
-    const cmd = `uvx hindsight-embed memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
+    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    const cmd = `uvx ${embedPackage} memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
 
     try {
       const { stdout } = await execAsync(cmd, { env: this.getEnv() });

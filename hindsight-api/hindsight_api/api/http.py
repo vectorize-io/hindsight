@@ -92,8 +92,7 @@ class RecallRequest(BaseModel):
     query: str
     types: list[str] | None = Field(
         default=None,
-        description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified. "
-        "Note: 'opinion' is accepted but ignored (opinions are excluded from recall).",
+        description="List of fact types to recall: 'world', 'experience', 'observation'. Defaults to world and experience if not specified.",
     )
     budget: Budget = Budget.MID
     max_tokens: int = 4096
@@ -504,13 +503,6 @@ class ReflectRequest(BaseModel):
     )
 
 
-class OpinionItem(BaseModel):
-    """Model for an opinion with confidence score."""
-
-    text: str
-    confidence: float
-
-
 class ReflectFact(BaseModel):
     """A fact used in think response."""
 
@@ -529,7 +521,7 @@ class ReflectFact(BaseModel):
 
     id: str | None = None
     text: str
-    type: str | None = None  # fact type: world, experience, opinion
+    type: str | None = None  # fact type: world, experience, observation
     context: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
@@ -1412,9 +1404,10 @@ def create_app(
                 worker_id=worker_id,
                 executor=memory.execute_task,
                 poll_interval_ms=config.worker_poll_interval_ms,
-                batch_size=config.worker_batch_size,
                 max_retries=config.worker_max_retries,
                 tenant_extension=getattr(memory, "_tenant_extension", None),
+                max_slots=config.worker_max_slots,
+                consolidation_max_slots=config.worker_consolidation_max_slots,
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
@@ -1707,9 +1700,7 @@ def _register_routes(app: FastAPI):
         description="Recall memory using semantic similarity and spreading activation.\n\n"
         "The type parameter is optional and must be one of:\n"
         "- `world`: General knowledge about people, places, events, and things that happen\n"
-        "- `experience`: Memories about experience, conversations, actions taken, and tasks performed\n"
-        "- `opinion`: The bank's formed beliefs, perspectives, and viewpoints\n\n"
-        "Set `include_entities=true` to get entity observations alongside recall results.",
+        "- `experience`: Memories about experience, conversations, actions taken, and tasks performed",
         operation_id="recall_memories",
         tags=["Memory"],
     )
@@ -1723,10 +1714,8 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         try:
-            # Default to world and experience if not specified (exclude observation and opinion)
-            # Filter out 'opinion' even if requested - opinions are excluded from recall
+            # Default to world and experience if not specified (exclude observation)
             fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
-            fact_types = [ft for ft in fact_types if ft != "opinion"]
 
             # Parse query_timestamp if provided
             question_date = None
@@ -1858,8 +1847,7 @@ def _register_routes(app: FastAPI):
         "2. Retrieves world facts relevant to the query\n"
         "3. Retrieves existing opinions (bank's perspectives)\n"
         "4. Uses LLM to formulate a contextual answer\n"
-        "5. Extracts and stores any new opinions formed\n"
-        "6. Returns plain text answer, the facts used, and new opinions",
+        "5. Returns plain text answer and the facts used",
         operation_id="reflect",
         tags=["Memory"],
     )

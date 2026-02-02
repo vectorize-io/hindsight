@@ -92,155 +92,12 @@ async def test_entity_extraction_on_retain(memory, request_context):
 
 
 @pytest.mark.asyncio
-async def test_regenerate_entity_observations(memory, request_context):
-    """
-    Test explicit regeneration of summary for an entity.
-    """
-    bank_id = f"test_regen_obs_{datetime.now(timezone.utc).timestamp()}"
-
-    try:
-        # Store facts about an entity
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Sarah is a product manager who loves user research and data analysis.",
-            context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            request_context=request_context,
-        )
-
-        await memory.wait_for_background_tasks()
-
-        # Find the Sarah entity
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            entity_row = await conn.fetchrow(
-                """
-                SELECT id, canonical_name
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%sarah%'
-                LIMIT 1
-                """,
-                bank_id
-            )
-
-        if entity_row:
-            entity_id = str(entity_row['id'])
-            entity_name = entity_row['canonical_name']
-
-            # Manually regenerate summary (via observations API for backwards compat)
-            created_ids = await memory.regenerate_entity_observations(
-                bank_id=bank_id,
-                entity_id=entity_id,
-                entity_name=entity_name,
-                request_context=request_context,
-            )
-
-            print(f"\n=== Regenerated Summary ===")
-            print(f"Created {len(created_ids)} summary for {entity_name}")
-
-            # Get entity state
-            state = await memory.get_entity_state(
-                bank_id, entity_id, entity_name, request_context=request_context
-            )
-            for obs in state.observations:
-                print(f"  - {obs.text}")
-
-            # Verify summary was created
-            if len(created_ids) > 0:
-                assert len(state.observations) == 1, "Should have exactly 1 observation (the summary)"
-                print(f"Summary regenerated successfully")
-            else:
-                print(f"Note: No summary was regenerated")
-
-        else:
-            print(f"Note: No 'Sarah' entity was extracted")
-
-    finally:
-        # Cleanup
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
-            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
-
-
-@pytest.mark.asyncio
-async def test_entity_state_retrieval(memory, request_context):
-    """
-    Test retrieving entity state with facts.
-    """
-    bank_id = f"test_entity_state_{datetime.now(timezone.utc).timestamp()}"
-
-    try:
-        # Store facts
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Alice works at Google as a senior software engineer.",
-            context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            request_context=request_context,
-        )
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Alice loves hiking and outdoor photography.",
-            context="hobbies",
-            event_date=datetime(2024, 1, 16, tzinfo=timezone.utc),
-            request_context=request_context,
-        )
-
-        # Find the Alice entity
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            entity_row = await conn.fetchrow(
-                """
-                SELECT id, canonical_name
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%alice%'
-                LIMIT 1
-                """,
-                bank_id
-            )
-
-        assert entity_row is not None, "Alice entity should have been extracted"
-
-        entity_id = str(entity_row['id'])
-        entity_name = entity_row['canonical_name']
-
-        # Check fact count
-        async with pool.acquire() as conn:
-            fact_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM unit_entities WHERE entity_id = $1",
-                entity_row['id']
-            )
-
-        print(f"\n=== Entity State Test ===")
-        print(f"Entity: {entity_name} (id: {entity_id})")
-        print(f"Linked facts: {fact_count}")
-
-        # Get entity state
-        state = await memory.get_entity_state(
-            bank_id, entity_id, entity_name, request_context=request_context
-        )
-
-        assert state.entity_id == entity_id
-        assert state.canonical_name == entity_name
-        print(f"Entity state retrieved successfully")
-
-    finally:
-        # Cleanup
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
-            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
-
-
-@pytest.mark.asyncio
 async def test_search_with_include_entities(memory, request_context):
     """
-    Test that search with include_entities=True returns entity information.
+    Test that recall accepts include_entities parameter for backwards compatibility.
 
-    This test verifies that:
-    1. Entities are extracted after retain
-    2. Entity info is returned in recall results with include_entities=True
+    Note: Entity observations have been deprecated. This test verifies the parameter
+    is still accepted without errors.
     """
     bank_id = f"test_search_ent_{datetime.now(timezone.utc).timestamp()}"
 
@@ -249,10 +106,6 @@ async def test_search_with_include_entities(memory, request_context):
         contents = [
             "Alice is a data scientist who works on recommendation systems at Netflix.",
             "Alice presented her research at the ML conference last month.",
-            "Alice is an expert in deep learning and neural networks.",
-            "Alice graduated from Stanford with a PhD in Computer Science.",
-            "Alice leads a team of 5 data scientists at Netflix.",
-            "Alice published a paper on collaborative filtering algorithms.",
         ]
 
         for i, content in enumerate(contents):
@@ -267,7 +120,7 @@ async def test_search_with_include_entities(memory, request_context):
         # Wait for background tasks
         await memory.wait_for_background_tasks()
 
-        # Search with include_entities=True
+        # Search with include_entities=True (should be accepted for backwards compatibility)
         result = await memory.recall_async(
             bank_id=bank_id,
             query="What does Alice do?",
@@ -279,98 +132,9 @@ async def test_search_with_include_entities(memory, request_context):
             request_context=request_context,
         )
 
-        print(f"\n=== Search Results ===")
-        print(f"Found {len(result.results)} facts")
-        for fact in result.results:
-            print(f"  - {fact.text}")
-            if fact.entities:
-                print(f"    Entities: {', '.join(fact.entities)}")
-
-        # Verify results
+        # Verify recall works
         assert len(result.results) > 0, "Should find some facts"
-
-        # Check if entities are included in facts
-        facts_with_entities = [f for f in result.results if f.entities]
-        assert len(facts_with_entities) > 0, "Some facts should have entity information"
-        print(f"{len(facts_with_entities)} facts have entity information")
-
-        # Check if entity info is returned
-        if result.entities:
-            print(f"Entity info included for {len(result.entities)} entities")
-
-            # Verify Alice entity is in results
-            alice_found = False
-            for name, state in result.entities.items():
-                assert state.canonical_name == name, "Entity canonical_name should match key"
-                assert state.entity_id, "Entity should have an ID"
-                if "alice" in name.lower():
-                    alice_found = True
-                    print(f"Alice entity found: {name}")
-
-            assert alice_found, "Alice entity should be in recall results"
-
-    finally:
-        # Cleanup
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
-            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
-
-
-@pytest.mark.asyncio
-async def test_get_entity_state(memory, request_context):
-    """
-    Test getting the full state of an entity.
-    """
-    bank_id = f"test_entity_state_{datetime.now(timezone.utc).timestamp()}"
-
-    try:
-        # Store facts
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Bob is a frontend developer who specializes in React and TypeScript.",
-            context="work info",
-            event_date=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            request_context=request_context,
-        )
-
-        await memory.wait_for_background_tasks()
-
-        # Find entity
-        pool = await memory._get_pool()
-        async with pool.acquire() as conn:
-            entity_row = await conn.fetchrow(
-                """
-                SELECT id, canonical_name
-                FROM entities
-                WHERE bank_id = $1 AND LOWER(canonical_name) LIKE '%bob%'
-                LIMIT 1
-                """,
-                bank_id
-            )
-
-        if entity_row:
-            entity_id = str(entity_row['id'])
-            entity_name = entity_row['canonical_name']
-
-            # Get entity state
-            state = await memory.get_entity_state(
-                bank_id=bank_id,
-                entity_id=entity_id,
-                entity_name=entity_name,
-                limit=10,
-                request_context=request_context,
-            )
-
-            print(f"\n=== Entity State for {entity_name} ===")
-            print(f"Entity ID: {state.entity_id}")
-            print(f"Canonical Name: {state.canonical_name}")
-            print(f"Observations: {len(state.observations)}")
-            for obs in state.observations:
-                print(f"  - {obs.text}")
-
-            assert state.entity_id == entity_id, "Entity ID should match"
-            assert state.canonical_name == entity_name, "Canonical name should match"
+        print(f"Found {len(result.results)} facts")
 
     finally:
         # Cleanup

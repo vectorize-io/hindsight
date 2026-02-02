@@ -125,12 +125,6 @@ def main():
         help=f"Poll interval in milliseconds (default: {config.worker_poll_interval_ms}, env: HINDSIGHT_API_WORKER_POLL_INTERVAL_MS)",
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=config.worker_batch_size,
-        help=f"Tasks to claim per poll (default: {config.worker_batch_size}, env: HINDSIGHT_API_WORKER_BATCH_SIZE)",
-    )
-    parser.add_argument(
         "--max-retries",
         type=int,
         default=config.worker_max_retries,
@@ -168,8 +162,9 @@ def main():
 
     print(f"Starting Hindsight Worker: {args.worker_id}")
     print(f"  Poll interval: {args.poll_interval}ms")
-    print(f"  Batch size: {args.batch_size}")
     print(f"  Max retries: {args.max_retries}")
+    print(f"  Max slots: {config.worker_max_slots}")
+    print(f"  Consolidation max slots: {config.worker_consolidation_max_slots}")
     print(f"  HTTP server: {args.http_host}:{args.http_port}")
     print()
 
@@ -213,9 +208,10 @@ def main():
             worker_id=args.worker_id,
             executor=memory.execute_task,
             poll_interval_ms=args.poll_interval,
-            batch_size=args.batch_size,
             max_retries=args.max_retries,
             tenant_extension=tenant_extension,
+            max_slots=config.worker_max_slots,
+            consolidation_max_slots=config.worker_consolidation_max_slots,
         )
 
         # Create the HTTP app for metrics/health

@@ -182,7 +182,16 @@ class BrokerTaskBackend(TaskBackend):
         operation_id = task_dict.get("operation_id")
         task_type = task_dict.get("type", "unknown")
         bank_id = task_dict.get("bank_id")
-        payload_json = json.dumps(task_dict)
+
+        # Custom encoder to handle datetime objects
+        from datetime import datetime
+
+        def datetime_encoder(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        payload_json = json.dumps(task_dict, default=datetime_encoder)
 
         schema = self._schema_getter() if self._schema_getter else self._schema
         table = fq_table("async_operations", schema)

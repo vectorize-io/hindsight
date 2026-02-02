@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Synced with upstream v0.4.6
+  - Bug fixes: deadlock in worker polling, retain async timestamp issues
+  - OpenClaw: moltbot → openclaw rename with config setup
+  - Our PRs merged back: MCP auth, docker retry, CLI flags, control-plane fixes
+  - Docs: VertexAI, MCP, OpenClaw, embed page
+
+### Fixed
+- CI: Build job no longer requires production approval (only deploy does)
+- Docker: Added retry logic for ML model downloads (3 retries with exponential backoff)
+- Docker: Preload tiktoken encoding during build (avoids runtime download)
+
+### Added
 - Synced with upstream v0.4.2 (12 commits merged)
   - Vertex AI as LLM provider
   - Per-operation LLM retry/backoff configuration

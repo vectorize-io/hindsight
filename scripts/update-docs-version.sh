@@ -73,8 +73,22 @@ if [ "$PATCH_VERSION" != "0" ]; then
         --exclude='.DS_Store' \
         "$SOURCE_DIR/" "$TARGET_DIR/"
 
+    # Sync sidebar configuration
+    print_info "Syncing sidebars.ts → versioned_sidebars/version-${MAJOR_MINOR}-sidebars.json"
+
+    cd "$DOCS_DIR"
+    # Use Node.js to convert sidebars.ts to JSON and update versioned sidebar
+    node -e "
+    const sidebars = require('./sidebars.ts').default;
+    const fs = require('fs');
+    const targetFile = './versioned_sidebars/version-${MAJOR_MINOR}-sidebars.json';
+    fs.writeFileSync(targetFile, JSON.stringify(sidebars, null, 2) + '\n');
+    console.log('Updated: ' + targetFile);
+    "
+
     echo ""
     print_info "✓ Synced docs/ to version-${MAJOR_MINOR}"
+    print_info "✓ Synced sidebars to version-${MAJOR_MINOR}-sidebars.json"
     print_info "✓ Files updated in: $TARGET_DIR"
 
 else

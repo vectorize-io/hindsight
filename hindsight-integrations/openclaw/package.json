@@ -1,21 +1,17 @@
 {
-  "name": "@vectorize-io/hindsight-moltbot-plugin",
-  "version": "0.1.0",
-  "description": "Hindsight memory plugin for Moltbot - biomimetic long-term memory with fact extraction",
+  "name": "@vectorize-io/hindsight-openclaw",
+  "version": "0.4.6",
+  "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "clawdbot": {
+  "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ],
-    "hooks": [
-      "hooks/retain-messages"
     ]
   },
   "keywords": [
-    "moltbot",
-    "clawdbot",
+    "openclaw",
     "memory",
     "ai",
     "agent",
@@ -27,12 +23,11 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/vectorize-io/hindsight.git",
-    "directory": "hindsight-integrations/moltbot"
+    "directory": "hindsight-integrations/openclaw"
   },
   "files": [
     "dist",
-    "clawdbot.plugin.json",
-    "hooks",
+    "openclaw.plugin.json",
     "README.md"
   ],
   "scripts": {

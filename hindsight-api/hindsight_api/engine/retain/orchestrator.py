@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from ..db_utils import acquire_with_retry
 from . import bank_utils
@@ -16,6 +17,39 @@ from . import bank_utils
 def utcnow():
     """Get current UTC time."""
     return datetime.now(UTC)
+
+
+def parse_datetime_flexible(value: Any) -> datetime:
+    """
+    Parse a datetime value that could be either a datetime object or an ISO string.
+
+    This handles datetime values from both direct Python calls and deserialized JSON
+    (where datetime objects are serialized as ISO strings).
+
+    Args:
+        value: Either a datetime object or an ISO format string
+
+    Returns:
+        datetime object (timezone-aware)
+
+    Raises:
+        TypeError: If value is neither datetime nor string
+        ValueError: If string is not a valid ISO datetime
+    """
+    if isinstance(value, datetime):
+        # Ensure timezone-aware
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
+    elif isinstance(value, str):
+        # Parse ISO format string (handles both 'Z' and '+00:00' timezone formats)
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Ensure timezone-aware
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
+    else:
+        raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
 
 
 from ..response_models import TokenUsage
@@ -89,10 +123,18 @@ async def retain_batch(
         # Merge item-level tags with document-level tags
         item_tags = item.get("tags", []) or []
         merged_tags = list(set(item_tags + (document_tags or [])))
+
+        # Handle event_date: parse flexibly (handles both datetime objects and ISO strings)
+        event_date_value = item.get("event_date")
+        if event_date_value:
+            event_date_value = parse_datetime_flexible(event_date_value)
+        else:
+            event_date_value = utcnow()
+
         content = RetainContent(
             content=item["content"],
             context=item.get("context", ""),
-            event_date=item.get("event_date") or utcnow(),
+            event_date=event_date_value,
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
             tags=merged_tags,
@@ -101,11 +143,8 @@ async def retain_batch(
 
     # Step 1: Extract facts from all contents
     step_start = time.time()
-    extract_opinions = fact_type_override == "opinion"
 
-    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, agent_name, extract_opinions
-    )
+    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(contents, llm_config, agent_name)
     log_buffer.append(
         f"[1] Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks from {len(contents)} contents in {time.time() - step_start:.3f}s"
     )

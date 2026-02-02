@@ -358,7 +358,7 @@ class TestLLMMetrics:
         collector.record_llm_call(
             provider="gemini",
             model="gemini-pro",
-            scope="entity_observation",
+            scope="memory",
             duration=2.0,
             success=True,
         )
@@ -369,11 +369,11 @@ class TestLLMMetrics:
         assert call_args[0][0] == 1
         assert call_args[0][1]["provider"] == "gemini"
         assert call_args[0][1]["model"] == "gemini-pro"
-        assert call_args[0][1]["scope"] == "entity_observation"
+        assert call_args[0][1]["scope"] == "memory"
 
     def test_record_llm_call_different_scopes(self, collector):
         """Test recording LLM calls with different scopes."""
-        scopes = ["memory", "reflect", "entity_observation", "answer"]
+        scopes = ["memory", "reflect", "consolidation", "answer"]
 
         for scope in scopes:
             collector.llm_duration.record.reset_mock()
