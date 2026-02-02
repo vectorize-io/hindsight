@@ -61,7 +61,7 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -120,6 +120,149 @@ export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name
+
+# OpenAI Codex (ChatGPT Plus/Pro subscription - uses OAuth, no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+export HINDSIGHT_API_LLM_MODEL=gpt-5.2-codex
+# No API key needed - uses OAuth tokens from ~/.codex/auth.json
+```
+
+#### OpenAI Codex Setup (ChatGPT Plus/Pro)
+
+Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI Platform API costs.
+
+**Prerequisites:**
+- Active ChatGPT Plus or Pro subscription
+- Node.js/npm installed (for Codex CLI)
+
+**Setup Steps:**
+
+1. **Install Codex CLI:**
+   ```bash
+   npm install -g @openai/codex
+   ```
+
+2. **Login with ChatGPT credentials:**
+   ```bash
+   codex auth login
+   ```
+   This opens a browser window to authenticate with your ChatGPT account and saves OAuth tokens to `~/.codex/auth.json`.
+
+3. **Verify authentication:**
+   ```bash
+   ls ~/.codex/auth.json  # Should show the auth file exists
+   ```
+
+4. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+   export HINDSIGHT_API_LLM_MODEL=gpt-5.2-codex  # or gpt-5.1-codex
+   # No API key needed - reads from ~/.codex/auth.json automatically
+   ```
+
+5. **Start Hindsight:**
+   ```bash
+   ./scripts/dev/start-api.sh
+   ```
+
+**Available Models:**
+- `gpt-5.2-codex` - Latest frontier agentic coding model
+- `gpt-5.2` - Latest frontier model
+- `gpt-5.1-codex` - Previous generation coding model
+- `gpt-5.1-codex-max` - Maximum context variant
+- `gpt-5.1-codex-mini` - Lightweight variant
+
+**Important Notes:**
+- OAuth tokens are stored in `~/.codex/auth.json`
+- Tokens refresh automatically when needed
+- Usage is billed to your ChatGPT subscription (not separate API costs)
+- For personal development use only (see ChatGPT Terms of Service)
+
+**Troubleshooting:**
+
+If authentication fails:
+```bash
+# Re-login to refresh tokens
+codex auth login
+
+# Check auth file exists and has correct format
+cat ~/.codex/auth.json | python3 -c "import json, sys; d=json.load(sys.stdin); print('auth_mode:', d.get('auth_mode')); print('has tokens:', 'tokens' in d)"
+```
+
+#### Claude Code Setup (Claude Pro/Max)
+
+Use your Claude Pro or Max subscription for Hindsight without separate Anthropic API costs.
+
+**Prerequisites:**
+- Active Claude Pro or Max subscription
+- Claude Code CLI installed
+
+**Setup Steps:**
+
+1. **Install Claude Code CLI:**
+   ```bash
+   npm install -g @anthropics/claude-code
+   # Or via Homebrew
+   brew install anthropics/claude-code/claude-code
+   ```
+
+2. **Login with Claude credentials:**
+   ```bash
+   claude auth login
+   ```
+   This opens a browser window to authenticate with your Claude account. Authentication is automatically managed by the Claude Agent SDK.
+
+3. **Verify authentication:**
+   ```bash
+   claude --version
+   # Should show version without errors
+   ```
+
+4. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=claude-code
+   export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-20250514
+   # No API key needed - uses claude auth login credentials
+   ```
+
+5. **Start Hindsight:**
+   ```bash
+   ./scripts/dev/start-api.sh
+   ```
+
+**Available Models:**
+- `claude-sonnet-4-20250514` - Latest Claude Sonnet (recommended)
+- `claude-opus-4-20250514` - Claude Opus for complex tasks
+- `claude-sonnet-3-5-20241022` - Previous generation Sonnet
+- Any model supported by Claude Code CLI
+
+**Important Notes:**
+- Authentication handled by Claude Agent SDK (uses bundled CLI)
+- Credentials managed securely by Claude Code
+- Usage billed to your Claude subscription (not separate API costs)
+- Includes Claude Agent SDK as dependency (auto-installed)
+- For personal development use only (see Claude Terms of Service)
+
+**Troubleshooting:**
+
+If authentication fails:
+```bash
+# Re-login to refresh credentials
+claude auth login
+
+# Check Claude CLI is working
+claude --version
+
+# Test authentication directly
+claude query "test"
+```
+
+If the SDK is not found:
+```bash
+# Install Claude Agent SDK
+pip install claude-agent-sdk
+# Or with uv
+uv add claude-agent-sdk
 ```
 
 #### Vertex AI Setup

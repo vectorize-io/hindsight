@@ -303,8 +303,10 @@ class MemoryEngine(MemoryEngineInterface):
         db_url = db_url or config.database_url
         memory_llm_provider = memory_llm_provider or config.llm_provider
         memory_llm_api_key = memory_llm_api_key or config.llm_api_key
-        # Ollama and mock don't require an API key
-        if not memory_llm_api_key and memory_llm_provider not in ("ollama", "mock"):
+        # Ollama, openai-codex, claude-code, and mock don't require an API key
+        # openai-codex uses OAuth tokens from ~/.codex/auth.json
+        # claude-code uses OAuth tokens from macOS Keychain
+        if not memory_llm_api_key and memory_llm_provider not in ("ollama", "openai-codex", "claude-code", "mock"):
             raise ValueError("LLM API key is required. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
         memory_llm_model = memory_llm_model or config.llm_model
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
