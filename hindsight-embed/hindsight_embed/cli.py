@@ -130,18 +130,12 @@ def do_configure(args):
 
     # Check if we're creating a named profile with --env flags
     if profile and env_vars:
-        if not port:
-            print(f"Error: --port is required when creating profile '{profile}'", file=sys.stderr)
-            print("  Example: --port 9100", file=sys.stderr)
-            return 1
+        # Pass port (may be None for auto-allocation/reuse)
         return _do_configure_profile_with_env(profile, port, env_vars)
 
     # Check if we're creating a named profile interactively
     if profile:
-        if not port:
-            print(f"Error: --port is required when creating profile '{profile}'", file=sys.stderr)
-            print("  Example: --port 9100", file=sys.stderr)
-            return 1
+        # Pass port (may be None for auto-allocation/reuse)
         return _do_configure_profile_interactive(profile, port)
 
     # Default behavior: interactive configuration for default profile
@@ -576,12 +570,12 @@ def do_daemon(args, config: dict, logger):
         return 1
 
 
-def _do_configure_profile_with_env(profile_name: str, port: int, env_vars: list[str]) -> int:
+def _do_configure_profile_with_env(profile_name: str, port: int | None, env_vars: list[str]) -> int:
     """Configure a named profile with environment variables (non-interactive).
 
     Args:
         profile_name: Name of the profile to create/update.
-        port: Port number for the daemon.
+        port: Port number for the daemon (None to auto-allocate/reuse existing).
         env_vars: List of KEY=VALUE strings.
 
     Returns:
@@ -611,6 +605,16 @@ def _do_configure_profile_with_env(profile_name: str, port: int, env_vars: list[
 
     # Create profile
     pm = ProfileManager()
+
+    # Determine port: use provided, reuse existing, or allocate new
+    if port is None:
+        # Check if profile exists and get its port
+        existing_profile = pm.get_profile(profile_name)
+        if existing_profile:
+            port = existing_profile.port
+        else:
+            port = pm._allocate_port(profile_name)
+
     try:
         pm.create_profile(profile_name, port, config)
     except ValueError as e:
@@ -632,16 +636,28 @@ def _do_configure_profile_with_env(profile_name: str, port: int, env_vars: list[
     return 0
 
 
-def _do_configure_profile_interactive(profile_name: str, port: int) -> int:
+def _do_configure_profile_interactive(profile_name: str, port: int | None) -> int:
     """Configure a named profile interactively.
 
     Args:
         profile_name: Name of the profile to create/update.
-        port: Port number for the daemon.
+        port: Port number for the daemon (None to auto-allocate/reuse existing).
 
     Returns:
         Exit code (0 = success, 1 = error).
     """
+    from .profile_manager import ProfileManager
+
+    # Determine port: use provided, reuse existing, or allocate new
+    if port is None:
+        pm = ProfileManager()
+        # Check if profile exists and get its port
+        existing_profile = pm.get_profile(profile_name)
+        if existing_profile:
+            port = existing_profile.port
+        else:
+            port = pm._allocate_port(profile_name)
+
     print()
     print(f"\033[1m\033[36m  Configuring profile '{profile_name}' (port {port})\033[0m")
     print()
@@ -1080,6 +1096,11 @@ def main():
                 help="Environment variable (KEY=VALUE, can be repeated)",
             )
             args = parser.parse_args(remaining_args[1:])  # Skip 'configure' itself
+
+            # If --profile was consumed by parent_parser, use global_profile
+            if not args.profile and global_profile:
+                args.profile = global_profile
+
             logger = setup_logging(False)
             exit_code = do_configure(args)
             sys.exit(exit_code)

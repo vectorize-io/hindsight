@@ -19,10 +19,13 @@ import httpx
 # Configuration paths
 CONFIG_DIR = Path.home() / ".hindsight"
 PROFILES_DIR = CONFIG_DIR / "profiles"
+METADATA_FILE = PROFILES_DIR / "metadata.json"
 ACTIVE_PROFILE_FILE = CONFIG_DIR / "active_profile"
 
 # Port allocation
 DEFAULT_PORT = 8888
+PROFILE_PORT_BASE = 8889
+PROFILE_PORT_RANGE = 1000  # 8889-9888
 
 
 @dataclass
@@ -47,6 +50,14 @@ class ProfileInfo:
     daemon_running: bool = False
 
 
+@dataclass
+class ProfileMetadata:
+    """Metadata for all profiles."""
+
+    version: int = 1
+    profiles: dict[str, dict] = field(default_factory=dict)
+
+
 class ProfileManager:
     """Manages configuration profiles for hindsight-embed."""
 
@@ -64,43 +75,36 @@ class ProfileManager:
         Returns:
             List of ProfileInfo objects with daemon status.
         """
+        metadata = self._load_metadata()
         active_profile = self.get_active_profile()
         profiles = []
 
         # Add default profile if config exists
         default_config = CONFIG_DIR / "embed"
         if default_config.exists():
-            stat = default_config.stat()
             profiles.append(
                 ProfileInfo(
                     name="",  # Empty name = default
                     port=DEFAULT_PORT,
-                    created_at=datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
-                    last_used=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    created_at="",  # Don't track for default
+                    last_used=None,
                     is_active=active_profile == "",
                     daemon_running=self._check_daemon_running(DEFAULT_PORT),
                 )
             )
 
-        # Add named profiles by listing .env files
-        if PROFILES_DIR.exists():
-            for env_file in sorted(PROFILES_DIR.glob("*.env")):
-                name = env_file.stem
-                port = self._read_port_from_env(env_file)
-                if port is None:
-                    continue  # Skip profiles without PORT
-
-                stat = env_file.stat()
-                profiles.append(
-                    ProfileInfo(
-                        name=name,
-                        port=port,
-                        created_at=datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
-                        last_used=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                        is_active=active_profile == name,
-                        daemon_running=self._check_daemon_running(port),
-                    )
+        # Add named profiles
+        for name, info in metadata.profiles.items():
+            profiles.append(
+                ProfileInfo(
+                    name=name,
+                    port=info["port"],
+                    created_at=info.get("created_at", ""),
+                    last_used=info.get("last_used"),
+                    is_active=active_profile == name,
+                    daemon_running=self._check_daemon_running(info["port"]),
                 )
+            )
 
         return sorted(profiles, key=lambda p: (p.name != "", p.name))
 
@@ -136,78 +140,108 @@ class ProfileManager:
                 return profile
         return None
 
-    def create_profile(self, name: str, port: int, config: dict[str, str]):
+    def create_profile(self, name: str, port_or_config: int | dict[str, str], config: dict[str, str] | None = None):
         """Create or update a profile.
 
         Args:
             name: Profile name.
-            port: Port number for the daemon.
-            config: Configuration dict (KEY=VALUE pairs).
+            port_or_config: Port number (int) or configuration dict. For backward compatibility,
+                            if this is a dict, it's treated as config and port is auto-allocated.
+            config: Configuration dict (KEY=VALUE pairs). Only used if port_or_config is an int.
 
         Raises:
-            ValueError: If profile name is invalid or port is already in use.
+            ValueError: If profile name is invalid or port is invalid.
         """
+        # Handle backward compatibility - allow (name, config) or (name, port, config)
+        if isinstance(port_or_config, dict):
+            # Called with (name, config) - auto-allocate port
+            port = None
+            config = port_or_config
+        else:
+            # Called with (name, port, config)
+            port = port_or_config
+            if config is None:
+                raise ValueError("Config must be provided when port is specified")
+
         if not name:
             raise ValueError("Profile name cannot be empty")
 
         if not name.replace("-", "").replace("_", "").isalnum():
             raise ValueError(f"Invalid profile name '{name}'. Use alphanumeric chars, hyphens, and underscores.")
 
-        if port < 1024 or port > 65535:
+        if port is not None and (port < 1024 or port > 65535):
             raise ValueError(f"Invalid port {port}. Must be between 1024-65535.")
 
         # Ensure profile directory exists
         self._ensure_directories()
 
-        # Check if port is already in use by another profile
-        for profile in self.list_profiles():
-            if profile.name != name and profile.port == port:
-                raise ValueError(f"Port {port} is already in use by profile '{profile.name}'")
+        # Load metadata to check if profile already exists
+        metadata = self._load_metadata()
 
-        # Write config file with PORT as first line
+        # Determine port: use provided port, preserve existing, or allocate new
+        if port is None:
+            if name in metadata.profiles and "port" in metadata.profiles[name]:
+                port = metadata.profiles[name]["port"]
+            else:
+                port = self._allocate_port(name)
+
+        # Write config file
         config_path = PROFILES_DIR / f"{name}.env"
-        config_lines = [f"PORT={port}"] + [f"{key}={value}" for key, value in config.items()]
+        config_lines = [f"{key}={value}" for key, value in config.items()]
         config_path.write_text("\n".join(config_lines) + "\n")
+
+        # Update metadata (reuse metadata loaded earlier to avoid race conditions)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        if name in metadata.profiles:
+            # Update existing profile
+            metadata.profiles[name]["last_used"] = now_iso
+            metadata.profiles[name]["port"] = port
+        else:
+            # Create new profile
+            metadata.profiles[name] = {
+                "port": port,
+                "created_at": now_iso,
+                "last_used": now_iso,
+            }
+
+        self._save_metadata(metadata)
 
     def delete_profile(self, name: str):
         """Delete a profile.
 
         Args:
-            name: Profile name (empty string for default).
+            name: Profile name.
 
         Raises:
-            ValueError: If profile doesn't exist.
+            ValueError: If profile name is invalid or doesn't exist.
         """
-        if not self.profile_exists(name):
-            raise ValueError(f"Profile '{name or 'default'}' does not exist")
-
         if not name:
-            # Delete default profile
-            config_files = [CONFIG_DIR / "embed", CONFIG_DIR / "config.env"]
-            for config_file in config_files:
-                if config_file.exists():
-                    config_file.unlink()
+            raise ValueError("Cannot delete default profile")
 
-            lock_file = CONFIG_DIR / "daemon.lock"
-            if lock_file.exists():
-                lock_file.unlink()
+        if not self.profile_exists(name):
+            raise ValueError(f"Profile '{name}' does not exist")
 
-            log_file = CONFIG_DIR / "daemon.log"
-            if log_file.exists():
-                log_file.unlink()
-        else:
-            # Delete named profile
-            config_path = PROFILES_DIR / f"{name}.env"
-            if config_path.exists():
-                config_path.unlink()
+        # Remove config file
+        config_path = PROFILES_DIR / f"{name}.env"
+        if config_path.exists():
+            config_path.unlink()
 
-            lock_path = PROFILES_DIR / f"{name}.lock"
-            if lock_path.exists():
-                lock_path.unlink()
+        # Remove lock file
+        lock_path = PROFILES_DIR / f"{name}.lock"
+        if lock_path.exists():
+            lock_path.unlink()
 
-            log_path = PROFILES_DIR / f"{name}.log"
-            if log_path.exists():
-                log_path.unlink()
+        # Remove log file
+        log_path = PROFILES_DIR / f"{name}.log"
+        if log_path.exists():
+            log_path.unlink()
+
+        # Update metadata
+        metadata = self._load_metadata()
+        if name in metadata.profiles:
+            del metadata.profiles[name]
+            self._save_metadata(metadata)
 
         # Clear active profile if it was deleted
         if self.get_active_profile() == name:
@@ -260,40 +294,48 @@ class ProfileManager:
                 port=DEFAULT_PORT,
             )
 
-        # Named profile - read port from .env file
-        env_file = PROFILES_DIR / f"{name}.env"
-        port = self._read_port_from_env(env_file)
-        if port is None:
-            raise ValueError(f"Profile '{name}' does not have PORT configured in {env_file}")
+        # Named profile
+        metadata = self._load_metadata()
+        port = metadata.profiles.get(name, {}).get("port", self._allocate_port(name))
 
         return ProfilePaths(
-            config=env_file,
+            config=PROFILES_DIR / f"{name}.env",
             lock=PROFILES_DIR / f"{name}.lock",
             log=PROFILES_DIR / f"{name}.log",
             port=port,
         )
 
-    def _read_port_from_env(self, env_file: Path) -> Optional[int]:
-        """Read PORT from a profile's .env file.
+    def _allocate_port(self, name: str) -> int:
+        """Allocate a port for a profile using hash-based strategy.
 
         Args:
-            env_file: Path to the .env file.
+            name: Profile name.
 
         Returns:
-            Port number if found, None otherwise.
+            Port number (8889-9888).
         """
-        if not env_file.exists():
-            return None
+        # Hash profile name to get consistent port
+        hash_val = int(hashlib.sha256(name.encode()).hexdigest(), 16)
+        port = PROFILE_PORT_BASE + (hash_val % PROFILE_PORT_RANGE)
 
-        try:
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("PORT="):
-                    return int(line.split("=", 1)[1])
-        except (ValueError, IOError):
-            return None
+        # Check if port is already allocated in metadata
+        metadata = self._load_metadata()
+        allocated_ports = {info["port"] for info in metadata.profiles.values() if info.get("port")}
 
-        return None
+        # If collision, find next available port
+        attempt = 0
+        while port in allocated_ports and attempt < PROFILE_PORT_RANGE:
+            port = PROFILE_PORT_BASE + ((hash_val + attempt) % PROFILE_PORT_RANGE)
+            attempt += 1
+
+        if attempt >= PROFILE_PORT_RANGE:
+            # Fallback: find first available port
+            for p in range(PROFILE_PORT_BASE, PROFILE_PORT_BASE + PROFILE_PORT_RANGE):
+                if p not in allocated_ports:
+                    return p
+            raise RuntimeError("No available ports for profile")
+
+        return port
 
     def _check_daemon_running(self, port: int) -> bool:
         """Check if daemon is running on a port.
@@ -310,6 +352,58 @@ class ProfileManager:
                 return response.status_code == 200
         except Exception:
             return False
+
+    def _load_metadata(self) -> ProfileMetadata:
+        """Load profile metadata from disk.
+
+        Returns:
+            ProfileMetadata object.
+        """
+        if not METADATA_FILE.exists():
+            return ProfileMetadata()
+
+        try:
+            with open(METADATA_FILE) as f:
+                data = json.load(f)
+                return ProfileMetadata(version=data.get("version", 1), profiles=data.get("profiles", {}))
+        except (json.JSONDecodeError, IOError) as e:
+            print(
+                f"Warning: Failed to load metadata: {e}. Using empty metadata.",
+                file=sys.stderr,
+            )
+            # Backup corrupted metadata
+            backup_path = METADATA_FILE.with_suffix(".json.bak")
+            if METADATA_FILE.exists():
+                METADATA_FILE.rename(backup_path)
+            return ProfileMetadata()
+
+    def _save_metadata(self, metadata: ProfileMetadata):
+        """Save profile metadata to disk with file locking.
+
+        Args:
+            metadata: ProfileMetadata to save.
+        """
+        self._ensure_directories()
+
+        # Use atomic write with temp file
+        temp_file = METADATA_FILE.with_suffix(".json.tmp")
+
+        with open(temp_file, "w") as f:
+            # Acquire exclusive lock
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(
+                    {"version": metadata.version, "profiles": metadata.profiles},
+                    f,
+                    indent=2,
+                )
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+        # Atomic rename
+        temp_file.rename(METADATA_FILE)
 
 
 def resolve_active_profile() -> str:
