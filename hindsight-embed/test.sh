@@ -2,6 +2,7 @@
 #
 # Smoke test for hindsight-embed CLI with daemon mode
 # Tests retain and recall operations via the background daemon
+# Verifies daemon lifecycle, memory retention, and recall functionality
 #
 
 set -e
