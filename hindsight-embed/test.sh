@@ -27,58 +27,23 @@ echo "Using bank ID: $BANK_ID"
 echo "Script dir: $SCRIPT_DIR"
 echo "API dir: $API_DIR"
 
-# Debug: Check if hindsight CLI is available
-echo ""
-echo "Checking hindsight CLI availability..."
-if command -v hindsight &> /dev/null; then
-    echo "  hindsight CLI found at: $(which hindsight)"
-else
-    echo "  hindsight CLI not in PATH"
-    if [ -f ~/.local/bin/hindsight ]; then
-        echo "  Found at ~/.local/bin/hindsight"
-    else
-        echo "  Not found at ~/.local/bin/hindsight - attempting installation..."
-        # Try to install the CLI
-        if curl -fsSL https://hindsight.vectorize.io/get-cli | bash; then
-            echo "  CLI installation completed"
-            if [ -f ~/.local/bin/hindsight ]; then
-                echo "  CLI now available at ~/.local/bin/hindsight"
-                export PATH="$HOME/.local/bin:$PATH"
-            else
-                echo "  WARNING: CLI still not found after installation"
-                ls -la ~/.local/bin/ 2>/dev/null || echo "  ~/.local/bin does not exist"
-            fi
-        else
-            echo "  WARNING: CLI installation failed"
-        fi
-    fi
-fi
-
 # Show environment info for debugging
 echo ""
 echo "Environment:"
 echo "  HINDSIGHT_EMBED_LLM_PROVIDER: ${HINDSIGHT_EMBED_LLM_PROVIDER:-not set}"
 echo "  HINDSIGHT_EMBED_LLM_MODEL: ${HINDSIGHT_EMBED_LLM_MODEL:-not set}"
 echo "  HINDSIGHT_EMBED_LLM_API_KEY: ${HINDSIGHT_EMBED_LLM_API_KEY:+set (hidden)}"
-echo "  PATH includes ~/.local/bin: $(echo $PATH | grep -q "$HOME/.local/bin" && echo yes || echo no)"
+echo "  Python: $(python3 --version 2>&1)"
+echo "  uv: $(uv --version 2>&1)"
 
-# Final check that CLI is available before proceeding
+# Verify hindsight-embed command is available
 echo ""
-echo "Final CLI check before tests..."
-CLI_PATH=""
-if [ -f ~/.local/bin/hindsight ]; then
-    CLI_PATH="$HOME/.local/bin/hindsight"
-elif command -v hindsight &> /dev/null; then
-    CLI_PATH="$(which hindsight)"
-fi
-
-if [ -n "$CLI_PATH" ]; then
-    echo "  CLI found at: $CLI_PATH"
-    echo "  CLI version: $($CLI_PATH --version 2>&1 || echo 'unknown')"
+echo "Verifying hindsight-embed is available..."
+if uv run --project "$SCRIPT_DIR" hindsight-embed --version &> /dev/null; then
+    echo "  ✓ hindsight-embed command available"
 else
-    echo "  ERROR: hindsight CLI not found. Tests cannot proceed."
-    echo "  The hindsight-embed package forwards commands to the hindsight CLI."
-    echo "  Please ensure the CLI is installed or check the get-cli installer output above."
+    echo "  ERROR: hindsight-embed command not available"
+    echo "  This test requires hindsight-embed to be installed"
     exit 1
 fi
 
