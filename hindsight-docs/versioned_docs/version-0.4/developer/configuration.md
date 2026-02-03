@@ -61,7 +61,7 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -120,7 +120,21 @@ export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_BASE_URL=https://your-endpoint.com/v1
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
 export HINDSIGHT_API_LLM_MODEL=your-model-name
+
+# OpenAI Codex (ChatGPT Plus/Pro subscription - uses OAuth, no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+export HINDSIGHT_API_LLM_MODEL=gpt-5.2-codex
+# No API key needed - uses OAuth tokens from ~/.codex/auth.json
+
+# Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=claude-code
+export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
+# No API key needed - uses claude auth login credentials
 ```
+
+:::tip OpenAI Codex & Claude Code Setup
+For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro) and **Claude Code** (Claude Pro/Max), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
+:::
 
 #### Vertex AI Setup
 

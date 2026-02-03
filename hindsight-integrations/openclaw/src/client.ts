@@ -44,12 +44,28 @@ export class HindsightClient {
   private llmApiKey: string;
   private llmModel?: string;
   private embedVersion: string;
+  private embedPackagePath?: string;
 
-  constructor(llmProvider: string, llmApiKey: string, llmModel?: string, embedVersion: string = 'latest') {
+  constructor(llmProvider: string, llmApiKey: string, llmModel?: string, embedVersion: string = 'latest', embedPackagePath?: string) {
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
     this.llmModel = llmModel;
     this.embedVersion = embedVersion || 'latest';
+    this.embedPackagePath = embedPackagePath;
+  }
+
+  /**
+   * Get the command prefix to run hindsight-embed (either local or from PyPI)
+   */
+  private getEmbedCommandPrefix(): string {
+    if (this.embedPackagePath) {
+      // Local package: uv run --directory <path> hindsight-embed
+      return `uv run --directory ${this.embedPackagePath} hindsight-embed`;
+    } else {
+      // PyPI package: uvx hindsight-embed@version
+      const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+      return `uvx ${embedPackage}`;
+    }
   }
 
   setBankId(bankId: string): void {
@@ -62,11 +78,11 @@ export class HindsightClient {
     }
 
     const escapedMission = escapeShellArg(mission);
-    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
-    const cmd = `uvx ${embedPackage} bank mission ${this.bankId} '${escapedMission}'`;
+    const embedCmd = this.getEmbedCommandPrefix();
+    const cmd = `${embedCmd} --profile openclaw bank mission ${this.bankId} '${escapedMission}'`;
 
     try {
-      const { stdout } = await execAsync(cmd, { env: this.getEnv() });
+      const { stdout } = await execAsync(cmd);
       console.log(`[Hindsight] Bank mission set: ${stdout.trim()}`);
     } catch (error) {
       // Don't fail if mission set fails - bank might not exist yet, will be created on first retain
@@ -74,29 +90,15 @@ export class HindsightClient {
     }
   }
 
-  private getEnv(): Record<string, string> {
-    const env: Record<string, string> = {
-      ...process.env,
-      HINDSIGHT_EMBED_LLM_PROVIDER: this.llmProvider,
-      HINDSIGHT_EMBED_LLM_API_KEY: this.llmApiKey,
-    };
-
-    if (this.llmModel) {
-      env.HINDSIGHT_EMBED_LLM_MODEL = this.llmModel;
-    }
-
-    return env;
-  }
-
   async retain(request: RetainRequest): Promise<RetainResponse> {
     const content = escapeShellArg(request.content);
     const docId = escapeShellArg(request.document_id || 'conversation');
 
-    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
-    const cmd = `uvx ${embedPackage} memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
+    const embedCmd = this.getEmbedCommandPrefix();
+    const cmd = `${embedCmd} --profile openclaw memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
 
     try {
-      const { stdout } = await execAsync(cmd, { env: this.getEnv() });
+      const { stdout } = await execAsync(cmd);
       console.log(`[Hindsight] Retained (async): ${stdout.trim()}`);
 
       // Return a simple response
@@ -114,11 +116,11 @@ export class HindsightClient {
     const query = escapeShellArg(request.query);
     const maxTokens = request.max_tokens || 1024;
 
-    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
-    const cmd = `uvx ${embedPackage} memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
+    const embedCmd = this.getEmbedCommandPrefix();
+    const cmd = `${embedCmd} --profile openclaw memory recall ${this.bankId} '${query}' --output json --max-tokens ${maxTokens}`;
 
     try {
-      const { stdout } = await execAsync(cmd, { env: this.getEnv() });
+      const { stdout } = await execAsync(cmd);
 
       // Parse JSON output - returns { entities: {...}, results: [...] }
       const response = JSON.parse(stdout);

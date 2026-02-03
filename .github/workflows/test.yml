@@ -749,9 +749,9 @@ jobs:
   test-embed:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_EMBED_LLM_PROVIDER: groq
-      HINDSIGHT_EMBED_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_EMBED_LLM_MODEL: openai/gpt-oss-20b
+      HINDSIGHT_API_LLM_PROVIDER: groq
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
       # Prefer CPU-only PyTorch in CI
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
 
@@ -961,6 +961,18 @@ jobs:
     - name: Run upgrade tests
       working-directory: ./hindsight-dev
       run: uv run pytest upgrade_tests/ -v --tb=short
+
+    - name: Show upgrade test logs
+      if: always()
+      run: |
+        echo "=== Upgrade Test Server Logs ==="
+        for log in /tmp/upgrade-test-*.log; do
+          if [ -f "$log" ]; then
+            echo ""
+            echo "--- $log ---"
+            tail -500 "$log"
+          fi
+        done
 
   verify-generated-files:
     runs-on: ubuntu-latest

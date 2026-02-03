@@ -67,6 +67,8 @@ class VersionRunner:
         self.process: subprocess.Popen | None = None
         self._temp_dir: str | None = None
         self._is_current = version.lower() in ("head", "current")
+        self.log_file: Path | None = None
+        self._log_handle = None
 
     def _find_repo_root(self) -> Path:
         """Find the git repository root."""
@@ -186,11 +188,17 @@ class VersionRunner:
             cwd = str(self.work_dir)
             self._head_cwd = None
 
+        # Create log file for server output
+        version_slug = self.version.replace("/", "-").replace(".", "-")
+        self.log_file = Path(f"/tmp/upgrade-test-{version_slug}-{self.port}.log")
+        self._log_handle = open(self.log_file, "w")
+        logger.info(f"Server logs will be written to {self.log_file}")
+
         # Start the server
         self.process = subprocess.Popen(
             [str(hindsight_api_bin)],
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             cwd=cwd,
         )
@@ -210,8 +218,8 @@ class VersionRunner:
         while time.time() < deadline:
             # Check if process is still alive
             if self.process and self.process.poll() is not None:
-                stdout = self.process.stdout.read().decode() if self.process.stdout else ""
-                raise RuntimeError(f"Server {self.version} exited unexpectedly.\nLogs:\n{stdout}")
+                logs = self._read_logs()
+                raise RuntimeError(f"Server {self.version} exited unexpectedly.\nLogs:\n{logs}")
 
             try:
                 resp = httpx.get(url, timeout=2)
@@ -225,12 +233,20 @@ class VersionRunner:
         # Timeout - dump logs
         if self.process:
             self.process.terminate()
-            try:
-                stdout, _ = self.process.communicate(timeout=5)
-                logs = stdout.decode() if stdout else ""
-            except Exception:
-                logs = "(failed to read logs)"
+            logs = self._read_logs()
             raise TimeoutError(f"Server {self.version} not healthy after {timeout}s.\nLogs:\n{logs}")
+
+    def _read_logs(self) -> str:
+        """Read current logs from the log file."""
+        if self.log_file and self.log_file.exists():
+            try:
+                # Flush the file handle first
+                if self._log_handle:
+                    self._log_handle.flush()
+                return self.log_file.read_text()
+            except Exception as e:
+                return f"(failed to read logs: {e})"
+        return "(no log file found)"
 
     def stop(self) -> None:
         """Stop the server and cleanup temp directory."""
@@ -245,6 +261,11 @@ class VersionRunner:
                 self.process.wait()
             self.process = None
 
+        # Close log file handle
+        if self._log_handle:
+            self._log_handle.close()
+            self._log_handle = None
+
         if self._temp_dir and os.path.exists(self._temp_dir):
             logger.info(f"Cleaning up {self._temp_dir}")
             shutil.rmtree(self._temp_dir, ignore_errors=True)
@@ -256,16 +277,8 @@ class VersionRunner:
             self._head_cwd = None
 
     def get_logs(self) -> str:
-        """Get current server logs (if process is running)."""
-        if self.process and self.process.stdout:
-            # Non-blocking read of available output
-            import select
-
-            if hasattr(select, "select"):
-                readable, _, _ = select.select([self.process.stdout], [], [], 0)
-                if readable:
-                    return self.process.stdout.read(4096).decode()
-        return ""
+        """Get current server logs."""
+        return self._read_logs()
 
     def __enter__(self) -> "VersionRunner":
         self.setup()

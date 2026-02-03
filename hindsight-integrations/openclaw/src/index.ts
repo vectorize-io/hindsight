@@ -107,6 +107,8 @@ const PROVIDER_DETECTION = [
   { name: 'gemini', keyEnv: 'GEMINI_API_KEY', defaultModel: 'gemini-2.5-flash' },
   { name: 'groq', keyEnv: 'GROQ_API_KEY', defaultModel: 'openai/gpt-oss-20b' },
   { name: 'ollama', keyEnv: '', defaultModel: 'llama3.2' },
+  { name: 'openai-codex', keyEnv: '', defaultModel: 'gpt-5.2-codex' },
+  { name: 'claude-code', keyEnv: '', defaultModel: 'claude-sonnet-4-5-20250929' },
 ];
 
 function detectLLMConfig(pluginConfig?: PluginConfig): {
@@ -124,7 +126,9 @@ function detectLLMConfig(pluginConfig?: PluginConfig): {
 
   // Priority 1: If provider is explicitly set via env var, use that
   if (overrideProvider) {
-    if (!overrideKey && overrideProvider !== 'ollama') {
+    // Providers that don't require an API key (use OAuth or local models)
+    const noKeyRequired = ['ollama', 'openai-codex', 'claude-code'];
+    if (!overrideKey && !noKeyRequired.includes(overrideProvider)) {
       throw new Error(
         `HINDSIGHT_API_LLM_PROVIDER is set to "${overrideProvider}" but HINDSIGHT_API_LLM_API_KEY is not set.\n` +
         `Please set: export HINDSIGHT_API_LLM_API_KEY=your-api-key`
@@ -153,7 +157,9 @@ function detectLLMConfig(pluginConfig?: PluginConfig): {
       apiKey = process.env[providerInfo.keyEnv] || '';
     }
 
-    if (!apiKey && pluginConfig.llmProvider !== 'ollama') {
+    // Providers that don't require an API key (use OAuth or local models)
+    const noKeyRequired = ['ollama', 'openai-codex', 'claude-code'];
+    if (!apiKey && !noKeyRequired.includes(pluginConfig.llmProvider)) {
       const keySource = pluginConfig.llmApiKeyEnv || providerInfo?.keyEnv || 'unknown';
       throw new Error(
         `Plugin config llmProvider is set to "${pluginConfig.llmProvider}" but no API key found.\n` +
@@ -175,8 +181,9 @@ function detectLLMConfig(pluginConfig?: PluginConfig): {
   for (const providerInfo of PROVIDER_DETECTION) {
     const apiKey = providerInfo.keyEnv ? process.env[providerInfo.keyEnv] : '';
 
-    // Skip ollama in auto-detection (must be explicitly requested)
-    if (providerInfo.name === 'ollama') {
+    // Skip providers that don't use API keys in auto-detection (must be explicitly requested)
+    const noKeyRequired = ['ollama', 'openai-codex', 'claude-code'];
+    if (noKeyRequired.includes(providerInfo.name)) {
       continue;
     }
 
@@ -197,11 +204,14 @@ function detectLLMConfig(pluginConfig?: PluginConfig): {
     `Option 1: Set a standard provider API key (auto-detect):\n` +
     `  export OPENAI_API_KEY=sk-your-key        # Uses gpt-4o-mini\n` +
     `  export ANTHROPIC_API_KEY=your-key       # Uses claude-3-5-haiku\n` +
-    `  export GEMINI_API_KEY=your-key          # Uses gemini-2.0-flash-exp\n` +
-    `  export GROQ_API_KEY=your-key            # Uses llama-3.3-70b-versatile\n\n` +
-    `Option 2: Set llmProvider in openclaw.json plugin config:\n` +
+    `  export GEMINI_API_KEY=your-key          # Uses gemini-2.5-flash\n` +
+    `  export GROQ_API_KEY=your-key            # Uses openai/gpt-oss-20b\n\n` +
+    `Option 2: Use Codex or Claude Code (no API key needed):\n` +
+    `  export HINDSIGHT_API_LLM_PROVIDER=openai-codex    # Requires 'codex auth login'\n` +
+    `  export HINDSIGHT_API_LLM_PROVIDER=claude-code     # Requires Claude Code CLI\n\n` +
+    `Option 3: Set llmProvider in openclaw.json plugin config:\n` +
     `  "llmProvider": "openai", "llmModel": "gpt-4o-mini"\n\n` +
-    `Option 3: Override with Hindsight-specific env vars:\n` +
+    `Option 4: Override with Hindsight-specific env vars:\n` +
     `  export HINDSIGHT_API_LLM_PROVIDER=openai\n` +
     `  export HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n` +
     `  export HINDSIGHT_API_LLM_API_KEY=sk-your-key\n` +
@@ -250,11 +260,13 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     embedPort: config.embedPort || 0,
     daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
     embedVersion: config.embedVersion || 'latest',
+    embedPackagePath: config.embedPackagePath,
     llmProvider: config.llmProvider,
     llmModel: config.llmModel,
     llmApiKeyEnv: config.llmApiKeyEnv,
     hindsightApiUrl: config.hindsightApiUrl,
     hindsightApiToken: config.hindsightApiToken,
+    apiPort: config.apiPort || 9077,
     // Dynamic bank ID options (default: enabled)
     dynamicBankId: config.dynamicBankId !== false,
     bankIdPrefix: config.bankIdPrefix,
@@ -299,6 +311,9 @@ export default function (api: MoltbotPluginAPI) {
     // Detect external API mode
     const externalApi = detectExternalApi(pluginConfig);
 
+    // Get API port from config (default: 9077)
+    const apiPort = pluginConfig.apiPort || 9077;
+
     if (externalApi.apiUrl) {
       // External API mode - skip local daemon
       usingExternalApi = true;
@@ -312,13 +327,8 @@ export default function (api: MoltbotPluginAPI) {
       }
     } else {
       console.log(`[Hindsight] Daemon idle timeout: ${pluginConfig.daemonIdleTimeout}s (0 = never timeout)`);
-      // Determine port for local daemon
-      const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
-      console.log(`[Hindsight] Port: ${port}`);
+      console.log(`[Hindsight] API Port: ${apiPort}`);
     }
-
-    // Determine port (only used for local daemon mode)
-    const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
 
     // Initialize in background (non-blocking)
     console.log('[Hindsight] Starting initialization in background...');
@@ -331,7 +341,7 @@ export default function (api: MoltbotPluginAPI) {
 
           // Initialize client (CLI commands will use external API via env vars)
           console.log('[Hindsight] Creating HindsightClient...');
-          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
+          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion, pluginConfig.embedPackagePath);
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -351,13 +361,14 @@ export default function (api: MoltbotPluginAPI) {
           // Local daemon mode - start hindsight-embed daemon
           console.log('[Hindsight] Creating HindsightEmbedManager...');
           embedManager = new HindsightEmbedManager(
-            port,
+            apiPort,
             llmConfig.provider,
             llmConfig.apiKey,
             llmConfig.model,
             llmConfig.baseUrl,
             pluginConfig.daemonIdleTimeout,
-            pluginConfig.embedVersion
+            pluginConfig.embedVersion,
+            pluginConfig.embedPackagePath
           );
 
           // Start the embedded server
@@ -366,7 +377,7 @@ export default function (api: MoltbotPluginAPI) {
 
           // Initialize client
           console.log('[Hindsight] Creating HindsightClient...');
-          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
+          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion, pluginConfig.embedPackagePath);
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -447,6 +458,7 @@ export default function (api: MoltbotPluginAPI) {
           currentPluginConfig = reinitPluginConfig;
           const llmConfig = detectLLMConfig(reinitPluginConfig);
           const externalApi = detectExternalApi(reinitPluginConfig);
+          const apiPort = reinitPluginConfig.apiPort || 9077;
 
           if (externalApi.apiUrl) {
             // External API mode
@@ -458,7 +470,7 @@ export default function (api: MoltbotPluginAPI) {
 
             await checkExternalApiHealth(externalApi.apiUrl);
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion);
+            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion, reinitPluginConfig.embedPackagePath);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
@@ -470,21 +482,20 @@ export default function (api: MoltbotPluginAPI) {
             console.log('[Hindsight] Reinitialization complete (external API mode)');
           } else {
             // Local daemon mode
-            const port = reinitPluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
-
             embedManager = new HindsightEmbedManager(
-              port,
+              apiPort,
               llmConfig.provider,
               llmConfig.apiKey,
               llmConfig.model,
               llmConfig.baseUrl,
               reinitPluginConfig.daemonIdleTimeout,
-              reinitPluginConfig.embedVersion
+              reinitPluginConfig.embedVersion,
+              reinitPluginConfig.embedPackagePath
             );
 
             await embedManager.start();
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion);
+            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion, reinitPluginConfig.embedPackagePath);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 

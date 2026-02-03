@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-control-plane",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Control plane for Hindsight - Semantic memory system",
   "bin": {
     "hindsight-control-plane": "./bin/cli.js"
@@ -55,7 +55,7 @@
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1",
     "lucide-react": "^0.553.0",
-    "next": "^16.0.10",
+    "next": "^16.1.6",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-chrono": "^2.9.1",

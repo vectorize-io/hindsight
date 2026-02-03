@@ -15,6 +15,7 @@ export class HindsightEmbedManager {
   private llmBaseUrl?: string;
   private daemonIdleTimeout: number;
   private embedVersion: string;
+  private embedPackagePath?: string;
 
   constructor(
     port: number,
@@ -23,10 +24,12 @@ export class HindsightEmbedManager {
     llmModel?: string,
     llmBaseUrl?: string,
     daemonIdleTimeout: number = 0, // Default: never timeout
-    embedVersion: string = 'latest' // Default: latest
+    embedVersion: string = 'latest', // Default: latest
+    embedPackagePath?: string // Local path to hindsight package
   ) {
-    this.port = 8888; // hindsight-embed daemon uses same port as API
-    this.baseUrl = `http://127.0.0.1:8888`;
+    // Use the configured port (default: 9077 from config)
+    this.port = port;
+    this.baseUrl = `http://127.0.0.1:${port}`;
     this.embedDir = join(homedir(), '.openclaw', 'hindsight-embed');
     this.llmProvider = llmProvider;
     this.llmApiKey = llmApiKey;
@@ -34,21 +37,36 @@ export class HindsightEmbedManager {
     this.llmBaseUrl = llmBaseUrl;
     this.daemonIdleTimeout = daemonIdleTimeout;
     this.embedVersion = embedVersion || 'latest';
+    this.embedPackagePath = embedPackagePath;
+  }
+
+  /**
+   * Get the command to run hindsight-embed (either local or from PyPI)
+   */
+  private getEmbedCommand(): string[] {
+    if (this.embedPackagePath) {
+      // Local package: uv run --directory <path> hindsight-embed
+      return ['uv', 'run', '--directory', this.embedPackagePath, 'hindsight-embed'];
+    } else {
+      // PyPI package: uvx hindsight-embed@version
+      const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+      return ['uvx', embedPackage];
+    }
   }
 
   async start(): Promise<void> {
     console.log(`[Hindsight] Starting hindsight-embed daemon...`);
 
-    // Build environment variables
+    // Build environment variables using standard HINDSIGHT_API_LLM_* variables
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      HINDSIGHT_EMBED_LLM_PROVIDER: this.llmProvider,
-      HINDSIGHT_EMBED_LLM_API_KEY: this.llmApiKey,
+      HINDSIGHT_API_LLM_PROVIDER: this.llmProvider,
+      HINDSIGHT_API_LLM_API_KEY: this.llmApiKey,
       HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: this.daemonIdleTimeout.toString(),
     };
 
     if (this.llmModel) {
-      env['HINDSIGHT_EMBED_LLM_MODEL'] = this.llmModel;
+      env['HINDSIGHT_API_LLM_MODEL'] = this.llmModel;
     }
 
     // Pass through base URL for OpenAI-compatible providers (OpenRouter, etc.)
@@ -62,16 +80,16 @@ export class HindsightEmbedManager {
       env['HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU'] = '1';
     }
 
-    // Write env vars to ~/.hindsight/config.env for daemon persistence
-    await this.writeConfigEnv(env);
+    // Configure "openclaw" profile using hindsight-embed configure (non-interactive)
+    console.log('[Hindsight] Configuring "openclaw" profile...');
+    await this.configureProfile(env);
 
-    // Start hindsight-embed daemon (it manages itself)
-    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
+    // Start hindsight-embed daemon with openclaw profile
+    const embedCmd = this.getEmbedCommand();
     const startDaemon = spawn(
-      'uvx',
-      [embedPackage, 'daemon', 'start'],
+      embedCmd[0],
+      [...embedCmd.slice(1), 'daemon', '--profile', 'openclaw', 'start'],
       {
-        env,
         stdio: 'pipe',
       }
     );
@@ -114,8 +132,8 @@ export class HindsightEmbedManager {
   async stop(): Promise<void> {
     console.log('[Hindsight] Stopping hindsight-embed daemon...');
 
-    const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
-    const stopDaemon = spawn('uvx', [embedPackage, 'daemon', 'stop'], {
+    const embedCmd = this.getEmbedCommand();
+    const stopDaemon = spawn(embedCmd[0], [...embedCmd.slice(1), 'daemon', '--profile', 'openclaw', 'stop'], {
       stdio: 'pipe',
     });
 
@@ -172,75 +190,60 @@ export class HindsightEmbedManager {
     }
   }
 
-  private async writeConfigEnv(env: NodeJS.ProcessEnv): Promise<void> {
-    const hindsightDir = join(homedir(), '.hindsight');
-    const embedConfigPath = join(hindsightDir, 'embed');
+  private async configureProfile(env: NodeJS.ProcessEnv): Promise<void> {
+    // Build profile create command args with --merge, --port and --env flags
+    // Use --merge to allow updating existing profile
+    const createArgs = ['profile', 'create', 'openclaw', '--merge', '--port', this.port.toString()];
 
-    // Ensure directory exists
-    await fs.mkdir(hindsightDir, { recursive: true });
-
-    // Read existing config to preserve extra settings
-    let existingContent = '';
-    let extraSettings: string[] = [];
-    try {
-      existingContent = await fs.readFile(embedConfigPath, 'utf-8');
-      // Extract non-LLM settings (like FORCE_CPU flags)
-      const lines = existingContent.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#') &&
-            !trimmed.startsWith('HINDSIGHT_EMBED_LLM_') &&
-            !trimmed.startsWith('HINDSIGHT_API_LLM_') &&
-            !trimmed.startsWith('HINDSIGHT_EMBED_BANK_ID') &&
-            !trimmed.startsWith('HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT')) {
-          extraSettings.push(line);
-        }
-      }
-    } catch {
-      // File doesn't exist yet, that's fine
-    }
-
-    // Build config file with header
-    const configLines: string[] = [
-      '# Hindsight Embed Configuration',
-      '# Generated by OpenClaw Hindsight plugin',
-      '',
+    // Add all environment variables as --env flags
+    const envVars = [
+      'HINDSIGHT_API_LLM_PROVIDER',
+      'HINDSIGHT_API_LLM_MODEL',
+      'HINDSIGHT_API_LLM_API_KEY',
+      'HINDSIGHT_API_LLM_BASE_URL',
+      'HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT',
+      'HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU',
+      'HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU',
     ];
 
-    // Add LLM config
-    if (env.HINDSIGHT_EMBED_LLM_PROVIDER) {
-      configLines.push(`HINDSIGHT_EMBED_LLM_PROVIDER=${env.HINDSIGHT_EMBED_LLM_PROVIDER}`);
-    }
-    if (env.HINDSIGHT_EMBED_LLM_MODEL) {
-      configLines.push(`HINDSIGHT_EMBED_LLM_MODEL=${env.HINDSIGHT_EMBED_LLM_MODEL}`);
-    }
-    if (env.HINDSIGHT_EMBED_LLM_API_KEY) {
-      configLines.push(`HINDSIGHT_EMBED_LLM_API_KEY=${env.HINDSIGHT_EMBED_LLM_API_KEY}`);
-    }
-    if (env.HINDSIGHT_API_LLM_BASE_URL) {
-      configLines.push(`HINDSIGHT_API_LLM_BASE_URL=${env.HINDSIGHT_API_LLM_BASE_URL}`);
-    }
-    if (env.HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT) {
-      configLines.push(`HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=${env.HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT}`);
+    for (const envVar of envVars) {
+      if (env[envVar]) {
+        createArgs.push('--env', `${envVar}=${env[envVar]}`);
+      }
     }
 
-    // Add platform-specific config (macOS FORCE_CPU flags)
-    if (env.HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU) {
-      configLines.push(`HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=${env.HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU}`);
-    }
-    if (env.HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU) {
-      configLines.push(`HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=${env.HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU}`);
-    }
+    // Run profile create command (non-interactive, overwrites if exists)
+    const embedCmd = this.getEmbedCommand();
+    const create = spawn(embedCmd[0], [...embedCmd.slice(1), ...createArgs], {
+      stdio: 'pipe',
+    });
 
-    // Add extra settings if they exist
-    if (extraSettings.length > 0) {
-      configLines.push('');
-      configLines.push('# Additional settings');
-      configLines.push(...extraSettings);
-    }
+    let output = '';
+    create.stdout?.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.log(`[Hindsight] ${text.trim()}`);
+    });
 
-    // Write to file
-    await fs.writeFile(embedConfigPath, configLines.join('\n') + '\n', 'utf-8');
-    console.log(`[Hindsight] Wrote config to ${embedConfigPath}`);
+    create.stderr?.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.error(`[Hindsight] ${text.trim()}`);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      create.on('exit', (code) => {
+        if (code === 0) {
+          console.log('[Hindsight] Profile "openclaw" configured successfully');
+          resolve();
+        } else {
+          reject(new Error(`Profile create failed with code ${code}: ${output}`));
+        }
+      });
+
+      create.on('error', (error) => {
+        reject(error);
+      });
+    });
   }
 }

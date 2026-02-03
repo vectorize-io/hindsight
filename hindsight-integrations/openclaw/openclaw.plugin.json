@@ -27,8 +27,8 @@
       },
       "llmProvider": {
         "type": "string",
-        "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama'). Takes priority over auto-detection but not over HINDSIGHT_API_LLM_PROVIDER env var.",
-        "enum": ["openai", "anthropic", "gemini", "groq", "ollama"]
+        "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code'). Takes priority over auto-detection but not over HINDSIGHT_API_LLM_PROVIDER env var.",
+        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
       },
       "llmModel": {
         "type": "string",
@@ -46,6 +46,24 @@
       "hindsightApiToken": {
         "type": "string",
         "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
+      },
+      "embedPackagePath": {
+        "type": "string",
+        "description": "Local path to hindsight package for development (e.g. '/path/to/hindsight'). When set, uses 'uv run --directory <path>' instead of 'uvx hindsight-embed@latest'."
+      },
+      "apiPort": {
+        "type": "number",
+        "description": "Port for the openclaw profile daemon (default: 9077)",
+        "default": 9077
+      },
+      "dynamicBankId": {
+        "type": "boolean",
+        "description": "Enable per-channel memory banks (default: true). Each channel gets isolated memory.",
+        "default": true
+      },
+      "bankIdPrefix": {
+        "type": "string",
+        "description": "Optional prefix for bank IDs (e.g., 'prod' creates 'prod-slack-C123')."
       }
     },
     "additionalProperties": false
@@ -86,6 +104,22 @@
     "hindsightApiToken": {
       "label": "External API Token",
       "placeholder": "API token if external API requires authentication"
+    },
+    "embedPackagePath": {
+      "label": "Local Package Path (Dev)",
+      "placeholder": "/path/to/hindsight (for local development)"
+    },
+    "apiPort": {
+      "label": "API Port",
+      "placeholder": "9077 (default)"
+    },
+    "dynamicBankId": {
+      "label": "Dynamic Bank IDs",
+      "placeholder": "true (per-channel isolation)"
+    },
+    "bankIdPrefix": {
+      "label": "Bank ID Prefix",
+      "placeholder": "e.g. prod, staging (optional)"
     }
   }
 }

@@ -140,21 +140,37 @@ class ProfileManager:
                 return profile
         return None
 
-    def create_profile(self, name: str, config: dict[str, str]):
+    def create_profile(self, name: str, port_or_config: int | dict[str, str], config: dict[str, str] | None = None):
         """Create or update a profile.
 
         Args:
             name: Profile name.
-            config: Configuration dict (KEY=VALUE pairs).
+            port_or_config: Port number (int) or configuration dict. For backward compatibility,
+                            if this is a dict, it's treated as config and port is auto-allocated.
+            config: Configuration dict (KEY=VALUE pairs). Only used if port_or_config is an int.
 
         Raises:
-            ValueError: If profile name is invalid.
+            ValueError: If profile name is invalid or port is invalid.
         """
+        # Handle backward compatibility - allow (name, config) or (name, port, config)
+        if isinstance(port_or_config, dict):
+            # Called with (name, config) - auto-allocate port
+            port = None
+            config = port_or_config
+        else:
+            # Called with (name, port, config)
+            port = port_or_config
+            if config is None:
+                raise ValueError("Config must be provided when port is specified")
+
         if not name:
             raise ValueError("Profile name cannot be empty")
 
         if not name.replace("-", "").replace("_", "").isalnum():
             raise ValueError(f"Invalid profile name '{name}'. Use alphanumeric chars, hyphens, and underscores.")
+
+        if port is not None and (port < 1024 or port > 65535):
+            raise ValueError(f"Invalid port {port}. Must be between 1024-65535.")
 
         # Ensure profile directory exists
         self._ensure_directories()
@@ -162,11 +178,12 @@ class ProfileManager:
         # Load metadata to check if profile already exists
         metadata = self._load_metadata()
 
-        # Allocate port for this profile (preserve existing port if updating)
-        if name in metadata.profiles and "port" in metadata.profiles[name]:
-            port = metadata.profiles[name]["port"]
-        else:
-            port = self._allocate_port(name)
+        # Determine port: use provided port, preserve existing, or allocate new
+        if port is None:
+            if name in metadata.profiles and "port" in metadata.profiles[name]:
+                port = metadata.profiles[name]["port"]
+            else:
+                port = self._allocate_port(name)
 
         # Write config file
         config_path = PROFILES_DIR / f"{name}.env"

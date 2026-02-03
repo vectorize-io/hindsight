@@ -47,6 +47,46 @@ The following models have been tested and verified to work correctly with Hindsi
 | **Groq** | `openai/gpt-oss-120b` |
 | **Groq** | `openai/gpt-oss-20b` |
 
+### Provider Default Models
+
+Each provider has a recommended default model that's used when `HINDSIGHT_API_LLM_MODEL` is not explicitly set. This makes configuration simpler - just specify the provider and get a sensible default:
+
+| Provider | Default Model |
+|----------|--------------|
+| `openai` | `o3-mini` |
+| `anthropic` | `claude-haiku-4-5-20251001` |
+| `gemini` | `gemini-2.5-flash` |
+| `groq` | `openai/gpt-oss-120b` |
+| `ollama` | `gemma3:12b` |
+| `lmstudio` | `local-model` |
+| `vertexai` | `gemini-2.0-flash-001` |
+| `openai-codex` | `gpt-5.2-codex` |
+| `claude-code` | `claude-sonnet-4-5-20250929` |
+
+**Example:** Setting just the provider uses its default model:
+```bash
+# Uses claude-haiku-4-5-20251001 automatically
+export HINDSIGHT_API_LLM_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
+```
+
+You can override the default by explicitly setting `HINDSIGHT_API_LLM_MODEL`:
+```bash
+# Override to use Sonnet instead
+export HINDSIGHT_API_LLM_PROVIDER=anthropic
+export HINDSIGHT_API_LLM_API_KEY=sk-ant-xxxxxxxxxxxx
+export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
+```
+
+This also applies to per-operation overrides:
+```bash
+# Global: OpenAI o3-mini (default)
+export HINDSIGHT_API_LLM_PROVIDER=openai
+
+# Retain: Anthropic claude-haiku-4-5-20251001 (default)
+export HINDSIGHT_API_RETAIN_LLM_PROVIDER=anthropic
+```
+
 ### Using Other Models
 
 Other LLM models not listed above may work with Hindsight, but they must support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
@@ -86,6 +126,148 @@ export HINDSIGHT_API_LLM_MODEL=your-local-model
 ```
 
 **Note:** The LLM is the primary bottleneck for retain operations. See [Performance](./performance) for optimization strategies.
+
+---
+
+### OpenAI Codex Setup (ChatGPT Plus/Pro)
+
+Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI Platform API costs.
+
+**Prerequisites:**
+- Active ChatGPT Plus or Pro subscription
+- Node.js/npm installed (for Codex CLI)
+
+**Setup Steps:**
+
+1. **Install Codex CLI:**
+   ```bash
+   npm install -g @openai/codex
+   ```
+
+2. **Login with ChatGPT credentials:**
+   ```bash
+   codex auth login
+   ```
+   This opens a browser window to authenticate with your ChatGPT account and saves OAuth tokens to `~/.codex/auth.json`.
+
+3. **Verify authentication:**
+   ```bash
+   ls ~/.codex/auth.json  # Should show the auth file exists
+   ```
+
+4. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=openai-codex
+   export HINDSIGHT_API_LLM_MODEL=gpt-5.2-codex  # or gpt-5.1-codex
+   # No API key needed - reads from ~/.codex/auth.json automatically
+   ```
+
+5. **Start Hindsight:**
+   ```bash
+   ./scripts/dev/start-api.sh
+   ```
+
+**Available Models:**
+- `gpt-5.2-codex` - Latest frontier agentic coding model (default)
+- `gpt-5.2` - Latest frontier model
+- `gpt-5.1-codex` - Previous generation coding model
+- `gpt-5.1-codex-max` - Maximum context variant
+- `gpt-5.1-codex-mini` - Lightweight variant
+
+**Important Notes:**
+- OAuth tokens are stored in `~/.codex/auth.json`
+- Tokens refresh automatically when needed
+- Usage is billed to your ChatGPT subscription (not separate API costs)
+- For personal development use only (see ChatGPT Terms of Service)
+
+**Troubleshooting:**
+
+If authentication fails:
+```bash
+# Re-login to refresh tokens
+codex auth login
+
+# Check auth file exists and has correct format
+cat ~/.codex/auth.json | python3 -c "import json, sys; d=json.load(sys.stdin); print('auth_mode:', d.get('auth_mode')); print('has tokens:', 'tokens' in d)"
+```
+
+---
+
+### Claude Code Setup (Claude Pro/Max)
+
+Use your Claude Pro or Max subscription for Hindsight without separate Anthropic API costs.
+
+**Prerequisites:**
+- Active Claude Pro or Max subscription
+- Claude Code CLI installed
+
+**Setup Steps:**
+
+1. **Install Claude Code CLI:**
+   ```bash
+   npm install -g @anthropics/claude-code
+   # Or via Homebrew
+   brew install anthropics/claude-code/claude-code
+   ```
+
+2. **Login with Claude credentials:**
+   ```bash
+   claude auth login
+   ```
+   This opens a browser window to authenticate with your Claude account. Authentication is automatically managed by the Claude Agent SDK.
+
+3. **Verify authentication:**
+   ```bash
+   claude --version
+   # Should show version without errors
+   ```
+
+4. **Configure Hindsight:**
+   ```bash
+   export HINDSIGHT_API_LLM_PROVIDER=claude-code
+   export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
+   # No API key needed - uses claude auth login credentials
+   ```
+
+5. **Start Hindsight:**
+   ```bash
+   ./scripts/dev/start-api.sh
+   ```
+
+**Available Models:**
+- `claude-sonnet-4-5-20250929` - Latest Claude Sonnet (default)
+- `claude-opus-4-20250514` - Claude Opus for complex tasks
+- `claude-sonnet-3-5-20241022` - Previous generation Sonnet
+- Any model supported by Claude Code CLI
+
+**Important Notes:**
+- Authentication handled by Claude Agent SDK (uses bundled CLI)
+- Credentials managed securely by Claude Code
+- Usage billed to your Claude subscription (not separate API costs)
+- Includes Claude Agent SDK as dependency (auto-installed)
+- For personal development use only (see Claude Terms of Service)
+
+**Troubleshooting:**
+
+If authentication fails:
+```bash
+# Re-login to refresh credentials
+claude auth login
+
+# Check Claude CLI is working
+claude --version
+
+# Test authentication directly
+claude query "test"
+```
+
+If the SDK is not found:
+```bash
+# Install Claude Agent SDK
+pip install claude-agent-sdk
+# Or with uv
+uv add claude-agent-sdk
+```
 
 ---
 

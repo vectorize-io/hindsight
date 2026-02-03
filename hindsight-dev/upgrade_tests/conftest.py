@@ -109,3 +109,40 @@ def unique_bank_id():
     import uuid
 
     return f"upgrade_test_{uuid.uuid4().hex[:8]}"
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """
+    Hook to dump server logs when a test fails.
+
+    This captures all upgrade test server logs from /tmp/upgrade-test-*.log
+    and displays them when a test fails, making CI debugging much easier.
+    """
+    outcome = yield
+    rep = outcome.get_result()
+
+    # Only show logs for test failures (not setup/teardown failures)
+    if rep.when == "call" and rep.failed:
+        import glob
+
+        log_files = sorted(glob.glob("/tmp/upgrade-test-*.log"))
+        if log_files:
+            print("\n" + "=" * 80)
+            print("UPGRADE TEST SERVER LOGS (from failed test)")
+            print("=" * 80)
+            for log_file in log_files:
+                print(f"\n--- {log_file} ---")
+                try:
+                    with open(log_file) as f:
+                        content = f.read()
+                        # Limit to last 1000 lines to avoid overwhelming output
+                        lines = content.splitlines()
+                        if len(lines) > 1000:
+                            print(f"(showing last 1000 of {len(lines)} lines)")
+                            print("\n".join(lines[-1000:]))
+                        else:
+                            print(content)
+                except Exception as e:
+                    print(f"Error reading log: {e}")
+            print("=" * 80)

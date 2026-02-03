@@ -246,8 +246,8 @@ class TestStartDaemon:
             # Start daemon (will fail health check, but we just want to verify env)
             daemon_client._start_daemon(config)
 
-            # Verify the default database URL was set
-            assert captured_env.get("HINDSIGHT_API_DATABASE_URL") == "pg0://hindsight-embed"
+            # Verify the default database URL was set (profile-specific)
+            assert captured_env.get("HINDSIGHT_API_DATABASE_URL") == "pg0://hindsight-embed-default"
 
 
 class TestIsDaemonRunning:

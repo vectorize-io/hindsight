@@ -26,6 +26,12 @@ export GEMINI_API_KEY="your-key"
 
 # Option D: Groq (uses openai/gpt-oss-20b for memory extraction)
 export GROQ_API_KEY="your-key"
+
+# Option E: Claude Code (uses claude-sonnet-4-20250514, no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=claude-code
+
+# Option F: OpenAI Codex (uses o3-mini, no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
 ```
 
 **Step 2: Install the plugin**
@@ -41,7 +47,7 @@ openclaw gateway
 ```
 
 The plugin will automatically:
-- Start a local Hindsight daemon (port 8888)
+- Start a local Hindsight daemon (port 9077)
 - Capture conversations after each turn
 - Inject relevant memories before agent responses
 
@@ -68,6 +74,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
       "hindsight-openclaw": {
         "enabled": true,
         "config": {
+          "apiPort": 9077,
           "daemonIdleTimeout": 0,
           "embedVersion": "latest"
         }
@@ -78,6 +85,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 ```
 
 **Options:**
+- `apiPort` - Port for the openclaw profile daemon (default: `9077`)
 - `daemonIdleTimeout` - Seconds before daemon shuts down from inactivity (default: `0` = never)
 - `embedVersion` - hindsight-embed version (default: `"latest"`)
 - `bankMission` - Custom context for the memory bank (optional)
@@ -86,12 +94,14 @@ Optional settings in `~/.openclaw/openclaw.json`:
 
 The plugin auto-detects your LLM provider from these environment variables:
 
-| Provider | Env Var | Default Model |
-|----------|---------|---------------|
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` |
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-20241022` |
-| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
-| Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` |
+| Provider | Env Var | Default Model | Notes |
+|----------|---------|---------------|-------|
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-20241022` | |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` | |
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` | |
+| Claude Code | `HINDSIGHT_API_LLM_PROVIDER=claude-code` | `claude-sonnet-4-20250514` | No API key needed |
+| OpenAI Codex | `HINDSIGHT_API_LLM_PROVIDER=openai-codex` | `o3-mini` | No API key needed |
 
 **Override with explicit config:**
 
@@ -133,32 +143,32 @@ Useful for shared memory across multiple OpenClaw instances or production deploy
 View the daemon config that was written by the plugin:
 
 ```bash
-cat ~/.hindsight/embed
+cat ~/.hindsight/profiles/openclaw.env
 ```
 
-This shows the LLM provider, model, and other settings the daemon is using.
+This shows the LLM provider, model, port, and other settings the daemon is using.
 
 ### Check Daemon Status
 
 ```bash
 # Check if daemon is running
-uvx hindsight-embed@latest daemon status
+uvx hindsight-embed@latest -p openclaw daemon status
 
 # View daemon logs
-tail -f ~/.hindsight/daemon.log
+tail -f ~/.hindsight/profiles/openclaw.log
 ```
 
 ### Query Memories
 
 ```bash
 # Search memories
-uvx hindsight-embed@latest memory recall openclaw "user preferences"
+uvx hindsight-embed@latest -p openclaw memory recall openclaw "user preferences"
 
 # View recent memories
-uvx hindsight-embed@latest memory list openclaw --limit 10
+uvx hindsight-embed@latest -p openclaw memory list openclaw --limit 10
 
-# Open web UI
-uvx hindsight-embed@latest ui
+# Open web UI (uses openclaw profile's daemon)
+uvx hindsight-embed@latest -p openclaw ui
 ```
 
 ## Troubleshooting
@@ -176,27 +186,40 @@ openclaw plugins install @vectorize-io/hindsight-openclaw
 ### Daemon not starting
 
 ```bash
-# Check daemon status
-uvx hindsight-embed@latest daemon status
+# Check daemon status (note: -p openclaw uses the openclaw profile)
+uvx hindsight-embed@latest -p openclaw daemon status
 
 # View logs for errors
-tail -f ~/.hindsight/daemon.log
+tail -f ~/.hindsight/profiles/openclaw.log
 
 # Check configuration
-cat ~/.hindsight/embed
+cat ~/.hindsight/profiles/openclaw.env
+
+# List all profiles
+uvx hindsight-embed@latest profile list
 ```
 
 ### No API key error
 
-Make sure you've set one of the provider API keys:
+Make sure you've set one of the provider API keys (or use a provider that doesn't require one):
 
 ```bash
+# Option 1: OpenAI
 export OPENAI_API_KEY="sk-your-key"
-# or
+
+# Option 2: Anthropic
 export ANTHROPIC_API_KEY="your-key"
+
+# Option 3: Claude Code (no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=claude-code
+
+# Option 4: OpenAI Codex (no API key needed)
+export HINDSIGHT_API_LLM_PROVIDER=openai-codex
 
 # Verify it's set
 echo $OPENAI_API_KEY
+# or
+echo $HINDSIGHT_API_LLM_PROVIDER
 ```
 
 ### Verify it's working
@@ -208,6 +231,8 @@ tail -f /tmp/openclaw/openclaw-*.log | grep Hindsight
 
 # Should see on startup:
 # [Hindsight] ✓ Using provider: openai, model: gpt-4o-mini
+# or
+# [Hindsight] ✓ Using provider: claude-code, model: claude-sonnet-4-20250514
 
 # Should see after conversations:
 # [Hindsight] Retained X messages for session ...
