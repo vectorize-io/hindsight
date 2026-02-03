@@ -8,6 +8,67 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [0.4.8](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.8)
+
+**Features**
+
+- Added profile support for `hindsight-embed`, enabling separate embedding configurations/workspaces. ([`6c7f057`](https://github.com/vectorize-io/hindsight/commit/6c7f057))
+- Added support for additional LLM backends, including OpenAI Codex and Claude Code. ([`539190b`](https://github.com/vectorize-io/hindsight/commit/539190b))
+
+**Improvements**
+
+- Enhanced OpenClaw and `hindsight-embed` parameter/config options for easier configuration and better defaults. ([`749478d`](https://github.com/vectorize-io/hindsight/commit/749478d))
+- Added OpenClaw plugin configuration options to select LLM provider and model. ([`8564135`](https://github.com/vectorize-io/hindsight/commit/8564135))
+- Server now prints its version during startup to simplify debugging and support requests. ([`1499ce5`](https://github.com/vectorize-io/hindsight/commit/1499ce5))
+- Improved tracing/debuggability by propagating request context through asynchronous background tasks. ([`44d9125`](https://github.com/vectorize-io/hindsight/commit/44d9125))
+- Added stronger validation and context for mental model create/refresh operations to prevent invalid requests. ([`35127d5`](https://github.com/vectorize-io/hindsight/commit/35127d5))
+
+**Bug Fixes**
+
+- Improved embedding CLI experience with richer logs and isolated profiles to avoid cross-contamination between runs. ([`794a743`](https://github.com/vectorize-io/hindsight/commit/794a743))
+- Operation validation now runs correctly in the worker process, preventing invalid background operations from slipping through. ([`96f0e54`](https://github.com/vectorize-io/hindsight/commit/96f0e54))
+- Fixed unreliable behavior when using a custom PostgreSQL schema. ([`3825506`](https://github.com/vectorize-io/hindsight/commit/3825506))
+
+## [0.4.7](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.7)
+
+**Features**
+
+- Add extension hooks to validate and customize mental model operations. ([`9c3fda7`](https://github.com/vectorize-io/hindsight/commit/9c3fda7))
+- Add support for using an external embedding API provider in OpenClaw plugin (with additional OpenClaw compatibility fixes). ([`4b57b82`](https://github.com/vectorize-io/hindsight/commit/4b57b82))
+
+**Improvements**
+
+- Speed up container startup by preloading the tiktoken encoding during Docker image builds. ([`039944c`](https://github.com/vectorize-io/hindsight/commit/039944c))
+
+**Bug Fixes**
+
+- Prevent PostgreSQL insert failures by stripping null bytes from text fields before saving. ([`ef9d3a1`](https://github.com/vectorize-io/hindsight/commit/ef9d3a1))
+- Fix worker schema selection so it uses the correct default database schema. ([`d788a55`](https://github.com/vectorize-io/hindsight/commit/d788a55))
+- Honor an already-set HINDSIGHT_API_DATABASE_URL instead of overwriting it in the hindsight-embed workflow. ([`f0cb192`](https://github.com/vectorize-io/hindsight/commit/f0cb192))
+
+## [0.4.6](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.6)
+
+**Improvements**
+
+- Improved OpenClaw configuration setup to make embedding integration easier to configure. ([`27498f9`](https://github.com/vectorize-io/hindsight/commit/27498f9))
+
+**Bug Fixes**
+
+- Fixed OpenClaw embedding version binding/versioning to prevent mismatches when using the embed integration. ([`1163b1f`](https://github.com/vectorize-io/hindsight/commit/1163b1f))
+
+## [0.4.5](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.5)
+
+**Bug Fixes**
+
+- Fixed occasional failures when retaining memories asynchronously with timestamps. ([`cbb8fc6`](https://github.com/vectorize-io/hindsight/commit/cbb8fc6))
+
+## [0.4.4](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.4)
+
+**Bug Fixes**
+
+- Fixed async “retain” operations failing when a timestamp is provided. ([`35f0984`](https://github.com/vectorize-io/hindsight/commit/35f0984))
+- Corrected the OpenClaw daemon integration name to “openclaw” (previously “openclawd”). ([`b364bc3`](https://github.com/vectorize-io/hindsight/commit/b364bc3))
+
 ## [0.4.3](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.3)
 
 **Features**
