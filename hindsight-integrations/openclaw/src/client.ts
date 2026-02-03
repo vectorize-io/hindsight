@@ -9,6 +9,35 @@ import type {
 
 const execAsync = promisify(exec);
 
+/**
+ * Escape a string for use as a single-quoted shell argument.
+ *
+ * In POSIX shells, single-quoted strings treat ALL characters literally
+ * except for the single quote itself. To include a literal single quote,
+ * we use the pattern: end quote + escaped quote + start quote = '\''
+ *
+ * Example: "It's $100" becomes 'It'\''s $100'
+ * Shell interprets: 'It' + \' + 's $100' = It's $100
+ *
+ * This handles ALL shell-special characters including:
+ * - $ (variable expansion)
+ * - ` (command substitution)
+ * - ! (history expansion)
+ * - ? * [ ] (glob patterns)
+ * - ( ) { } (subshell/brace expansion)
+ * - < > | & ; (redirection/control)
+ * - \ " # ~ newlines
+ *
+ * @param arg - The string to escape
+ * @returns The escaped string (without surrounding quotes - caller adds those)
+ */
+export function escapeShellArg(arg: string): string {
+  // Replace single quotes with the escape sequence: '\''
+  // This ends the current single-quoted string, adds an escaped literal quote,
+  // and starts a new single-quoted string.
+  return arg.replace(/'/g, "'\\''");
+}
+
 export class HindsightClient {
   private bankId: string = 'default'; // Always use default bank
   private llmProvider: string;
@@ -32,7 +61,7 @@ export class HindsightClient {
       return;
     }
 
-    const escapedMission = mission.replace(/'/g, "'\\''"); // Escape single quotes
+    const escapedMission = escapeShellArg(mission);
     const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
     const cmd = `uvx ${embedPackage} bank mission ${this.bankId} '${escapedMission}'`;
 
@@ -60,8 +89,8 @@ export class HindsightClient {
   }
 
   async retain(request: RetainRequest): Promise<RetainResponse> {
-    const content = request.content.replace(/'/g, "'\\''"); // Escape single quotes
-    const docId = request.document_id || 'conversation';
+    const content = escapeShellArg(request.content);
+    const docId = escapeShellArg(request.document_id || 'conversation');
 
     const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
     const cmd = `uvx ${embedPackage} memory retain ${this.bankId} '${content}' --doc-id '${docId}' --async`;
@@ -82,7 +111,7 @@ export class HindsightClient {
   }
 
   async recall(request: RecallRequest): Promise<RecallResponse> {
-    const query = request.query.replace(/'/g, "'\\''"); // Escape single quotes
+    const query = escapeShellArg(request.query);
     const maxTokens = request.max_tokens || 1024;
 
     const embedPackage = this.embedVersion ? `hindsight-embed@${this.embedVersion}` : 'hindsight-embed@latest';
