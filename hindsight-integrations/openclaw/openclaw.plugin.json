@@ -37,6 +37,15 @@
       "llmApiKeyEnv": {
         "type": "string",
         "description": "Name of the env var holding the API key (e.g. 'MY_CUSTOM_KEY'). If not set, uses the standard env var for the chosen provider."
+      },
+      "hindsightApiUrl": {
+        "type": "string",
+        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API.",
+        "format": "uri"
+      },
+      "hindsightApiToken": {
+        "type": "string",
+        "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
       }
     },
     "additionalProperties": false
@@ -69,6 +78,14 @@
     "llmApiKeyEnv": {
       "label": "API Key Env Var",
       "placeholder": "e.g. MY_CUSTOM_API_KEY (optional)"
+    },
+    "hindsightApiUrl": {
+      "label": "External Hindsight API URL",
+      "placeholder": "e.g. https://mcp.hindsight.devcraft.team (leave empty for local daemon)"
+    },
+    "hindsightApiToken": {
+      "label": "External API Token",
+      "placeholder": "API token if external API requires authentication"
     }
   }
 }

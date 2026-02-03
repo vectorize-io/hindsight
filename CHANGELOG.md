@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- OpenClaw plugin: Dynamic memory banks for per-channel isolation
+  - Each channel gets its own bank: `{messageProvider}-{channelId}` (e.g., `slack-C123`, `telegram-456`)
+  - `dynamicBankId` config option (default: true)
+  - `bankIdPrefix` config option for namespace prefixing
+  - Bank mission auto-set on first use of each bank
+  - Hook handlers updated to use correct `(event, ctx)` signature
+- OpenClaw plugin: External Hindsight API support
+  - `HINDSIGHT_EMBED_API_URL` / `hindsightApiUrl` config to connect to remote Hindsight
+  - `HINDSIGHT_EMBED_API_TOKEN` / `hindsightApiToken` for authentication
+  - Skip local daemon when external API configured
+
+### Fixed
+- OpenClaw plugin: Shell argument escaping for special characters (`?`, `!`, `$`, backticks, etc.)
+  - Added comprehensive `escapeShellArg()` function using POSIX single-quote escaping
+  - 17 new tests covering all shell-special character scenarios
+
+### Added
 - Synced with upstream v0.4.7
   - Mental model extension hooks (pre/post validation for billing/quota)
   - hindsight-embed external API support (connect to remote servers)
