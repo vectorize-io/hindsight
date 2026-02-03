@@ -19,6 +19,10 @@ MODEL_MATRIX = [
     ("openai", "gpt-5-nano"),
     ("openai", "gpt-5"),
     ("openai", "gpt-5.2"),
+    # Anthropic models
+    ("anthropic", "claude-sonnet-4-20250514"),
+    ("anthropic", "claude-opus-4-5-20251101"),
+    ("anthropic", "claude-haiku-4-20250514"),
     # Groq models
     ("groq", "openai/gpt-oss-120b"),
     ("groq", "openai/gpt-oss-20b"),
@@ -36,6 +40,7 @@ def get_api_key_for_provider(provider: str) -> str | None:
     """Get API key for provider from environment variables."""
     provider_key_map = {
         "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
         "groq": "GROQ_API_KEY",
         "gemini": "GEMINI_API_KEY",
     }

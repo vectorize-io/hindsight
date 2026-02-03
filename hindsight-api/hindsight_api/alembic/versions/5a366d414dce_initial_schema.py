@@ -11,6 +11,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -23,8 +24,21 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Upgrade schema - create all tables from scratch."""
 
-    # Enable required extensions
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # Note: pgvector extension is installed globally BEFORE migrations run
+    # See migrations.py:run_migrations() - this ensures the extension is available
+    # to all schemas, not just the one being migrated
+
+    # We keep this here as a fallback for backwards compatibility
+    # This may fail if user lacks permissions, which is fine if extension already exists
+    try:
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    except Exception:
+        # Extension might already exist or user lacks permissions - verify it exists
+        conn = op.get_bind()
+        result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).fetchone()
+        if not result:
+            # Extension truly doesn't exist - re-raise the error
+            raise
 
     # Create banks table
     op.create_table(

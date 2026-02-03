@@ -20,7 +20,7 @@ import warnings
 
 import uvicorn
 
-from . import MemoryEngine
+from . import MemoryEngine, __version__
 from .api import create_app
 from .banner import print_banner
 from .config import DEFAULT_WORKERS, ENV_WORKERS, HindsightConfig, get_config
@@ -131,17 +131,28 @@ def main():
         default=DEFAULT_IDLE_TIMEOUT,
         help=f"Idle timeout in seconds before auto-exit in daemon mode (default: {DEFAULT_IDLE_TIMEOUT})",
     )
+    parser.add_argument(
+        "--lockfile",
+        type=str,
+        default=None,
+        help="Custom lockfile path for daemon mode (default: ~/.hindsight/daemon.lock)",
+    )
 
     args = parser.parse_args()
 
     # Daemon mode handling
     if args.daemon:
-        # Use fixed daemon port
-        args.port = DEFAULT_DAEMON_PORT
+        # Use port from args (may be custom for profiles)
+        if args.port == config.port:  # No custom port specified
+            args.port = DEFAULT_DAEMON_PORT
         args.host = "127.0.0.1"  # Only bind to localhost for security
 
         # Check if another daemon is already running
-        daemon_lock = DaemonLock()
+        # Use custom lockfile if provided (for profile support)
+        from pathlib import Path
+
+        lockfile_path = Path(args.lockfile) if args.lockfile else None
+        daemon_lock = DaemonLock(lockfile_path) if lockfile_path else DaemonLock()
         if not daemon_lock.acquire():
             print(f"Daemon already running (PID: {daemon_lock.get_pid()})", file=sys.stderr)
             sys.exit(1)
@@ -362,6 +373,7 @@ def main():
             embeddings_provider=config.embeddings_provider,
             reranker_provider=config.reranker_provider,
             mcp_enabled=config.mcp_enabled,
+            version=__version__,
         )
 
     # Start idle checker in daemon mode

@@ -83,9 +83,12 @@ def print_startup_info(
     embeddings_provider: str,
     reranker_provider: str,
     mcp_enabled: bool = False,
+    version: str | None = None,
 ):
     """Print styled startup information."""
     print(color_start("Starting Hindsight API..."))
+    if version:
+        print(f"  {dim('Version:')} {color(f'v{version}', 0.1)}")
     print(f"  {dim('URL:')} {color(f'http://{host}:{port}', 0.2)}")
     print(f"  {dim('Database:')} {color(database_url, 0.4)}")
     print(f"  {dim('LLM:')} {color(f'{llm_provider} / {llm_model}', 0.6)}")

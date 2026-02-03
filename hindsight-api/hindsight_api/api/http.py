@@ -1410,7 +1410,7 @@ def create_app(
                 poll_interval_ms=config.worker_poll_interval_ms,
                 max_retries=config.worker_max_retries,
                 schema=schema,
-                tenant_extension=getattr(memory, "_tenant_extension", None),
+                tenant_extension=memory._tenant_extension,
                 max_slots=config.worker_max_slots,
                 consolidation_max_slots=config.worker_consolidation_max_slots,
             )

@@ -782,6 +782,10 @@ jobs:
           ${{ runner.os }}-huggingface-embed-
           ${{ runner.os }}-huggingface-
 
+    - name: Run unit and integration tests
+      working-directory: ./hindsight-embed
+      run: uv run pytest tests/ -v
+
     - name: Run smoke test
       working-directory: ./hindsight-embed
       run: ./test.sh

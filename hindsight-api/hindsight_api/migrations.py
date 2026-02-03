@@ -166,6 +166,81 @@ def run_migrations(
             logger.debug("Migration advisory lock acquired")
 
             try:
+                # Ensure pgvector extension is installed globally BEFORE schema migrations
+                # This is critical: the extension must exist database-wide before any schema
+                # migrations run, otherwise custom schemas won't have access to vector types
+                logger.debug("Checking pgvector extension availability...")
+
+                # First, check if extension already exists
+                ext_check = conn.execute(
+                    text(
+                        "SELECT extname, nspname FROM pg_extension e "
+                        "JOIN pg_namespace n ON e.extnamespace = n.oid "
+                        "WHERE extname = 'vector'"
+                    )
+                ).fetchone()
+
+                if ext_check:
+                    # Extension exists - check if in correct schema
+                    ext_schema = ext_check[1]
+                    if ext_schema == "public":
+                        logger.info("pgvector extension found in public schema - ready to use")
+                    else:
+                        # Extension in wrong schema - try to fix if we have permissions
+                        logger.warning(
+                            f"pgvector extension found in schema '{ext_schema}' instead of 'public'. "
+                            f"Attempting to relocate..."
+                        )
+                        try:
+                            conn.execute(text("DROP EXTENSION vector CASCADE"))
+                            conn.execute(text("SET search_path TO public"))
+                            conn.execute(text("CREATE EXTENSION vector"))
+                            conn.commit()
+                            logger.info("pgvector extension relocated to public schema")
+                        except Exception as e:
+                            # Failed to relocate - log but don't fail if extension exists somewhere
+                            logger.warning(
+                                f"Could not relocate pgvector extension to public schema: {e}. "
+                                f"Continuing with extension in '{ext_schema}' schema."
+                            )
+                            conn.rollback()
+                else:
+                    # Extension doesn't exist - try to install
+                    logger.info("pgvector extension not found, attempting to install...")
+                    try:
+                        conn.execute(text("SET search_path TO public"))
+                        conn.execute(text("CREATE EXTENSION vector"))
+                        conn.commit()
+                        logger.info("pgvector extension installed in public schema")
+                    except Exception as e:
+                        # Installation failed - this is only fatal if extension truly doesn't exist
+                        # Check one more time in case another process installed it
+                        conn.rollback()
+                        ext_recheck = conn.execute(
+                            text(
+                                "SELECT nspname FROM pg_extension e "
+                                "JOIN pg_namespace n ON e.extnamespace = n.oid "
+                                "WHERE extname = 'vector'"
+                            )
+                        ).fetchone()
+
+                        if ext_recheck:
+                            logger.warning(
+                                f"Could not install pgvector extension (permission denied?), "
+                                f"but extension exists in '{ext_recheck[0]}' schema. Continuing..."
+                            )
+                        else:
+                            # Extension truly doesn't exist and we can't install it
+                            logger.error(
+                                f"pgvector extension is not installed and cannot be installed: {e}. "
+                                f"Please ensure pgvector is installed by a database administrator. "
+                                f"See: https://github.com/pgvector/pgvector#installation"
+                            )
+                            raise RuntimeError(
+                                "pgvector extension is required but not installed. "
+                                "Please install it with: CREATE EXTENSION vector;"
+                            ) from e
+
                 # Run migrations while holding the lock
                 _run_migrations_internal(database_url, script_location, schema=schema)
             finally:

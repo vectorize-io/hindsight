@@ -303,8 +303,10 @@ class MemoryEngine(MemoryEngineInterface):
         db_url = db_url or config.database_url
         memory_llm_provider = memory_llm_provider or config.llm_provider
         memory_llm_api_key = memory_llm_api_key or config.llm_api_key
-        # Ollama and mock don't require an API key
-        if not memory_llm_api_key and memory_llm_provider not in ("ollama", "mock"):
+        # Ollama, openai-codex, claude-code, and mock don't require an API key
+        # openai-codex uses OAuth tokens from ~/.codex/auth.json
+        # claude-code uses OAuth tokens from macOS Keychain
+        if not memory_llm_api_key and memory_llm_provider not in ("ollama", "openai-codex", "claude-code", "mock"):
             raise ValueError("LLM API key is required. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
         memory_llm_model = memory_llm_model or config.llm_model
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
@@ -457,7 +459,11 @@ class MemoryEngine(MemoryEngineInterface):
         # Store operation validator extension (optional)
         self._operation_validator = operation_validator
 
-        # Store tenant extension (optional)
+        # Store tenant extension (always set, use default if none provided)
+        if tenant_extension is None:
+            from ..extensions.builtin.tenant import DefaultTenantExtension
+
+            tenant_extension = DefaultTenantExtension(config={})
         self._tenant_extension = tenant_extension
 
     async def _validate_operation(self, validation_coro) -> None:
@@ -495,22 +501,18 @@ class MemoryEngine(MemoryEngineInterface):
         Raises:
             AuthenticationError: If authentication fails or request_context is missing when required.
         """
-        if self._tenant_extension is None:
-            _current_schema.set("public")
-            return "public"
-
         from hindsight_api.extensions import AuthenticationError
 
         if request_context is None:
-            raise AuthenticationError("RequestContext is required when tenant extension is configured")
+            raise AuthenticationError("RequestContext is required")
 
         # For internal/background operations (e.g., worker tasks), skip extension authentication.
         # The task was already authenticated at submission time, and execute_task sets _current_schema
-        # from the task's _schema field. For public schema tasks, _current_schema keeps its default "public".
+        # from the task's _schema field.
         if request_context.internal:
             return _current_schema.get()
 
-        # Let AuthenticationError propagate - HTTP layer will convert to 401
+        # Authenticate through tenant extension (always set, may be default no-auth extension)
         tenant_context = await self._tenant_extension.authenticate(request_context)
 
         _current_schema.set(tenant_context.schema_name)
@@ -536,10 +538,15 @@ class MemoryEngine(MemoryEngineInterface):
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
         )
 
-        # Use internal request context for background tasks (skips tenant auth when schema is pre-set)
+        # Restore tenant_id/api_key_id from task payload so downstream operations
+        # (e.g., consolidation and mental model refreshes) can attribute usage.
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext(internal=True)
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+        )
         await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=internal_context)
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
@@ -565,7 +572,13 @@ class MemoryEngine(MemoryEngineInterface):
 
         from .consolidation import run_consolidation_job
 
-        internal_context = RequestContext(internal=True)
+        # Restore tenant_id/api_key_id from task payload so downstream operations
+        # (e.g., mental model refreshes) can attribute usage to the correct org.
+        internal_context = RequestContext(
+            internal=True,
+            tenant_id=task_dict.get("_tenant_id"),
+            api_key_id=task_dict.get("_api_key_id"),
+        )
         result = await run_consolidation_job(
             memory_engine=self,
             bank_id=bank_id,
@@ -926,30 +939,34 @@ class MemoryEngine(MemoryEngineInterface):
 
             if not self.db_url:
                 raise ValueError("Database URL is required for migrations")
+
+            # Migrate all schemas from the tenant extension
+            # The tenant extension is the single source of truth for which schemas exist
             logger.info("Running database migrations...")
-            # Use configured database schema for migrations (defaults to "public")
-            run_migrations(self.db_url, schema=get_config().database_schema)
+            try:
+                tenants = await self._tenant_extension.list_tenants()
+                if tenants:
+                    logger.info(f"Running migrations on {len(tenants)} schema(s)...")
+                    for tenant in tenants:
+                        schema = tenant.schema
+                        if schema:
+                            try:
+                                run_migrations(self.db_url, schema=schema)
+                            except Exception as e:
+                                logger.warning(f"Failed to migrate schema {schema}: {e}")
+                    logger.info("Schema migrations completed")
 
-            # Migrate all existing tenant schemas (if multi-tenant)
-            if self._tenant_extension is not None:
-                try:
-                    tenants = await self._tenant_extension.list_tenants()
-                    if tenants:
-                        logger.info(f"Running migrations on {len(tenants)} tenant schemas...")
-                        for tenant in tenants:
-                            schema = tenant.schema
-                            if schema and schema != "public":
-                                try:
-                                    run_migrations(self.db_url, schema=schema)
-                                except Exception as e:
-                                    logger.warning(f"Failed to migrate tenant schema {schema}: {e}")
-                        logger.info("Tenant schema migrations completed")
-                except Exception as e:
-                    logger.warning(f"Failed to run tenant schema migrations: {e}")
-
-            # Ensure embedding column dimension matches the model's dimension
-            # This is done after migrations and after embeddings.initialize()
-            ensure_embedding_dimension(self.db_url, self.embeddings.dimension, schema=get_config().database_schema)
+                    # Ensure embedding column dimension matches the model's dimension
+                    # This is done after migrations and after embeddings.initialize()
+                    for tenant in tenants:
+                        schema = tenant.schema
+                        if schema:
+                            try:
+                                ensure_embedding_dimension(self.db_url, self.embeddings.dimension, schema=schema)
+                            except Exception as e:
+                                logger.warning(f"Failed to ensure embedding dimension for schema {schema}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to run schema migrations: {e}")
 
         logger.info(f"Connecting to PostgreSQL at {self.db_url}")
 
@@ -5458,6 +5475,13 @@ class MemoryEngine(MemoryEngineInterface):
         task_payload: dict[str, Any] = {"contents": contents}
         if document_tags:
             task_payload["document_tags"] = document_tags
+        # Pass tenant_id and api_key_id through task payload so the worker
+        # can propagate request context to downstream operations (e.g.,
+        # consolidation and mental model refreshes triggered after retain).
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
 
         result = await self._submit_async_operation(
             bank_id=bank_id,
@@ -5490,11 +5514,21 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with operation_id
         """
         await self._authenticate_tenant(request_context)
+
+        # Pass tenant_id and api_key_id through task payload so the worker
+        # can provide request context to extension hooks (e.g., usage metering
+        # for mental model refreshes triggered by consolidation).
+        task_payload: dict[str, Any] = {}
+        if request_context.tenant_id:
+            task_payload["_tenant_id"] = request_context.tenant_id
+        if request_context.api_key_id:
+            task_payload["_api_key_id"] = request_context.api_key_id
+
         return await self._submit_async_operation(
             bank_id=bank_id,
             operation_type="consolidation",
             task_type="consolidation",
-            task_payload={},
+            task_payload=task_payload,
             dedupe_by_bank=True,
         )
 
