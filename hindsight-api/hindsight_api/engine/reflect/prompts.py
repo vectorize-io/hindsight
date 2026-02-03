@@ -463,9 +463,12 @@ def build_final_prompt(
     parts.append(
         "\n## Instructions\n"
         "Provide a thoughtful answer by synthesizing and reasoning from the retrieved data above. "
-        "You can make reasonable inferences from the memories, but don't completely fabricate information."
+        "You can make reasonable inferences from the memories, but don't completely fabricate information. "
         "If the exact answer isn't stated, use what IS stated to give the best possible answer. "
-        "Only say 'I don't have information' if the retrieved data is truly unrelated to the question."
+        "Only say 'I don't have information' if the retrieved data is truly unrelated to the question.\n\n"
+        "IMPORTANT: Output ONLY the final answer. Do NOT include meta-commentary like "
+        '"I\'ll search..." or "Let me analyze...". Do NOT explain your reasoning process. '
+        "Just provide the direct synthesized answer."
     )
 
     return "\n".join(parts)
@@ -480,4 +483,10 @@ Your approach:
 - Be helpful - if you have related information, use it to give the best possible answer
 
 Only say "I don't have information" if the retrieved data is truly unrelated to the question.
-Do NOT fabricate information that has no basis in the retrieved data."""
+Do NOT fabricate information that has no basis in the retrieved data.
+
+CRITICAL: Output ONLY the final synthesized answer. Do NOT include:
+- Meta-commentary about what you're doing ("I'll search...", "Let me analyze...")
+- Explanations of your reasoning process
+- Descriptions of your approach
+Just provide the direct answer."""
