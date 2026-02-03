@@ -131,6 +131,21 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Display Deploy Info
+        run: |
+          echo "============================================="
+          echo "Deploying Hindsight to GKE (PROD)"
+          echo "============================================="
+          echo "Commit:    ${{ github.sha }}"
+          echo "Namespace: hindsight"
+          echo "Image tag: latest"
+          echo ""
+          echo "Expected image digest:"
+          gcloud artifacts docker images describe \
+            us-docker.pkg.dev/xsolla-n8n-prod/hindsight/hindsight:latest \
+            --format="value(image_summary.fully_qualified_digest)" || echo "Could not fetch digest"
+          echo "============================================="
+
       - name: Deploy to GKE via Cloud Build (Connect Gateway)
         run: |
           cat > /tmp/deploy.yaml <<EOF
@@ -164,6 +179,8 @@ jobs:
                   echo ""
                   echo "============================================="
           serviceAccount: 'projects/xsolla-n8n-prod/serviceAccounts/hindsight-github-actions@xsolla-n8n-prod.iam.gserviceaccount.com'
+          options:
+            logging: CLOUD_LOGGING_ONLY
           substitutions:
             _COMMIT_SHA: ${{ github.sha }}
           EOF
