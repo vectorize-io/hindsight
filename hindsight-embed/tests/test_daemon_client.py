@@ -96,7 +96,7 @@ class TestRunCli:
             call_args = mock_subprocess_run.call_args
 
             # Verify environment contains the local daemon URL
-            assert call_args.kwargs["env"]["HINDSIGHT_API_URL"] == daemon_client.DAEMON_URL
+            assert call_args.kwargs["env"]["HINDSIGHT_API_URL"] == daemon_client.get_daemon_url()
 
             # Verify exit code
             assert exit_code == 0

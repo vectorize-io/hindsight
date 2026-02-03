@@ -25,7 +25,7 @@ uvx hindsight-embed --help
 ## Quick Start
 
 ```bash
-# Interactive setup (recommended)
+# Interactive setup (configures default profile)
 hindsight-embed configure
 
 # Or set your LLM API key manually
@@ -38,14 +38,25 @@ hindsight-embed memory retain default "User prefers dark mode"
 hindsight-embed memory recall default "What are user preferences?"
 ```
 
+All commands use the "default" profile unless you specify a different one with `--profile` or `HINDSIGHT_EMBED_PROFILE`.
+
 ## Commands
 
 ### configure
 
-Interactive setup wizard:
+Configure the default profile or create/update named profiles:
 
 ```bash
+# Interactive setup for default profile
 hindsight-embed configure
+
+# Create/update named profile with single command
+hindsight-embed configure --profile my-app \
+  --env HINDSIGHT_EMBED_LLM_PROVIDER=openai \
+  --env HINDSIGHT_EMBED_LLM_API_KEY=sk-xxx
+
+# Create/update named profile interactively
+hindsight-embed configure --profile staging
 ```
 
 This will:
@@ -94,6 +105,27 @@ List all memory banks:
 hindsight-embed bank list
 ```
 
+### profile
+
+Manage configuration profiles:
+
+```bash
+# List all profiles with status
+hindsight-embed profile list
+
+# Show current active profile
+hindsight-embed profile show
+
+# Set active profile (persists across commands)
+hindsight-embed profile set-active my-app
+
+# Clear active profile (revert to default)
+hindsight-embed profile set-active --none
+
+# Delete a profile
+hindsight-embed profile delete my-app
+```
+
 ### daemon
 
 Manage the background daemon:
@@ -117,6 +149,7 @@ Run `hindsight-embed configure` for a guided setup that saves to `~/.hindsight/e
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `HINDSIGHT_EMBED_PROFILE` | Profile name to use (overrides active profile) | None (uses default profile) |
 | `HINDSIGHT_EMBED_LLM_API_KEY` | LLM API key (or use `OPENAI_API_KEY`) | Required |
 | `HINDSIGHT_EMBED_LLM_PROVIDER` | LLM provider (`openai`, `groq`, `google`, `ollama`) | `openai` |
 | `HINDSIGHT_EMBED_LLM_MODEL` | LLM model | `gpt-4o-mini` |
@@ -147,14 +180,82 @@ hindsight-embed daemon start
 
 **Note:** All banks share a single database. Bank isolation happens within the database via the `bank_id` parameter passed to CLI commands.
 
+### Configuration Profiles
+
+Profiles let you maintain multiple independent configurations (e.g., different API endpoints, LLM providers, or projects). Each profile runs its own daemon on a unique port (8889-9888).
+
+**The Default Profile:**
+
+When you run `hindsight-embed configure` without specifying a profile, it configures the "default" profile. This uses the backward-compatible configuration at `~/.hindsight/embed` and runs on port 8888.
+
+**Creating Named Profiles:**
+
+```bash
+# Create a profile with single command
+hindsight-embed configure --profile my-app \
+  --env HINDSIGHT_EMBED_LLM_PROVIDER=openai \
+  --env HINDSIGHT_EMBED_LLM_API_KEY=sk-xxx \
+  --env HINDSIGHT_EMBED_LLM_MODEL=gpt-4o-mini
+
+# Create a profile interactively
+hindsight-embed configure --profile staging
+```
+
+**Using Profiles:**
+
+```bash
+# Option 1: Environment variable (recommended for apps)
+HINDSIGHT_EMBED_PROFILE=my-app hindsight-embed memory retain default "text"
+
+# Option 2: CLI flag
+hindsight-embed --profile my-app memory recall default "query"
+
+# Option 3: Set as active (persists across commands)
+hindsight-embed profile set-active my-app
+hindsight-embed memory recall default "query"  # Uses my-app profile
+
+# Clear active profile (revert to default)
+hindsight-embed profile set-active --none
+```
+
+**Profile Management:**
+
+```bash
+# List all profiles with status
+hindsight-embed profile list
+
+# Show active profile
+hindsight-embed profile show
+
+# Delete a profile
+hindsight-embed profile delete my-app
+```
+
+**Profile Resolution Priority:**
+1. `HINDSIGHT_EMBED_PROFILE` environment variable (highest)
+2. `--profile` CLI flag
+3. Active profile from `~/.hindsight/active_profile` file
+4. Default profile (lowest)
+
+**Note:** If a profile is specified but doesn't exist, the command will fail with an error. Profiles must be explicitly created using `hindsight-embed configure --profile <name>`.
+
 ### Files
 
+**Default Profile:**
 | Path | Description |
 |------|-------------|
-| `~/.hindsight/embed` | Configuration file |
-| `~/.hindsight/config.env` | Alternative config file location |
-| `~/.hindsight/daemon.log` | Daemon logs |
-| `~/.hindsight/daemon.lock` | Daemon lock file (PID) |
+| `~/.hindsight/embed` | Configuration file for default profile |
+| `~/.hindsight/daemon.log` | Daemon logs for default profile |
+| `~/.hindsight/daemon.lock` | Daemon lock file (PID) for default profile |
+
+**Named Profiles:**
+| Path | Description |
+|------|-------------|
+| `~/.hindsight/profiles/<name>.env` | Configuration file for profile |
+| `~/.hindsight/profiles/<name>.log` | Daemon logs for profile |
+| `~/.hindsight/profiles/<name>.lock` | Daemon lock file (PID) for profile |
+| `~/.hindsight/profiles/metadata.json` | Profile metadata (ports, timestamps) |
+| `~/.hindsight/active_profile` | Active profile name (when set with `profile set-active`) |
 
 ## Use with AI Coding Assistants
 

@@ -24,6 +24,19 @@
         "type": "string",
         "description": "hindsight-embed version to use (e.g. 'latest', '0.4.2', or empty for latest)",
         "default": "latest"
+      },
+      "llmProvider": {
+        "type": "string",
+        "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama'). Takes priority over auto-detection but not over HINDSIGHT_API_LLM_PROVIDER env var.",
+        "enum": ["openai", "anthropic", "gemini", "groq", "ollama"]
+      },
+      "llmModel": {
+        "type": "string",
+        "description": "LLM model to use (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022'). Used with llmProvider."
+      },
+      "llmApiKeyEnv": {
+        "type": "string",
+        "description": "Name of the env var holding the API key (e.g. 'MY_CUSTOM_KEY'). If not set, uses the standard env var for the chosen provider."
       }
     },
     "additionalProperties": false
@@ -44,6 +57,18 @@
     "embedVersion": {
       "label": "Hindsight Embed Version",
       "placeholder": "latest (or pin to specific version like 0.4.2)"
+    },
+    "llmProvider": {
+      "label": "LLM Provider",
+      "placeholder": "e.g. openai, anthropic, gemini, groq"
+    },
+    "llmModel": {
+      "label": "LLM Model",
+      "placeholder": "e.g. gpt-4o-mini, claude-3-5-haiku-20241022"
+    },
+    "llmApiKeyEnv": {
+      "label": "API Key Env Var",
+      "placeholder": "e.g. MY_CUSTOM_API_KEY (optional)"
     }
   }
 }

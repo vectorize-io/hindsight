@@ -72,9 +72,9 @@ class WorkerPoller:
             executor: Async function to execute tasks (typically MemoryEngine.execute_task)
             poll_interval_ms: Interval between polls when no tasks found (milliseconds)
             max_retries: Maximum retry attempts before marking task as failed
-            schema: Database schema for single-tenant support (ignored if tenant_extension is set)
-            tenant_extension: Extension for dynamic multi-tenant discovery. If set, list_tenants()
-                            is called on each poll cycle to discover schemas dynamically.
+            schema: Database schema for single-tenant support (deprecated, use tenant_extension)
+            tenant_extension: Extension for dynamic multi-tenant discovery. If None, creates a
+                            DefaultTenantExtension with the configured schema.
             max_slots: Maximum concurrent tasks per worker
             consolidation_max_slots: Maximum concurrent consolidation tasks per worker
         """
@@ -84,6 +84,13 @@ class WorkerPoller:
         self._poll_interval_ms = poll_interval_ms
         self._max_retries = max_retries
         self._schema = schema
+        # Always set tenant extension (use DefaultTenantExtension if none provided)
+        if tenant_extension is None:
+            from ..extensions.builtin.tenant import DefaultTenantExtension
+
+            # Pass schema parameter to DefaultTenantExtension if explicitly provided
+            config = {"schema": schema} if schema else {}
+            tenant_extension = DefaultTenantExtension(config=config)
         self._tenant_extension = tenant_extension
         self._max_slots = max_slots
         self._consolidation_max_slots = consolidation_max_slots
@@ -100,14 +107,11 @@ class WorkerPoller:
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
-        if self._tenant_extension is not None:
-            from ..config import DEFAULT_DATABASE_SCHEMA
+        from ..config import DEFAULT_DATABASE_SCHEMA
 
-            tenants = await self._tenant_extension.list_tenants()
-            # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
-            return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
-        # Single schema mode
-        return [self._schema]
+        tenants = await self._tenant_extension.list_tenants()
+        # Convert default schema to None for SQL compatibility (no prefix), keep others as-is
+        return [t.schema if t.schema != DEFAULT_DATABASE_SCHEMA else None for t in tenants]
 
     async def _get_available_slots(self) -> tuple[int, int]:
         """

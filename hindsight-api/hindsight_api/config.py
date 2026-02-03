@@ -154,7 +154,21 @@ ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_DATABASE_SCHEMA = "public"
 DEFAULT_LLM_PROVIDER = "openai"
-DEFAULT_LLM_MODEL = "gpt-5-mini"
+
+# Provider-specific default models
+PROVIDER_DEFAULT_MODELS = {
+    "openai": "o3-mini",
+    "anthropic": "claude-haiku-4-5-20251001",
+    "gemini": "gemini-2.5-flash",
+    "groq": "openai/gpt-oss-120b",
+    "ollama": "gemma3:12b",
+    "lmstudio": "local-model",
+    "vertexai": "gemini-2.0-flash-001",
+    "openai-codex": "gpt-5.2-codex",
+    "claude-code": "claude-sonnet-4-5-20250929",
+    "mock": "mock-model",
+}
+DEFAULT_LLM_MODEL = "o3-mini"  # Fallback if provider not in table
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 10  # Max retry attempts for LLM API calls
 DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry exponential backoff
@@ -303,6 +317,11 @@ def _validate_extraction_mode(mode: str) -> str:
     return mode_lower
 
 
+def _get_default_model_for_provider(provider: str) -> str:
+    """Get the default model for a given provider."""
+    return PROVIDER_DEFAULT_MODELS.get(provider.lower(), DEFAULT_LLM_MODEL)
+
+
 @dataclass
 class HindsightConfig:
     """Configuration container for Hindsight API."""
@@ -431,14 +450,18 @@ class HindsightConfig:
     @classmethod
     def from_env(cls) -> "HindsightConfig":
         """Create configuration from environment variables."""
+        # Get provider first to determine default model
+        llm_provider = os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER)
+        llm_model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(llm_provider)
+
         return cls(
             # Database
             database_url=os.getenv(ENV_DATABASE_URL, DEFAULT_DATABASE_URL),
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
             # LLM
-            llm_provider=os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER),
+            llm_provider=llm_provider,
             llm_api_key=os.getenv(ENV_LLM_API_KEY),
-            llm_model=os.getenv(ENV_LLM_MODEL, DEFAULT_LLM_MODEL),
+            llm_model=llm_model,
             llm_base_url=os.getenv(ENV_LLM_BASE_URL) or None,
             llm_max_concurrent=int(os.getenv(ENV_LLM_MAX_CONCURRENT, str(DEFAULT_LLM_MAX_CONCURRENT))),
             llm_max_retries=int(os.getenv(ENV_LLM_MAX_RETRIES, str(DEFAULT_LLM_MAX_RETRIES))),
@@ -453,7 +476,12 @@ class HindsightConfig:
             # Per-operation LLM config (None = use default)
             retain_llm_provider=os.getenv(ENV_RETAIN_LLM_PROVIDER) or None,
             retain_llm_api_key=os.getenv(ENV_RETAIN_LLM_API_KEY) or None,
-            retain_llm_model=os.getenv(ENV_RETAIN_LLM_MODEL) or None,
+            retain_llm_model=os.getenv(ENV_RETAIN_LLM_MODEL)
+            or (
+                _get_default_model_for_provider(os.getenv(ENV_RETAIN_LLM_PROVIDER))
+                if os.getenv(ENV_RETAIN_LLM_PROVIDER)
+                else None
+            ),
             retain_llm_base_url=os.getenv(ENV_RETAIN_LLM_BASE_URL) or None,
             retain_llm_max_concurrent=int(os.getenv(ENV_RETAIN_LLM_MAX_CONCURRENT))
             if os.getenv(ENV_RETAIN_LLM_MAX_CONCURRENT)
@@ -470,7 +498,12 @@ class HindsightConfig:
             retain_llm_timeout=float(os.getenv(ENV_RETAIN_LLM_TIMEOUT)) if os.getenv(ENV_RETAIN_LLM_TIMEOUT) else None,
             reflect_llm_provider=os.getenv(ENV_REFLECT_LLM_PROVIDER) or None,
             reflect_llm_api_key=os.getenv(ENV_REFLECT_LLM_API_KEY) or None,
-            reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL) or None,
+            reflect_llm_model=os.getenv(ENV_REFLECT_LLM_MODEL)
+            or (
+                _get_default_model_for_provider(os.getenv(ENV_REFLECT_LLM_PROVIDER))
+                if os.getenv(ENV_REFLECT_LLM_PROVIDER)
+                else None
+            ),
             reflect_llm_base_url=os.getenv(ENV_REFLECT_LLM_BASE_URL) or None,
             reflect_llm_max_concurrent=int(os.getenv(ENV_REFLECT_LLM_MAX_CONCURRENT))
             if os.getenv(ENV_REFLECT_LLM_MAX_CONCURRENT)
@@ -489,7 +522,12 @@ class HindsightConfig:
             else None,
             consolidation_llm_provider=os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER) or None,
             consolidation_llm_api_key=os.getenv(ENV_CONSOLIDATION_LLM_API_KEY) or None,
-            consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL) or None,
+            consolidation_llm_model=os.getenv(ENV_CONSOLIDATION_LLM_MODEL)
+            or (
+                _get_default_model_for_provider(os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER))
+                if os.getenv(ENV_CONSOLIDATION_LLM_PROVIDER)
+                else None
+            ),
             consolidation_llm_base_url=os.getenv(ENV_CONSOLIDATION_LLM_BASE_URL) or None,
             consolidation_llm_max_concurrent=int(os.getenv(ENV_CONSOLIDATION_LLM_MAX_CONCURRENT))
             if os.getenv(ENV_CONSOLIDATION_LLM_MAX_CONCURRENT)

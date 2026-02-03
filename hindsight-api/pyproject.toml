@@ -25,7 +25,7 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "tiktoken>=0.12.0",
     "httpx>=0.27.0",
-    "fastmcp>=2.14.0",  # CVE-2025-66416
+    "fastmcp>=2.14.0", # CVE-2025-66416
     "pg0-embedded>=0.11.0",
     "python-dateutil>=2.8.0",
     "opentelemetry-api>=1.20.0",
@@ -41,16 +41,17 @@ dependencies = [
     "flashrank>=0.2.0",
     # Local ML models for embeddings/reranking - can be excluded in Docker with INCLUDE_LOCAL_MODELS=false
     "sentence-transformers>=3.3.0",
-    "transformers>=4.53.0",  # Security fixes for ReDoS vulnerabilities
-    "torch>=2.6.0",  # CVE fix for remote code execution
+    "transformers>=4.53.0", # Security fixes for ReDoS vulnerabilities
+    "torch>=2.6.0", # CVE fix for remote code execution
     "uvloop>=0.22.1",
     # Transitive dependency security fixes
-    "pyasn1>=0.6.2",  # DoS vulnerability fix
-    "urllib3>=2.6.3",  # Decompression-bomb safeguards bypass fix
-    "langchain-core>=1.2.5",  # Serialization injection vulnerability fix
-    "filelock>=3.20.1",  # TOCTOU race condition fix
-    "authlib>=1.6.6",  # Account takeover vulnerability fix
-    "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
+    "pyasn1>=0.6.2", # DoS vulnerability fix
+    "urllib3>=2.6.3", # Decompression-bomb safeguards bypass fix
+    "langchain-core>=1.2.5", # Serialization injection vulnerability fix
+    "filelock>=3.20.1", # TOCTOU race condition fix
+    "authlib>=1.6.6", # Account takeover vulnerability fix
+    "aiohttp>=3.13.3", # Multiple DoS vulnerabilities
+    "claude-agent-sdk>=0.1.27",
 ]
 
 [project.optional-dependencies]
