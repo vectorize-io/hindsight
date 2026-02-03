@@ -11,6 +11,12 @@ let initPromise: Promise<void> | null = null;
 let isInitialized = false;
 let usingExternalApi = false; // Track if using external API (skip daemon management)
 
+// Store the current plugin config for bank ID derivation
+let currentPluginConfig: PluginConfig | null = null;
+
+// Track which banks have had their mission set (to avoid re-setting on every request)
+const banksWithMissionSet = new Set<string>();
+
 // Global access for hooks (Moltbot loads hooks separately)
 if (typeof global !== 'undefined') {
   (global as any).__hindsightClient = {
@@ -19,6 +25,32 @@ if (typeof global !== 'undefined') {
       if (isInitialized) return;
       if (initPromise) await initPromise;
     },
+    /**
+     * Get a client configured for a specific agent context.
+     * Derives the bank ID from the context for per-channel isolation.
+     * Also ensures the bank mission is set on first use.
+     */
+    getClientForContext: async (ctx: PluginHookAgentContext | undefined) => {
+      if (!client) return null;
+      const config = currentPluginConfig || {};
+      const bankId = deriveBankId(ctx, config);
+      client.setBankId(bankId);
+
+      // Set bank mission on first use of this bank (if configured)
+      if (config.bankMission && config.dynamicBankId && !banksWithMissionSet.has(bankId)) {
+        try {
+          await client.setBankMission(config.bankMission);
+          banksWithMissionSet.add(bankId);
+          console.log(`[Hindsight] Set mission for new bank: ${bankId}`);
+        } catch (error) {
+          // Log but don't fail - bank mission is not critical
+          console.warn(`[Hindsight] Could not set bank mission for ${bankId}: ${error}`);
+        }
+      }
+
+      return client;
+    },
+    getPluginConfig: () => currentPluginConfig,
   };
 }
 
@@ -26,8 +58,47 @@ if (typeof global !== 'undefined') {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Default bank name
-const BANK_NAME = 'openclaw';
+// Default bank name (fallback when channel context not available)
+const DEFAULT_BANK_NAME = 'openclaw';
+
+/**
+ * Agent context passed to plugin hooks.
+ * These fields are populated by OpenClaw when invoking hooks.
+ */
+interface PluginHookAgentContext {
+  agentId?: string;
+  sessionKey?: string;
+  workspaceDir?: string;
+  messageProvider?: string;
+  channelId?: string;
+  senderId?: string;
+}
+
+/**
+ * Derive a bank ID from the agent context.
+ * Creates channel-specific banks: {messageProvider}-{channelId}
+ * Falls back to default bank when context is unavailable.
+ */
+function deriveBankId(
+  ctx: PluginHookAgentContext | undefined,
+  pluginConfig: PluginConfig
+): string {
+  // If dynamic bank ID is disabled, use static bank
+  if (pluginConfig.dynamicBankId === false) {
+    return pluginConfig.bankIdPrefix
+      ? `${pluginConfig.bankIdPrefix}-${DEFAULT_BANK_NAME}`
+      : DEFAULT_BANK_NAME;
+  }
+
+  const channelType = ctx?.messageProvider || 'unknown';
+  const channelId = ctx?.channelId || 'default';
+
+  // Build bank ID: {prefix?}-{channelType}-{channelId}
+  const baseBankId = `${channelType}-${channelId}`;
+  return pluginConfig.bankIdPrefix
+    ? `${pluginConfig.bankIdPrefix}-${baseBankId}`
+    : baseBankId;
+}
 
 // Provider detection from standard env vars
 const PROVIDER_DETECTION = [
@@ -184,6 +255,9 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     llmApiKeyEnv: config.llmApiKeyEnv,
     hindsightApiUrl: config.hindsightApiUrl,
     hindsightApiToken: config.hindsightApiToken,
+    // Dynamic bank ID options (default: enabled)
+    dynamicBankId: config.dynamicBankId !== false,
+    bankIdPrefix: config.bankIdPrefix,
   };
 }
 
@@ -194,6 +268,9 @@ export default function (api: MoltbotPluginAPI) {
     // Get plugin config first (needed for LLM detection)
     console.log('[Hindsight] Getting plugin config...');
     const pluginConfig = getPluginConfig(api);
+
+    // Store config globally for bank ID derivation in hooks
+    currentPluginConfig = pluginConfig;
 
     // Detect LLM configuration (env vars > plugin config > auto-detect)
     console.log('[Hindsight] Detecting LLM config...');
@@ -209,6 +286,14 @@ export default function (api: MoltbotPluginAPI) {
     }
     if (pluginConfig.bankMission) {
       console.log(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
+    }
+
+    // Log dynamic bank ID mode
+    if (pluginConfig.dynamicBankId) {
+      const prefixInfo = pluginConfig.bankIdPrefix ? ` (prefix: ${pluginConfig.bankIdPrefix})` : '';
+      console.log(`[Hindsight] ✓ Dynamic bank IDs enabled${prefixInfo} - each channel gets isolated memory`);
+    } else {
+      console.log(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${DEFAULT_BANK_NAME}`);
     }
 
     // Detect external API mode
@@ -248,12 +333,14 @@ export default function (api: MoltbotPluginAPI) {
           console.log('[Hindsight] Creating HindsightClient...');
           client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
 
-          // Use openclaw bank
-          console.log(`[Hindsight] Using bank: ${BANK_NAME}`);
-          client.setBankId(BANK_NAME);
+          // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
+          const defaultBankId = deriveBankId(undefined, pluginConfig);
+          console.log(`[Hindsight] Default bank: ${defaultBankId}`);
+          client.setBankId(defaultBankId);
 
-          // Set bank mission
-          if (pluginConfig.bankMission) {
+          // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
+          // For now, set it on the default bank
+          if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
             console.log(`[Hindsight] Setting bank mission...`);
             await client.setBankMission(pluginConfig.bankMission);
           }
@@ -281,12 +368,14 @@ export default function (api: MoltbotPluginAPI) {
           console.log('[Hindsight] Creating HindsightClient...');
           client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
 
-          // Use openclaw bank
-          console.log(`[Hindsight] Using bank: ${BANK_NAME}`);
-          client.setBankId(BANK_NAME);
+          // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
+          const defaultBankId = deriveBankId(undefined, pluginConfig);
+          console.log(`[Hindsight] Default bank: ${defaultBankId}`);
+          client.setBankId(defaultBankId);
 
-          // Set bank mission
-          if (pluginConfig.bankMission) {
+          // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
+          // For now, set it on the default bank
+          if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
             console.log(`[Hindsight] Setting bank mission...`);
             await client.setBankMission(pluginConfig.bankMission);
           }
@@ -354,9 +443,10 @@ export default function (api: MoltbotPluginAPI) {
         // Reinitialize if needed (fresh start or recovery)
         if (!isInitialized) {
           console.log('[Hindsight] Reinitializing...');
-          const pluginConfig = getPluginConfig(api);
-          const llmConfig = detectLLMConfig(pluginConfig);
-          const externalApi = detectExternalApi(pluginConfig);
+          const reinitPluginConfig = getPluginConfig(api);
+          currentPluginConfig = reinitPluginConfig;
+          const llmConfig = detectLLMConfig(reinitPluginConfig);
+          const externalApi = detectExternalApi(reinitPluginConfig);
 
           if (externalApi.apiUrl) {
             // External API mode
@@ -368,18 +458,19 @@ export default function (api: MoltbotPluginAPI) {
 
             await checkExternalApiHealth(externalApi.apiUrl);
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
-            client.setBankId(BANK_NAME);
+            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion);
+            const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
+            client.setBankId(defaultBankId);
 
-            if (pluginConfig.bankMission) {
-              await client.setBankMission(pluginConfig.bankMission);
+            if (reinitPluginConfig.bankMission && !reinitPluginConfig.dynamicBankId) {
+              await client.setBankMission(reinitPluginConfig.bankMission);
             }
 
             isInitialized = true;
             console.log('[Hindsight] Reinitialization complete (external API mode)');
           } else {
             // Local daemon mode
-            const port = pluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
+            const port = reinitPluginConfig.embedPort || Math.floor(Math.random() * 10000) + 10000;
 
             embedManager = new HindsightEmbedManager(
               port,
@@ -387,17 +478,18 @@ export default function (api: MoltbotPluginAPI) {
               llmConfig.apiKey,
               llmConfig.model,
               llmConfig.baseUrl,
-              pluginConfig.daemonIdleTimeout,
-              pluginConfig.embedVersion
+              reinitPluginConfig.daemonIdleTimeout,
+              reinitPluginConfig.embedVersion
             );
 
             await embedManager.start();
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion);
-            client.setBankId(BANK_NAME);
+            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion);
+            const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
+            client.setBankId(defaultBankId);
 
-            if (pluginConfig.bankMission) {
-              await client.setBankMission(pluginConfig.bankMission);
+            if (reinitPluginConfig.bankMission && !reinitPluginConfig.dynamicBankId) {
+              await client.setBankMission(reinitPluginConfig.bankMission);
             }
 
             isInitialized = true;
@@ -429,22 +521,29 @@ export default function (api: MoltbotPluginAPI) {
 
     console.log('[Hindsight] Plugin loaded successfully');
 
-    // Register agent_end hook for auto-retention
-    console.log('[Hindsight] Registering agent_end hook...');
-    // Store session key for retention
+    // Register agent hooks for auto-recall and auto-retention
+    console.log('[Hindsight] Registering agent hooks...');
+
+    // Store session key and context for retention
     let currentSessionKey: string | undefined;
+    let currentAgentContext: PluginHookAgentContext | undefined;
 
     // Auto-recall: Inject relevant memories before agent processes the message
-    api.on('before_agent_start', async (context: any) => {
+    // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
+    api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
-        // Capture session key
-        if (context.sessionKey) {
-          currentSessionKey = context.sessionKey as string;
-          console.log('[Hindsight] Captured session key:', currentSessionKey);
+        // Capture session key and context for use in agent_end
+        if (ctx?.sessionKey) {
+          currentSessionKey = ctx.sessionKey;
         }
+        currentAgentContext = ctx;
+
+        // Derive bank ID from context
+        const bankId = deriveBankId(ctx, pluginConfig);
+        console.log(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
 
         // Get the user's latest message for recall
-        let prompt = context.prompt;
+        let prompt = event.prompt;
         if (!prompt || typeof prompt !== 'string' || prompt.length < 5) {
           return; // Skip very short messages
         }
@@ -468,13 +567,14 @@ export default function (api: MoltbotPluginAPI) {
 
         await clientGlobal.waitForReady();
 
-        const client = clientGlobal.getClient();
+        // Get client configured for this context's bank (async to handle mission setup)
+        const client = await clientGlobal.getClientForContext(ctx);
         if (!client) {
           console.log('[Hindsight] Client not initialized, skipping auto-recall');
           return;
         }
 
-        console.log('[Hindsight] Auto-recall for prompt:', prompt.substring(0, 50));
+        console.log(`[Hindsight] Auto-recall for bank ${bankId}, prompt: ${prompt.substring(0, 50)}`);
 
         // Recall relevant memories (up to 512 tokens)
         const response = await client.recall({
@@ -497,7 +597,7 @@ ${memoriesJson}
 User message: ${prompt}
 </hindsight_memories>`;
 
-        console.log(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories`);
+        console.log(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories from bank ${bankId}`);
 
         // Inject context before the user message
         return { prependContext: contextMessage };
@@ -507,9 +607,15 @@ User message: ${prompt}
       }
     });
 
-    api.on('agent_end', async (event: any) => {
+    // Hook signature: (event, ctx) where event has {messages, success, error?, durationMs?}
+    api.on('agent_end', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
-        console.log('[Hindsight Hook] agent_end triggered');
+        // Use context from this hook, or fall back to context captured in before_agent_start
+        const effectiveCtx = ctx || currentAgentContext;
+
+        // Derive bank ID from context
+        const bankId = deriveBankId(effectiveCtx, pluginConfig);
+        console.log(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
 
         // Check event success and messages
         if (!event.success || !Array.isArray(event.messages) || event.messages.length === 0) {
@@ -526,7 +632,8 @@ User message: ${prompt}
 
         await clientGlobal.waitForReady();
 
-        const client = clientGlobal.getClient();
+        // Get client configured for this context's bank (async to handle mission setup)
+        const client = await clientGlobal.getClientForContext(effectiveCtx);
         if (!client) {
           console.warn('[Hindsight] Client not initialized, skipping retain');
           return;
@@ -557,8 +664,8 @@ User message: ${prompt}
           return;
         }
 
-        // Use session key as document ID
-        const documentId = currentSessionKey || 'default-session';
+        // Use session key as document ID (prefer context over captured value)
+        const documentId = effectiveCtx?.sessionKey || currentSessionKey || 'default-session';
 
         // Retain to Hindsight
         await client.retain({
@@ -567,15 +674,18 @@ User message: ${prompt}
           metadata: {
             retained_at: new Date().toISOString(),
             message_count: event.messages.length,
+            channel_type: effectiveCtx?.messageProvider,
+            channel_id: effectiveCtx?.channelId,
+            sender_id: effectiveCtx?.senderId,
           },
         });
 
-        console.log(`[Hindsight] Retained ${event.messages.length} messages for session ${documentId}`);
+        console.log(`[Hindsight] Retained ${event.messages.length} messages to bank ${bankId} for session ${documentId}`);
       } catch (error) {
         console.error('[Hindsight] Error retaining messages:', error);
       }
     });
-    console.log('[Hindsight] Hook registered');
+    console.log('[Hindsight] Hooks registered');
   } catch (error) {
     console.error('[Hindsight] Plugin loading error:', error);
     if (error instanceof Error) {

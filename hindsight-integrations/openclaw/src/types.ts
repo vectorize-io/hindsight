@@ -3,7 +3,13 @@
 export interface MoltbotPluginAPI {
   config: MoltbotConfig;
   registerService(config: ServiceConfig): void;
-  on(event: string, handler: (context: any) => void | Promise<void | { prependContext?: string }>): void;
+  /**
+   * Register a hook handler.
+   * Handler receives (event, ctx) where:
+   * - event: Hook-specific event data (e.g., {prompt, messages?} for before_agent_start)
+   * - ctx: Agent context with sessionKey, messageProvider, channelId, senderId, etc.
+   */
+  on(event: string, handler: (event: any, ctx?: any) => void | Promise<void | { prependContext?: string }>): void;
   // Add more as needed
 }
 
@@ -37,6 +43,9 @@ export interface PluginConfig {
   llmApiKeyEnv?: string; // Env var name holding the API key (e.g. 'MY_CUSTOM_KEY')
   hindsightApiUrl?: string; // External Hindsight API URL (skips local daemon when set)
   hindsightApiToken?: string; // API token for external Hindsight API authentication
+  // Dynamic bank ID options
+  dynamicBankId?: boolean; // Enable per-channel banks (default: true)
+  bankIdPrefix?: string; // Optional prefix for bank IDs (e.g., 'prod' -> 'prod-slack-C123')
 }
 
 export interface ServiceConfig {
