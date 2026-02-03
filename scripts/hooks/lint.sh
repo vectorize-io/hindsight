@@ -34,7 +34,8 @@ run_task() {
 echo "  Syncing Python dependencies..."
 # Run uv sync first to avoid race conditions when multiple uv run commands
 # try to reinstall local packages in parallel (e.g., after version bump)
-uv sync --quiet
+# Note: May fail with corrupted cache, but uv run will handle it automatically
+uv sync --quiet 2>/dev/null || echo "  (sync skipped, will sync on-demand)"
 
 echo "  Running lints in parallel..."
 
@@ -47,15 +48,15 @@ run_task "ruff-api-check" "$REPO_ROOT/hindsight-api" "uv run ruff check --fix ."
 run_task "ruff-api-format" "$REPO_ROOT/hindsight-api" "uv run ruff format ."
 run_task "ty-api" "$REPO_ROOT/hindsight-api" "uv run ty check hindsight_api"
 
-# Python hindsight-dev tasks
-run_task "ruff-dev-check" "$REPO_ROOT/hindsight-dev" "uv run ruff check --fix ."
-run_task "ruff-dev-format" "$REPO_ROOT/hindsight-dev" "uv run ruff format ."
-run_task "ty-dev" "$REPO_ROOT/hindsight-dev" "uv run ty check hindsight_dev benchmarks"
+# Python hindsight-dev tasks (use python3 directly to avoid uv cache issues)
+run_task "ruff-dev-check" "$REPO_ROOT/hindsight-dev" "python3 -m ruff check --fix ."
+run_task "ruff-dev-format" "$REPO_ROOT/hindsight-dev" "python3 -m ruff format ."
+run_task "ty-dev" "$REPO_ROOT/hindsight-dev" "python3 -m ty check hindsight_dev benchmarks"
 
-# Python hindsight-embed tasks
-run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "uv run ruff check --fix ."
-run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "uv run ruff format ."
-run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "uv run ty check hindsight_embed"
+# Python hindsight-embed tasks (use python3 directly to avoid uv cache issues)
+run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "python3 -m ruff check --fix ."
+run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "python3 -m ruff format ."
+run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "python3 -m ty check hindsight_embed"
 
 # Wait for all tasks to complete
 for pid in "${PIDS[@]}"; do

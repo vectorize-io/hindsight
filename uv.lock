@@ -1688,6 +1688,7 @@ version = "0.4.7"
 source = { editable = "hindsight-embed" }
 dependencies = [
     { name = "httpx" },
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -1698,7 +1699,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.27.0" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "rich", specifier = ">=13.0.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [

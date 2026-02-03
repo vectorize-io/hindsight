@@ -6,16 +6,26 @@ Handles daemon lifecycle (start if needed) and API requests via the Python clien
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 import time
 from pathlib import Path
 
 import httpx  # Used only for health check
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
 
 from .profile_manager import ProfileManager, resolve_active_profile
 
+console = Console(stderr=True)
+
 logger = logging.getLogger(__name__)
+
+# Suppress noisy httpx logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Default port for default profile
 DEFAULT_DAEMON_PORT = 8888
@@ -119,7 +129,8 @@ def _start_daemon(config: dict, profile: str | None = None) -> bool:
     paths = pm.resolve_profile_paths(profile)
 
     profile_label = f"profile '{profile}'" if profile else "default profile"
-    logger.info(f"Starting daemon for {profile_label}...")
+    daemon_log = paths.log
+    port = paths.port
 
     # Build environment with LLM config
     env = os.environ.copy()
@@ -130,14 +141,21 @@ def _start_daemon(config: dict, profile: str | None = None) -> bool:
     if config.get("llm_model"):
         env["HINDSIGHT_API_LLM_MODEL"] = config["llm_model"]
 
-    # Use single shared pg0 database for all banks (banks are isolated within the database)
+    # Use profile-specific pg0 database for isolation
     # Allow override via HINDSIGHT_EMBED_API_DATABASE_URL for external PostgreSQL
     # (e.g. when running as root where embedded pg0 cannot use initdb)
     if "HINDSIGHT_EMBED_API_DATABASE_URL" not in env:
-        env["HINDSIGHT_API_DATABASE_URL"] = "pg0://hindsight-embed"
+        # Sanitize profile name for use in database name (allow only alphanumeric, dash, underscore)
+        safe_profile = re.sub(r"[^a-zA-Z0-9_-]", "-", profile or "default")
+        env["HINDSIGHT_API_DATABASE_URL"] = f"pg0://hindsight-embed-{safe_profile}"
     else:
         # Pass through the embed-specific env var to the daemon as the standard API env var
         env["HINDSIGHT_API_DATABASE_URL"] = env["HINDSIGHT_EMBED_API_DATABASE_URL"]
+
+    # Store database URL for display later
+    database_url = env["HINDSIGHT_API_DATABASE_URL"]
+    is_pg0 = database_url.startswith("pg0://")
+
     env["HINDSIGHT_API_LOG_LEVEL"] = "info"
 
     # On macOS, force CPU for embeddings/reranker to avoid MPS/Metal/XPC issues in daemon mode
@@ -154,7 +172,6 @@ def _start_daemon(config: dict, profile: str | None = None) -> bool:
     idle_timeout = int(os.getenv("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
 
     # Use profile-specific log file
-    daemon_log = paths.log
     daemon_log.parent.mkdir(parents=True, exist_ok=True)
 
     # Tell hindsight-api daemon where to write its logs
@@ -168,9 +185,6 @@ def _start_daemon(config: dict, profile: str | None = None) -> bool:
         "--port",
         str(paths.port),
     ]
-
-    print(f"Starting daemon with command: {' '.join(cmd)}", file=sys.stderr)
-    print(f"  Log file: {daemon_log}", file=sys.stderr)
 
     try:
         # Start daemon directly (hindsight-api handles its own log redirection via HINDSIGHT_API_DAEMON_LOG)
@@ -186,46 +200,190 @@ def _start_daemon(config: dict, profile: str | None = None) -> bool:
         # to detect failures - we must use the health check.
         start_time = time.time()
         last_check_time = start_time
-        while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
-            if _is_daemon_running(profile):
-                # Health check passed - but daemon might crash during initialization
-                # Wait a moment and verify it's still healthy (stability check)
-                print("  Daemon responding, verifying stability...", file=sys.stderr)
-                time.sleep(2)
+        last_log_position = 0  # Track position in log file for tailing
+        log_lines = [f"Starting daemon for {profile_label}...", ""]  # Accumulate log lines for display
+
+        # Build title with profile and port info
+        if profile:
+            title = f"[bold cyan]Starting Daemon[/bold cyan] [dim]({profile} @ :{port})[/dim]"
+        else:
+            title = f"[bold cyan]Starting Daemon[/bold cyan] [dim](:{port})[/dim]"
+
+        # Use Rich Live display for beautiful real-time updates
+        with Live(console=console, auto_refresh=False) as live:
+            # Show initial panel
+            content = Text("\n".join(log_lines), style="dim")
+            panel = Panel(
+                content,
+                title=title,
+                border_style="cyan",
+                padding=(1, 2),
+            )
+            live.update(panel)
+            live.refresh()
+
+            while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
+                # Tail daemon logs if available
+                if daemon_log.exists():
+                    try:
+                        with open(daemon_log, "r") as f:
+                            f.seek(last_log_position)
+                            new_lines = f.readlines()
+                            last_log_position = f.tell()
+
+                            # Add new log lines (keep last 4 for display)
+                            for line in new_lines:
+                                line = line.rstrip()
+                                if line:
+                                    log_lines.append(line)
+                            # Keep only last 4 lines
+                            log_lines = log_lines[-4:]
+                    except Exception:
+                        pass  # Silently ignore log read errors
+
                 if _is_daemon_running(profile):
-                    logger.info(f"Daemon started successfully for {profile_label}")
-                    return True
-                else:
-                    # Daemon crashed after initial health check
-                    print("  Daemon crashed during initialization", file=sys.stderr)
-                    break
+                    # Health check passed - but daemon might crash during initialization
+                    # Add status message to logs
+                    log_lines.append("")
+                    log_lines.append("✓ Daemon responding, verifying stability...")
 
-            # Periodically log progress
-            if time.time() - last_check_time > 5:
-                elapsed = int(time.time() - start_time)
-                print(f"  Still waiting for daemon... ({elapsed}s elapsed)", file=sys.stderr)
-                last_check_time = time.time()
+                    # Update display with success status
+                    content = Text("\n".join(log_lines), style="dim")
+                    panel = Panel(
+                        content,
+                        title=title,
+                        border_style="cyan",
+                        padding=(1, 2),
+                    )
+                    live.update(panel)
+                    live.refresh()
 
-            time.sleep(0.5)
+                    time.sleep(2)
+                    if _is_daemon_running(profile):
+                        log_lines.append("✓ Daemon started successfully!")
+                        log_lines.append("")
+                        log_lines.append(f"Logs: {daemon_log}")
 
-        logger.error("Daemon failed to start")
-        # Show logs on failure
-        if daemon_log.exists():
-            log_content = daemon_log.read_text()
-            if log_content:
-                # Show last 3000 chars of log
-                print(f"\n  Daemon log ({daemon_log}):", file=sys.stderr)
-                print(f"{log_content[-3000:]}", file=sys.stderr)
+                        # Show pg0 location if using pg0
+                        if is_pg0:
+                            # pg0 stores data in ~/.pg0/instances/<database_name>
+                            pg0_name = database_url.replace("pg0://", "")
+                            pg0_path = Path.home() / ".pg0" / "instances" / pg0_name
+                            log_lines.append(f"Database: {pg0_path}")
+
+                        content = Text("\n".join(log_lines), style="dim")
+
+                        # Build success title with profile and port
+                        if profile:
+                            success_title = (
+                                f"[bold green]✓ Daemon Started[/bold green] [dim]({profile} @ :{port})[/dim]"
+                            )
+                        else:
+                            success_title = f"[bold green]✓ Daemon Started[/bold green] [dim](:{port})[/dim]"
+
+                        panel = Panel(
+                            content,
+                            title=success_title,
+                            border_style="green",
+                            padding=(1, 2),
+                        )
+                        live.update(panel)
+                        live.refresh()
+                        console.print()  # Add newline after panel
+                        return True
+                    else:
+                        # Daemon crashed after initial health check
+                        log_lines.append("")
+                        log_lines.append("✗ Daemon crashed during initialization")
+                        content = Text("\n".join(log_lines), style="dim")
+
+                        # Build failure title with profile and port
+                        if profile:
+                            fail_title = f"[bold red]✗ Daemon Failed[/bold red] [dim]({profile} @ :{port})[/dim]"
+                        else:
+                            fail_title = f"[bold red]✗ Daemon Failed[/bold red] [dim](:{port})[/dim]"
+
+                        panel = Panel(
+                            content,
+                            title=fail_title,
+                            border_style="red",
+                            padding=(1, 2),
+                        )
+                        live.update(panel)
+                        live.refresh()
+                        console.print()
+                        break
+
+                # Periodically log progress
+                if time.time() - last_check_time > 3:
+                    elapsed = int(time.time() - start_time)
+                    # Update last status line or add new one
+                    status_msg = f"⏳ Waiting for daemon... ({elapsed}s elapsed)"
+                    if log_lines and log_lines[-1].startswith("⏳"):
+                        log_lines[-1] = status_msg
+                    else:
+                        log_lines.append(status_msg)
+                    last_check_time = time.time()
+
+                # Update the live display
+                content = Text("\n".join(log_lines), style="dim")
+                panel = Panel(
+                    content,
+                    title=title,
+                    border_style="cyan",
+                    padding=(1, 2),
+                )
+                live.update(panel)
+                live.refresh()
+
+                time.sleep(0.5)
+
+        # Timeout - show failure
+        log_lines.append("")
+        log_lines.append("✗ Daemon failed to start (timeout)")
+        log_lines.append("")
+        log_lines.append(f"See full log: {daemon_log}")
+
+        content = Text("\n".join(log_lines), style="dim")
+
+        # Build timeout title with profile and port
+        if profile:
+            timeout_title = f"[bold red]✗ Daemon Failed (Timeout)[/bold red] [dim]({profile} @ :{port})[/dim]"
+        else:
+            timeout_title = f"[bold red]✗ Daemon Failed (Timeout)[/bold red] [dim](:{port})[/dim]"
+
+        panel = Panel(
+            content,
+            title=timeout_title,
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print(panel)
+        console.print()
+
         return False
 
     except FileNotFoundError as e:
-        print(f"Command not found: {cmd[0]}", file=sys.stderr)
-        print(f"  Full command: {' '.join(cmd)}", file=sys.stderr)
-        logger.error("hindsight-api command not found. Install with: pip install hindsight-api")
+        error_msg = f"Command not found: {cmd[0]}\nFull command: {' '.join(cmd)}\n\nInstall hindsight-api with: pip install hindsight-api"
+        error_panel = Panel(
+            Text(error_msg, style="red"),
+            title="[bold red]✗ Command Not Found[/bold red]",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print(error_panel)
+        console.print()
         return False
     except Exception as e:
-        print(f"Failed to start daemon: {e}", file=sys.stderr)
-        logger.error(f"Failed to start daemon: {e}")
+        error_msg = f"Failed to start daemon: {e}\n\nCommand: {' '.join(cmd)}\nLog file: {daemon_log}"
+        error_panel = Panel(
+            Text(error_msg, style="red"),
+            title="[bold red]✗ Startup Error[/bold red]",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print(error_panel)
+        console.print()
         return False
 
 

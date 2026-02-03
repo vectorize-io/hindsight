@@ -76,6 +76,10 @@ def setup_logging(verbose: bool = False):
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         stream=sys.stderr,
     )
+
+    # Set httpx to warning level to reduce noise
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     return logging.getLogger(__name__)
 
 
@@ -451,27 +455,6 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
     return 0
 
 
-def _tail_daemon_log(log_path: Path, lines: int = 20):
-    """Tail the daemon log using Python."""
-    if not log_path.exists():
-        return
-
-    try:
-        with open(log_path, "r") as f:
-            all_lines = f.readlines()
-            # Get last N lines
-            tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-
-            if tail_lines:
-                print("\n  Recent daemon log:")
-                for line in tail_lines:
-                    print(f"    {line.rstrip()}")
-                print()
-    except Exception:
-        # Silently ignore errors when tailing log
-        pass
-
-
 def do_daemon(args, config: dict, logger):
     """Handle daemon subcommands."""
     from pathlib import Path
@@ -487,55 +470,154 @@ def do_daemon(args, config: dict, logger):
     paths = pm.resolve_profile_paths(profile or "")
 
     daemon_log_path = paths.log
-    lockfile = paths.lock
     port = paths.port
 
     if args.daemon_command == "start":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
         if daemon_client._is_daemon_running(profile):
-            print("Daemon is already running")
+            # Build title with profile and port
+            if profile:
+                already_running_title = (
+                    f"[bold yellow]Daemon Already Running[/bold yellow] [dim]({profile} @ :{port})[/dim]"
+                )
+            else:
+                already_running_title = f"[bold yellow]Daemon Already Running[/bold yellow] [dim](:{port})[/dim]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is already running", style="yellow"),
+                    title=already_running_title,
+                    border_style="yellow",
+                )
+            )
             return 0
 
-        print("Starting daemon...")
         if daemon_client.ensure_daemon_running(config, profile):
-            print("Daemon started successfully")
-            print(f"  Port: {port}")
-            print(f"  Logs: {daemon_log_path}")
-
-            # Tail the log to show startup info
-            _tail_daemon_log(daemon_log_path, lines=20)
             return 0
         else:
-            print("Failed to start daemon", file=sys.stderr)
+            console.print(
+                Panel(
+                    Text("Failed to start daemon", style="red"),
+                    title="[bold red]✗ Error[/bold red]",
+                    border_style="red",
+                )
+            )
             return 1
 
     elif args.daemon_command == "stop":
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
         if not daemon_client._is_daemon_running(profile):
-            print("Daemon is not running")
+            # Build title for not running status
+            if profile:
+                not_running_title = f"[bold]Daemon Status[/bold] [dim]({profile})[/dim]"
+            else:
+                not_running_title = "[bold]Daemon Status[/bold]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is not running", style="dim"),
+                    title=not_running_title,
+                    border_style="dim",
+                )
+            )
             return 0
 
-        print("Stopping daemon...")
         if daemon_client.stop_daemon(profile):
-            print("Daemon stopped")
+            # Build title with profile
+            if profile:
+                stopped_title = f"[bold green]✓ Daemon Stopped[/bold green] [dim]({profile})[/dim]"
+            else:
+                stopped_title = "[bold green]✓ Daemon Stopped[/bold green]"
+
+            console.print(
+                Panel(
+                    Text("Daemon stopped successfully", style="green"),
+                    title=stopped_title,
+                    border_style="green",
+                )
+            )
             return 0
         else:
-            print("Failed to stop daemon", file=sys.stderr)
+            console.print(
+                Panel(
+                    Text("Failed to stop daemon", style="red"),
+                    title="[bold red]✗ Error[/bold red]",
+                    border_style="red",
+                )
+            )
             return 1
 
     elif args.daemon_command == "status":
+        import os
+        import re
+        from pathlib import Path
+
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        console = Console()
+
         if daemon_client._is_daemon_running(profile):
-            # Get PID from lockfile
-            pid = "unknown"
-            if lockfile.exists():
-                try:
-                    pid = lockfile.read_text().strip()
-                except Exception:
-                    pass
-            print(f"Daemon is running (PID: {pid})")
-            print(f"  URL: http://127.0.0.1:{port}")
-            print(f"  Logs: {daemon_log_path}")
+            status_text = Text()
+            status_text.append("Daemon is running\n\n", style="green bold")
+            status_text.append("  URL: ", style="dim")
+            status_text.append(f"http://127.0.0.1:{port}\n", style="cyan")
+            status_text.append("  Logs: ", style="dim")
+            status_text.append(f"{daemon_log_path}\n", style="")
+
+            # Check if using pg0 and show database location
+            database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL")
+            if not database_url:
+                # Default: use profile-specific pg0
+                safe_profile = re.sub(r"[^a-zA-Z0-9_-]", "-", profile or "default")
+                database_url = f"pg0://hindsight-embed-{safe_profile}"
+
+            if database_url.startswith("pg0://"):
+                pg0_name = database_url.replace("pg0://", "")
+                pg0_path = Path.home() / ".pg0" / "instances" / pg0_name
+                status_text.append("  Database: ", style="dim")
+                status_text.append(f"{pg0_path}", style="")
+
+            # Build title with profile and port
+            if profile:
+                status_title = f"[bold green]✓ Daemon Running[/bold green] [dim]({profile} @ :{port})[/dim]"
+            else:
+                status_title = f"[bold green]✓ Daemon Running[/bold green] [dim](:{port})[/dim]"
+
+            console.print(
+                Panel(
+                    status_text,
+                    title=status_title,
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
             return 0
         else:
-            print("Daemon is not running")
+            # Build title for not running status
+            if profile:
+                not_running_title = f"[bold]Daemon Status[/bold] [dim]({profile})[/dim]"
+            else:
+                not_running_title = "[bold]Daemon Status[/bold]"
+
+            console.print(
+                Panel(
+                    Text("Daemon is not running", style="dim"),
+                    title=not_running_title,
+                    border_style="dim",
+                )
+            )
             return 1
 
     elif args.daemon_command == "logs":
@@ -1134,6 +1216,14 @@ def main():
         if command in ("--help", "-h"):
             print_help()
             sys.exit(0)
+
+        # Check for common mistakes - these are daemon subcommands, not top-level commands
+        if command in ("start", "stop", "status", "logs"):
+            print(f"error: '{command}' is not a direct command", file=sys.stderr)
+            print(f"\nDid you mean: hindsight-embed daemon {command}", file=sys.stderr)
+            if global_profile:
+                print(f"              (with --profile {global_profile})", file=sys.stderr)
+            sys.exit(1)
 
         # Forward all other commands to hindsight-cli
         config = get_config()
