@@ -333,30 +333,34 @@ async def _trigger_mental_model_refreshes(
     pool = memory_engine._pool
 
     # Find mental models with refresh_after_consolidation=true
-    # SECURITY: Only refresh models with overlapping tags (or untagged models, or if no tags were consolidated)
+    # SECURITY: Only refresh models with overlapping tags (tagged memories only refresh tagged models)
     async with pool.acquire() as conn:
         if consolidated_tags:
             # Filter by tag overlap: mental model tags must overlap with consolidated tags
-            # OR mental model has no tags (untagged mental models are refreshed regardless)
+            # SECURITY: Untagged mental models are NOT refreshed when tagged memories are consolidated
             rows = await conn.fetch(
                 f"""
                 SELECT id, name, tags
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
-                  AND (tags IS NULL OR tags = '{{}}' OR tags && $2::varchar[])
+                  AND tags IS NOT NULL
+                  AND tags != '{{}}'
+                  AND tags && $2::varchar[]
                 """,
                 bank_id,
                 consolidated_tags,
             )
         else:
-            # No tags were consolidated (all untagged memories) - refresh all mental models
+            # No tags were consolidated (all untagged memories) - only refresh untagged mental models
+            # SECURITY: Tagged mental models are NOT refreshed when untagged memories are consolidated
             rows = await conn.fetch(
                 f"""
                 SELECT id, name, tags
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
+                  AND (tags IS NULL OR tags = '{{}}')
                 """,
                 bank_id,
             )
