@@ -158,6 +158,13 @@ async def retain_batch(
                 # Handle document tracking even with no facts
                 if document_id:
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
+                    # Collect tags from all content items and merge with document_tags
+                    all_tags = set(document_tags or [])
+                    for item in contents_dicts:
+                        item_tags = item.get("tags", []) or []
+                        all_tags.update(item_tags)
+                    merged_tags = list(all_tags)
+
                     retain_params = {}
                     if contents_dicts:
                         first_item = contents_dicts[0]
@@ -172,7 +179,7 @@ async def retain_batch(
                         if first_item.get("metadata"):
                             retain_params["metadata"] = first_item["metadata"]
                     await fact_storage.handle_document_tracking(
-                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
+                        conn, bank_id, document_id, combined_content, is_first_batch, retain_params, merged_tags
                     )
                 else:
                     # Check for per-item document_ids
@@ -186,6 +193,13 @@ async def retain_batch(
 
                     for doc_id, doc_contents in contents_by_doc.items():
                         combined_content = "\n".join([c.get("content", "") for _, c in doc_contents])
+                        # Collect tags from all content items for this document and merge with document_tags
+                        all_tags = set(document_tags or [])
+                        for _, item in doc_contents:
+                            item_tags = item.get("tags", []) or []
+                            all_tags.update(item_tags)
+                        merged_tags = list(all_tags)
+
                         retain_params = {}
                         if doc_contents:
                             first_item = doc_contents[0][1]
@@ -200,7 +214,7 @@ async def retain_batch(
                             if first_item.get("metadata"):
                                 retain_params["metadata"] = first_item["metadata"]
                         await fact_storage.handle_document_tracking(
-                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params, document_tags
+                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params, merged_tags
                         )
 
         total_time = time.time() - start_time
@@ -252,6 +266,13 @@ async def retain_batch(
                 # Legacy: single document_id parameter
                 combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
                 retain_params = {}
+                # Collect tags from all content items and merge with document_tags
+                all_tags = set(document_tags or [])
+                for item in contents_dicts:
+                    item_tags = item.get("tags", []) or []
+                    all_tags.update(item_tags)
+                merged_tags = list(all_tags)
+
                 if contents_dicts:
                     first_item = contents_dicts[0]
                     if first_item.get("context"):
@@ -266,7 +287,7 @@ async def retain_batch(
                         retain_params["metadata"] = first_item["metadata"]
 
                 await fact_storage.handle_document_tracking(
-                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params, document_tags
+                    conn, bank_id, document_id, combined_content, is_first_batch, retain_params, merged_tags
                 )
                 document_ids_added.append(document_id)
                 doc_id_mapping[None] = document_id  # For backwards compatibility
@@ -294,6 +315,13 @@ async def retain_batch(
                             # Combine content for this document
                             combined_content = "\n".join([c.get("content", "") for _, c in doc_contents])
 
+                            # Collect tags from all content items for this document and merge with document_tags
+                            all_tags = set(document_tags or [])
+                            for _, item in doc_contents:
+                                item_tags = item.get("tags", []) or []
+                                all_tags.update(item_tags)
+                            merged_tags = list(all_tags)
+
                             # Extract retain params from first content item
                             retain_params = {}
                             if doc_contents:
@@ -316,7 +344,7 @@ async def retain_batch(
                                 combined_content,
                                 is_first_batch,
                                 retain_params,
-                                document_tags,
+                                merged_tags,
                             )
                             document_ids_added.append(actual_doc_id)
 

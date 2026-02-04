@@ -2193,3 +2193,65 @@ If the text contains both Italian and English content, extract ONLY the Italian 
 
         # Clear cache again to restore original config
         clear_config_cache()
+
+
+@pytest.mark.asyncio
+async def test_retain_batch_with_per_item_tags_on_document(memory, request_context):
+    """
+    Test that per-item tags are correctly stored on documents.
+
+    This test verifies the fix for a bug where per-item tags in content dictionaries
+    were not being merged and passed to document tracking, causing tags to be lost
+    even though they were correctly sent through the API.
+
+    Without the fix, this test would fail because:
+    - Tags are correctly passed in the content dict
+    - Tags are correctly stored on memory_units (facts)
+    - BUT tags were NOT stored on the document record itself
+    """
+    bank_id = f"test_doc_tags_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "app-state-testuser"
+
+    try:
+        # Retain content with per-item tags (simulating the TasteAI use case)
+        contents = [
+            {
+                "content": '{"username":"testuser","meals":[],"preferences":{"nickname":"testuser"}}',
+                "document_id": document_id,
+                "tags": ["user:testuser", "app-type:taste-ai"],
+            }
+        ]
+
+        result = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
+
+        assert len(result) > 0, "Should have retained content"
+        print(f"\n=== Retained content with tags ===")
+
+        # Retrieve the document
+        doc = await memory.get_document(
+            document_id=document_id,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        assert doc is not None, "Document should exist"
+        assert "tags" in doc, "Document should have tags field"
+
+        # This is the critical assertion - tags should be stored on the document
+        doc_tags = doc["tags"] or []
+        print(f"Document tags: {doc_tags}")
+
+        assert "user:testuser" in doc_tags, \
+            f"Document should have 'user:testuser' tag, but got: {doc_tags}"
+        assert "app-type:taste-ai" in doc_tags, \
+            f"Document should have 'app-type:taste-ai' tag, but got: {doc_tags}"
+
+        print("✓ Per-item tags correctly stored on document")
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+        print(f"\n=== Cleaned up bank: {bank_id} ===")

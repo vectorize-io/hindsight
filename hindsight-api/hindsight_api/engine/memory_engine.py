@@ -625,11 +625,19 @@ class MemoryEngine(MemoryEngineInterface):
 
         source_query = mental_model["source_query"]
 
+        # SECURITY: If the mental model has tags, pass them to reflect with "all_strict" matching
+        # to ensure it can only access other mental models/memories with the SAME tags.
+        # This prevents cross-tenant/cross-user information leakage by excluding untagged content.
+        tags = mental_model.get("tags")
+        tags_match = "all_strict" if tags else "any"
+
         # Run reflect to generate new content, excluding the mental model being refreshed
         reflect_result = await self.reflect_async(
             bank_id=bank_id,
             query=source_query,
             request_context=internal_context,
+            tags=tags,
+            tags_match=tags_match,
             exclude_mental_model_ids=[mental_model_id],
         )
 
@@ -4721,11 +4729,19 @@ class MemoryEngine(MemoryEngineInterface):
         if not mental_model:
             return None
 
+        # SECURITY: If the mental model has tags, pass them to reflect with "all_strict" matching
+        # to ensure it can only access other mental models/memories with the SAME tags.
+        # This prevents cross-tenant/cross-user information leakage by excluding untagged content.
+        tags = mental_model.get("tags")
+        tags_match = "all_strict" if tags else "any"
+
         # Run reflect with the source query, excluding the mental model being refreshed
         reflect_result = await self.reflect_async(
             bank_id=bank_id,
             query=mental_model["source_query"],
             request_context=request_context,
+            tags=tags,
+            tags_match=tags_match,
             exclude_mental_model_ids=[mental_model_id],
         )
 

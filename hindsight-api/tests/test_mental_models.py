@@ -451,3 +451,198 @@ class TestDirectivesPromptInjection:
         directives_pos = prompt.find("## DIRECTIVES")
         critical_rules_pos = prompt.find("## CRITICAL RULES")
         assert directives_pos < critical_rules_pos
+
+
+class TestMentalModelRefreshTagSecurity:
+    """Test that mental model refresh respects tag-based security boundaries."""
+
+    async def test_refresh_with_tags_only_accesses_same_tagged_models(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Test that refreshing a mental model with tags can only access other models with the same tags.
+
+        This is a security test to ensure that mental models with tags (e.g., user:alice)
+        cannot access mental models from other scopes (e.g., user:bob or no tags) during refresh.
+        """
+        bank_id = f"test-refresh-tags-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Add some facts with different tags
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works on the frontend React project. Alice's favorite color is blue.", "tags": ["user:alice"]},
+                {"content": "Alice prefers working in the morning. Alice drinks coffee every day.", "tags": ["user:alice"]},
+                {"content": "Bob works on the backend API services. Bob's favorite language is Python.", "tags": ["user:bob"]},
+                {"content": "Bob prefers working at night. Bob drinks tea every day.", "tags": ["user:bob"]},
+                {"content": "The company has 100 employees and is growing fast.", "tags": []},  # No tags
+            ],
+            request_context=request_context,
+        )
+
+        # Wait for background processing
+        await memory.wait_for_background_tasks()
+
+        # Create mental model for user:alice with sensitive data
+        mm_alice = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Alice's Work Profile",
+            source_query="What does Alice work on?",
+            content="Alice is a frontend engineer specializing in React",
+            tags=["user:alice"],
+            request_context=request_context,
+        )
+
+        # Create mental model for user:bob with sensitive data
+        mm_bob = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Bob's Work Profile",
+            source_query="What does Bob work on?",
+            content="Bob is a backend engineer specializing in Python",
+            tags=["user:bob"],
+            request_context=request_context,
+        )
+
+        # Create mental model with no tags (should not be accessible from tagged models)
+        mm_untagged = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Company Info",
+            source_query="What is the company info?",
+            content="The company has 100 employees",
+            request_context=request_context,
+        )
+
+        # Create a mental model for user:alice that will be refreshed
+        mm_alice_refresh = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Alice's Summary",
+            source_query="What are all the facts about work and preferences?",  # Broad query that should match all facts
+            content="Initial content",
+            tags=["user:alice"],
+            request_context=request_context,
+        )
+
+        # Refresh Alice's mental model
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm_alice_refresh["id"],
+            request_context=request_context,
+        )
+
+        # SECURITY CHECK: The refreshed content should ONLY include information from
+        # memories/models tagged with user:alice, NOT from user:bob or untagged
+        refreshed_content = refreshed["content"].lower()
+
+        # Should include Alice's content (either from facts or mental models)
+        assert "alice" in refreshed_content, \
+            "Refreshed model should access memories/models with matching tags (user:alice)"
+
+        # MUST NOT include Bob's content (security violation)
+        assert "bob" not in refreshed_content and "python" not in refreshed_content and "tea" not in refreshed_content, \
+            f"SECURITY VIOLATION: Refreshed model accessed memories/models with different tags (user:bob). Content: {refreshed_content}"
+
+        # MUST NOT include untagged content (security violation)
+        assert "100 employees" not in refreshed_content and "growing fast" not in refreshed_content, \
+            f"SECURITY VIOLATION: Refreshed model accessed untagged memories/models. Content: {refreshed_content}"
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_consolidation_only_refreshes_matching_tagged_models(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Test that consolidation only triggers refresh for mental models with matching tags.
+
+        This is a security test to ensure that when tagged memories are consolidated,
+        only mental models with overlapping tags get refreshed, not all mental models.
+        """
+        bank_id = f"test-consolidation-refresh-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Create mental models with different tags, all with refresh_after_consolidation=true
+        mm_alice = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Alice's Model",
+            source_query="What about Alice?",
+            content="Initial Alice content",
+            tags=["user:alice"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+
+        mm_bob = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Bob's Model",
+            source_query="What about Bob?",
+            content="Initial Bob content",
+            tags=["user:bob"],
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+
+        mm_untagged = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Untagged Model",
+            source_query="What about general stuff?",
+            content="Initial untagged content",
+            trigger={"refresh_after_consolidation": True},
+            request_context=request_context,
+        )
+
+        # Record initial last_refreshed_at timestamps
+        alice_initial = mm_alice["last_refreshed_at"]
+        bob_initial = mm_bob["last_refreshed_at"]
+        untagged_initial = mm_untagged["last_refreshed_at"]
+
+        # Add memories with user:alice tags
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice likes React", "tags": ["user:alice"]},
+                {"content": "Alice drinks coffee", "tags": ["user:alice"]},
+            ],
+            request_context=request_context,
+        )
+
+        # Trigger consolidation manually (this should only refresh Alice's mental model)
+        from hindsight_api.engine.consolidation.consolidator import run_consolidation_job
+
+        result = await run_consolidation_job(
+            memory_engine=memory,
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        # Wait for background refresh tasks to complete
+        await memory.wait_for_background_tasks()
+
+        # Check that mental models were refreshed appropriately
+        mm_alice_after = await memory.get_mental_model(
+            bank_id, mm_alice["id"], request_context=request_context
+        )
+        mm_bob_after = await memory.get_mental_model(
+            bank_id, mm_bob["id"], request_context=request_context
+        )
+        mm_untagged_after = await memory.get_mental_model(
+            bank_id, mm_untagged["id"], request_context=request_context
+        )
+
+        # SECURITY CHECK: Only Alice's mental model and untagged model should be refreshed
+        # Alice's model should be refreshed (tags match)
+        assert mm_alice_after["last_refreshed_at"] != alice_initial or mm_alice_after["content"] != mm_alice["content"], \
+            "Alice's mental model should be refreshed when user:alice memories are consolidated"
+
+        # Bob's model should NOT be refreshed (tags don't match)
+        assert mm_bob_after["last_refreshed_at"] == bob_initial, \
+            "SECURITY VIOLATION: Bob's mental model was refreshed even though user:bob memories were not consolidated"
+
+        # Untagged model should be refreshed (untagged models are always refreshed)
+        assert mm_untagged_after["last_refreshed_at"] != untagged_initial or mm_untagged_after["content"] != mm_untagged["content"], \
+            "Untagged mental model should be refreshed after any consolidation"
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)

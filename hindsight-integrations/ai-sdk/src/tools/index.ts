@@ -129,6 +129,36 @@ export interface DocumentResponse {
 }
 
 /**
+ * Directive response from Hindsight
+ */
+export interface DirectiveResponse {
+  id: string;
+  bank_id: string;
+  name: string;
+  content: string;
+  priority: number;
+  is_active: boolean;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Create directive response from Hindsight
+ */
+export interface CreateDirectiveResponse {
+  id: string;
+  bank_id: string;
+  name: string;
+  content: string;
+  priority: number;
+  is_active: boolean;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/**
  * Hindsight client interface - matches @vectorize-io/hindsight-client
  */
 export interface HindsightClient {
@@ -173,6 +203,7 @@ export interface HindsightClient {
   createMentalModel(
     bankId: string,
     options?: {
+      id?: string;
       name?: string;
       sourceQuery?: string;
       tags?: string[];
@@ -190,6 +221,33 @@ export interface HindsightClient {
     bankId: string,
     documentId: string
   ): Promise<DocumentResponse | null>;
+
+  createDirective(
+    bankId: string,
+    options: {
+      name: string;
+      content: string;
+      priority?: number;
+      isActive?: boolean;
+      tags?: string[];
+    }
+  ): Promise<CreateDirectiveResponse>;
+
+  getDirective(
+    bankId: string,
+    directiveId: string
+  ): Promise<DirectiveResponse | null>;
+
+  listDirectives(
+    bankId: string,
+    options?: {
+      tags?: string[];
+      tagsMatch?: 'any' | 'all' | 'exact';
+      activeOnly?: boolean;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<{ directives: DirectiveResponse[]; total: number }>;
 }
 
 export interface HindsightToolsOptions {
@@ -259,7 +317,7 @@ export function createHindsightTools({
     timestamp: z.string().optional().describe('Optional ISO timestamp for when the memory occurred'),
     context: z.string().optional().describe('Optional context about the memory'),
     tags: z.array(z.string()).optional().describe('Optional tags for visibility scoping'),
-    metadata: z.record(z.string()).optional().describe('Optional user-defined metadata'),
+    metadata: z.record(z.string(), z.string()).optional().describe('Optional user-defined metadata'),
   });
 
   const recallParams = z.object({
@@ -282,6 +340,7 @@ export function createHindsightTools({
 
   const createMentalModelParams = z.object({
     bankId: z.string().describe('Memory bank ID (usually the user ID)'),
+    mentalModelId: z.string().optional().describe('Optional custom ID for the mental model (auto-generated if not provided)'),
     name: z.string().optional().describe('Optional name for the mental model'),
     sourceQuery: z.string().optional().describe('Query to define what memories to consolidate'),
     tags: z.array(z.string()).optional().describe('Optional tags for organizing mental models'),
@@ -297,6 +356,20 @@ export function createHindsightTools({
   const getDocumentParams = z.object({
     bankId: z.string().describe('Memory bank ID (usually the user ID)'),
     documentId: z.string().describe('ID of the document to retrieve'),
+  });
+
+  const createDirectiveParams = z.object({
+    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
+    name: z.string().describe('Human-readable name for the directive'),
+    content: z.string().describe('The directive text to inject into prompts'),
+    priority: z.number().optional().describe('Higher priority directives are injected first (default 0)'),
+    isActive: z.boolean().optional().describe('Whether this directive is active (default true)'),
+    tags: z.array(z.string()).optional().describe('Tags for filtering'),
+  });
+
+  const getDirectiveParams = z.object({
+    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
+    directiveId: z.string().describe('ID of the directive to retrieve'),
   });
 
   type RetainInput = z.infer<typeof retainParams>;
@@ -317,6 +390,12 @@ export function createHindsightTools({
   type GetDocumentInput = z.infer<typeof getDocumentParams>;
   type GetDocumentOutput = { originalText: string; id: string; createdAt: string; updatedAt: string } | null;
 
+  type CreateDirectiveInput = z.infer<typeof createDirectiveParams>;
+  type CreateDirectiveOutput = { id: string; name: string; content: string; tags: string[]; createdAt: string };
+
+  type GetDirectiveInput = z.infer<typeof getDirectiveParams>;
+  type GetDirectiveOutput = { id: string; name: string; content: string; tags: string[]; isActive: boolean } | null;
+
   return {
     retain: tool<RetainInput, RetainOutput>({
       description:
@@ -324,10 +403,18 @@ export function createHindsightTools({
         `Store information in long-term memory. Use this when information should be remembered for future interactions, such as user preferences, facts, experiences, or important context.`,
       inputSchema: retainParams,
       execute: async (input) => {
+        console.log('[AI SDK Tool] Retain input:', {
+          bankId: input.bankId,
+          documentId: input.documentId,
+          tags: input.tags,
+          hasContent: !!input.content,
+        });
         const result = await client.retain(input.bankId, input.content, {
           documentId: input.documentId,
           timestamp: input.timestamp,
           context: input.context,
+          tags: input.tags,
+          metadata: input.metadata as Record<string, string> | undefined,
         });
         return { success: result.success, itemsCount: result.items_count };
       },
@@ -378,6 +465,7 @@ export function createHindsightTools({
       inputSchema: createMentalModelParams,
       execute: async (input) => {
         const result = await client.createMentalModel(input.bankId, {
+          id: input.mentalModelId,
           name: input.name,
           sourceQuery: input.sourceQuery,
           tags: input.tags,
@@ -421,6 +509,47 @@ export function createHindsightTools({
           id: result.id,
           createdAt: result.created_at,
           updatedAt: result.updated_at,
+        };
+      },
+    }),
+
+    createDirective: tool<CreateDirectiveInput, CreateDirectiveOutput>({
+      description:
+        `Create a directive - a hard rule that is injected into prompts during reflect operations. Directives are explicit instructions that guide agent behavior. Use tags to control when directives are applied (e.g., user-specific directives with 'user:username' tags).`,
+      inputSchema: createDirectiveParams,
+      execute: async (input) => {
+        const result = await client.createDirective(input.bankId, {
+          name: input.name,
+          content: input.content,
+          priority: input.priority,
+          isActive: input.isActive,
+          tags: input.tags,
+        });
+        return {
+          id: result.id,
+          name: result.name,
+          content: result.content,
+          tags: result.tags,
+          createdAt: result.created_at,
+        };
+      },
+    }),
+
+    getDirective: tool<GetDirectiveInput, GetDirectiveOutput>({
+      description:
+        `Retrieve a directive by its ID. Returns the directive's content, tags, and active status.`,
+      inputSchema: getDirectiveParams,
+      execute: async (input) => {
+        const result = await client.getDirective(input.bankId, input.directiveId);
+        if (!result) {
+          return null;
+        }
+        return {
+          id: result.id,
+          name: result.name,
+          content: result.content,
+          tags: result.tags,
+          isActive: result.is_active,
         };
       },
     }),
