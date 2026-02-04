@@ -27,44 +27,61 @@ export HINDSIGHT_API_MCP_ENABLED=false
 
 ## Authentication
 
-By default, the MCP endpoint is **open** for local development. For production deployments, enable authentication with a Bearer token:
+By default, the MCP endpoint is **open** for local development.
+
+To enable authentication, set an API key:
 
 ```bash
-export HINDSIGHT_API_MCP_AUTH_TOKEN=your-secret-token
+export HINDSIGHT_API_TENANT_API_KEY=your-secret-key
 ```
 
-When authentication is enabled, all MCP requests must include a valid `Authorization` header:
+When authentication is enabled, include your API key in the `Authorization` header:
 
-**Claude Desktop config** (`.claude_desktop_config.json`):
+### Claude Code
+
+```bash
+claude mcp add --transport http hindsight http://localhost:8888/mcp \
+  --header "Authorization: Bearer your-secret-key" \
+  --header "X-Bank-Id: my-bank"
+```
+
+### Claude Desktop
+
+Add to `~/.claude_desktop_config.json`:
+
 ```json
 {
   "mcpServers": {
     "hindsight": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-http-client", "http://localhost:8888/mcp/alice/"],
-      "env": {
-        "HTTP_HEADERS": "{\"Authorization\": \"Bearer your-secret-token\"}"
+      "url": "http://localhost:8888/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret-key",
+        "X-Bank-Id": "my-bank"
       }
     }
   }
 }
 ```
 
-**Claude Code config:**
-```bash
-claude mcp add --transport http hindsight http://localhost:8888/mcp/alice/ \
-  --header "Authorization: Bearer your-secret-token"
-```
+### Direct HTTP Request
 
-**Direct HTTP request:**
 ```bash
-curl -X POST http://localhost:8888/mcp/alice/ \
-  -H "Authorization: Bearer your-secret-token" \
+curl -X POST http://localhost:8888/mcp \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "X-Bank-Id: my-bank" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 ```
 
-If the token is missing or invalid, requests will receive a `401 Unauthorized` response.
+If the key is missing or invalid, requests will receive a `401 Unauthorized` response.
+
+## Bank Selection
+
+Specify the memory bank via:
+
+1. **X-Bank-Id header** (recommended): `--header "X-Bank-Id: my-bank"`
+2. **URL path**: `http://localhost:8888/mcp/my-bank/`
+3. **Default**: Uses `HINDSIGHT_MCP_BANK_ID` env var (default: "default")
 
 ## Per-Bank Endpoints
 
@@ -151,20 +168,8 @@ Search memories to provide personalized responses.
 
 ## Integration with AI Assistants
 
-The MCP server can be used with any MCP-compatible AI assistant.
+The MCP server can be used with any MCP-compatible AI assistant. See the [Authentication](#authentication) section above for Claude Code and Claude Desktop configuration examples.
 
-### Claude Desktop Configuration
-
-To connect Claude Desktop to a specific memory bank:
-
-```json
-{
-  "mcpServers": {
-    "hindsight-alice": {
-      "url": "http://localhost:8888/mcp/alice/"
-    }
-  }
-}
-```
-
-Each user can have their own MCP server configuration pointing to their personal memory bank.
+Each user can have their own configuration pointing to their personal memory bank using either:
+- The `X-Bank-Id` header (recommended)
+- A bank-specific URL path like `/mcp/alice/`

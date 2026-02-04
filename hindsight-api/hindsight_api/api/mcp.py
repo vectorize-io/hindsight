@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 # Default bank_id from environment variable
 DEFAULT_BANK_ID = os.environ.get("HINDSIGHT_MCP_BANK_ID", "default")
 
+# Legacy MCP authentication token (for backwards compatibility)
+# If set, this token is checked first before TenantExtension auth
+MCP_AUTH_TOKEN = os.environ.get("HINDSIGHT_API_MCP_AUTH_TOKEN")
+
 # Context variable to hold the current bank_id
 _current_bank_id: ContextVar[str | None] = ContextVar("current_bank_id", default=None)
 
@@ -80,11 +84,10 @@ class MCPMiddleware:
     """ASGI middleware that handles authentication and extracts bank_id from header or path.
 
     Authentication:
-        Uses the TenantExtension from the MemoryEngine to authenticate requests.
-        The tenant extension validates the API key from the Authorization header.
-        - DefaultTenantExtension: no auth required (local dev)
-        - ApiKeyTenantExtension: validates against env var
-        - CloudTenantExtension: HMAC + DB lookup (production)
+        1. If HINDSIGHT_API_MCP_AUTH_TOKEN is set (legacy), validates against that token
+        2. Otherwise, uses TenantExtension.authenticate_mcp() from the MemoryEngine
+           - DefaultTenantExtension: no auth required (local dev)
+           - ApiKeyTenantExtension: validates against env var (can disable MCP auth)
 
     Bank ID can be provided via:
     1. X-Bank-Id header (recommended for Claude Code)
@@ -125,15 +128,28 @@ class MCPMiddleware:
             # Support both "Bearer <token>" and direct token
             auth_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else auth_header.strip()
 
-        # Authenticate using TenantExtension (same auth as REST API)
-        try:
-            tenant_context = await self.tenant_extension.authenticate(RequestContext(api_key=auth_token))
-        except AuthenticationError as e:
-            await self._send_error(send, 401, str(e))
-            return
+        # Authenticate: check legacy MCP_AUTH_TOKEN first, then TenantExtension
+        tenant_context = None
+        if MCP_AUTH_TOKEN:
+            # Legacy authentication mode - validate against static token
+            if not auth_token:
+                await self._send_error(send, 401, "Authorization header required")
+                return
+            if auth_token != MCP_AUTH_TOKEN:
+                await self._send_error(send, 401, "Invalid authentication token")
+                return
+            # Legacy mode doesn't use tenant schemas
+            tenant_context = None
+        else:
+            # Use TenantExtension.authenticate_mcp() for auth
+            try:
+                tenant_context = await self.tenant_extension.authenticate_mcp(RequestContext(api_key=auth_token))
+            except AuthenticationError as e:
+                await self._send_error(send, 401, str(e))
+                return
 
         # Set schema from tenant context so downstream DB queries use the correct schema
-        schema_token = _current_schema.set(tenant_context.schema_name) if tenant_context.schema_name else None
+        schema_token = _current_schema.set(tenant_context.schema_name) if tenant_context and tenant_context.schema_name else None
 
         path = scope.get("path", "")
 

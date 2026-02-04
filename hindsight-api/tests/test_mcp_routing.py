@@ -279,6 +279,10 @@ class MultiTenantTestExtension:
             raise AuthenticationError("Invalid API key")
         return TenantContext(schema_name=schema)
 
+    async def authenticate_mcp(self, context):
+        """MCP auth delegates to authenticate by default."""
+        return await self.authenticate(context)
+
 
 @pytest.mark.asyncio
 async def test_mcp_middleware_sets_schema_from_tenant_context():
@@ -319,3 +323,58 @@ async def test_mcp_middleware_sets_schema_from_tenant_context():
     scope = _make_scope(path="/mcp", headers={"Authorization": "Bearer key-for-tenant-beta"})
     await _collect_response(middleware, scope)
     assert captured_schema == "tenant_beta", f"Expected tenant_beta, got {captured_schema}"
+
+
+@pytest.mark.asyncio
+async def test_mcp_legacy_auth_token(monkeypatch):
+    """MCP middleware supports legacy MCP_AUTH_TOKEN for backwards compatibility."""
+    import hindsight_api.api.mcp as mcp_module
+    from hindsight_api.api.mcp import MCPMiddleware
+
+    # Set legacy auth token
+    monkeypatch.setattr(mcp_module, "MCP_AUTH_TOKEN", "legacy-secret-token")
+
+    memory = MagicMock()
+    # Even with ApiKeyTenantExtension, legacy token should work
+    memory._tenant_extension = ApiKeyTenantExtension({"api_key": "different-key"})
+
+    middleware = MCPMiddleware(None, memory)
+
+    # Wrong token should fail
+    scope = _make_scope(path="/mcp", headers={"Authorization": "Bearer wrong-token"})
+    status, body = await _collect_response(middleware, scope)
+    assert status == 401
+    assert b"Invalid authentication token" in body
+
+    # Correct legacy token should pass
+    scope = _make_scope(path="/mcp", headers={"Authorization": "Bearer legacy-secret-token"})
+    with pytest.raises(RuntimeError, match="Task group is not initialized"):
+        await _collect_response(
+            middleware,
+            scope,
+            body=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_auth_disabled_flag():
+    """ApiKeyTenantExtension with mcp_auth_disabled=true skips MCP auth."""
+    from hindsight_api.api.mcp import MCPMiddleware
+
+    memory = MagicMock()
+    # Create extension with MCP auth disabled
+    memory._tenant_extension = ApiKeyTenantExtension({
+        "api_key": "test-secret-123",
+        "mcp_auth_disabled": "true",
+    })
+
+    middleware = MCPMiddleware(None, memory)
+
+    # No auth should pass when mcp_auth_disabled=true
+    scope = _make_scope(path="/mcp")
+    with pytest.raises(RuntimeError, match="Task group is not initialized"):
+        await _collect_response(
+            middleware,
+            scope,
+            body=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode(),
+        )
