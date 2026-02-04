@@ -154,6 +154,16 @@ else
     print_warn "File $OPENCLAW_PKG not found, skipping"
 fi
 
+# Update AI SDK integration
+AI_SDK_PKG="hindsight-integrations/ai-sdk/package.json"
+if [ -f "$AI_SDK_PKG" ]; then
+    print_info "Updating $AI_SDK_PKG"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$AI_SDK_PKG"
+    rm "${AI_SDK_PKG}.bak"
+else
+    print_warn "File $AI_SDK_PKG not found, skipping"
+fi
+
 # Update documentation version (creates new version or syncs to existing)
 print_info "Updating documentation for version $VERSION..."
 if [ -f "scripts/update-docs-version.sh" ]; then
@@ -202,6 +212,7 @@ COMMIT_MSG="Release v$VERSION
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
 - OpenClaw integration: hindsight-integrations/openclaw
+- AI SDK integration: hindsight-integrations/ai-sdk
 - Helm chart"
 
 # Add docs update note

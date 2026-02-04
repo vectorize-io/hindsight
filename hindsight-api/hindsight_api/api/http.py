@@ -866,6 +866,7 @@ class ListDocumentsResponse(BaseModel):
                         "updated_at": "2024-01-15T10:30:00Z",
                         "text_length": 5420,
                         "memory_unit_count": 15,
+                        "tags": ["user_a", "session_123"],
                     }
                 ],
                 "total": 50,
@@ -1160,7 +1161,8 @@ class CreateMentalModelRequest(BaseModel):
 class CreateMentalModelResponse(BaseModel):
     """Response model for mental model creation."""
 
-    operation_id: str = Field(description="Operation ID to track progress")
+    mental_model_id: str = Field(description="ID of the created mental model")
+    operation_id: str = Field(description="Operation ID to track refresh progress")
 
 
 class UpdateMentalModelRequest(BaseModel):
@@ -2423,7 +2425,7 @@ def _register_routes(app: FastAPI):
                 mental_model_id=mental_model["id"],
                 request_context=request_context,
             )
-            return CreateMentalModelResponse(operation_id=result["operation_id"])
+            return CreateMentalModelResponse(mental_model_id=mental_model["id"], operation_id=result["operation_id"])
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):

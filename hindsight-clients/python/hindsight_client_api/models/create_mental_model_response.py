@@ -26,8 +26,9 @@ class CreateMentalModelResponse(BaseModel):
     """
     Response model for mental model creation.
     """ # noqa: E501
-    operation_id: StrictStr = Field(description="Operation ID to track progress")
-    __properties: ClassVar[List[str]] = ["operation_id"]
+    mental_model_id: StrictStr = Field(description="ID of the created mental model")
+    operation_id: StrictStr = Field(description="Operation ID to track refresh progress")
+    __properties: ClassVar[List[str]] = ["mental_model_id", "operation_id"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,7 @@ class CreateMentalModelResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "mental_model_id": obj.get("mental_model_id"),
             "operation_id": obj.get("operation_id")
         })
         return _obj

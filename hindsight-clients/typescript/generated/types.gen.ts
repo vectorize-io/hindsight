@@ -436,9 +436,15 @@ export type CreateMentalModelRequest = {
  */
 export type CreateMentalModelResponse = {
   /**
+   * Mental Model Id
+   *
+   * ID of the created mental model
+   */
+  mental_model_id: string;
+  /**
    * Operation Id
    *
-   * Operation ID to track progress
+   * Operation ID to track refresh progress
    */
   operation_id: string;
 };

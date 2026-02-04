@@ -74,6 +74,29 @@ jobs:
       working-directory: ./hindsight-integrations/openclaw
       run: npm run build
 
+  build-ai-sdk-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm run build
+
   build-control-plane:
     runs-on: ubuntu-latest
 

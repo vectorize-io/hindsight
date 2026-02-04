@@ -3304,7 +3304,8 @@ class MemoryEngine(MemoryEngineInterface):
                     created_at,
                     updated_at,
                     LENGTH(original_text) as text_length,
-                    retain_params
+                    retain_params,
+                    tags
                 FROM {fq_table("documents")}
                 {where_clause}
                 ORDER BY created_at DESC
@@ -3360,6 +3361,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "text_length": row["text_length"] or 0,
                         "memory_unit_count": unit_count,
                         "retain_params": row["retain_params"] if row["retain_params"] else None,
+                        "tags": row["tags"] if row["tags"] else [],
                     }
                 )
 
