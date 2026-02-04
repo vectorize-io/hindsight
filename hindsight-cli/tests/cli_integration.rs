@@ -69,8 +69,8 @@ fn test_health_check() {
     let output = run_hindsight(&["health"]);
 
     // Should succeed or fail gracefully
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Either succeeded with "healthy" output or has a reasonable error
     if output.status.success() {
@@ -108,8 +108,8 @@ fn test_bank_list() {
     let output = run_hindsight(&["bank", "list"]);
 
     // Should succeed (even if no banks exist)
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
@@ -147,8 +147,8 @@ fn test_bank_create_and_delete() {
         "--mission", "A test bank for CLI integration tests",
     ]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Bank might already exist, which is OK
     let created = output.status.success();
@@ -189,8 +189,8 @@ fn test_memory_list() {
     // List memories (should be empty for new bank)
     let output = run_hindsight(&["memory", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if empty)
     assert!(
@@ -216,8 +216,8 @@ fn test_mental_model_list() {
     // List mental models
     let output = run_hindsight(&["mental-model", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed
     assert!(
@@ -248,8 +248,8 @@ fn test_mental_model_create_and_delete() {
         "A test mental model",
     ]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // The create command should succeed
     assert!(
@@ -296,8 +296,8 @@ fn test_tag_list() {
     // List tags
     let output = run_hindsight(&["tag", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if no tags)
     assert!(
@@ -323,8 +323,8 @@ fn test_entity_list() {
     // List entities
     let output = run_hindsight(&["entity", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if no entities)
     assert!(
@@ -350,8 +350,8 @@ fn test_operation_list() {
     // List operations
     let output = run_hindsight(&["operation", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if no operations)
     assert!(
@@ -377,8 +377,8 @@ fn test_bank_stats() {
     // Get stats
     let output = run_hindsight(&["bank", "stats", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed
     assert!(
@@ -404,8 +404,8 @@ fn test_bank_graph() {
     // Get graph
     let output = run_hindsight(&["bank", "graph", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if empty graph)
     assert!(
@@ -498,8 +498,8 @@ fn test_directive_list() {
     // List directives
     let output = run_hindsight(&["directive", "list", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed (even if empty)
     assert!(
@@ -530,8 +530,8 @@ fn test_directive_create_get_update_delete() {
         "Always respond politely",
     ]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
         output.status.success(),
@@ -807,8 +807,8 @@ fn test_bank_consolidate() {
     // Trigger consolidation
     let output = run_hindsight(&["bank", "consolidate", &bank_id]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed
     assert!(
@@ -834,8 +834,8 @@ fn test_bank_clear_observations() {
     // Clear observations
     let output = run_hindsight(&["bank", "clear-observations", &bank_id, "-y"]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed
     assert!(
@@ -859,8 +859,8 @@ fn test_version() {
 
     let output = run_hindsight(&["version"]);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stdout = String::from_utf8_lossy(&output.stdout);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should succeed
     assert!(
