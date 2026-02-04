@@ -3583,7 +3583,7 @@
               }
             ],
             "title": "Id",
-            "description": "Optional custom ID for the mental model (auto-generated if not provided)"
+            "description": "Optional custom ID for the mental model (alphanumeric lowercase with hyphens)"
           },
           "name": {
             "type": "string",
@@ -3624,7 +3624,7 @@
         "title": "CreateMentalModelRequest",
         "description": "Request model for creating a mental model.",
         "example": {
-          "id": "user-123-health",
+          "id": "team-communication",
           "max_tokens": 2048,
           "name": "Team Communication Preferences",
           "source_query": "How does the team prefer to communicate?",
