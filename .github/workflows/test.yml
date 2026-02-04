@@ -11,6 +11,11 @@ concurrency:
 jobs:
   build-python-packages:
     runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: groq
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
+      UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
     strategy:
       matrix:
         include:
@@ -39,6 +44,26 @@ jobs:
     - name: Build ${{ matrix.name }}
       working-directory: ./${{ matrix.path }}
       run: uv build
+
+    - name: Install dependencies for hindsight-all tests
+      if: matrix.name == 'hindsight-all'
+      working-directory: ./${{ matrix.path }}
+      run: uv sync --frozen --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      if: matrix.name == 'hindsight-all'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-all-${{ hashFiles('hindsight/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-all-
+          ${{ runner.os }}-huggingface-
+
+    - name: Run tests for hindsight-all
+      if: matrix.name == 'hindsight-all'
+      working-directory: ./${{ matrix.path }}
+      run: uv run pytest tests/ -v
 
   build-api-python-versions:
     runs-on: ubuntu-latest
