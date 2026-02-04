@@ -143,6 +143,9 @@ async def run_consolidation_job(
         "skipped": 0,
     }
 
+    # Track all unique tags from consolidated memories for mental model refresh filtering
+    consolidated_tags: set[str] = set()
+
     batch_num = 0
     last_progress_timings = {}  # Track timings at last progress log
     while True:
@@ -175,6 +178,11 @@ async def run_consolidation_job(
 
         for memory in memories:
             mem_start = time.time()
+
+            # Track tags from this memory for mental model refresh filtering
+            memory_tags = memory.get("tags") or []
+            if memory_tags:
+                consolidated_tags.update(memory_tags)
 
             # Process the memory (uses its own connection internally)
             async with pool.acquire() as conn:
@@ -284,10 +292,12 @@ async def run_consolidation_job(
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
 
     # Trigger mental model refreshes for models with refresh_after_consolidation=true
+    # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
     mental_models_refreshed = await _trigger_mental_model_refreshes(
         memory_engine=memory_engine,
         bank_id=bank_id,
         request_context=request_context,
+        consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
         perf=perf,
     )
     stats["mental_models_refreshed"] = mental_models_refreshed
@@ -301,15 +311,20 @@ async def _trigger_mental_model_refreshes(
     memory_engine: "MemoryEngine",
     bank_id: str,
     request_context: "RequestContext",
+    consolidated_tags: list[str] | None = None,
     perf: ConsolidationPerfLog | None = None,
 ) -> int:
     """
     Trigger refreshes for mental models with refresh_after_consolidation=true.
 
+    SECURITY: Only triggers refresh for mental models whose tags overlap with the
+    consolidated memory tags, preventing unnecessary refreshes across security boundaries.
+
     Args:
         memory_engine: MemoryEngine instance
         bank_id: Bank identifier
         request_context: Request context for authentication
+        consolidated_tags: Tags from memories that were consolidated (None = refresh all)
         perf: Performance logging
 
     Returns:
@@ -318,22 +333,52 @@ async def _trigger_mental_model_refreshes(
     pool = memory_engine._pool
 
     # Find mental models with refresh_after_consolidation=true
+    # SECURITY: Control which mental models get refreshed based on tags
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT id, name
-            FROM {fq_table("mental_models")}
-            WHERE bank_id = $1
-              AND (trigger->>'refresh_after_consolidation')::boolean = true
-            """,
-            bank_id,
-        )
+        if consolidated_tags:
+            # Tagged memories were consolidated - refresh:
+            # 1. Mental models with overlapping tags (security boundary)
+            # 2. Untagged mental models (they're "global" and available to all contexts)
+            # DO NOT refresh mental models with different tags
+            rows = await conn.fetch(
+                f"""
+                SELECT id, name, tags
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1
+                  AND (trigger->>'refresh_after_consolidation')::boolean = true
+                  AND (
+                    (tags IS NOT NULL AND tags != '{{}}' AND tags && $2::varchar[])
+                    OR (tags IS NULL OR tags = '{{}}')
+                  )
+                """,
+                bank_id,
+                consolidated_tags,
+            )
+        else:
+            # Untagged memories were consolidated - only refresh untagged mental models
+            # SECURITY: Tagged mental models are NOT refreshed when untagged memories are consolidated
+            rows = await conn.fetch(
+                f"""
+                SELECT id, name, tags
+                FROM {fq_table("mental_models")}
+                WHERE bank_id = $1
+                  AND (trigger->>'refresh_after_consolidation')::boolean = true
+                  AND (tags IS NULL OR tags = '{{}}')
+                """,
+                bank_id,
+            )
 
     if not rows:
         return 0
 
     if perf:
-        perf.log(f"[5] Triggering refresh for {len(rows)} mental models with refresh_after_consolidation=true")
+        if consolidated_tags:
+            perf.log(
+                f"[5] Triggering refresh for {len(rows)} mental models with refresh_after_consolidation=true "
+                f"(filtered by tags: {consolidated_tags})"
+            )
+        else:
+            perf.log(f"[5] Triggering refresh for {len(rows)} mental models with refresh_after_consolidation=true")
 
     # Submit refresh tasks for each mental model
     refreshed_count = 0
@@ -385,7 +430,8 @@ async def _process_memory(
     memory_id = memory["id"]
     fact_tags = memory.get("tags") or []
 
-    # Find related observations using the full recall system (NO tag filtering)
+    # Find related observations using the full recall system
+    # SECURITY: Pass tags to ensure observations don't leak across security boundaries
     t0 = time.time()
     related_observations = await _find_related_observations(
         conn=conn,
@@ -393,6 +439,7 @@ async def _process_memory(
         bank_id=bank_id,
         query=fact_text,
         request_context=request_context,
+        tags=fact_tags,  # Pass source memory's tags for security
     )
     if perf:
         perf.record_timing("recall", time.time() - t0)
@@ -666,16 +713,19 @@ async def _find_related_observations(
     bank_id: str,
     query: str,
     request_context: "RequestContext",
+    tags: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Find observations related to the given query using optimized recall.
 
-    IMPORTANT: We do NOT filter by tags here. Consolidation needs to see ALL
-    potentially related observations regardless of scope, so the LLM can
-    decide on tag routing (same scope update vs cross-scope create).
+    SECURITY: Filters by tags using all_strict matching to prevent cross-tenant/cross-user
+    information leakage. Observations are only consolidated within the same tag scope.
 
     Uses max_tokens to naturally limit observations (no artificial count limit).
     Includes source memories with dates for LLM context.
+
+    Args:
+        tags: Optional tags to filter observations (uses all_strict matching for security)
 
     Returns:
         List of related observations with their tags, source memories, and dates
@@ -685,14 +735,19 @@ async def _find_related_observations(
     from ...config import get_config
 
     config = get_config()
+
+    # SECURITY: Use all_strict matching if tags provided to prevent cross-scope consolidation
+    tags_match = "all_strict" if tags else "any"
+
     recall_result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
         max_tokens=config.consolidation_max_tokens,  # Token budget for observations (configurable)
         fact_type=["observation"],  # Only retrieve observations
         request_context=request_context,
+        tags=tags,  # Filter by source memory's tags
+        tags_match=tags_match,  # Use strict matching for security
         _quiet=True,  # Suppress logging
-        # NO tags parameter - intentionally get ALL observations
     )
 
     # If no observations returned, return empty list

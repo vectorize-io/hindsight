@@ -46,4 +46,4 @@ __all__ = [
     "RemoteTEICrossEncoder",
     "LLMConfig",
 ]
-__version__ = "0.4.8"
+__version__ = "0.4.9"

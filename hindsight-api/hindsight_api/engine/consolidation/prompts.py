@@ -32,13 +32,16 @@ BAD examples:
 
 ## MERGE RULES (when comparing to existing observations):
 1. REDUNDANT: Same information worded differently → update existing
-2. CONTRADICTION: Opposite information about same topic → update with history (e.g., "used to X, now Y")
-3. UPDATE: New state replacing old state → update with history
+2. CONTRADICTION: Opposite information about same topic → update with temporal markers showing change
+   Example: "Alex used to love pizza but now hates it" OR "Alex's pizza preference changed from love to hate"
+3. UPDATE: New state replacing old state → update showing the transition with "used to", "now", "changed from X to Y"
 
 ## CRITICAL RULES:
 - NEVER merge facts about DIFFERENT people
 - NEVER merge unrelated topics (food preferences vs work vs hobbies)
-- When merging contradictions, capture the CHANGE (before → after)
+- When merging contradictions, the "text" field MUST capture BOTH states with temporal markers:
+  * Use "used to X, now Y" OR "changed from X to Y" OR "X but now Y"
+  * DO NOT just state the new fact - you MUST show the change
 - Keep observations focused on ONE specific topic per person
 - The "text" field MUST contain durable knowledge, not ephemeral state
 - Do NOT include "tags" in output - tags are handled automatically"""

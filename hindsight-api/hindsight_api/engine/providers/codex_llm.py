@@ -177,6 +177,9 @@ class CodexLLM(LLMInterface):
             schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
             system_instruction += schema_msg
 
+        # gpt-5.2-codex only supports "detailed" reasoning summary
+        reasoning_summary = "detailed" if "5.2" in self.model else self.reasoning_summary
+
         # Build Codex request payload
         payload = {
             "model": self.model,
@@ -192,7 +195,7 @@ class CodexLLM(LLMInterface):
             "tools": [],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
-            "reasoning": {"summary": self.reasoning_summary},
+            "reasoning": {"summary": reasoning_summary},
             "store": False,  # Codex uses stateless mode
             "stream": True,  # SSE streaming
             "include": ["reasoning.encrypted_content"],
@@ -283,13 +286,20 @@ class CodexLLM(LLMInterface):
                         "Run 'codex auth login' to re-authenticate."
                     ) from e
 
+                # Log the actual error message from the API
+                error_detail = e.response.text[:500] if hasattr(e.response, "text") else str(e)
+
                 if attempt < max_retries:
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
-                    logger.warning(f"Codex HTTP error {status_code} (attempt {attempt + 1}/{max_retries + 1})")
+                    logger.warning(
+                        f"Codex HTTP error {status_code} (attempt {attempt + 1}/{max_retries + 1}): {error_detail}"
+                    )
                     await asyncio.sleep(backoff)
                     continue
                 else:
-                    logger.error(f"Codex HTTP error after {max_retries + 1} attempts: {e}")
+                    logger.error(
+                        f"Codex HTTP error after {max_retries + 1} attempts: Status {status_code}, Detail: {error_detail}"
+                    )
                     raise
 
             except httpx.RequestError as e:
@@ -379,8 +389,22 @@ class CodexLLM(LLMInterface):
         """
         Make API call with tool calling support.
 
-        Note: This is a basic implementation. Full tool calling support for Codex
-        may require additional SSE event parsing.
+        Parses Codex SSE stream to extract tool calls from response.output_item.done events.
+        Tools are converted from OpenAI format to Codex format (flat structure at top level).
+
+        Args:
+            messages: List of message dicts. Can include tool results with role='tool'.
+            tools: List of tool definitions in OpenAI format.
+            max_completion_tokens: Maximum tokens in response.
+            temperature: Sampling temperature.
+            scope: Scope identifier for tracking.
+            max_retries: Maximum retry attempts.
+            initial_backoff: Initial backoff time in seconds.
+            max_backoff: Maximum backoff time in seconds.
+            tool_choice: How to choose tools - "auto", "none", "required", or specific function.
+
+        Returns:
+            LLMToolCallResult with content and/or tool_calls.
         """
         start_time = time.time()
 
@@ -413,19 +437,21 @@ class CodexLLM(LLMInterface):
                 )
 
         # Convert tools to Codex format
+        # Codex expects tools with type and name/description/parameters at top level
         codex_tools = []
         for tool in tools:
             func = tool.get("function", {})
             codex_tools.append(
                 {
                     "type": "function",
-                    "function": {
-                        "name": func.get("name", ""),
-                        "description": func.get("description", ""),
-                        "parameters": func.get("parameters", {}),
-                    },
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "parameters": func.get("parameters", {}),
                 }
             )
+
+        # gpt-5.2-codex only supports "detailed" reasoning summary
+        reasoning_summary = "detailed" if "5.2" in self.model else self.reasoning_summary
 
         payload = {
             "model": self.model,
@@ -434,7 +460,7 @@ class CodexLLM(LLMInterface):
             "tools": codex_tools,
             "tool_choice": tool_choice,
             "parallel_tool_calls": True,
-            "reasoning": {"summary": self.reasoning_summary},
+            "reasoning": {"summary": reasoning_summary},
             "store": False,
             "stream": True,
             "include": ["reasoning.encrypted_content"],
@@ -451,8 +477,16 @@ class CodexLLM(LLMInterface):
 
         url = f"{self.base_url}/codex/responses"
 
+        # Debug logging for troubleshooting
+        logger.debug(f"Codex tool call request: url={url}, model={payload['model']}, tools={len(codex_tools)}")
+
         try:
             response = await self._client.post(url, json=payload, headers=headers, timeout=120.0)
+
+            # Log response details on error
+            if response.status_code != 200:
+                logger.error(f"Codex API error {response.status_code}: {response.text[:500]}")
+
             response.raise_for_status()
 
             # Parse SSE for tool calls and content
@@ -512,13 +546,30 @@ class CodexLLM(LLMInterface):
                     if event_type == "response.text.delta" and "delta" in data:
                         content += data["delta"]
 
-                    # Extract tool calls
-                    elif event_type == "response.function_call_arguments.delta":
-                        # Handle tool call events (implementation depends on actual Codex SSE format)
-                        pass
+                    # Extract completed tool calls from response.output_item.done
+                    elif event_type == "response.output_item.done":
+                        item = data.get("item", {})
+                        if item.get("type") == "function_call" and item.get("status") == "completed":
+                            tool_name = item.get("name", "")
+                            arguments_str = item.get("arguments", "{}")
+                            call_id = item.get("call_id", "")
 
-                except json.JSONDecodeError:
-                    pass
+                            try:
+                                arguments = json.loads(arguments_str)
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse tool arguments: {arguments_str}")
+                                arguments = {}
+
+                            tool_calls.append(
+                                LLMToolCall(
+                                    id=call_id,
+                                    name=tool_name,
+                                    arguments=arguments,
+                                )
+                            )
+
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse SSE data: {e}, data_str: {data_str[:200]}")
 
         return content if content else None, tool_calls
 

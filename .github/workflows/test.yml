@@ -9,37 +9,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-python-packages:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: hindsight-all
-            path: hindsight
-          - name: hindsight-api
-            path: hindsight-api
-          - name: hindsight-client
-            path: hindsight-clients/python
-          - name: hindsight-embed
-            path: hindsight-embed
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
-      with:
-        enable-cache: true
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build ${{ matrix.name }}
-      working-directory: ./${{ matrix.path }}
-      run: uv build
-
   build-api-python-versions:
     runs-on: ubuntu-latest
     strategy:
@@ -103,6 +72,29 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/openclaw
+      run: npm run build
+
+  build-ai-sdk-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm ci
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/ai-sdk
       run: npm run build
 
   build-control-plane:
@@ -789,6 +781,54 @@ jobs:
     - name: Run smoke test
       working-directory: ./hindsight-embed
       run: ./test.sh
+
+  test-hindsight-all:
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: groq
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
+      # For test_server_integration.py compatibility
+      HINDSIGHT_LLM_PROVIDER: groq
+      HINDSIGHT_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_LLM_MODEL: openai/gpt-oss-20b
+      # Prefer CPU-only PyTorch in CI
+      UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build hindsight-all
+      working-directory: ./hindsight
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight
+      run: uv sync --frozen --extra test --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-all-${{ hashFiles('hindsight/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-all-
+          ${{ runner.os }}-huggingface-
+
+    - name: Run unit tests
+      working-directory: ./hindsight
+      run: uv run pytest tests/ -v
 
   test-doc-examples:
     runs-on: ubuntu-latest

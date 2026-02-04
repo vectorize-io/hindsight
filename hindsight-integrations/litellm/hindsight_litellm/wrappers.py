@@ -12,7 +12,7 @@ import os
 import threading
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from .config import (
     DEFAULT_BANK_ID,
@@ -678,6 +678,149 @@ async def aretain(
     )
 
 
+class _StreamWrapper:
+    """Wrapper for OpenAI stream that collects content and stores conversation when done."""
+
+    def __init__(
+        self,
+        stream: Any,
+        user_query: str,
+        model: str,
+        wrapper: "HindsightOpenAI",
+        settings: HindsightCallSettings,
+    ):
+        self._stream = stream
+        self._user_query = user_query
+        self._model = model
+        self._wrapper = wrapper
+        self._settings = settings
+        self._collected_content: List[str] = []
+        self._finished = False
+
+    def __iter__(self) -> Iterator[Any]:
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            chunk = next(self._stream)
+            # Collect content from the chunk
+            if hasattr(chunk, "choices") and chunk.choices:
+                delta = chunk.choices[0].delta
+                if hasattr(delta, "content") and delta.content:
+                    self._collected_content.append(delta.content)
+            return chunk
+        except StopIteration:
+            # Stream exhausted - store conversation if we collected content
+            self._store_if_needed()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._store_if_needed()
+        if hasattr(self._stream, "__exit__"):
+            return self._stream.__exit__(exc_type, exc_val, exc_tb)
+
+    def _store_if_needed(self):
+        """Store the collected conversation if not already done."""
+        if self._finished or not self._settings.store_conversations:
+            return
+
+        self._finished = True
+        if self._collected_content:
+            assistant_output = "".join(self._collected_content)
+            if assistant_output:
+                try:
+                    self._wrapper._store_conversation(
+                        self._user_query, assistant_output, self._model, self._settings
+                    )
+                except Exception as e:
+                    if self._settings.verbose:
+                        logger.warning(f"Failed to store streamed conversation: {e}")
+
+    def close(self):
+        """Close the underlying stream if it has a close method."""
+        self._store_if_needed()
+        if hasattr(self._stream, "close"):
+            self._stream.close()
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy other attributes to the underlying stream."""
+        return getattr(self._stream, name)
+
+
+class _AnthropicStreamWrapper:
+    """Wrapper for Anthropic stream that collects content and stores conversation when done."""
+
+    def __init__(
+        self,
+        stream: Any,
+        user_query: str,
+        model: str,
+        wrapper: "HindsightAnthropic",
+        settings: HindsightCallSettings,
+    ):
+        self._stream = stream
+        self._user_query = user_query
+        self._model = model
+        self._wrapper = wrapper
+        self._settings = settings
+        self._collected_content: List[str] = []
+        self._finished = False
+
+    def __iter__(self) -> Iterator[Any]:
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            chunk = next(self._stream)
+            # Collect content from the chunk
+            if hasattr(chunk, "type") and chunk.type == "content_block_delta":
+                if hasattr(chunk, "delta") and hasattr(chunk.delta, "text"):
+                    self._collected_content.append(chunk.delta.text)
+            return chunk
+        except StopIteration:
+            # Stream exhausted - store conversation if we collected content
+            self._store_if_needed()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._store_if_needed()
+        if hasattr(self._stream, "__exit__"):
+            return self._stream.__exit__(exc_type, exc_val, exc_tb)
+
+    def _store_if_needed(self):
+        """Store the collected conversation if not already done."""
+        if self._finished or not self._settings.store_conversations:
+            return
+
+        self._finished = True
+        if self._collected_content:
+            assistant_output = "".join(self._collected_content)
+            if assistant_output:
+                try:
+                    self._wrapper._store_conversation(
+                        self._user_query, assistant_output, self._model, self._settings
+                    )
+                except Exception as e:
+                    if self._settings.verbose:
+                        logger.warning(f"Failed to store streamed conversation: {e}")
+
+    def close(self):
+        """Close the underlying stream if it has a close method."""
+        self._store_if_needed()
+        if hasattr(self._stream, "close"):
+            self._stream.close()
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy other attributes to the underlying stream."""
+        return getattr(self._stream, name)
+
+
 class HindsightOpenAI:
     """Wrapper for OpenAI client with Hindsight memory integration.
 
@@ -1080,16 +1223,30 @@ class _WrappedCompletions:
         # Make the actual API call
         response = self._wrapper._client.chat.completions.create(**openai_kwargs)
 
-        # Store conversation
-        if user_query and settings.store_conversations:
-            if response.choices and response.choices[0].message:
-                assistant_output = response.choices[0].message.content or ""
-                if assistant_output:
-                    self._wrapper._store_conversation(
-                        user_query, assistant_output, model, settings
-                    )
-
-        return response
+        # Handle streaming vs non-streaming responses
+        is_streaming = openai_kwargs.get("stream", False)
+        if is_streaming:
+            # Wrap the stream to collect content and store conversation when done
+            if user_query and settings.store_conversations:
+                return _StreamWrapper(
+                    stream=response,
+                    user_query=user_query,
+                    model=model,
+                    wrapper=self._wrapper,
+                    settings=settings,
+                )
+            else:
+                return response
+        else:
+            # Non-streaming: store conversation immediately
+            if user_query and settings.store_conversations:
+                if response.choices and response.choices[0].message:
+                    assistant_output = response.choices[0].message.content or ""
+                    if assistant_output:
+                        self._wrapper._store_conversation(
+                            user_query, assistant_output, model, settings
+                        )
+            return response
 
 
 class HindsightAnthropic:
@@ -1477,19 +1634,33 @@ class _WrappedAnthropicMessages:
         # Make the actual API call
         response = self._wrapper._client.messages.create(**anthropic_kwargs)
 
-        # Store conversation
-        if user_query and settings.store_conversations:
-            if response.content:
-                assistant_output = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        assistant_output += block.text
-                if assistant_output:
-                    self._wrapper._store_conversation(
-                        user_query, assistant_output, model, settings
-                    )
-
-        return response
+        # Handle streaming vs non-streaming responses
+        is_streaming = anthropic_kwargs.get("stream", False)
+        if is_streaming:
+            # Wrap the stream to collect content and store conversation when done
+            if user_query and settings.store_conversations:
+                return _AnthropicStreamWrapper(
+                    stream=response,
+                    user_query=user_query,
+                    model=model,
+                    wrapper=self._wrapper,
+                    settings=settings,
+                )
+            else:
+                return response
+        else:
+            # Non-streaming: store conversation immediately
+            if user_query and settings.store_conversations:
+                if response.content:
+                    assistant_output = ""
+                    for block in response.content:
+                        if hasattr(block, "text"):
+                            assistant_output += block.text
+                    if assistant_output:
+                        self._wrapper._store_conversation(
+                            user_query, assistant_output, model, settings
+                        )
+            return response
 
 
 def wrap_openai(

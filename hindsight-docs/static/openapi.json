@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.4.8"
+    "version": "0.4.9"
   },
   "paths": {
     "/health": {
@@ -3573,6 +3573,18 @@
       },
       "CreateMentalModelRequest": {
         "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Optional custom ID for the mental model (alphanumeric lowercase with hyphens)"
+          },
           "name": {
             "type": "string",
             "title": "Name",
@@ -3612,6 +3624,7 @@
         "title": "CreateMentalModelRequest",
         "description": "Request model for creating a mental model.",
         "example": {
+          "id": "team-communication",
           "max_tokens": 2048,
           "name": "Team Communication Preferences",
           "source_query": "How does the team prefer to communicate?",
@@ -3625,14 +3638,20 @@
       },
       "CreateMentalModelResponse": {
         "properties": {
+          "mental_model_id": {
+            "type": "string",
+            "title": "Mental Model Id",
+            "description": "ID of the created mental model"
+          },
           "operation_id": {
             "type": "string",
             "title": "Operation Id",
-            "description": "Operation ID to track progress"
+            "description": "Operation ID to track refresh progress"
           }
         },
         "type": "object",
         "required": [
+          "mental_model_id",
           "operation_id"
         ],
         "title": "CreateMentalModelResponse",
@@ -4388,6 +4407,10 @@
               "created_at": "2024-01-15T10:30:00Z",
               "id": "session_1",
               "memory_unit_count": 15,
+              "tags": [
+                "user_a",
+                "session_123"
+              ],
               "text_length": 5420,
               "updated_at": "2024-01-15T10:30:00Z"
             }

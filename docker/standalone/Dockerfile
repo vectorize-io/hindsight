@@ -208,6 +208,10 @@ ENV HINDSIGHT_API_LOG_LEVEL=info
 ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=false
 ENV PYTHONUNBUFFERED=1
+# Suppress verbose transformers/HuggingFace model loading warnings
+ENV TRANSFORMERS_VERBOSITY=error
+ENV HF_HUB_VERBOSITY=error
+ENV TOKENIZERS_PARALLELISM=false
 
 CMD ["/app/start-all.sh"]
 
@@ -336,6 +340,10 @@ ENV HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888
 ENV HINDSIGHT_ENABLE_API=true
 ENV HINDSIGHT_ENABLE_CP=true
 ENV PYTHONUNBUFFERED=1
+# Suppress verbose transformers/HuggingFace model loading warnings
+ENV TRANSFORMERS_VERBOSITY=error
+ENV HF_HUB_VERBOSITY=error
+ENV TOKENIZERS_PARALLELISM=false
 
 CMD ["/app/start-all.sh"]
 

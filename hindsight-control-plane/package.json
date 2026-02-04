@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-control-plane",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "description": "Control plane for Hindsight - Semantic memory system",
   "bin": {
     "hindsight-control-plane": "./bin/cli.js"

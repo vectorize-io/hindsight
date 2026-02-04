@@ -188,6 +188,55 @@ jobs:
         path: hindsight-integrations/openclaw/*.tgz
         retention-days: 1
 
+  release-ai-sdk-integration:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm ci
+
+    - name: Build
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm run build
+
+    - name: Publish to npm
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack for GitHub release
+      working-directory: ./hindsight-integrations/ai-sdk
+      run: npm pack
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-sdk-integration
+        path: hindsight-integrations/ai-sdk/*.tgz
+        retention-days: 1
+
   release-control-plane:
     runs-on: ubuntu-latest
     environment: npm
@@ -415,7 +464,7 @@ jobs:
 
   create-github-release:
     runs-on: ubuntu-latest
-    needs: [release-python-packages, release-typescript-client, release-openclaw-integration, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
+    needs: [release-python-packages, release-typescript-client, release-openclaw-integration, release-ai-sdk-integration, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
     permissions:
       contents: write
 
@@ -443,6 +492,12 @@ jobs:
       with:
         name: openclaw-integration
         path: ./artifacts/openclaw-integration
+
+    - name: Download AI SDK Integration
+      uses: actions/download-artifact@v4
+      with:
+        name: ai-sdk-integration
+        path: ./artifacts/ai-sdk-integration
 
     - name: Download Control Plane
       uses: actions/download-artifact@v4
@@ -487,6 +542,8 @@ jobs:
         cp artifacts/typescript-client/*.tgz release-assets/ || true
         # OpenClaw Integration
         cp artifacts/openclaw-integration/*.tgz release-assets/ || true
+        # AI SDK Integration
+        cp artifacts/ai-sdk-integration/*.tgz release-assets/ || true
         # Control Plane
         cp artifacts/control-plane/*.tgz release-assets/ || true
         # Rust CLI binaries

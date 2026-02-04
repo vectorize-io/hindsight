@@ -98,6 +98,7 @@ pub fn create(
     bank_id: &str,
     name: &str,
     source_query: &str,
+    id: Option<&str>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -108,6 +109,7 @@ pub fn create(
     };
 
     let request = types::CreateMentalModelRequest {
+        id: id.map(|s| s.to_string()),
         name: name.to_string(),
         source_query: source_query.to_string(),
         max_tokens: 2048,

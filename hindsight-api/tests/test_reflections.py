@@ -175,6 +175,45 @@ class TestMentalModelsCRUD:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.asyncio
+    async def test_create_mental_model_with_custom_id(self, memory: MemoryEngine, request_context):
+        """Test creating a mental model with a custom ID."""
+        bank_id = f"test-mental-model-custom-id-{uuid.uuid4().hex[:8]}"
+
+        # Create the bank first
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Create a mental model with a custom ID
+        custom_id = "team-communication-preferences"
+        mental_model = await memory.create_mental_model(
+            bank_id=bank_id,
+            mental_model_id=custom_id,
+            name="Team Communication Preferences",
+            source_query="How does the team prefer to communicate?",
+            content="The team prefers async communication via Slack",
+            tags=["team", "communication"],
+            request_context=request_context,
+        )
+
+        # Verify the custom ID was used
+        assert mental_model["id"] == custom_id
+        assert mental_model["name"] == "Team Communication Preferences"
+        assert mental_model["tags"] == ["team", "communication"]
+
+        # Verify we can retrieve it with the custom ID
+        fetched = await memory.get_mental_model(
+            bank_id=bank_id,
+            mental_model_id=custom_id,
+            request_context=request_context,
+        )
+
+        assert fetched is not None
+        assert fetched["id"] == custom_id
+        assert fetched["name"] == "Team Communication Preferences"
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestObservationsAPI:
     """Test observations API endpoints.

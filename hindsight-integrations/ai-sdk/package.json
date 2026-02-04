@@ -1,0 +1,58 @@
+{
+  "name": "@vectorize-io/hindsight-ai-sdk",
+  "version": "0.4.9",
+  "description": "Hindsight memory integration for Vercel AI SDK - Give your AI agents persistent, human-like memory",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "ai",
+    "ai-sdk",
+    "vercel",
+    "memory",
+    "hindsight",
+    "agents",
+    "llm",
+    "long-term-memory"
+  ],
+  "author": "Vectorize <support@vectorize.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/ai-sdk"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "ai": "^6.0.0",
+    "zod": "^3.0.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/ui": "^4.0.18",
+    "ai": "^6.0.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18",
+    "zod": "^4.2.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

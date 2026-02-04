@@ -54,19 +54,18 @@ async def tool_search_mental_models(
         Dict with matching mental models including content and freshness info
     """
     from ..memory_engine import fq_table
+    from ..search.tags import build_tags_where_clause
 
     # Build filters dynamically
     filters = ""
     params: list[Any] = [bank_id, str(query_embedding), max_results]
     next_param = 4
 
+    # Use the centralized tag filtering logic
     if tags:
-        if tags_match == "all":
-            filters += f" AND tags @> ${next_param}::varchar[]"
-        else:
-            filters += f" AND (tags && ${next_param}::varchar[] OR tags IS NULL OR tags = '{{}}')"
-        params.append(tags)
-        next_param += 1
+        tag_clause, tag_params, next_param = build_tags_where_clause(tags, param_offset=next_param, match=tags_match)
+        filters += f" {tag_clause}"
+        params.extend(tag_params)
 
     if exclude_ids:
         filters += f" AND id != ALL(${next_param}::text[])"

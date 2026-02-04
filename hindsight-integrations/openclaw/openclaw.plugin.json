@@ -38,15 +38,6 @@
         "type": "string",
         "description": "Name of the env var holding the API key (e.g. 'MY_CUSTOM_KEY'). If not set, uses the standard env var for the chosen provider."
       },
-      "hindsightApiUrl": {
-        "type": "string",
-        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API.",
-        "format": "uri"
-      },
-      "hindsightApiToken": {
-        "type": "string",
-        "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
-      },
       "embedPackagePath": {
         "type": "string",
         "description": "Local path to hindsight package for development (e.g. '/path/to/hindsight'). When set, uses 'uv run --directory <path>' instead of 'uvx hindsight-embed@latest'."
@@ -56,14 +47,23 @@
         "description": "Port for the openclaw profile daemon (default: 9077)",
         "default": 9077
       },
+      "hindsightApiUrl": {
+        "type": "string",
+        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API.",
+        "format": "uri"
+      },
+      "hindsightApiToken": {
+        "type": "string",
+        "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
+      },
       "dynamicBankId": {
         "type": "boolean",
-        "description": "Enable per-channel memory banks (default: true). Each channel gets isolated memory.",
+        "description": "Enable per-channel memory banks. When true, memories are isolated by channel (e.g., slack-C123, telegram-456). When false, all channels share a single 'openclaw' bank.",
         "default": true
       },
       "bankIdPrefix": {
         "type": "string",
-        "description": "Optional prefix for bank IDs (e.g., 'prod' creates 'prod-slack-C123')."
+        "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-C123'). Useful for separating environments."
       }
     },
     "additionalProperties": false
@@ -97,14 +97,6 @@
       "label": "API Key Env Var",
       "placeholder": "e.g. MY_CUSTOM_API_KEY (optional)"
     },
-    "hindsightApiUrl": {
-      "label": "External Hindsight API URL",
-      "placeholder": "e.g. https://mcp.hindsight.devcraft.team (leave empty for local daemon)"
-    },
-    "hindsightApiToken": {
-      "label": "External API Token",
-      "placeholder": "API token if external API requires authentication"
-    },
     "embedPackagePath": {
       "label": "Local Package Path (Dev)",
       "placeholder": "/path/to/hindsight (for local development)"
@@ -113,13 +105,21 @@
       "label": "API Port",
       "placeholder": "9077 (default)"
     },
+    "hindsightApiUrl": {
+      "label": "External Hindsight API URL",
+      "placeholder": "e.g. https://mcp.hindsight.devcraft.team (leave empty for local daemon)"
+    },
+    "hindsightApiToken": {
+      "label": "External API Token",
+      "placeholder": "API token if external API requires authentication"
+    },
     "dynamicBankId": {
       "label": "Dynamic Bank IDs",
-      "placeholder": "true (per-channel isolation)"
+      "placeholder": "true (isolate memories per channel)"
     },
     "bankIdPrefix": {
       "label": "Bank ID Prefix",
-      "placeholder": "e.g. prod, staging (optional)"
+      "placeholder": "e.g., prod, staging (optional)"
     }
   }
 }

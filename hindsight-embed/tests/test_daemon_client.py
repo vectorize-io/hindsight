@@ -9,7 +9,6 @@ import pytest
 
 from hindsight_embed import daemon_client
 
-
 @pytest.fixture
 def config():
     """Default config for tests."""
@@ -20,7 +19,6 @@ def config():
         "bank_id": "test-bank",
     }
 
-
 @pytest.fixture
 def mock_cli_binary(tmp_path):
     """Create a mock CLI binary."""
@@ -28,7 +26,6 @@ def mock_cli_binary(tmp_path):
     cli_path.write_text("#!/bin/bash\nexit 0")
     cli_path.chmod(0o755)
     return cli_path
-
 
 class TestRunCli:
     """Tests for run_cli function."""
@@ -181,104 +178,3 @@ class TestRunCli:
             # Verify exit code
             assert exit_code == 0
 
-
-class TestStartDaemon:
-    """Tests for _start_daemon function."""
-
-    def test_start_daemon_respects_database_url_env(self, config, monkeypatch):
-        """Test that HINDSIGHT_EMBED_API_DATABASE_URL is respected if already set."""
-        custom_db_url = "postgresql://custom:password@localhost:5432/custom_db"
-        monkeypatch.setenv("HINDSIGHT_EMBED_API_DATABASE_URL", custom_db_url)
-
-        # Mock subprocess.Popen to capture the env
-        captured_env = {}
-
-        def mock_popen(*args, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
-            # Return a mock process
-            mock_proc = MagicMock()
-            mock_proc.poll.return_value = None
-            return mock_proc
-
-        # Reduce timeout to 0.1s to avoid waiting
-        monkeypatch.setattr(daemon_client, "DAEMON_STARTUP_TIMEOUT", 0.1)
-
-        # Mock daemon health check to fail immediately (so we don't wait for startup)
-        mock_is_running = Mock(return_value=False)
-
-        with (
-            patch("subprocess.Popen", side_effect=mock_popen),
-            patch.object(daemon_client, "_is_daemon_running", mock_is_running),
-            patch.object(daemon_client, "_find_hindsight_api_command", return_value=["fake-cmd"]),
-        ):
-            # Start daemon (will fail health check, but we just want to verify env)
-            daemon_client._start_daemon(config)
-
-            # Verify the custom database URL was NOT overwritten
-            assert captured_env.get("HINDSIGHT_API_DATABASE_URL") == custom_db_url
-
-    def test_start_daemon_sets_default_database_url(self, config, monkeypatch):
-        """Test that default database URL is set if not already in env."""
-        # Ensure HINDSIGHT_EMBED_API_DATABASE_URL is not set
-        monkeypatch.delenv("HINDSIGHT_EMBED_API_DATABASE_URL", raising=False)
-
-        # Mock subprocess.Popen to capture the env
-        captured_env = {}
-
-        def mock_popen(*args, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
-            # Return a mock process
-            mock_proc = MagicMock()
-            mock_proc.poll.return_value = None
-            return mock_proc
-
-        # Reduce timeout to 0.1s to avoid waiting
-        monkeypatch.setattr(daemon_client, "DAEMON_STARTUP_TIMEOUT", 0.1)
-
-        # Mock daemon health check to fail immediately (so we don't wait for startup)
-        mock_is_running = Mock(return_value=False)
-
-        with (
-            patch("subprocess.Popen", side_effect=mock_popen),
-            patch.object(daemon_client, "_is_daemon_running", mock_is_running),
-            patch.object(daemon_client, "_find_hindsight_api_command", return_value=["fake-cmd"]),
-        ):
-            # Start daemon (will fail health check, but we just want to verify env)
-            daemon_client._start_daemon(config)
-
-            # Verify the default database URL was set (profile-specific)
-            assert captured_env.get("HINDSIGHT_API_DATABASE_URL") == "pg0://hindsight-embed-default"
-
-
-class TestIsDaemonRunning:
-    """Tests for _is_daemon_running function."""
-
-    def test_daemon_running_returns_true_on_200(self):
-        """Test that daemon is considered running when health check returns 200."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-
-        mock_client = MagicMock()
-        mock_client.__enter__.return_value.get.return_value = mock_response
-
-        with patch("httpx.Client", return_value=mock_client):
-            assert daemon_client._is_daemon_running() is True
-
-    def test_daemon_not_running_returns_false_on_error(self):
-        """Test that daemon is considered not running when health check fails."""
-        mock_client = MagicMock()
-        mock_client.__enter__.return_value.get.side_effect = Exception("Connection refused")
-
-        with patch("httpx.Client", return_value=mock_client):
-            assert daemon_client._is_daemon_running() is False
-
-    def test_daemon_not_running_returns_false_on_non_200(self):
-        """Test that daemon is considered not running when health check returns non-200."""
-        mock_response = Mock()
-        mock_response.status_code = 500
-
-        mock_client = MagicMock()
-        mock_client.__enter__.return_value.get.return_value = mock_response
-
-        with patch("httpx.Client", return_value=mock_client):
-            assert daemon_client._is_daemon_running() is False

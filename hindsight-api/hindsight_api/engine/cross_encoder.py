@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import time
+import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, TypeVar
@@ -212,15 +213,32 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             except Exception as e:
                 logger.warning(f"Failed to detect GPU/MPS, falling back to CPU: {e}")
 
+        # Suppress verbose transformers warnings during model loading
+        # This suppresses the "UNEXPECTED" warnings from CrossEncoder which are harmless
+        # but look alarming to users (e.g., "embeddings.position_ids | UNEXPECTED")
+        def load_model():
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                warnings.filterwarnings("ignore", message=".*was not found in model state dict.*")
+                warnings.filterwarnings("ignore", message=".*UNEXPECTED.*")
+
+                # Also suppress transformers library logging temporarily
+                transformers_logger = logging.getLogger("transformers")
+                original_level = transformers_logger.level
+                transformers_logger.setLevel(logging.ERROR)
+
+                try:
+                    return CrossEncoder(
+                        self.model_name,
+                        device=device,
+                        model_kwargs={"low_cpu_mem_usage": False},
+                    )
+                finally:
+                    # Restore original logging level
+                    transformers_logger.setLevel(original_level)
+
         # Retry model loading to handle transient network issues (VPN instability, HuggingFace Hub issues)
-        self._model = _retry_model_load(
-            lambda: CrossEncoder(
-                self.model_name,
-                device=device,
-                model_kwargs={"low_cpu_mem_usage": False},
-            ),
-            model_type="CrossEncoder",
-        )
+        self._model = _retry_model_load(load_model, model_type="CrossEncoder")
 
         # Initialize shared executor (limited workers naturally limits concurrency)
         if LocalSTCrossEncoder._executor is None:

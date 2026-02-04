@@ -6,6 +6,7 @@ import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -45,6 +46,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Pencil,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { MemoryDetailModal } from "./memory-detail-modal";
 
@@ -66,21 +69,30 @@ interface MentalModel {
   source_query: string;
   content: string;
   tags: string[];
+  max_tokens: number;
+  trigger: {
+    refresh_after_consolidation: boolean;
+  };
   last_refreshed_at: string;
   created_at: string;
   reflect_response?: ReflectResponse;
 }
 
+type ViewMode = "dashboard" | "table";
+
 export function MentalModelsView() {
   const { currentBank } = useBank();
   const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
   const [loading, setLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
 
   const [showCreateMentalModel, setShowCreateMentalModel] = useState(false);
   const [selectedMentalModel, setSelectedMentalModel] = useState<MentalModel | null>(null);
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [mentalModelToUpdate, setMentalModelToUpdate] = useState<MentalModel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: string;
     name: string;
@@ -193,69 +205,91 @@ export function MentalModelsView() {
                 ? `${filteredMentalModels.length} of ${mentalModels.length} mental models`
                 : `${mentalModels.length} mental model${mentalModels.length !== 1 ? "s" : ""}`}
             </div>
-            <Button onClick={() => setShowCreateMentalModel(true)} variant="outline" size="sm">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Mental Model
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button onClick={() => setShowCreateMentalModel(true)} size="sm">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Mental Model
+              </Button>
+              <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode("dashboard")}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                    viewMode === "dashboard"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  Dashboard
+                </button>
+                <button
+                  onClick={() => setViewMode("table")}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                    viewMode === "table"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <List className="w-4 h-4" />
+                  Table
+                </button>
+              </div>
+            </div>
           </div>
 
           {filteredMentalModels.length > 0 ? (
             <>
-              <div className="border rounded-lg overflow-hidden">
-                <Table className="table-fixed">
-                  <TableHeader>
-                    <TableRow className="bg-muted/50">
-                      <TableHead className="w-[20%]">ID</TableHead>
-                      <TableHead className="w-[20%]">Name</TableHead>
-                      <TableHead className="w-[35%]">Source Query</TableHead>
-                      <TableHead className="w-[15%]">Last Refreshed</TableHead>
-                      <TableHead className="w-[10%]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paginatedMentalModels.map((m) => {
-                      const refreshedDate = new Date(m.last_refreshed_at);
-                      const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      });
-                      const timeDisplay = refreshedDate.toLocaleTimeString("en-US", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        hour12: false,
-                      });
+              {/* Dashboard View - Cards */}
+              {viewMode === "dashboard" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {paginatedMentalModels.map((m) => {
+                    const refreshedDate = new Date(m.last_refreshed_at);
+                    const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    });
+                    const timeDisplay = refreshedDate.toLocaleTimeString("en-US", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: false,
+                    });
 
-                      return (
-                        <TableRow
-                          key={m.id}
-                          className={`cursor-pointer hover:bg-muted/50 ${
-                            selectedMentalModel?.id === m.id ? "bg-primary/10" : ""
-                          }`}
-                          onClick={() => setSelectedMentalModel(m)}
-                        >
-                          <TableCell className="py-2">
-                            <code className="text-xs font-mono text-muted-foreground truncate block">
-                              {m.id}
-                            </code>
-                          </TableCell>
-                          <TableCell className="py-2">
-                            <div className="font-medium text-foreground">{m.name}</div>
-                          </TableCell>
-                          <TableCell className="py-2">
-                            <div className="text-sm text-muted-foreground truncate">
-                              {m.source_query}
+                    return (
+                      <Card
+                        key={m.id}
+                        className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/50 ${
+                          selectedMentalModel?.id === m.id ? "border-primary shadow-md" : ""
+                        }`}
+                        onClick={() => setSelectedMentalModel(m)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-semibold text-foreground mb-1 truncate">
+                                {m.name}
+                              </h3>
+                              <div className="flex items-center gap-2">
+                                <code className="text-xs font-mono text-muted-foreground truncate">
+                                  {m.id}
+                                </code>
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                                    m.trigger?.refresh_after_consolidation
+                                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                      : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                                  }`}
+                                >
+                                  {m.trigger?.refresh_after_consolidation
+                                    ? "Auto Refresh"
+                                    : "Manual"}
+                                </span>
+                              </div>
                             </div>
-                          </TableCell>
-                          <TableCell className="py-2 text-sm text-foreground">
-                            <div>{dateDisplay}</div>
-                            <div className="text-xs text-muted-foreground">{timeDisplay}</div>
-                          </TableCell>
-                          <TableCell className="py-2">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                              className="h-7 w-7 p-0 ml-2 text-muted-foreground hover:text-destructive flex-shrink-0"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setDeleteTarget({ id: m.id, name: m.name });
@@ -263,13 +297,116 @@ export function MentalModelsView() {
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                            {m.source_query}
+                          </p>
+                          <div className="text-sm text-foreground line-clamp-6 mb-3 border-t border-border pt-3">
+                            {m.content}
+                          </div>
+                          <div className="flex items-center justify-between text-xs border-t border-border pt-3">
+                            <div className="flex items-center gap-2">
+                              {m.tags.length > 0 && (
+                                <div className="flex gap-1">
+                                  {m.tags.slice(0, 2).map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="px-1.5 py-0.5 rounded text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {m.tags.length > 2 && (
+                                    <span className="px-1.5 py-0.5 rounded text-xs bg-muted text-muted-foreground">
+                                      +{m.tags.length - 2}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-muted-foreground">
+                              {dateDisplay} {timeDisplay}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Table View */}
+              {viewMode === "table" && (
+                <div className="border rounded-lg overflow-hidden">
+                  <Table className="table-fixed">
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="w-[20%]">ID</TableHead>
+                        <TableHead className="w-[20%]">Name</TableHead>
+                        <TableHead className="w-[35%]">Source Query</TableHead>
+                        <TableHead className="w-[15%]">Last Refreshed</TableHead>
+                        <TableHead className="w-[10%]"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedMentalModels.map((m) => {
+                        const refreshedDate = new Date(m.last_refreshed_at);
+                        const dateDisplay = refreshedDate.toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        });
+                        const timeDisplay = refreshedDate.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        });
+
+                        return (
+                          <TableRow
+                            key={m.id}
+                            className={`cursor-pointer hover:bg-muted/50 ${
+                              selectedMentalModel?.id === m.id ? "bg-primary/10" : ""
+                            }`}
+                            onClick={() => setSelectedMentalModel(m)}
+                          >
+                            <TableCell className="py-2">
+                              <code className="text-xs font-mono text-muted-foreground truncate block">
+                                {m.id}
+                              </code>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <div className="font-medium text-foreground">{m.name}</div>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <div className="text-sm text-muted-foreground truncate">
+                                {m.source_query}
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2 text-sm text-foreground">
+                              <div>{dateDisplay}</div>
+                              <div className="text-xs text-muted-foreground">{timeDisplay}</div>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteTarget({ id: m.id, name: m.name });
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
 
               {/* Pagination Controls */}
               {totalPages > 1 && (
@@ -378,9 +515,30 @@ export function MentalModelsView() {
           onDelete={() =>
             setDeleteTarget({ id: selectedMentalModel.id, name: selectedMentalModel.name })
           }
+          onEdit={() => {
+            setMentalModelToUpdate(selectedMentalModel);
+            setShowUpdateDialog(true);
+          }}
           onRefreshed={(updated) => {
             setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
             setSelectedMentalModel(updated);
+          }}
+        />
+      )}
+
+      {mentalModelToUpdate && (
+        <UpdateMentalModelDialog
+          open={showUpdateDialog}
+          mentalModel={mentalModelToUpdate}
+          onClose={() => {
+            setShowUpdateDialog(false);
+            setMentalModelToUpdate(null);
+          }}
+          onUpdated={(updated) => {
+            setMentalModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+            setSelectedMentalModel(updated);
+            setShowUpdateDialog(false);
+            setMentalModelToUpdate(null);
           }}
         />
       )}
@@ -399,7 +557,14 @@ function CreateMentalModelDialog({
 }) {
   const { currentBank } = useBank();
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: "", sourceQuery: "", maxTokens: "2048", tags: "" });
+  const [form, setForm] = useState({
+    id: "",
+    name: "",
+    sourceQuery: "",
+    maxTokens: "2048",
+    tags: "",
+    autoRefresh: false,
+  });
 
   const handleCreate = async () => {
     if (!currentBank || !form.name.trim() || !form.sourceQuery.trim()) return;
@@ -415,13 +580,22 @@ function CreateMentalModelDialog({
 
       // Submit mental model creation - content will be generated in background
       await client.createMentalModel(currentBank, {
+        id: form.id.trim() || undefined,
         name: form.name.trim(),
         source_query: form.sourceQuery.trim(),
         tags: tags.length > 0 ? tags : undefined,
         max_tokens: maxTokens,
+        trigger: { refresh_after_consolidation: form.autoRefresh },
       });
 
-      setForm({ name: "", sourceQuery: "", maxTokens: "2048", tags: "" });
+      setForm({
+        id: "",
+        name: "",
+        sourceQuery: "",
+        maxTokens: "2048",
+        tags: "",
+        autoRefresh: false,
+      });
       onCreated();
     } catch (error) {
       console.error("Error creating mental model:", error);
@@ -436,7 +610,14 @@ function CreateMentalModelDialog({
       open={open}
       onOpenChange={(o) => {
         if (!o) {
-          setForm({ name: "", sourceQuery: "", maxTokens: "2048", tags: "" });
+          setForm({
+            id: "",
+            name: "",
+            sourceQuery: "",
+            maxTokens: "2048",
+            tags: "",
+            autoRefresh: false,
+          });
           onClose();
         }
       }}
@@ -451,6 +632,19 @@ function CreateMentalModelDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">
+              ID <span className="text-muted-foreground font-normal">(optional)</span>
+            </label>
+            <Input
+              value={form.id}
+              onChange={(e) => setForm({ ...form, id: e.target.value })}
+              placeholder="e.g., team-communication"
+            />
+            <p className="text-xs text-muted-foreground">
+              Custom ID for the mental model. If not provided, a UUID will be generated.
+            </p>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Name *</label>
             <Input
@@ -494,6 +688,22 @@ function CreateMentalModelDialog({
               placeholder="e.g., project-x, team-alpha (comma-separated)"
             />
           </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="auto-refresh"
+              checked={form.autoRefresh}
+              onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
+            />
+            <label
+              htmlFor="auto-refresh"
+              className="text-sm font-medium text-foreground cursor-pointer"
+            >
+              Auto-refresh after consolidation
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2 ml-6">
+            Automatically refresh this mental model when memories are consolidated.
+          </p>
         </div>
 
         <DialogFooter>
@@ -519,29 +729,186 @@ function CreateMentalModelDialog({
   );
 }
 
+function UpdateMentalModelDialog({
+  open,
+  mentalModel,
+  onClose,
+  onUpdated,
+}: {
+  open: boolean;
+  mentalModel: MentalModel;
+  onClose: () => void;
+  onUpdated: (updated: MentalModel) => void;
+}) {
+  const { currentBank } = useBank();
+  const [updating, setUpdating] = useState(false);
+  const [form, setForm] = useState({
+    name: mentalModel.name,
+    sourceQuery: mentalModel.source_query,
+    maxTokens: String(mentalModel.max_tokens || 2048),
+    tags: mentalModel.tags.join(", "),
+    autoRefresh: mentalModel.trigger?.refresh_after_consolidation || false,
+  });
+
+  // Reset form when mental model changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      setForm({
+        name: mentalModel.name,
+        sourceQuery: mentalModel.source_query,
+        maxTokens: String(mentalModel.max_tokens || 2048),
+        tags: mentalModel.tags.join(", "),
+        autoRefresh: mentalModel.trigger?.refresh_after_consolidation || false,
+      });
+    }
+  }, [open, mentalModel]);
+
+  const handleUpdate = async () => {
+    if (!currentBank || !form.name.trim() || !form.sourceQuery.trim()) return;
+
+    setUpdating(true);
+    try {
+      const tags = form.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
+      const maxTokens = parseInt(form.maxTokens) || 2048;
+
+      const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
+        name: form.name.trim(),
+        source_query: form.sourceQuery.trim(),
+        tags: tags.length > 0 ? tags : undefined,
+        max_tokens: maxTokens,
+        trigger: { refresh_after_consolidation: form.autoRefresh },
+      });
+
+      onUpdated(updated);
+      onClose();
+    } catch (error) {
+      console.error("Error updating mental model:", error);
+      alert("Error updating mental model: " + (error as Error).message);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Update Mental Model</DialogTitle>
+          <DialogDescription>
+            Update the mental model configuration. Changes will take effect immediately.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">ID</label>
+            <Input value={mentalModel.id} disabled className="bg-muted" />
+            <p className="text-xs text-muted-foreground">ID cannot be changed after creation.</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Name *</label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="e.g., Team Communication Preferences"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Source Query *</label>
+            <Input
+              value={form.sourceQuery}
+              onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
+              placeholder="e.g., How does the team prefer to communicate?"
+            />
+            <p className="text-xs text-muted-foreground">
+              This query will be run to generate the initial content, and re-run when you refresh.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Max Tokens</label>
+            <Input
+              type="number"
+              value={form.maxTokens}
+              onChange={(e) => setForm({ ...form, maxTokens: e.target.value })}
+              placeholder="2048"
+              min="256"
+              max="8192"
+            />
+            <p className="text-xs text-muted-foreground">
+              Maximum tokens for the generated response (256-8192).
+            </p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">
+              Tags <span className="text-muted-foreground font-normal">(optional)</span>
+            </label>
+            <Input
+              value={form.tags}
+              onChange={(e) => setForm({ ...form, tags: e.target.value })}
+              placeholder="e.g., project-x, team-alpha (comma-separated)"
+            />
+          </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="update-auto-refresh"
+              checked={form.autoRefresh}
+              onCheckedChange={(checked) => setForm({ ...form, autoRefresh: checked === true })}
+            />
+            <label
+              htmlFor="update-auto-refresh"
+              className="text-sm font-medium text-foreground cursor-pointer"
+            >
+              Auto-refresh after consolidation
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2 ml-6">
+            Automatically refresh this mental model when memories are consolidated.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={updating}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleUpdate}
+            disabled={updating || !form.name.trim() || !form.sourceQuery.trim()}
+          >
+            {updating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                Updating...
+              </>
+            ) : (
+              "Update"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MentalModelDetailPanel({
   mentalModel,
   onClose,
   onDelete,
+  onEdit,
   onRefreshed,
 }: {
   mentalModel: MentalModel;
   onClose: () => void;
   onDelete: () => void;
+  onEdit: () => void;
   onRefreshed: (m: MentalModel) => void;
 }) {
   const { currentBank } = useBank();
   const [refreshing, setRefreshing] = useState(false);
   const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(mentalModel.name);
-  const [saving, setSaving] = useState(false);
-
-  // Reset edit form when mental model changes
-  useEffect(() => {
-    setEditName(mentalModel.name);
-    setIsEditing(false);
-  }, [mentalModel.id, mentalModel.name]);
 
   const handleRefresh = async () => {
     if (!currentBank) return;
@@ -591,24 +958,6 @@ function MentalModelDetailPanel({
     }
   };
 
-  const handleSave = async () => {
-    if (!currentBank || !editName.trim()) return;
-
-    setSaving(true);
-    try {
-      const updated = await client.updateMentalModel(currentBank, mentalModel.id, {
-        name: editName.trim(),
-      });
-      onRefreshed(updated);
-      setIsEditing(false);
-    } catch (error) {
-      console.error("Error updating mental model:", error);
-      alert("Error updating: " + (error as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const formatDateTime = (dateStr: string) => {
     const date = new Date(dateStr);
     return `${date.toLocaleDateString("en-US", {
@@ -637,47 +986,13 @@ function MentalModelDetailPanel({
       <div className="p-6">
         <div className="flex justify-between items-start mb-8 pb-5 border-b border-border">
           <div className="flex-1 mr-4">
-            {isEditing ? (
-              <div className="space-y-2">
-                <Input
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="text-lg font-bold"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleSave} disabled={saving || !editName.trim()}>
-                    {saving ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Save
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setEditName(mentalModel.name);
-                      setIsEditing(false);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-bold text-foreground">{mentalModel.name}</h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsEditing(true)}
-                    className="h-7 w-7 p-0"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">{mentalModel.source_query}</p>
-              </>
-            )}
+            <div className="flex items-center gap-2">
+              <h3 className="text-xl font-bold text-foreground">{mentalModel.name}</h3>
+              <Button variant="ghost" size="sm" onClick={onEdit} className="h-7 w-7 p-0">
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">{mentalModel.source_query}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -701,7 +1016,76 @@ function MentalModelDetailPanel({
         </div>
 
         <div className="space-y-6">
-          <div>
+          {/* Metadata Section */}
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">ID</div>
+              <div className="text-sm text-foreground font-mono">{mentalModel.id}</div>
+            </div>
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Name</div>
+              <div className="text-sm text-foreground">{mentalModel.name}</div>
+            </div>
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                Source Query
+              </div>
+              <div className="text-sm text-foreground">{mentalModel.source_query}</div>
+            </div>
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                Max Tokens
+              </div>
+              <div className="text-sm text-foreground">{mentalModel.max_tokens}</div>
+            </div>
+            {mentalModel.tags.length > 0 && (
+              <div>
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Tags</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {mentalModel.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="px-2 py-1 rounded text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                Auto-refresh
+              </div>
+              <span
+                className={`inline-block text-xs px-2 py-1 rounded-full font-medium ${
+                  mentalModel.trigger?.refresh_after_consolidation
+                    ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                    : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                }`}
+              >
+                {mentalModel.trigger?.refresh_after_consolidation ? "Auto Refresh" : "Manual"}
+              </span>
+            </div>
+            {mentalModel.last_refreshed_at && (
+              <div>
+                <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                  Last Refreshed
+                </div>
+                <div className="text-sm text-foreground">
+                  {formatDateTime(mentalModel.last_refreshed_at)}
+                </div>
+              </div>
+            )}
+            <div>
+              <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Created</div>
+              <div className="text-sm text-foreground">
+                {formatDateTime(mentalModel.created_at)}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-5">
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               Content
             </div>
@@ -792,38 +1176,6 @@ function MentalModelDetailPanel({
               </p>
             </div>
           )}
-
-          {mentalModel.tags && mentalModel.tags.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                Tags
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {mentalModel.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="px-2 py-1 rounded bg-muted text-muted-foreground text-sm"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-6 text-sm text-muted-foreground">
-            <span>Created: {formatDateTime(mentalModel.created_at)}</span>
-            <span>Refreshed: {formatDateTime(mentalModel.last_refreshed_at)}</span>
-          </div>
-
-          <div className="p-4 bg-muted/50 rounded-lg">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-              ID
-            </div>
-            <code className="text-sm font-mono break-all text-muted-foreground">
-              {mentalModel.id}
-            </code>
-          </div>
 
           <div className="pt-4 border-t border-border">
             <Button

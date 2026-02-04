@@ -3,12 +3,7 @@
 export interface MoltbotPluginAPI {
   config: MoltbotConfig;
   registerService(config: ServiceConfig): void;
-  /**
-   * Register a hook handler.
-   * Handler receives (event, ctx) where:
-   * - event: Hook-specific event data (e.g., {prompt, messages?} for before_agent_start)
-   * - ctx: Agent context with sessionKey, messageProvider, channelId, senderId, etc.
-   */
+  // OpenClaw hook handler signature: (event, ctx?) where ctx contains channel/sender info
   on(event: string, handler: (event: any, ctx?: any) => void | Promise<void | { prependContext?: string }>): void;
   // Add more as needed
 }
@@ -42,12 +37,11 @@ export interface PluginConfig {
   llmProvider?: string; // LLM provider override (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama')
   llmModel?: string; // LLM model override (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022')
   llmApiKeyEnv?: string; // Env var name holding the API key (e.g. 'MY_CUSTOM_KEY')
+  apiPort?: number; // Port for openclaw profile daemon (default: 9077)
   hindsightApiUrl?: string; // External Hindsight API URL (skips local daemon when set)
   hindsightApiToken?: string; // API token for external Hindsight API authentication
-  apiPort?: number; // Port for openclaw profile daemon (default: 9077)
-  // Dynamic bank ID options
-  dynamicBankId?: boolean; // Enable per-channel banks (default: true)
-  bankIdPrefix?: string; // Optional prefix for bank IDs (e.g., 'prod' -> 'prod-slack-C123')
+  dynamicBankId?: boolean; // Enable per-channel memory banks (default: true)
+  bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
 }
 
 export interface ServiceConfig {

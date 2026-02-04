@@ -1,5 +1,5 @@
 ---
-sidebar_position: 1
+sidebar_position: 5
 ---
 
 # OpenAI Agent + Hindsight Memory Integration
@@ -7,7 +7,7 @@ sidebar_position: 1
 
 :::info Complete Application
 This is a complete, runnable application demonstrating Hindsight integration.
-[**View source on GitHub →**](https://github.com/vectorize-io/hindsight-cookbook/tree/main/openai-fitness-coach)
+[**View source on GitHub →**](https://github.com/vectorize-io/hindsight-cookbook/tree/main/applications/openai-fitness-coach)
 :::
 
 
@@ -22,7 +22,7 @@ This example showcases:
 - **Function calling** to bridge them together
 - **Streaming responses** for real-time interaction (enabled by default)
 - **Bidirectional memory** - both user data AND coach observations stored
-- **System-level post-processing** - automatic knowledge consolidation
+- **System-level post-processing** - automatic opinion storage for reliability
 - **Temporal-semantic memory** queries via function tools
 - **Enhanced preference learning** - coach learns and respects user likes/dislikes
 - **Real-world integration pattern** for adding memory to AI agents
@@ -46,9 +46,9 @@ Hindsight API (returns workouts + preferences)
     |
 OpenAI Assistant (analyzes, gives advice)
     |
-Function Call: store_memory(advice as experience)
+Function Call: store_memory(advice as opinion)
     |
-Hindsight API (stores coach's advice, consolidates into observations)
+Hindsight API (stores coach's observation)
     |
 Personalized Answer
 ```
@@ -57,10 +57,10 @@ Personalized Answer
 
 | Component | Standard Demo | OpenAI Integration |
 |-----------|---------------|-------------------|
-| **Conversation** | Hindsight `/reflect` endpoint | OpenAI Assistant API |
+| **Conversation** | Hindsight `/think` endpoint | OpenAI Assistant API |
 | **Memory** | Hindsight (built-in) | Hindsight (via function calling) |
 | **LLM** | Configured in Hindsight | OpenAI GPT-4 |
-| **Knowledge Consolidation** | Automatic after retain | Automatic after retain |
+| **Opinion Formation** | Automatic in `/think` | Explicit via `store_memory(type="opinion")` |
 | **Best For** | Hindsight-native apps | Integrating memory into existing OpenAI agents |
 
 ## Quick Start
@@ -126,7 +126,7 @@ retrieve_memories(query, fact_types, top_k)
 search_workouts(after_date, before_date, workout_type)
 get_nutrition_summary(after_date, before_date)
 get_user_goals()
-get_coach_insights(about)  # Retrieves observations
+get_coach_opinions(about)
 ```
 
 Each function makes API calls to Hindsight to fetch relevant memories.
@@ -191,8 +191,8 @@ The agent will automatically:
 The OpenAI Agent can retrieve different memory types from Hindsight:
 
 - **World Facts** (`fact_type: "world"`): Workouts, meals, activities
-- **Experience Facts** (`fact_type: "experience"`): Goals, intentions, coach advice
-- **Observations** (`fact_type: "observation"`): Consolidated knowledge about user patterns
+- **Agent Facts** (`fact_type: "agent"`): Goals, intentions
+- **Opinions** (`fact_type: "opinion"`): Coach's observations about patterns
 
 ## Customization
 
@@ -266,9 +266,9 @@ The key benefit: **Separation of concerns**
 
 **Use Hindsight directly when:**
 - You want a complete memory-first solution
-- You want automatic memory retrieval and observation consolidation
+- You want automatic memory retrieval and opinion formation
 - You want to use different LLM providers (not just OpenAI)
-- You want the `/reflect` endpoint's integrated approach
+- You want the `/think` endpoint's integrated approach
 
 ## Learning Points
 

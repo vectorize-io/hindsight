@@ -596,6 +596,10 @@ enum MentalModelCommands {
 
         /// Source query to generate the mental model from
         source_query: String,
+
+        /// Optional custom ID for the mental model (alphanumeric lowercase with hyphens)
+        #[arg(long)]
+        id: Option<String>,
     },
 
     /// Update a mental model
@@ -863,8 +867,8 @@ fn run() -> Result<()> {
             MentalModelCommands::Get { bank_id, mental_model_id } => {
                 commands::mental_model::get(&client, &bank_id, &mental_model_id, verbose, output_format)
             }
-            MentalModelCommands::Create { bank_id, name, source_query } => {
-                commands::mental_model::create(&client, &bank_id, &name, &source_query, verbose, output_format)
+            MentalModelCommands::Create { bank_id, name, source_query, id } => {
+                commands::mental_model::create(&client, &bank_id, &name, &source_query, id.as_deref(), verbose, output_format)
             }
             MentalModelCommands::Update { bank_id, mental_model_id, name } => {
                 commands::mental_model::update(&client, &bank_id, &mental_model_id, name, verbose, output_format)

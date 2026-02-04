@@ -125,16 +125,70 @@ export HINDSIGHT_API_LLM_BASE_URL=https://openrouter.ai/api/v1
 
 ### External API (Advanced)
 
-To use an existing Hindsight API server instead of the local daemon:
+Connect to a remote Hindsight API server instead of running a local daemon. This is useful for:
+
+- **Shared memory** across multiple OpenClaw instances
+- **Production deployments** with centralized memory storage
+- **Team environments** where agents share knowledge
+
+#### Plugin Configuration
+
+Configure in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "hindsight-openclaw": {
+        "enabled": true,
+        "config": {
+          "hindsightApiUrl": "https://your-hindsight-server.com",
+          "hindsightApiToken": "your-api-token"
+        }
+      }
+    }
+  }
+}
+```
+
+**Options:**
+- `hindsightApiUrl` - Full URL to external Hindsight API (e.g., `https://mcp.hindsight.example.com`)
+- `hindsightApiToken` - API token for authentication (optional, only if API requires auth)
+
+#### Environment Variables (Alternative)
+
+You can also configure via environment variables:
 
 ```bash
-export HINDSIGHT_EMBED_API_URL=http://your-server:8000
-export HINDSIGHT_EMBED_API_TOKEN=your-api-token  # Optional, if API requires auth
+export HINDSIGHT_EMBED_API_URL=https://your-hindsight-server.com
+export HINDSIGHT_EMBED_API_TOKEN=your-api-token  # Optional
 
 openclaw gateway
 ```
 
-Useful for shared memory across multiple OpenClaw instances or production deployments.
+**Note:** Plugin config takes precedence over environment variables.
+
+#### Behavior
+
+When external API mode is enabled:
+- **No local daemon** is started (no hindsight-embed process)
+- **Health check** runs on startup to verify API connectivity
+- **All memory operations** (retain, recall, reflect) go to the external API
+- **Faster startup** since no local PostgreSQL or embedding models are needed
+
+#### Verification
+
+Check OpenClaw logs for external API mode:
+
+```bash
+tail -f /tmp/openclaw/openclaw-*.log | grep Hindsight
+
+# Should see on startup:
+# [Hindsight] External API mode enabled: https://your-hindsight-server.com
+# [Hindsight] External API health check passed
+```
+
+If you see daemon startup messages instead, verify your configuration is correct.
 
 ## Inspecting Memories
 

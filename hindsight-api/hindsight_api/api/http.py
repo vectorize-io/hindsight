@@ -5,6 +5,7 @@ This module provides the create_app function to create and configure
 the FastAPI application with all API endpoints.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -35,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.memory_engine import Budget, fq_table
+from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.reflect.observations import Observation
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, TokenUsage
 from hindsight_api.engine.search.tags import TagsMatch
@@ -44,6 +45,8 @@ from hindsight_api.metrics import create_metrics_collector, get_metrics_collecto
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 
 
 class EntityIncludeOptions(BaseModel):
@@ -863,6 +866,7 @@ class ListDocumentsResponse(BaseModel):
                         "updated_at": "2024-01-15T10:30:00Z",
                         "text_length": 5420,
                         "memory_unit_count": 15,
+                        "tags": ["user_a", "session_123"],
                     }
                 ],
                 "total": 50,
@@ -1134,6 +1138,7 @@ class CreateMentalModelRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "id": "team-communication",
                 "name": "Team Communication Preferences",
                 "source_query": "How does the team prefer to communicate?",
                 "tags": ["team"],
@@ -1143,6 +1148,9 @@ class CreateMentalModelRequest(BaseModel):
         }
     )
 
+    id: str | None = Field(
+        None, description="Optional custom ID for the mental model (alphanumeric lowercase with hyphens)"
+    )
     name: str = Field(description="Human-readable name for the mental model")
     source_query: str = Field(description="The query to run to generate content")
     tags: list[str] = Field(default_factory=list, description="Tags for scoped visibility")
@@ -1153,7 +1161,8 @@ class CreateMentalModelRequest(BaseModel):
 class CreateMentalModelResponse(BaseModel):
     """Response model for mental model creation."""
 
-    operation_id: str = Field(description="Operation ID to track progress")
+    mental_model_id: str = Field(description="ID of the created mental model")
+    operation_id: str = Field(description="Operation ID to track refresh progress")
 
 
 class UpdateMentalModelRequest(BaseModel):
@@ -1718,6 +1727,15 @@ def _register_routes(app: FastAPI):
         handler_start = time.time()
         metrics = get_metrics_collector()
 
+        # Validate query length to prevent expensive operations on oversized queries
+        encoding = _get_tiktoken_encoding()
+        query_tokens = len(encoding.encode(request.query))
+        if query_tokens > MAX_QUERY_TOKENS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {MAX_QUERY_TOKENS}. Please shorten your query.",
+            )
+
         try:
             # Default to world and experience if not specified (exclude observation)
             fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
@@ -1832,6 +1850,15 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except (asyncio.TimeoutError, TimeoutError):
+            handler_duration = time.time() - handler_start
+            logger.error(
+                f"[RECALL TIMEOUT] bank={bank_id} handler_duration={handler_duration:.3f}s - database query timed out"
+            )
+            raise HTTPException(
+                status_code=504,
+                detail="Request timed out while searching memories. Try a shorter or more specific query.",
+            )
         except Exception as e:
             import traceback
 
@@ -2386,6 +2413,7 @@ def _register_routes(app: FastAPI):
                 name=body.name,
                 source_query=body.source_query,
                 content="Generating content...",
+                mental_model_id=body.id if body.id else None,
                 tags=body.tags if body.tags else None,
                 max_tokens=body.max_tokens,
                 trigger=body.trigger.model_dump() if body.trigger else None,
@@ -2397,7 +2425,7 @@ def _register_routes(app: FastAPI):
                 mental_model_id=mental_model["id"],
                 request_context=request_context,
             )
-            return CreateMentalModelResponse(operation_id=result["operation_id"])
+            return CreateMentalModelResponse(mental_model_id=mental_model["id"], operation_id=result["operation_id"])
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):

@@ -595,6 +595,7 @@ export class ControlPlaneClient {
   async createMentalModel(
     bankId: string,
     params: {
+      id?: string;
       name: string;
       source_query: string;
       tags?: string[];

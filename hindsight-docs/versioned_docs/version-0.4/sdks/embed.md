@@ -230,21 +230,6 @@ rm ~/.hindsight/embed
 hindsight-embed configure
 ```
 
-## Advanced Configuration
-
-While `hindsight-embed` aims to be zero-config, you can customize the underlying API behavior by setting `HINDSIGHT_API_*` variables in `~/.hindsight/embed`:
-
-```bash
-# Example: Custom embedding model
-HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
-HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-large
-
-# Example: Verbose extraction
-HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbose
-```
-
-See [Configuration](/developer/configuration) for all available `HINDSIGHT_API_*` options.
-
 ## When to Use
 
 **Perfect for:**

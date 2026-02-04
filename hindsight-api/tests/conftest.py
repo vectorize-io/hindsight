@@ -220,3 +220,34 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
             await mem.close()
     except Exception:
         pass
+
+
+@pytest_asyncio.fixture(scope="function")
+async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+    """
+    Provide a MemoryEngine instance that skips LLM connection verification.
+
+    This fixture is useful for tests that override the LLM configuration
+    after initialization (e.g., to test specific providers).
+    """
+    mem = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="mock",  # Use mock provider as placeholder
+        memory_llm_api_key="",
+        memory_llm_model="mock",
+        embeddings=embeddings,
+        cross_encoder=cross_encoder,
+        query_analyzer=query_analyzer,
+        pool_min_size=1,
+        pool_max_size=5,
+        run_migrations=False,
+        task_backend=SyncTaskBackend(),
+        skip_llm_verification=True,  # Skip verification - will be overridden by test
+    )
+    await mem.initialize()
+    yield mem
+    try:
+        if mem._pool and not mem._pool._closing:
+            await mem.close()
+    except Exception:
+        pass

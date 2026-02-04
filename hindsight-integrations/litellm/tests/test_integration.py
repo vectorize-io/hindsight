@@ -587,3 +587,182 @@ class TestSetDefaults:
     def test_get_defaults_returns_none_initially(self):
         """Test get_defaults returns None when not set."""
         assert get_defaults() is None
+
+
+class TestStreamingSupport:
+    """Tests for streaming support in wrappers."""
+
+    def test_wrap_openai_with_stream_no_error(self):
+        """Test that wrap_openai handles streaming without errors."""
+        from unittest.mock import Mock, MagicMock
+        from hindsight_litellm.wrappers import wrap_openai
+
+        # Create mock OpenAI client
+        mock_client = Mock()
+        mock_stream = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_stream
+
+        # Wrap the client with store_conversations=False
+        wrapped = wrap_openai(
+            mock_client,
+            hindsight_api_url="http://localhost:8888",
+            bank_id="test-agent",
+            store_conversations=False,  # Disable storage for this test
+        )
+
+        # Call with stream=True
+        result = wrapped.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=True,
+        )
+
+        # Should return the stream without errors
+        assert result == mock_stream
+        # Verify the underlying client was called with stream=True
+        mock_client.chat.completions.create.assert_called_once()
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs["stream"] is True
+
+    def test_wrap_anthropic_with_stream_no_error(self):
+        """Test that wrap_anthropic handles streaming without errors."""
+        from unittest.mock import Mock, MagicMock
+        from hindsight_litellm.wrappers import wrap_anthropic
+
+        # Create mock Anthropic client
+        mock_client = Mock()
+        mock_stream = MagicMock()
+        mock_client.messages.create.return_value = mock_stream
+
+        # Wrap the client with store_conversations=False
+        wrapped = wrap_anthropic(
+            mock_client,
+            hindsight_api_url="http://localhost:8888",
+            bank_id="test-agent",
+            store_conversations=False,  # Disable storage for this test
+        )
+
+        # Call with stream=True
+        result = wrapped.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=True,
+        )
+
+        # Should return the stream without errors
+        assert result == mock_stream
+        # Verify the underlying client was called with stream=True
+        mock_client.messages.create.assert_called_once()
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["stream"] is True
+
+    def test_wrap_openai_stream_stores_conversation(self):
+        """Test that streaming stores conversation after all chunks are consumed."""
+        from unittest.mock import Mock, MagicMock, patch
+        from hindsight_litellm.wrappers import wrap_openai
+
+        # Create mock OpenAI client
+        mock_client = Mock()
+
+        # Create mock stream chunks
+        class MockChunk:
+            def __init__(self, content):
+                self.choices = [MagicMock()]
+                self.choices[0].delta.content = content
+
+        chunks = [
+            MockChunk("Hello"),
+            MockChunk(" "),
+            MockChunk("world"),
+            MockChunk("!"),
+        ]
+        mock_client.chat.completions.create.return_value = iter(chunks)
+
+        # Wrap the client
+        wrapped = wrap_openai(
+            mock_client,
+            hindsight_api_url="http://localhost:8888",
+            bank_id="test-agent",
+            store_conversations=True,  # Enable storage
+        )
+
+        # Mock the hindsight client
+        mock_hindsight_client = MagicMock()
+        with patch.object(wrapped, "_get_hindsight_client", return_value=mock_hindsight_client):
+            # Call with stream=True
+            result = wrapped.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "Hello"}],
+                stream=True,
+            )
+
+            # Consume all chunks
+            collected = []
+            for chunk in result:
+                collected.append(chunk)
+
+            # Verify all chunks were yielded
+            assert len(collected) == 4
+
+            # Verify retain was called with the complete conversation
+            mock_hindsight_client.retain.assert_called_once()
+            call_kwargs = mock_hindsight_client.retain.call_args[1]
+            assert "USER: Hello" in call_kwargs["content"]
+            assert "ASSISTANT: Hello world!" in call_kwargs["content"]
+
+    def test_wrap_anthropic_stream_stores_conversation(self):
+        """Test that streaming stores conversation after all chunks are consumed."""
+        from unittest.mock import Mock, MagicMock, patch
+        from hindsight_litellm.wrappers import wrap_anthropic
+
+        # Create mock Anthropic client
+        mock_client = Mock()
+
+        # Create mock stream chunks
+        class MockChunk:
+            def __init__(self, content):
+                self.type = "content_block_delta"
+                self.delta = MagicMock()
+                self.delta.text = content
+
+        chunks = [
+            MockChunk("Hello"),
+            MockChunk(" "),
+            MockChunk("world"),
+            MockChunk("!"),
+        ]
+        mock_client.messages.create.return_value = iter(chunks)
+
+        # Wrap the client
+        wrapped = wrap_anthropic(
+            mock_client,
+            hindsight_api_url="http://localhost:8888",
+            bank_id="test-agent",
+            store_conversations=True,  # Enable storage
+        )
+
+        # Mock the hindsight client
+        mock_hindsight_client = MagicMock()
+        with patch.object(wrapped, "_get_hindsight_client", return_value=mock_hindsight_client):
+            # Call with stream=True
+            result = wrapped.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": "Hello"}],
+                stream=True,
+            )
+
+            # Consume all chunks
+            collected = []
+            for chunk in result:
+                collected.append(chunk)
+
+            # Verify all chunks were yielded
+            assert len(collected) == 4
+
+            # Verify retain was called with the complete conversation
+            mock_hindsight_client.retain.assert_called_once()
+            call_kwargs = mock_hindsight_client.retain.call_args[1]
+            assert "USER: Hello" in call_kwargs["content"]
+            assert "ASSISTANT: Hello world!" in call_kwargs["content"]

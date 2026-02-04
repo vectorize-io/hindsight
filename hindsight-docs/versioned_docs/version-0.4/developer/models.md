@@ -158,21 +158,16 @@ Use your ChatGPT Plus or Pro subscription for Hindsight without separate OpenAI 
 4. **Configure Hindsight:**
    ```bash
    export HINDSIGHT_API_LLM_PROVIDER=openai-codex
-   export HINDSIGHT_API_LLM_MODEL=gpt-5.2-codex  # or gpt-5.1-codex
+   # export HINDSIGHT_API_LLM_MODEL=gpt-5.1-codex  # defaults to gpt-5.2-codex
    # No API key needed - reads from ~/.codex/auth.json automatically
    ```
 
 5. **Start Hindsight:**
    ```bash
-   ./scripts/dev/start-api.sh
+   hindsight-api
    ```
 
-**Available Models:**
-- `gpt-5.2-codex` - Latest frontier agentic coding model (default)
-- `gpt-5.2` - Latest frontier model
-- `gpt-5.1-codex` - Previous generation coding model
-- `gpt-5.1-codex-max` - Maximum context variant
-- `gpt-5.1-codex-mini` - Lightweight variant
+You can use any model supported by OpenAI Codex CLI
 
 **Important Notes:**
 - OAuth tokens are stored in `~/.codex/auth.json`
@@ -186,9 +181,6 @@ If authentication fails:
 ```bash
 # Re-login to refresh tokens
 codex auth login
-
-# Check auth file exists and has correct format
-cat ~/.codex/auth.json | python3 -c "import json, sys; d=json.load(sys.stdin); print('auth_mode:', d.get('auth_mode')); print('has tokens:', 'tokens' in d)"
 ```
 
 ---
@@ -225,49 +217,21 @@ Use your Claude Pro or Max subscription for Hindsight without separate Anthropic
 4. **Configure Hindsight:**
    ```bash
    export HINDSIGHT_API_LLM_PROVIDER=claude-code
-   export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
    # No API key needed - uses claude auth login credentials
    ```
 
 5. **Start Hindsight:**
    ```bash
-   ./scripts/dev/start-api.sh
+   hindsight-api
    ```
 
-**Available Models:**
-- `claude-sonnet-4-5-20250929` - Latest Claude Sonnet (default)
-- `claude-opus-4-20250514` - Claude Opus for complex tasks
-- `claude-sonnet-3-5-20241022` - Previous generation Sonnet
-- Any model supported by Claude Code CLI
+You can use any model supported by Claude Code CLI.
 
 **Important Notes:**
 - Authentication handled by Claude Agent SDK (uses bundled CLI)
 - Credentials managed securely by Claude Code
 - Usage billed to your Claude subscription (not separate API costs)
-- Includes Claude Agent SDK as dependency (auto-installed)
 - For personal development use only (see Claude Terms of Service)
-
-**Troubleshooting:**
-
-If authentication fails:
-```bash
-# Re-login to refresh credentials
-claude auth login
-
-# Check Claude CLI is working
-claude --version
-
-# Test authentication directly
-claude query "test"
-```
-
-If the SDK is not found:
-```bash
-# Install Claude Agent SDK
-pip install claude-agent-sdk
-# Or with uv
-uv add claude-agent-sdk
-```
 
 ---
 

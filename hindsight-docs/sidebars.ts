@@ -240,6 +240,36 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'cookbook/recipes/tool-learning-demo',
           label: 'Routing Tool Learning',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/fitness_tracker',
+          label: 'Fitness Coach with Hindsight Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/healthcare_assistant',
+          label: 'Healthcare Assistant with Hindsight Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/movie_recommendation',
+          label: 'Movie Recommendation Assistant with Hindsight Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/personal_assistant',
+          label: 'Personal AI Assistant with Hindsight Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/personalized_search',
+          label: 'Personalized Search Agent with Hindsight Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/recipes/study_buddy',
+          label: 'Study Buddy with Hindsight Memory',
         }
       ],
     },
@@ -250,8 +280,38 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'doc',
+          id: 'cookbook/applications/chat-memory',
+          label: 'Chat Memory App',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/applications/deliveryman-demo',
+          label: 'Deliveryman Demo',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/applications/hindsight-litellm-demo',
+          label: 'Memory Approaches Comparison Demo',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/applications/hindsight-tool-learning-demo',
+          label: 'Tool Learning Demo',
+        },
+        {
+          type: 'doc',
           id: 'cookbook/applications/openai-fitness-coach',
           label: 'OpenAI Agent + Hindsight Memory Integration',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/applications/sanity-blog-memory',
+          label: 'Sanity CMS Blog Memory',
+        },
+        {
+          type: 'doc',
+          id: 'cookbook/applications/stancetracker',
+          label: 'Stance Tracker',
         }
       ],
     },

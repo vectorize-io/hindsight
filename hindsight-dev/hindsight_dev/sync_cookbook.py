@@ -4,14 +4,14 @@ Syncs content from the hindsight-cookbook repository.
 
 - Clones the cookbook repo to a temp directory
 - Converts notebooks/*.ipynb → docs/cookbook/recipes/*.md
-- Converts app directories (with README.md) → docs/cookbook/applications/*.md
+- Converts applications/*/ directories (with README.md) → docs/cookbook/applications/*.md
 - Updates sidebars.ts with the new entries
 
 Usage: sync-cookbook (after installing hindsight-dev)
 
 Conventions in cookbook repo:
 - notebooks/*.ipynb → Recipes (use cases, tutorials)
-- Directories with README.md at root → Applications (complete apps)
+- applications/*/ directories with README.md → Applications (complete apps)
 - Notebook title extracted from first # heading in first markdown cell
 - App title extracted from first # heading in README.md
 """
@@ -236,7 +236,13 @@ def process_applications(cookbook_dir: Path, apps_dir: Path) -> list[dict]:
     """Process application directories with README.md."""
     apps = []
 
-    for entry in sorted(cookbook_dir.iterdir()):
+    # Applications are now in the applications/ subdirectory
+    applications_dir = cookbook_dir / "applications"
+    if not applications_dir.exists():
+        print("  No applications directory found")
+        return apps
+
+    for entry in sorted(applications_dir.iterdir()):
         if not entry.is_dir() or entry.name in IGNORE_DIRS:
             continue
 
@@ -253,7 +259,7 @@ def process_applications(cookbook_dir: Path, apps_dir: Path) -> list[dict]:
         readme_content = readme_path.read_text()
 
         # Create application page with frontmatter
-        app_url = f"https://github.com/vectorize-io/hindsight-cookbook/tree/main/{entry.name}"
+        app_url = f"https://github.com/vectorize-io/hindsight-cookbook/tree/main/applications/{entry.name}"
 
         frontmatter = f"""---
 sidebar_position: {len(apps) + 1}

@@ -4,18 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-all"
-version = "0.4.8"
+version = "0.4.9"
 description = "Hindsight: Agent Memory That Works Like Human Memory - All-in-One Bundle"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "hindsight-api>=0.0.7",
     "hindsight-client>=0.0.7",
+    "hindsight-embed>=0.1.0",
 ]
 
 [tool.uv.sources]
 hindsight-api = { workspace = true }
 hindsight-client = { workspace = true }
+hindsight-embed = { workspace = true }
 
 [project.optional-dependencies]
 test = [

@@ -85,16 +85,118 @@ print(answer.text)
 </TabItem>
 </Tabs>
 
+## Embedded Client (Easiest Option)
+
+`HindsightEmbedded` provides the simplest way to use Hindsight in Python. It automatically manages a background server for you - no manual setup required:
+
+```python
+from hindsight import HindsightEmbedded
+import os
+
+# Server starts automatically on first use
+client = HindsightEmbedded(
+    profile="myapp",                        # Profile for data isolation
+    llm_provider="openai",
+    llm_model="gpt-4o-mini",
+    llm_api_key=os.environ["OPENAI_API_KEY"],
+)
+
+# Use immediately - no manual server management needed
+client.retain(bank_id="my-bank", content="Alice works at Google")
+results = client.recall(bank_id="my-bank", query="What does Alice do?")
+
+# Server continues running (auto-stops after idle timeout)
+# Or explicitly stop it:
+client.close(stop_daemon=True)
+```
+
+**What's a Profile?**
+
+A profile is an isolated Hindsight environment. Each profile gets its own PostgreSQL database (stored in `~/.pg0/instances/hindsight-embed-{profile}/`) and its own API server. Use different profiles to separate environments (dev/prod), applications, or users.
+
+**When to Use HindsightEmbedded**
+
+Use `HindsightEmbedded` when you want the server to start automatically and manage itself. Use `HindsightServer` when you need explicit control over server lifecycle (e.g., testing where you want immediate startup/shutdown).
+
+**Advanced Operations**
+
+`HindsightEmbedded` provides organized API namespaces for advanced operations. Each method call automatically ensures the daemon is running:
+
+```python
+from hindsight import HindsightEmbedded
+import os
+
+embedded = HindsightEmbedded(
+    profile="myapp",
+    llm_provider="openai",
+    llm_api_key=os.environ["OPENAI_API_KEY"],
+)
+
+# Core operations (automatically proxied)
+embedded.retain(bank_id="test", content="Hello")
+results = embedded.recall(bank_id="test", query="Hello")
+
+# Bank management
+embedded.banks.create(bank_id="test", name="Test Bank", mission="Help users")
+embedded.banks.set_mission(bank_id="test", mission="Updated mission")
+embedded.banks.delete(bank_id="test")
+
+# Mental models
+embedded.mental_models.create(
+    bank_id="test",
+    name="User Preferences",
+    content="User prefers dark mode"
+)
+models = embedded.mental_models.list(bank_id="test")
+embedded.mental_models.update(bank_id="test", mental_model_id="...", content="New content")
+
+# Directives
+embedded.directives.create(
+    bank_id="test",
+    name="Response Style",
+    content="Be concise and friendly"
+)
+directives = embedded.directives.list(bank_id="test")
+
+# List memories
+memories = embedded.memories.list(bank_id="test", type="world", limit=50)
+```
+
+**Why Use API Namespaces?**
+
+API namespaces (`banks`, `mental_models`, `directives`, `memories`) ensure the daemon is running before each call. This handles daemon crashes gracefully:
+
+```python
+# ✅ GOOD - Uses API namespace (daemon restarts handled)
+embedded.banks.create(bank_id="test", name="Test")
+
+# ❌ BAD - Direct client access (daemon crashes NOT handled)
+client = embedded.client
+client.create_bank(bank_id="test", name="Test")  # Fails if daemon crashed
+```
+
 ## Client Initialization
 
 ```python
-from hindsight_client import Hindsight
+from hindsight import HindsightClient
 
-client = Hindsight(
+client = HindsightClient(
     base_url="http://localhost:8888",  # Hindsight API URL
     timeout=30.0,                       # Request timeout in seconds
 )
+
+# Core operations
+client.retain(bank_id="test", content="Hello world")
+results = client.recall(bank_id="test", query="Hello")
+
+# Organized API access (same as HindsightEmbedded)
+client.banks.create(bank_id="test", name="Test Bank")
+models = client.mental_models.list(bank_id="test")
+directives = client.directives.list(bank_id="test")
+memories = client.memories.list(bank_id="test")
 ```
+
+Both `HindsightClient` and `HindsightEmbedded` provide the same organized API namespaces (`banks`, `mental_models`, `directives`, `memories`) for consistent developer experience.
 
 ## Core Operations
 
