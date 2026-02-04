@@ -291,61 +291,202 @@ class ClaudeCodeLLM(LLMInterface):
         tool_choice: str | dict[str, Any] = "auto",
     ) -> LLMToolCallResult:
         """
-        Make an LLM API call with tool/function calling support.
+        Make an LLM API call with tool/function calling support using Claude Agent SDK.
 
-        Note: This is a simplified implementation. Full tool support would require
-        integrating with Claude Agent SDK's tool system.
+        This implementation uses ClaudeSDKClient (not query()) because custom tools via
+        SDK MCP servers are only supported with the client. Tools are converted from OpenAI
+        format to SDK MCP tools, and tool names are formatted as mcp__hindsight_tools__{name}.
 
         Args:
             messages: List of message dicts. Can include tool results with role='tool'.
             tools: List of tool definitions in OpenAI format.
-            max_completion_tokens: Maximum tokens in response.
-            temperature: Sampling temperature.
+            max_completion_tokens: Maximum tokens in response (not used by Claude Agent SDK).
+            temperature: Sampling temperature (not used by Claude Agent SDK).
             scope: Scope identifier for tracking.
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or specific function.
+            tool_choice: How to choose tools (not used by Claude Agent SDK).
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
         """
-        # For now, use regular call without tools
-        # Full implementation would require mapping OpenAI tool format to Claude Agent SDK tools
-        logger.warning(
-            "Claude Code provider does not fully support tool calling yet. Falling back to regular text completion."
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ClaudeSDKClient,
+            SdkMcpTool,
+            TextBlock,
+            ToolUseBlock,
+            create_sdk_mcp_server,
         )
 
-        result = await self.call(
-            messages=messages,
-            response_format=None,
-            max_completion_tokens=max_completion_tokens,
-            temperature=temperature,
-            scope=scope,
-            max_retries=max_retries,
-            initial_backoff=initial_backoff,
-            max_backoff=max_backoff,
-            return_usage=True,
+        start_time = time.time()
+
+        # Convert OpenAI tool format to Claude Agent SDK SdkMcpTool format
+        sdk_tools: list[SdkMcpTool] = []
+        tool_names: list[str] = []
+
+        for tool in tools:
+            func = tool.get("function", {})
+            tool_name = func.get("name", "")
+            tool_description = func.get("description", "")
+            parameters = func.get("parameters", {})
+
+            # Create a handler with proper closure to avoid transport issues
+            def make_handler(name: str):
+                async def handler(args: dict[str, Any]) -> dict[str, Any]:
+                    # Return immediately with success - tool execution happens externally
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"[Tool {name} called successfully]",
+                            }
+                        ]
+                    }
+
+                return handler
+
+            sdk_tools.append(
+                SdkMcpTool(
+                    name=tool_name,
+                    description=tool_description,
+                    input_schema=parameters,
+                    handler=make_handler(tool_name),
+                )
+            )
+            tool_names.append(tool_name)
+
+        # Create an MCP server with the tools
+        mcp_server = create_sdk_mcp_server(
+            name="hindsight_tools",
+            version="1.0.0",
+            tools=sdk_tools if sdk_tools else None,
         )
 
-        if isinstance(result, tuple):
-            text, usage = result
-            return LLMToolCallResult(
-                content=text,
-                tool_calls=[],
-                finish_reason="stop",
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-            )
-        else:
-            # Fallback if return_usage didn't work as expected
-            return LLMToolCallResult(
-                content=str(result),
-                tool_calls=[],
-                finish_reason="stop",
-                input_tokens=0,
-                output_tokens=0,
-            )
+        # Build system prompt and user content from messages
+        system_prompt = ""
+        user_content = ""
+
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if role == "system":
+                system_prompt += ("\n\n" + content) if system_prompt else content
+            elif role == "user":
+                user_content += ("\n\n" + content) if user_content else content
+            elif role == "assistant":
+                # Include previous assistant messages as context
+                user_content += f"\n\n[Previous assistant response: {content}]"
+            elif role == "tool":
+                # Tool results are already in tool_results_map, append to user context
+                tool_call_id = msg.get("tool_call_id", "")
+                user_content += f"\n\n[Tool result for {tool_call_id}: {content}]"
+
+        # Format tool names for SDK MCP servers: mcp__{server_name}__{tool_name}
+        # This is required by the Claude Agent SDK for MCP server tools
+        allowed_tool_names = [f"mcp__hindsight_tools__{name}" for name in tool_names]
+
+        # Configure SDK options with MCP server
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt if system_prompt else None,
+            max_turns=1,  # Single-turn for API-style interactions
+            mcp_servers={"hindsight_tools": mcp_server} if sdk_tools else {},
+            allowed_tools=allowed_tool_names if allowed_tool_names else [],
+        )
+
+        # Call Claude Agent SDK with retry logic
+        last_exception = None
+        for attempt in range(max_retries + 1):
+            try:
+                full_text = ""
+                tool_calls: list[LLMToolCall] = []
+
+                # Use ClaudeSDKClient for tool calling support
+                # Note: query() does NOT support custom tools, only ClaudeSDKClient does
+                async with ClaudeSDKClient(options=options) as client:
+                    # Send the query
+                    await client.query(user_content)
+
+                    # Receive response
+                    async for message in client.receive_response():
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    full_text += block.text
+                                elif isinstance(block, ToolUseBlock):
+                                    # SDK returns tool names with MCP prefix (mcp__hindsight_tools__{name})
+                                    # Strip the prefix to return original tool name expected by caller
+                                    tool_name = block.name
+                                    if tool_name.startswith("mcp__hindsight_tools__"):
+                                        tool_name = tool_name.replace("mcp__hindsight_tools__", "", 1)
+
+                                    tool_calls.append(
+                                        LLMToolCall(
+                                            id=block.id,
+                                            name=tool_name,
+                                            arguments=block.input,
+                                        )
+                                    )
+
+                # Record metrics
+                duration = time.time() - start_time
+                metrics = get_metrics_collector()
+
+                # Estimate token usage (Claude Agent SDK doesn't report exact counts)
+                estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
+                estimated_output = len(full_text) // 4
+
+                metrics.record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    duration=duration,
+                    input_tokens=estimated_input,
+                    output_tokens=estimated_output,
+                    success=True,
+                )
+
+                # Log slow calls
+                if duration > 10.0:
+                    logger.info(
+                        f"slow llm call: scope={scope}, model={self.provider}/{self.model}, time={duration:.3f}s"
+                    )
+
+                return LLMToolCallResult(
+                    content=full_text if full_text else None,
+                    tool_calls=tool_calls,
+                    finish_reason="tool_calls" if tool_calls else "stop",
+                    input_tokens=estimated_input,
+                    output_tokens=estimated_output,
+                )
+
+            except Exception as e:
+                last_exception = e
+
+                # Check for authentication errors
+                error_str = str(e).lower()
+                if "auth" in error_str or "login" in error_str or "credential" in error_str:
+                    logger.error(f"Claude Code authentication error: {e}")
+                    raise RuntimeError(
+                        f"Claude Code authentication failed: {e}\n\n"
+                        "Run 'claude auth login' to authenticate with Claude Pro/Max."
+                    ) from e
+
+                if attempt < max_retries:
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    logger.warning(f"Claude Code tool call error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    await asyncio.sleep(backoff)
+                    continue
+                else:
+                    logger.error(f"Claude Code tool call error after {max_retries + 1} attempts: {e}")
+                    raise
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Claude Code tool call failed after all retries")
 
     async def cleanup(self) -> None:
         """Clean up resources (no HTTP client to close for Claude Agent SDK)."""

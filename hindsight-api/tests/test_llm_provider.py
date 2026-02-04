@@ -33,6 +33,12 @@ MODEL_MATRIX = [
     # Ollama models (local)
     ("ollama", "gemma3:12b"),
     ("ollama", "gemma3:1b"),
+    # Claude Code (uses Claude Agent SDK with Claude models)
+    ("claude-code", "claude-sonnet-4-20250514"),
+    # OpenAI Codex (uses MCP with Codex-specific models)
+    ("openai-codex", "gpt-5.2-codex"),
+    # Mock provider (for testing)
+    ("mock", "mock"),
 ]
 
 
@@ -48,6 +54,32 @@ def get_api_key_for_provider(provider: str) -> str | None:
     return os.getenv(env_var) if env_var else None
 
 
+def should_skip_provider(provider: str, model: str = "") -> tuple[bool, str]:
+    """Check if provider should be skipped and return reason."""
+    # Never skip mock provider
+    if provider == "mock":
+        return False, ""
+
+    # Skip Ollama in CI (no models available)
+    if provider == "ollama" and os.getenv("CI"):
+        return True, "Ollama not available in CI"
+
+    # Skip Ollama gemma models (don't support tool calling)
+    if provider == "ollama" and "gemma" in model.lower():
+        return True, f"Ollama {model} does not support tool calling"
+
+    # Don't skip claude-code or openai-codex - let them run if configured
+    # They will fail with clear errors if not set up properly
+
+    # Other providers need an API key
+    if provider not in ("ollama", "claude-code", "openai-codex", "mock"):
+        api_key = get_api_key_for_provider(provider)
+        if not api_key:
+            return True, f"No API key available (set {provider.upper()}_API_KEY)"
+
+    return False, ""
+
+
 @pytest.mark.parametrize("provider,model", MODEL_MATRIX)
 @pytest.mark.asyncio
 async def test_llm_provider_memory_operations(provider: str, model: str):
@@ -55,15 +87,11 @@ async def test_llm_provider_memory_operations(provider: str, model: str):
     Test LLM provider with actual memory operations: fact extraction and reflect.
     All models must pass this test.
     """
+    should_skip, reason = should_skip_provider(provider, model)
+    if should_skip:
+        pytest.skip(f"Skipping {provider}/{model}: {reason}")
+
     api_key = get_api_key_for_provider(provider)
-
-    # Skip Ollama tests in CI (no models available)
-    if provider == "ollama" and os.getenv("CI"):
-        pytest.skip(f"Skipping {provider}/{model}: Ollama not available in CI")
-
-    # Other providers need an API key
-    if provider != "ollama" and not api_key:
-        pytest.skip(f"Skipping {provider}/{model}: no API key available")
 
     llm = LLMProvider(
         provider=provider,
@@ -122,3 +150,89 @@ async def test_llm_provider_memory_operations(provider: str, model: str):
 
     assert response is not None, f"{provider}/{model} reflect returned None"
     assert len(response) > 10, f"{provider}/{model} reflect response too short"
+
+
+@pytest.mark.parametrize("provider,model", MODEL_MATRIX)
+@pytest.mark.asyncio
+async def test_llm_provider_tool_calling(provider: str, model: str):
+    """
+    Test LLM provider tool calling capability.
+    This verifies that the provider can properly call tools (critical for reflect agent).
+    """
+    should_skip, reason = should_skip_provider(provider, model)
+    if should_skip:
+        pytest.skip(f"Skipping {provider}/{model}: {reason}")
+
+    api_key = get_api_key_for_provider(provider)
+
+    llm = LLMProvider(
+        provider=provider,
+        api_key=api_key or "",
+        base_url="",
+        model=model,
+    )
+
+    # For mock provider, set it to return tool calls
+    if provider == "mock":
+        llm.set_mock_response([
+            {"name": "get_memory", "arguments": {"topic": "Paris trip"}},
+        ])
+
+    # Define simple test tools
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_memory",
+                "description": "Retrieve a memory about the user's trip",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "What to retrieve (e.g., 'Paris trip')"},
+                    },
+                    "required": ["topic"],
+                },
+            },
+        },
+    ]
+
+    # Call with tools - should return tool calls
+    result = await llm.call_with_tools(
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant with access to the user's memories."},
+            {"role": "user", "content": "What do you remember about my Paris trip? Use the get_memory tool."},
+        ],
+        tools=tools,
+        max_completion_tokens=500,
+    )
+
+    print(f"\n{provider}/{model} - Tool calling test:")
+    print(f"  Tool calls: {len(result.tool_calls)}")
+    print(f"  Content: {result.content[:200] if result.content else 'None'}...")
+    if result.tool_calls:
+        for tc in result.tool_calls:
+            print(f"    - {tc.name}({tc.arguments})")
+
+    # Verify tool calling worked
+    assert result.tool_calls is not None, f"{provider}/{model} returned None for tool_calls"
+    assert len(result.tool_calls) > 0, (
+        f"{provider}/{model} did not call any tools - provider may not support tool calling properly. "
+        f"Content: {result.content[:200] if result.content else 'None'}"
+    )
+
+    # Verify at least one tool call is the expected tool
+    tool_names = [tc.name for tc in result.tool_calls]
+    assert "get_memory" in tool_names, (
+        f"{provider}/{model} called wrong tools: {tool_names}. "
+        f"Expected 'get_memory'. This indicates tool calling is not working correctly."
+    )
+
+    # Verify content doesn't have meta-commentary (the bug we're fixing with Claude Code)
+    # Some providers return both tool calls AND explanatory text
+    if result.content:
+        content_lower = result.content.lower()
+        meta_phrases = ["i'll search", "let me search", "i'll look", "let me look", "i'm going to", "i will"]
+        has_meta = any(phrase in content_lower for phrase in meta_phrases)
+        if has_meta:
+            print(f"  WARNING: {provider}/{model} content has meta-commentary: {result.content[:100]}")
+            # Don't fail for this - some providers do return explanatory text alongside tool calls
