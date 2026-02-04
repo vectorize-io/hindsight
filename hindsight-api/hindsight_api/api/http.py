@@ -5,6 +5,7 @@ This module provides the create_app function to create and configure
 the FastAPI application with all API endpoints.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -35,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.memory_engine import Budget, fq_table
+from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.reflect.observations import Observation
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, TokenUsage
 from hindsight_api.engine.search.tags import TagsMatch
@@ -44,6 +45,8 @@ from hindsight_api.metrics import create_metrics_collector, get_metrics_collecto
 from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
+
+MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 
 
 class EntityIncludeOptions(BaseModel):
@@ -1722,6 +1725,15 @@ def _register_routes(app: FastAPI):
         handler_start = time.time()
         metrics = get_metrics_collector()
 
+        # Validate query length to prevent expensive operations on oversized queries
+        encoding = _get_tiktoken_encoding()
+        query_tokens = len(encoding.encode(request.query))
+        if query_tokens > MAX_QUERY_TOKENS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {MAX_QUERY_TOKENS}. Please shorten your query.",
+            )
+
         try:
             # Default to world and experience if not specified (exclude observation)
             fact_types = request.types if request.types else list(VALID_RECALL_FACT_TYPES)
@@ -1836,6 +1848,15 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except (asyncio.TimeoutError, TimeoutError):
+            handler_duration = time.time() - handler_start
+            logger.error(
+                f"[RECALL TIMEOUT] bank={bank_id} handler_duration={handler_duration:.3f}s - database query timed out"
+            )
+            raise HTTPException(
+                status_code=504,
+                detail="Request timed out while searching memories. Try a shorter or more specific query.",
+            )
         except Exception as e:
             import traceback
 
