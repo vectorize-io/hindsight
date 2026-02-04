@@ -63,9 +63,7 @@ async def tool_search_mental_models(
 
     # Use the centralized tag filtering logic
     if tags:
-        tag_clause, tag_params, next_param = build_tags_where_clause(
-            tags, param_offset=next_param, match=tags_match
-        )
+        tag_clause, tag_params, next_param = build_tags_where_clause(tags, param_offset=next_param, match=tags_match)
         filters += f" {tag_clause}"
         params.extend(tag_params)
 
