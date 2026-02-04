@@ -30,7 +30,7 @@ import os
 import sys
 from pathlib import Path
 
-from .profile_utils import get_profile_database_url, sanitize_profile_name
+from . import get_embed_manager
 
 CONFIG_DIR = Path.home() / ".hindsight"
 CONFIG_FILE = CONFIG_DIR / "embed"
@@ -426,7 +426,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
     from . import daemon_client
 
     daemon_profile = profile_name if profile_name else None
-    if daemon_client._is_daemon_running(daemon_profile):
+    if daemon_client.is_daemon_running(daemon_profile):
         print("\n  \033[2mRestarting daemon with new configuration...\033[0m")
         daemon_client.stop_daemon(daemon_profile)
 
@@ -481,7 +481,7 @@ def do_daemon(args, config: dict, logger):
 
         console = Console()
 
-        if daemon_client._is_daemon_running(profile):
+        if daemon_client.is_daemon_running(profile):
             # Build title with profile and port
             if profile:
                 already_running_title = (
@@ -518,7 +518,7 @@ def do_daemon(args, config: dict, logger):
 
         console = Console()
 
-        if not daemon_client._is_daemon_running(profile):
+        if not daemon_client.is_daemon_running(profile):
             # Build title for not running status
             if profile:
                 not_running_title = f"[bold]Daemon Status[/bold] [dim]({profile})[/dim]"
@@ -569,7 +569,7 @@ def do_daemon(args, config: dict, logger):
 
         console = Console()
 
-        if daemon_client._is_daemon_running(profile):
+        if daemon_client.is_daemon_running(profile):
             status_text = Text()
             status_text.append("Daemon is running\n\n", style="green bold")
             status_text.append("  URL: ", style="dim")
@@ -581,7 +581,7 @@ def do_daemon(args, config: dict, logger):
             database_url = os.getenv("HINDSIGHT_EMBED_API_DATABASE_URL")
             if not database_url:
                 # Default: use profile-specific pg0 (shared utility ensures consistency)
-                database_url = get_profile_database_url(profile)
+                database_url = get_embed_manager().get_database_url(profile)
 
             if database_url.startswith("pg0://"):
                 pg0_name = database_url.replace("pg0://", "")

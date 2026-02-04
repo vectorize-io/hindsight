@@ -39,7 +39,7 @@ import threading
 from typing import Optional
 
 from hindsight_client import Hindsight
-from hindsight_embed.daemon_client import ensure_daemon_running, get_daemon_url, stop_daemon
+from hindsight_embed import get_embed_manager
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,7 @@ class HindsightEmbedded:
         self._lock = threading.Lock()
         self._started = False
         self._closed = False
+        self._manager = get_embed_manager()
 
     def _ensure_started(self):
         """Ensure daemon is running (thread-safe)."""
@@ -133,14 +134,14 @@ class HindsightEmbedded:
             if self._closed:
                 raise RuntimeError("Cannot use HindsightEmbedded after it has been closed")
 
-            # Use hindsight-embed's daemon management (same as CLI)
+            # Use embed manager interface for daemon management
             logger.info(f"Ensuring daemon is running for profile '{self.profile}'...")
-            success = ensure_daemon_running(self.config, self.profile)
+            success = self._manager.ensure_running(self.config, self.profile)
             if not success:
                 raise RuntimeError(f"Failed to start daemon for profile '{self.profile}'")
 
             # Get daemon URL and create client
-            daemon_url = get_daemon_url(self.profile)
+            daemon_url = self._manager.get_url(self.profile)
             self._client = Hindsight(base_url=daemon_url)
             self._started = True
             logger.info(f"Connected to daemon at {daemon_url}")
@@ -167,7 +168,7 @@ class HindsightEmbedded:
             # Optionally stop daemon (daemon has idle timeout, so not required)
             if stop_daemon_on_close and self._started:
                 logger.info(f"Stopping daemon for profile '{self.profile}'...")
-                stop_daemon(self.profile)
+                self._manager.stop(self.profile)
 
             self._closed = True
 
@@ -227,7 +228,7 @@ class HindsightEmbedded:
     def url(self) -> str:
         """Get the daemon URL (starts daemon if needed)."""
         self._ensure_started()
-        return get_daemon_url(self.profile)
+        return self._manager.get_url(self.profile)
 
     @property
     def is_running(self) -> bool:

@@ -1,10 +1,16 @@
 """Hindsight embedded CLI - local memory operations without a server."""
 
-from .profile_utils import get_profile_database_url, sanitize_profile_name
+from .daemon_embed_manager import DaemonEmbedManager
+from .embed_manager import EmbedManager
 
 __version__ = "0.4.8"
 
 __all__ = [
-    "get_profile_database_url",
-    "sanitize_profile_name",
+    "EmbedManager",
+    "DaemonEmbedManager",
 ]
+
+
+def get_embed_manager() -> EmbedManager:
+    """Get the default embed manager instance."""
+    return DaemonEmbedManager()
