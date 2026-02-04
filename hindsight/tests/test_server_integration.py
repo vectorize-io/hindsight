@@ -267,6 +267,3 @@ def test_list_banks(client, shared_server):
     assert bank2_id in bank_ids, f"Should find {bank2_id} in bank list"
 
     print(f"✓ Successfully listed {len(response.banks)} banks with correct bank_id field")
-
-    # Cleanup
-    loop.run_until_complete(api_client.close())
