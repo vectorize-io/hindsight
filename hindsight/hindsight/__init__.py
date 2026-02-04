@@ -57,11 +57,9 @@ Using context manager:
     ```
 """
 
+from .client_wrapper import HindsightClient
 from .embedded import HindsightEmbedded
 from .server import Server as HindsightServer, start_server
-
-# Re-export Client from hindsight-client
-from hindsight_client import Hindsight as HindsightClient
 
 __all__ = [
     "HindsightServer",

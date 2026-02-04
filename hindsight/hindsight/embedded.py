@@ -41,6 +41,8 @@ from typing import Optional
 from hindsight_client import Hindsight
 from hindsight_embed import get_embed_manager
 
+from .api_namespaces import BanksAPI, DirectivesAPI, MemoriesAPI, MentalModelsAPI
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,6 +122,12 @@ class HindsightEmbedded:
         self._started = False
         self._closed = False
         self._manager = get_embed_manager()
+
+        # API namespaces (initialized once, lazily)
+        self._banks_api: Optional[BanksAPI] = None
+        self._mental_models_api: Optional[MentalModelsAPI] = None
+        self._directives_api: Optional[DirectivesAPI] = None
+        self._memories_api: Optional[MemoriesAPI] = None
 
     def _ensure_started(self):
         """Ensure daemon is running (thread-safe)."""
@@ -223,6 +231,139 @@ class HindsightEmbedded:
     def __del__(self):
         """Cleanup on garbage collection."""
         self._cleanup()
+
+    @property
+    def banks(self) -> BanksAPI:
+        """
+        Access bank management operations.
+
+        Each method call ensures the daemon is running before executing.
+
+        Example:
+            ```python
+            from hindsight import HindsightEmbedded
+
+            embedded = HindsightEmbedded(profile="myapp", ...)
+
+            # Create a bank
+            embedded.banks.create(bank_id="test", name="Test Bank")
+
+            # Set mission
+            embedded.banks.set_mission(bank_id="test", mission="Help users")
+            ```
+        """
+        if self._banks_api is None:
+            self._banks_api = BanksAPI(self)
+        return self._banks_api
+
+    @property
+    def mental_models(self) -> MentalModelsAPI:
+        """
+        Access mental model operations.
+
+        Each method call ensures the daemon is running before executing.
+
+        Example:
+            ```python
+            from hindsight import HindsightEmbedded
+
+            embedded = HindsightEmbedded(profile="myapp", ...)
+
+            # Create a mental model
+            embedded.mental_models.create(
+                bank_id="test",
+                name="User Preferences",
+                content="User prefers dark mode"
+            )
+
+            # List mental models
+            models = embedded.mental_models.list(bank_id="test")
+            ```
+        """
+        if self._mental_models_api is None:
+            self._mental_models_api = MentalModelsAPI(self)
+        return self._mental_models_api
+
+    @property
+    def directives(self) -> DirectivesAPI:
+        """
+        Access directive operations.
+
+        Each method call ensures the daemon is running before executing.
+
+        Example:
+            ```python
+            from hindsight import HindsightEmbedded
+
+            embedded = HindsightEmbedded(profile="myapp", ...)
+
+            # Create a directive
+            embedded.directives.create(
+                bank_id="test",
+                name="Response Style",
+                content="Always be concise and friendly"
+            )
+
+            # List directives
+            directives = embedded.directives.list(bank_id="test")
+            ```
+        """
+        if self._directives_api is None:
+            self._directives_api = DirectivesAPI(self)
+        return self._directives_api
+
+    @property
+    def memories(self) -> MemoriesAPI:
+        """
+        Access memory listing operations.
+
+        Each method call ensures the daemon is running before executing.
+
+        Example:
+            ```python
+            from hindsight import HindsightEmbedded
+
+            embedded = HindsightEmbedded(profile="myapp", ...)
+
+            # List memories
+            memories = embedded.memories.list(
+                bank_id="test",
+                type="world",
+                limit=50
+            )
+            ```
+        """
+        if self._memories_api is None:
+            self._memories_api = MemoriesAPI(self)
+        return self._memories_api
+
+    @property
+    def client(self) -> Hindsight:
+        """
+        Get the underlying Hindsight client for direct access.
+
+        WARNING: Using this property directly means daemon restarts won't be
+        handled automatically. Prefer using the API namespaces (banks, mental_models,
+        directives, memories) or direct method calls on HindsightEmbedded instead.
+
+        Ensures daemon is started before returning the client.
+
+        Returns:
+            Hindsight: The underlying client instance
+
+        Example:
+            ```python
+            from hindsight import HindsightEmbedded
+
+            embedded = HindsightEmbedded(profile="myapp", ...)
+
+            # Direct access (not recommended - daemon crashes won't be handled)
+            client = embedded.client
+            banks = client.list_banks()  # If daemon crashes, this will fail
+            ```
+        """
+        self._ensure_started()
+        return self._client
 
     @property
     def url(self) -> str:
