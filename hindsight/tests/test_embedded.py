@@ -260,15 +260,15 @@ def test_embedded_multiple_banks(llm_config):
     try:
         # Create first bank and store data
         client.create_bank(bank_id=bank1_id, name="Bank 1")
-        client.retain(bank_id=bank1_id, content="Content for bank 1")
+        client.retain(bank_id=bank1_id, content="Alice prefers Python for data science")
 
         # Create second bank and store data
         client.create_bank(bank_id=bank2_id, name="Bank 2")
-        client.retain(bank_id=bank2_id, content="Content for bank 2")
+        client.retain(bank_id=bank2_id, content="Bob uses JavaScript for web development")
 
         # Recall from both banks
-        results1 = client.recall(bank_id=bank1_id, query="content")
-        results2 = client.recall(bank_id=bank2_id, query="content")
+        results1 = client.recall(bank_id=bank1_id, query="programming language")
+        results2 = client.recall(bank_id=bank2_id, query="programming language")
 
         assert len(results1.results) > 0
         assert len(results2.results) > 0
@@ -296,14 +296,14 @@ def test_embedded_profile_isolation(llm_config):
 
     try:
         # Store data in profile1
-        client1.retain(bank_id=bank_id, content="Content from profile 1")
+        client1.retain(bank_id=bank_id, content="User likes TypeScript for frontend development")
 
         # Store different data in profile2
-        client2.retain(bank_id=bank_id, content="Content from profile 2")
+        client2.retain(bank_id=bank_id, content="User prefers Rust for systems programming")
 
         # Each profile should only see its own data
-        results1 = client1.recall(bank_id=bank_id, query="content")
-        results2 = client2.recall(bank_id=bank_id, query="content")
+        results1 = client1.recall(bank_id=bank_id, query="programming preference")
+        results2 = client2.recall(bank_id=bank_id, query="programming preference")
 
         # Both should have results
         assert len(results1.results) > 0

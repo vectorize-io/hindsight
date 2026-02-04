@@ -765,6 +765,10 @@ jobs:
       HINDSIGHT_API_LLM_PROVIDER: groq
       HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
       HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
+      # For test_server_integration.py compatibility
+      HINDSIGHT_LLM_PROVIDER: groq
+      HINDSIGHT_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_LLM_MODEL: openai/gpt-oss-20b
       # Prefer CPU-only PyTorch in CI
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
 
