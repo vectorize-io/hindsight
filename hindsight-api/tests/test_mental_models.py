@@ -522,6 +522,81 @@ class TestDirectivesInReflect:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_reflect_based_on_structure(self, memory: MemoryEngine, request_context):
+        """Test that reflect returns correct based_on structure with directives and memories separated."""
+        bank_id = f"test-reflect-based-on-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Add some memories
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works at Google as a software engineer."},
+                {"content": "Bob is a product manager at Microsoft."},
+                {"content": "The team meets every Monday at 9am."},
+            ],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        # Create a directive
+        directive = await memory.create_directive(
+            bank_id=bank_id,
+            name="Professional Tone",
+            content="Always maintain a professional and formal tone in responses.",
+            request_context=request_context,
+        )
+        directive_id = directive["id"]
+
+        # Run reflect which returns the core result
+        result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="Who works at Google?",
+            request_context=request_context,
+        )
+
+        # Verify based_on structure exists
+        assert result.based_on is not None
+
+        # Verify directives key exists and contains our directive
+        assert "directives" in result.based_on
+        directives_list = result.based_on.get("directives", [])
+
+        # Verify directives are dicts with id, name, content (not MemoryFact objects)
+        assert len(directives_list) > 0, "Should have at least one directive"
+        directive_found = False
+        for d in directives_list:
+            assert isinstance(d, dict), f"Directive should be dict, got {type(d)}"
+            assert "id" in d, "Directive dict should have 'id'"
+            assert "name" in d, "Directive dict should have 'name'"
+            assert "content" in d, "Directive dict should have 'content'"
+            # Check if this is our directive
+            if d["id"] == directive_id:
+                directive_found = True
+                assert d["name"] == "Professional Tone"
+                assert "professional" in d["content"].lower()
+
+        assert directive_found, f"Our directive {directive_id} should be in based_on.directives"
+
+        # Verify memories (world/experience) are separate from directives
+        has_memories = "world" in result.based_on or "experience" in result.based_on
+        assert has_memories, "Should have world or experience memories"
+
+        # Verify that if mental-models key exists, it's separate from directives
+        if "mental-models" in result.based_on:
+            mental_models = result.based_on.get("mental-models", [])
+            # Verify mental models are MemoryFact objects, not dicts like directives
+            for mm in mental_models:
+                assert hasattr(mm, "fact_type"), "Mental model should be MemoryFact with fact_type"
+                assert mm.fact_type == "mental-models"
+                assert hasattr(mm, "context")
+                assert "mental model" in mm.context.lower()
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestDirectivesPromptInjection:
     """Test that directives are properly injected into the system prompt."""
