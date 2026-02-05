@@ -3673,12 +3673,14 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Load directives from the dedicated directives table
         # Directives are hard rules that must be followed in all responses
+        # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
         directives_raw = await self.list_directives(
             bank_id=bank_id,
             tags=tags,
             tags_match=tags_match,
             active_only=True,
             request_context=request_context,
+            isolation_mode=True,
         )
         # Convert directive format to the expected format for reflect agent
         # The agent expects: name, description (optional), observations (list of {title, content})
@@ -3747,7 +3749,16 @@ class MemoryEngine(MemoryEngineInterface):
         # Extract memories from recall tool outputs - only include memories the agent actually used
         # agent_result.used_memory_ids contains validated IDs from the done action
         used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
-        based_on: dict[str, list[MemoryFact]] = {"world": [], "experience": [], "opinion": [], "observation": []}
+        # based_on stores facts, mental models, and directives
+        # Note: directives list stores raw directive dicts (not MemoryFact), which will be converted to Directive objects
+        based_on: dict[str, list[MemoryFact] | list[dict[str, Any]]] = {
+            "world": [],
+            "experience": [],
+            "opinion": [],
+            "observation": [],
+            "mental-models": [],
+            "directives": [],
+        }
         seen_memory_ids: set[str] = set()
         for tc in agent_result.tool_trace:
             if tc.tool == "recall" and "memories" in tc.output:
@@ -3849,38 +3860,15 @@ class MemoryEngine(MemoryEngineInterface):
                         )
                 # List all models lookup - don't add to based_on (too verbose, just a listing)
 
-        # Add directives to based_on["mental-models"] (they are mental models with subtype='directive')
-        for directive in directives:
-            # Extract summary from observations
-            summary_parts: list[str] = []
-            for obs in directive.get("observations", []):
-                # Support both Pydantic Observation objects and dicts
-                if hasattr(obs, "content"):
-                    content = obs.content
-                    title = obs.title
-                else:
-                    content = obs.get("content", "")
-                    title = obs.get("title", "")
-                if title and content:
-                    summary_parts.append(f"{title}: {content}")
-                elif content:
-                    summary_parts.append(content)
-
-            # Fallback to description if no observations
-            if not summary_parts and directive.get("description"):
-                summary_parts.append(directive["description"])
-
-            directive_name = directive.get("name", "")
-            directive_summary = "; ".join(summary_parts) if summary_parts else ""
-            based_on["mental-models"].append(
-                MemoryFact(
-                    id=directive.get("id", ""),
-                    text=f"{directive_name}: {directive_summary}",
-                    fact_type="mental-models",
-                    context="directive (directive)",
-                    occurred_start=None,
-                    occurred_end=None,
-                )
+        # Add directives to based_on["directives"]
+        # Store raw directive dicts (with id, name, content) for http.py to convert to ReflectDirective
+        for directive_raw in directives_raw:
+            based_on["directives"].append(
+                {
+                    "id": directive_raw["id"],
+                    "name": directive_raw["name"],
+                    "content": directive_raw["content"],
+                }
             )
 
         # Build directives_applied from agent result
@@ -4754,6 +4742,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "id": str(fact.id),
                         "text": fact.text,
                         "type": fact_type,
+                        "context": fact.context,  # Include context to distinguish directives from mental models in UI
                     }
                     for fact in facts
                 ]
@@ -4942,6 +4931,7 @@ class MemoryEngine(MemoryEngineInterface):
         limit: int = 100,
         offset: int = 0,
         request_context: "RequestContext",
+        isolation_mode: bool = False,
     ) -> list[dict[str, Any]]:
         """List directives for a bank.
 
@@ -4953,6 +4943,9 @@ class MemoryEngine(MemoryEngineInterface):
             limit: Maximum number of results
             offset: Offset for pagination
             request_context: Request context for authentication
+            isolation_mode: When True and tags=None, only return directives with no tags.
+                This prevents tag-scoped directives from leaking into untagged operations.
+                Default False (normal API behavior - returns all directives when tags=None)
 
         Returns:
             List of directive dicts
@@ -4962,6 +4955,8 @@ class MemoryEngine(MemoryEngineInterface):
 
         async with acquire_with_retry(pool) as conn:
             # Build filters
+            from .search.tags import build_tags_where_clause
+
             filters = ["bank_id = $1"]
             params: list[Any] = [bank_id]
             param_idx = 2
@@ -4969,15 +4964,23 @@ class MemoryEngine(MemoryEngineInterface):
             if active_only:
                 filters.append("is_active = TRUE")
 
+            # Apply tags filter:
+            # - If tags provided: use standard filtering (with strict modes support)
+            # - If tags=None and isolation_mode=True: only include directives with NO tags
+            #   (prevents tag-scoped directives from leaking into untagged reflect/refresh)
+            # - If tags=None and isolation_mode=False: no filtering (normal API behavior)
             if tags:
-                if tags_match == "all":
-                    filters.append(f"tags @> ${param_idx}::varchar[]")
-                elif tags_match == "exact":
-                    filters.append(f"tags = ${param_idx}::varchar[]")
-                else:  # any
-                    filters.append(f"tags && ${param_idx}::varchar[]")
-                params.append(tags)
-                param_idx += 1
+                tags_clause, tags_params, param_idx = build_tags_where_clause(
+                    tags=tags, param_offset=param_idx, table_alias="", match=tags_match
+                )
+                if tags_clause:
+                    # Remove leading "AND " from clause since we're building filters list
+                    filters.append(tags_clause.replace("AND ", "", 1))
+                    params.extend(tags_params)
+            elif isolation_mode:
+                # Isolation mode: only include directives with empty/null tags
+                # This ensures tag-scoped directives don't apply to untagged operations
+                filters.append("(tags IS NULL OR tags = '{}')")
 
             params.extend([limit, offset])
 

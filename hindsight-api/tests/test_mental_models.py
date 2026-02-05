@@ -312,6 +312,49 @@ class TestDirectiveTags:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_list_all_directives_without_filter(self, memory: MemoryEngine, request_context):
+        """Test that listing directives without tags returns ALL directives (both tagged and untagged)."""
+        bank_id = f"test-directive-list-all-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Create untagged directive
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Untagged Directive",
+            content="This has no tags",
+            request_context=request_context,
+        )
+
+        # Create tagged directive
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Tagged Directive",
+            content="This has tags",
+            tags=["project-x"],
+            request_context=request_context,
+        )
+
+        # List ALL directives (no tag filter, isolation_mode defaults to False)
+        all_directives = await memory.list_directives(
+            bank_id=bank_id,
+            request_context=request_context,
+        )
+
+        # Should return BOTH tagged and untagged directives
+        assert len(all_directives) == 2
+        directive_names = {d["name"] for d in all_directives}
+        assert "Untagged Directive" in directive_names
+        assert "Tagged Directive" in directive_names
+
+        # Verify the tagged directive has its tags
+        tagged = next(d for d in all_directives if d["name"] == "Tagged Directive")
+        assert tagged["tags"] == ["project-x"]
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestReflect:
     """Test reflect endpoint."""
@@ -395,6 +438,86 @@ class TestDirectivesInReflect:
         assert (
             french_word_count >= 2
         ), f"Expected French response, but got: {result.text[:200]}"
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_tagged_directive_not_applied_without_tags(self, memory: MemoryEngine, request_context):
+        """Test that directives with tags are NOT applied to untagged reflect operations."""
+        bank_id = f"test-directive-isolation-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Add some untagged content
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "The sky is blue."},
+                {"content": "Water is wet."},
+            ],
+            request_context=request_context,
+        )
+
+        # Add some tagged content for the project-x context
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "The sky is blue according to project X standards.", "tags": ["project-x"]},
+                {"content": "Project X color guidelines specify sky is blue.", "tags": ["project-x"]},
+            ],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        # Create an untagged directive (should be applied)
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="General Policy",
+            content="Always be polite and start responses with 'Hello!'",
+            request_context=request_context,
+        )
+
+        # Create a tagged directive (should NOT be applied to untagged reflect)
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Tagged Policy",
+            content="ALWAYS respond in ALL CAPS and end with 'PROJECT-X ONLY'",
+            tags=["project-x"],
+            request_context=request_context,
+        )
+
+        # Run reflect without tags - should only apply the untagged directive
+        result = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What color is the sky?",
+            request_context=request_context,
+        )
+
+        response_lower = result.text.lower()
+
+        # Should follow the untagged directive (polite greeting)
+        assert "hello" in response_lower, f"Expected 'Hello' from untagged directive, but got: {result.text}"
+
+        # Should NOT follow the tagged directive (all caps and PROJECT-X)
+        # If it did follow, the entire response would be in caps
+        all_caps = result.text.replace(" ", "").replace("!", "").replace(".", "").isupper()
+        assert not all_caps, f"Tagged directive was incorrectly applied to untagged operation: {result.text}"
+        assert "project-x only" not in response_lower, f"Tagged directive was incorrectly applied: {result.text}"
+
+        # Now run reflect WITH the tag - should apply BOTH directives
+        result_tagged = await memory.reflect_async(
+            bank_id=bank_id,
+            query="What color is the sky?",
+            tags=["project-x"],
+            tags_match="all_strict",
+            request_context=request_context,
+        )
+
+        response_tagged_lower = result_tagged.text.lower()
+
+        # With strict matching and tags, should apply the tagged directive
+        assert "project-x only" in response_tagged_lower, f"Tagged directive should be applied with tags: {result_tagged.text}"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)

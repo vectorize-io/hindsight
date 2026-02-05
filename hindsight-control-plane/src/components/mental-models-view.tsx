@@ -55,6 +55,7 @@ interface ReflectResponseBasedOnFact {
   id: string;
   text: string;
   type: string;
+  context?: string;
 }
 
 interface ReflectResponse {
@@ -978,6 +979,30 @@ function MentalModelDetailPanel({
         .flatMap(([factType, facts]) => facts.map((fact) => ({ ...fact, factType })))
     : [];
 
+  // Helper to determine display label for fact type
+  const getFactTypeDisplay = (fact: any) => {
+    if (fact.factType === "mental-models") {
+      // Check context to distinguish directives from mental models
+      if (fact.context?.includes("directive")) {
+        return {
+          label: "directive",
+          color: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+        };
+      }
+      return {
+        label: "mental model",
+        color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+      };
+    }
+    if (fact.factType === "world") {
+      return { label: "world", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" };
+    }
+    if (fact.factType === "experience") {
+      return { label: "experience", color: "bg-green-500/10 text-green-600 dark:text-green-400" };
+    }
+    return { label: fact.factType, color: "bg-slate-500/10 text-slate-600 dark:text-slate-400" };
+  };
+
   // Observations are now in based_on with type=observation
   const observations = mentalModel.reflect_response?.based_on?.observation || [];
 
@@ -1101,35 +1126,32 @@ function MentalModelDetailPanel({
                 Based On ({basedOnFacts.length} {basedOnFacts.length === 1 ? "fact" : "facts"})
               </div>
               <div className="space-y-3">
-                {basedOnFacts.map((fact, i) => (
-                  <div
-                    key={fact.id || i}
-                    className="p-4 bg-muted/50 rounded-lg border border-border/50"
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          fact.factType === "world"
-                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                            : fact.factType === "experience"
-                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                              : "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                        }`}
-                      >
-                        {fact.factType}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-xs"
-                        onClick={() => setViewMemoryId(fact.id)}
-                      >
-                        View
-                      </Button>
+                {basedOnFacts.map((fact, i) => {
+                  const display = getFactTypeDisplay(fact);
+                  return (
+                    <div
+                      key={fact.id || i}
+                      className="p-4 bg-muted/50 rounded-lg border border-border/50"
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-medium ${display.color}`}
+                        >
+                          {display.label}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-xs"
+                          onClick={() => setViewMemoryId(fact.id)}
+                        >
+                          View
+                        </Button>
+                      </div>
+                      <p className="text-sm text-foreground leading-relaxed">{fact.text}</p>
                     </div>
-                    <p className="text-sm text-foreground leading-relaxed">{fact.text}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
