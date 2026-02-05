@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.mental_model_trigger import MentalModelTrigger
 from typing import Optional, Set
@@ -31,7 +31,7 @@ class MentalModelResponse(BaseModel):
     bank_id: StrictStr
     name: StrictStr
     source_query: StrictStr
-    content: StrictStr
+    content: StrictStr = Field(description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)")
     tags: Optional[List[StrictStr]] = None
     max_tokens: Optional[StrictInt] = 2048
     trigger: Optional[MentalModelTrigger] = None

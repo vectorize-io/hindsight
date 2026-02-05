@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -27,7 +27,7 @@ class ReflectFact(BaseModel):
     A fact used in think response.
     """ # noqa: E501
     id: Optional[StrictStr] = None
-    text: StrictStr
+    text: StrictStr = Field(description="Fact text. When type='observation', this contains markdown-formatted consolidated knowledge")
     type: Optional[StrictStr] = None
     context: Optional[StrictStr] = None
     occurred_start: Optional[StrictStr] = None

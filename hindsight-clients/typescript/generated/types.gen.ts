@@ -1034,6 +1034,8 @@ export type MentalModelResponse = {
   source_query: string;
   /**
    * Content
+   *
+   * The mental model content as well-formatted markdown (auto-generated from reflect endpoint)
    */
   content: string;
   /**
@@ -1382,6 +1384,8 @@ export type ReflectFact = {
   id?: string | null;
   /**
    * Text
+   *
+   * Fact text. When type='observation', this contains markdown-formatted consolidated knowledge
    */
   text: string;
   /**
@@ -1523,6 +1527,8 @@ export type ReflectRequest = {
 export type ReflectResponse = {
   /**
    * Text
+   *
+   * The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)
    */
   text: string;
   /**
