@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Docker: Claude CLI (`@anthropic-ai/claude-code`) for `claude-code` LLM provider support
+  - Enables using Claude via Agent SDK authentication in Docker containers
+  - Creates `/home/hindsight/.claude/` directory for credentials mount
+
+### Added
 - OpenClaw plugin: Dynamic memory banks for per-channel isolation
   - Each channel gets its own bank: `{messageProvider}-{channelId}` (e.g., `slack-C123`, `telegram-456`)
   - `dynamicBankId` config option (default: true)
