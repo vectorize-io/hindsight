@@ -87,3 +87,22 @@ class TenantExtension(Extension, ABC):
             For single-tenant setups, return [Tenant(schema="public")].
         """
         ...
+
+    async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
+        """
+        Authenticate MCP requests.
+
+        By default, this calls authenticate(). Override this method to provide
+        different authentication behavior for MCP endpoints (e.g., to disable
+        auth for backwards compatibility with existing MCP servers).
+
+        Args:
+            context: The action context containing API key and other auth data.
+
+        Returns:
+            TenantContext with the schema_name for database operations.
+
+        Raises:
+            AuthenticationError: If authentication fails.
+        """
+        return await self.authenticate(context)

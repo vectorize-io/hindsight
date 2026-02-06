@@ -54,6 +54,7 @@ class ApiKeyTenantExtension(TenantExtension):
         HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
         HINDSIGHT_API_TENANT_API_KEY=your-secret-key
         HINDSIGHT_API_DATABASE_SCHEMA=your-schema (optional, defaults to 'public')
+        HINDSIGHT_API_TENANT_MCP_AUTH_DISABLED=true (optional, disable auth for MCP endpoints)
 
     For multi-tenant setups with separate schemas per tenant, implement a custom
     TenantExtension that looks up the schema based on the API key or token claims.
@@ -64,6 +65,8 @@ class ApiKeyTenantExtension(TenantExtension):
         self.expected_api_key = config.get("api_key")
         if not self.expected_api_key:
             raise ValueError("HINDSIGHT_API_TENANT_API_KEY is required when using ApiKeyTenantExtension")
+        # Allow disabling MCP auth for backwards compatibility
+        self.mcp_auth_disabled = config.get("mcp_auth_disabled", "").lower() in ("true", "1", "yes")
 
     async def authenticate(self, context: RequestContext) -> TenantContext:
         """Validate API key and return configured schema context."""
@@ -74,3 +77,14 @@ class ApiKeyTenantExtension(TenantExtension):
     async def list_tenants(self) -> list[Tenant]:
         """Return configured schema for single-tenant setup."""
         return [Tenant(schema=get_config().database_schema)]
+
+    async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
+        """
+        Authenticate MCP requests.
+
+        If mcp_auth_disabled is set, skip authentication for backwards compatibility.
+        Otherwise, delegate to authenticate().
+        """
+        if self.mcp_auth_disabled:
+            return TenantContext(schema_name=get_config().database_schema)
+        return await self.authenticate(context)
