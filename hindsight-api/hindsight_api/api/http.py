@@ -523,7 +523,9 @@ class ReflectFact(BaseModel):
     )
 
     id: str | None = None
-    text: str
+    text: str = Field(
+        description="Fact text. When type='observation', this contains markdown-formatted consolidated knowledge"
+    )
     type: str | None = None  # fact type: world, experience, observation
     context: str | None = None
     occurred_start: str | None = None
@@ -588,7 +590,7 @@ class ReflectResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "text": "Based on my understanding, AI is a transformative technology...",
+                "text": "## AI Overview\n\nBased on my understanding, AI is a **transformative technology**:\n\n- Used extensively in healthcare\n- Discussed in recent conversations\n- Continues to evolve rapidly",
                 "based_on": {
                     "memories": [
                         {"id": "123", "text": "AI is used in healthcare", "type": "world"},
@@ -616,7 +618,9 @@ class ReflectResponse(BaseModel):
         }
     )
 
-    text: str
+    text: str = Field(
+        description="The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)"
+    )
     based_on: ReflectBasedOn | None = Field(
         default=None,
         description="Evidence used to generate the response. Only present when include.facts is set.",
@@ -1114,7 +1118,9 @@ class MentalModelResponse(BaseModel):
     bank_id: str
     name: str
     source_query: str
-    content: str
+    content: str = Field(
+        description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)"
+    )
     tags: list[str] = Field(default_factory=list)
     max_tokens: int = Field(default=2048)
     trigger: MentalModelTrigger = Field(default_factory=MentalModelTrigger)

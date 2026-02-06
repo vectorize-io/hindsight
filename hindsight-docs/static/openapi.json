@@ -4678,7 +4678,8 @@
           },
           "content": {
             "type": "string",
-            "title": "Content"
+            "title": "Content",
+            "description": "The mental model content as well-formatted markdown (auto-generated from reflect endpoint)"
           },
           "tags": {
             "items": {
@@ -5397,7 +5398,8 @@
           },
           "text": {
             "type": "string",
-            "title": "Text"
+            "title": "Text",
+            "description": "Fact text. When type='observation', this contains markdown-formatted consolidated knowledge"
           },
           "type": {
             "anyOf": [
@@ -5657,7 +5659,8 @@
         "properties": {
           "text": {
             "type": "string",
-            "title": "Text"
+            "title": "Text",
+            "description": "The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)"
           },
           "based_on": {
             "anyOf": [
@@ -5734,7 +5737,7 @@
             ],
             "summary": "AI is transformative"
           },
-          "text": "Based on my understanding, AI is a transformative technology...",
+          "text": "## AI Overview\n\nBased on my understanding, AI is a **transformative technology**:\n\n- Used extensively in healthcare\n- Discussed in recent conversations\n- Continues to evolve rapidly",
           "trace": {
             "llm_calls": [
               {

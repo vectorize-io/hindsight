@@ -2,7 +2,7 @@
 
 CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
 
-You must output ONLY valid JSON with no markdown formatting, no code blocks, and no additional text.
+You must output ONLY valid JSON with no markdown code blocks or additional text. However, the "text" field within each observation should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
 
 ## EXTRACT DURABLE KNOWLEDGE, NOT EPHEMERAL STATE
 Facts often describe events or actions. Extract the DURABLE KNOWLEDGE implied by the fact, not the transient state.
@@ -71,10 +71,15 @@ Instructions:
    - New topic → CREATE new observation
    - Purely ephemeral → return []
 
-Output JSON array of actions:
+Output JSON array of actions (the "text" field should use markdown formatting for structure):
 [
-  {{"action": "update", "learning_id": "uuid-from-observations", "text": "updated knowledge", "reason": "..."}},
-  {{"action": "create", "text": "new durable knowledge", "reason": "..."}}
+  {{"action": "update", "learning_id": "uuid-from-observations", "text": "## Updated Knowledge\n\n**Key point**: details here\n\n- Supporting detail 1\n- Supporting detail 2", "reason": "..."}},
+  {{"action": "create", "text": "## New Durable Knowledge\n\nDescription with **emphasis** and proper structure", "reason": "..."}}
 ]
 
-Return [] if fact contains no durable knowledge."""
+Return [] if fact contains no durable knowledge.
+
+IMPORTANT: Format the "text" field with markdown for better readability:
+- Use headers, lists, bold/italic, tables where appropriate
+- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)
+- Ensure proper spacing for markdown to render correctly"""

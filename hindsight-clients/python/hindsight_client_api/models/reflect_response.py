@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
 from hindsight_client_api.models.reflect_trace import ReflectTrace
@@ -29,7 +29,7 @@ class ReflectResponse(BaseModel):
     """
     Response model for think endpoint.
     """ # noqa: E501
-    text: StrictStr
+    text: StrictStr = Field(description="The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)")
     based_on: Optional[ReflectBasedOn] = None
     structured_output: Optional[Dict[str, Any]] = None
     usage: Optional[TokenUsage] = None

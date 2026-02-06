@@ -63,6 +63,7 @@
     "react-markdown": "^10.1.0",
     "react18-json-view": "^0.2.9",
     "recharts": "^3.5.1",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.17",
     "tailwindcss-animate": "^1.0.7",

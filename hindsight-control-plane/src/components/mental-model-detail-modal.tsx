@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Loader2, Zap } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface MentalModelDetailContentProps {
   mentalModel: MentalModel;
@@ -73,7 +74,7 @@ export function MentalModelDetailContent({ mentalModel }: MentalModelDetailConte
           Content
         </div>
         <div className="prose prose-base dark:prose-invert max-w-none">
-          <ReactMarkdown>{mentalModel.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{mentalModel.content}</ReactMarkdown>
         </div>
       </div>
 

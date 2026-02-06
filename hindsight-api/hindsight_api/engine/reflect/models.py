@@ -31,7 +31,7 @@ class ReflectAction(BaseModel):
         default=None, description="Observation sections for done action (when output_mode=observations)"
     )
     # Plain text answer fields (for output_mode=answer)
-    answer: str | None = Field(default=None, description="Plain text answer for done action (no markdown)")
+    answer: str | None = Field(default=None, description="Well-formatted markdown answer for done action")
     answer_memory_ids: list[str] | None = Field(
         default=None, description="Memory IDs supporting the answer", alias="memory_ids"
     )

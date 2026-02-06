@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useRouter } from "next/navigation";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
@@ -1343,7 +1344,7 @@ function DirectiveDetailPanel({
               Rule
             </div>
             <div className="prose prose-base dark:prose-invert max-w-none">
-              <ReactMarkdown>{directive.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{directive.content}</ReactMarkdown>
             </div>
           </div>
 

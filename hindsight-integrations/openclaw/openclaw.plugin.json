@@ -49,8 +49,7 @@
       },
       "hindsightApiUrl": {
         "type": "string",
-        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API.",
-        "format": "uri"
+        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API."
       },
       "hindsightApiToken": {
         "type": "string",

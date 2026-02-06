@@ -300,9 +300,11 @@ def build_system_prompt_for_tools(
     parts.extend(
         [
             "",
-            "## Output Format: Plain Text Answer",
-            "Call done() with a plain text 'answer' field.",
-            "- Do NOT use markdown formatting",
+            "## Output Format: Well-Formatted Markdown Answer",
+            "Call done() with a well-formatted markdown 'answer' field.",
+            "- USE markdown formatting for structure (headers, lists, bold, italic, code blocks, tables, etc.)",
+            "- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)",
+            "- Format for clarity and readability with proper spacing and hierarchy",
             "- NEVER include memory IDs, UUIDs, or 'Memory references' in the answer text",
             "- Put IDs ONLY in the memory_ids/mental_model_ids/observation_ids arrays, not in the answer",
         ]
@@ -485,8 +487,17 @@ Your approach:
 Only say "I don't have information" if the retrieved data is truly unrelated to the question.
 Do NOT fabricate information that has no basis in the retrieved data.
 
+FORMATTING: Use proper markdown formatting in your answer:
+- Headers (##, ###) for sections
+- Lists (bullet or numbered) for enumerations
+- Bold/italic for emphasis
+- Tables with proper syntax (ensure blank line before and after)
+- Code blocks where appropriate
+- CRITICAL: Always add blank lines before and after block elements (tables, code blocks, lists)
+- Proper spacing between sections
+
 CRITICAL: Output ONLY the final synthesized answer. Do NOT include:
 - Meta-commentary about what you're doing ("I'll search...", "Let me analyze...")
 - Explanations of your reasoning process
 - Descriptions of your approach
-Just provide the direct answer."""
+Just provide the direct answer with proper markdown formatting."""
