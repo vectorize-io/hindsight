@@ -233,6 +233,32 @@ You can use any model supported by Claude Code CLI.
 - Usage billed to your Claude subscription (not separate API costs)
 - For personal development use only (see Claude Terms of Service)
 
+:::warning Terms of Service Notice
+
+This integration uses the Claude Agent SDK with your personal Claude Pro/Max subscription
+credentials. You must be logged into Claude Code on your own machine before using this provider.
+
+**Please be aware:**
+
+- Anthropic's [Agent SDK documentation](https://docs.claude.com/en/api/agent-sdk/overview)
+  states that third-party developers should not offer claude.ai login or rate limits for
+  their products. Hindsight does **not** perform any login on your behalf — it uses
+  credentials you've already authenticated via `claude auth login`.
+- In January 2026, Anthropic [enforced restrictions](https://paddo.dev/blog/anthropic-walled-garden-crackdown/)
+  against third-party tools using Claude subscription OAuth tokens. Those restrictions
+  targeted tools that **spoofed the Claude Code client identity** — Hindsight uses the
+  official Claude Agent SDK instead.
+- This provider is intended for **local, personal development use only**. Do not use it
+  in production deployments or shared environments.
+- Anthropic's terms may change. If you want guaranteed compliance, use the `anthropic`
+  provider with an API key instead.
+- Usage counts against your Claude Pro/Max subscription limits.
+
+For production or team use, we recommend using `HINDSIGHT_API_LLM_PROVIDER=anthropic` with
+an API key from the [Anthropic Console](https://console.anthropic.com/).
+
+:::
+
 ---
 
 ## Embedding Model
