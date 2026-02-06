@@ -340,6 +340,7 @@ jobs:
         retention-days: 1
 
   release-docker-images:
+    name: Release Docker (${{ matrix.image_name }}${{ matrix.tag_suffix }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -349,10 +350,28 @@ jobs:
         include:
           - target: api-only
             image_name: hindsight-api
+            tag_suffix: ""
+            build_args: ""
+          - target: api-only
+            image_name: hindsight-api
+            tag_suffix: "-slim"
+            build_args: |
+              INCLUDE_LOCAL_MODELS=false
+              PRELOAD_ML_MODELS=false
           - target: cp-only
             image_name: hindsight-control-plane
+            tag_suffix: ""
+            build_args: ""
           - target: standalone
             image_name: hindsight
+            tag_suffix: ""
+            build_args: ""
+          - target: standalone
+            image_name: hindsight
+            tag_suffix: "-slim"
+            build_args: |
+              INCLUDE_LOCAL_MODELS=false
+              PRELOAD_ML_MODELS=false
 
     steps:
     - uses: actions/checkout@v4
@@ -390,6 +409,9 @@ jobs:
       uses: docker/metadata-action@v5
       with:
         images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+        flavor: |
+          latest=auto
+          suffix=${{ matrix.tag_suffix }}
         tags: |
           type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
           type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
@@ -415,7 +437,7 @@ jobs:
     # - name: Smoke test - verify container starts
     #   env:
     #     GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-    #   run: ./scripts/docker-smoke-test.sh "${{ matrix.image_name }}:test" "${{ matrix.target }}"
+    #   run: ./docker/test-image.sh "${{ matrix.image_name }}:test" "${{ matrix.target }}"
 
     # Build multi-platform and push to release tags
     - name: Build and push release images
@@ -424,6 +446,7 @@ jobs:
         context: .
         file: docker/standalone/Dockerfile
         target: ${{ matrix.target }}
+        build-args: ${{ matrix.build_args }}
         push: true
         platforms: linux/amd64,linux/arm64
         tags: ${{ steps.meta.outputs.tags }}

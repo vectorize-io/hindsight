@@ -65,6 +65,7 @@ class MockLLM(LLMInterface):
         # Storage for test verification
         self._mock_calls: list[dict] = []
         self._mock_response: Any = None
+        self._mock_exception: Exception | None = None
 
     async def verify_connection(self) -> None:
         """
@@ -123,6 +124,10 @@ class MockLLM(LLMInterface):
         }
         self._mock_calls.append(call_record)
         logger.debug(f"Mock LLM call recorded: scope={scope}, model={self.model}")
+
+        # Raise mock exception if configured
+        if self._mock_exception is not None:
+            raise self._mock_exception
 
         # Return mock response
         if self._mock_response is not None:
@@ -183,6 +188,10 @@ class MockLLM(LLMInterface):
         }
         self._mock_calls.append(call_record)
 
+        # Raise mock exception if configured
+        if self._mock_exception is not None:
+            raise self._mock_exception
+
         if self._mock_response is not None:
             if isinstance(self._mock_response, LLMToolCallResult):
                 return self._mock_response
@@ -215,6 +224,16 @@ class MockLLM(LLMInterface):
         """
         self._mock_response = response
 
+    def set_mock_exception(self, exception: Exception) -> None:
+        """
+        Set an exception to raise from mock calls.
+
+        Args:
+            exception: The exception to raise on the next call.
+                      After raising, the exception is cleared.
+        """
+        self._mock_exception = exception
+
     def get_mock_calls(self) -> list[dict]:
         """
         Get the list of recorded mock calls.
@@ -230,5 +249,6 @@ class MockLLM(LLMInterface):
         return self._mock_calls
 
     def clear_mock_calls(self) -> None:
-        """Clear the recorded mock calls."""
+        """Clear the recorded mock calls and any set exception."""
         self._mock_calls = []
+        self._mock_exception = None

@@ -8,8 +8,6 @@ from unittest.mock import Mock, patch
 import pytest
 
 from hindsight_embed.profile_manager import (
-    CONFIG_DIR,
-    PROFILES_DIR,
     ProfileInfo,
     ProfileManager,
     ProfilePaths,
@@ -20,15 +18,25 @@ from hindsight_embed.profile_manager import (
 
 @pytest.fixture
 def temp_hindsight_dir(tmp_path, monkeypatch):
-    """Create a temporary hindsight directory for tests."""
-    temp_config = tmp_path / ".hindsight"
+    """Create a temporary hindsight directory for tests.
+
+    Uses HOME environment variable to make Path.home() return the temp directory.
+    This works with the dynamic path resolution in ProfileManager.
+    """
+    # Clear any CLI profile override for test isolation
+    from hindsight_embed.cli import set_cli_profile_override
+
+    set_cli_profile_override(None)
+
+    # Clear HINDSIGHT_EMBED_PROFILE env var
+    monkeypatch.delenv("HINDSIGHT_EMBED_PROFILE", raising=False)
+
+    temp_home = tmp_path / "home"
+    temp_home.mkdir()
+    monkeypatch.setenv("HOME", str(temp_home))
+
+    temp_config = temp_home / ".hindsight"
     temp_config.mkdir()
-    monkeypatch.setattr("hindsight_embed.profile_manager.CONFIG_DIR", temp_config)
-    monkeypatch.setattr("hindsight_embed.profile_manager.PROFILES_DIR", temp_config / "profiles")
-    monkeypatch.setattr(
-        "hindsight_embed.profile_manager.METADATA_FILE", temp_config / "profiles" / "metadata.json"
-    )
-    monkeypatch.setattr("hindsight_embed.profile_manager.ACTIVE_PROFILE_FILE", temp_config / "active_profile")
     return temp_config
 
 

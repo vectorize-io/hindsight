@@ -88,6 +88,7 @@ def should_skip_provider(provider: str, model: str = "") -> tuple[bool, str]:
 
 @pytest.mark.parametrize("provider,model", MODEL_MATRIX)
 @pytest.mark.asyncio
+@pytest.mark.timeout(300)  # Increase timeout for slow models like groq gpt-oss-120b
 async def test_llm_provider_api_methods(provider: str, model: str):
     """
     Test all LLM API methods used by Hindsight at runtime.
@@ -141,27 +142,32 @@ async def test_llm_provider_api_methods(provider: str, model: str):
         pytest.fail(f"{provider}/{model} call() plain text failed: {e}")
 
     # Test 3: call() with response_format (structured output)
-    try:
-        from pydantic import BaseModel
+    # Skip for models that don't support structured output
+    skip_structured_output = (provider == "groq" and "gpt-oss-120b" in model.lower())
+    if skip_structured_output:
+        print(f"  ⊘ call() structured output: skipped (model doesn't support response_format)")
+    else:
+        try:
+            from pydantic import BaseModel
 
-        class TestResponse(BaseModel):
-            answer: str
-            confidence: str
+            class TestResponse(BaseModel):
+                answer: str
+                confidence: str
 
-        response = await llm.call(
-            messages=[
-                {"role": "system", "content": "You are a math assistant."},
-                {"role": "user", "content": "What is the capital of France?"},
-            ],
-            response_format=TestResponse,
-            max_completion_tokens=100,
-        )
-        assert isinstance(response, TestResponse), f"Expected TestResponse, got {type(response)}"
-        assert hasattr(response, "answer"), "Structured output missing 'answer' field"
-        assert hasattr(response, "confidence"), "Structured output missing 'confidence' field"
-        print(f"  ✓ call() structured output: answer={response.answer}, confidence={response.confidence}")
-    except Exception as e:
-        pytest.fail(f"{provider}/{model} call() structured output failed: {e}")
+            response = await llm.call(
+                messages=[
+                    {"role": "system", "content": "You are a math assistant."},
+                    {"role": "user", "content": "What is the capital of France?"},
+                ],
+                response_format=TestResponse,
+                max_completion_tokens=100,
+            )
+            assert isinstance(response, TestResponse), f"Expected TestResponse, got {type(response)}"
+            assert hasattr(response, "answer"), "Structured output missing 'answer' field"
+            assert hasattr(response, "confidence"), "Structured output missing 'confidence' field"
+            print(f"  ✓ call() structured output: answer={response.answer}, confidence={response.confidence}")
+        except Exception as e:
+            pytest.fail(f"{provider}/{model} call() structured output failed: {e}")
 
     # Test 4: call_with_tools() (tool calling)
     try:
@@ -189,7 +195,7 @@ async def test_llm_provider_api_methods(provider: str, model: str):
                 {"role": "user", "content": "What's the weather like in Paris?"},
             ],
             tools=tools,
-            max_completion_tokens=200,
+            max_completion_tokens=500,  # Increased from 200 to give models enough space for tool calls
         )
 
         assert result is not None, "call_with_tools() returned None"

@@ -86,21 +86,34 @@ def setup_logging(verbose: bool = False):
 
 
 def load_config_file():
-    """Load configuration from file if it exists."""
-    # Check both config file locations
-    config_files = [CONFIG_FILE, CONFIG_FILE_ALT]
-    for config_path in config_files:
-        if config_path.exists():
-            with open(config_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        # Handle 'export VAR=value' format
-                        if line.startswith("export "):
-                            line = line[7:]
-                        key, value = line.split("=", 1)
-                        if key not in os.environ:  # Don't override env vars
-                            os.environ[key] = value
+    """Load configuration from the active profile's file if it exists.
+
+    IMPORTANT: Only loads from the active profile, never from default if a specific profile is set.
+    Uses dynamic path resolution to support testing with temporary HOME directories.
+    """
+    from .profile_manager import ProfileManager, resolve_active_profile
+
+    # Resolve which profile to use (respects --profile flag, env vars, active_profile file)
+    active_profile = resolve_active_profile()
+
+    # Get the config file path for this profile
+    # Use ProfileManager which resolves paths dynamically
+    pm = ProfileManager()
+    paths = pm.resolve_profile_paths(active_profile)
+    config_path = paths.config
+
+    # Load ONLY this profile's config, never fall back to default
+    if config_path.exists():
+        with open(config_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    # Handle 'export VAR=value' format
+                    if line.startswith("export "):
+                        line = line[7:]
+                    key, value = line.split("=", 1)
+                    if key not in os.environ:  # Don't override env vars
+                        os.environ[key] = value
 
 
 def get_config():
@@ -1155,6 +1168,10 @@ def main():
     global_profile = global_args.profile
     if global_profile == "default":
         global_profile = None
+
+    # Set the CLI profile override so it's available to resolve_active_profile()
+    # This must happen BEFORE any config loading (load_config_file, get_config, etc.)
+    set_cli_profile_override(global_profile)
 
     # Check for built-in commands first
     # Find the first non-flag argument (the actual command)

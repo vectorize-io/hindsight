@@ -738,12 +738,20 @@ class TestMentalModelRefreshTagSecurity:
             "Refreshed model should access memories/models with matching tags (user:alice)"
 
         # MUST NOT include Bob's content (security violation)
-        assert "bob" not in refreshed_content and "python" not in refreshed_content and "tea" not in refreshed_content, \
-            f"SECURITY VIOLATION: Refreshed model accessed memories/models with different tags (user:bob). Content: {refreshed_content}"
+        # Use word boundary matching to avoid false positives (e.g., "team" contains "tea")
+        import re
+        def contains_word(text: str, word: str) -> bool:
+            """Check if text contains word as a whole word (not substring)."""
+            return bool(re.search(rf'\b{re.escape(word)}\b', text, re.IGNORECASE))
+
+        assert not contains_word(refreshed_content, "bob") and \
+               not contains_word(refreshed_content, "python") and \
+               not contains_word(refreshed_content, "tea"), \
+            f"SECURITY VIOLATION: Refreshed model accessed memories/models with different tags (user:bob). Content: {refreshed['content']}"
 
         # MUST NOT include untagged content (security violation)
         assert "100 employees" not in refreshed_content and "growing fast" not in refreshed_content, \
-            f"SECURITY VIOLATION: Refreshed model accessed untagged memories/models. Content: {refreshed_content}"
+            f"SECURITY VIOLATION: Refreshed model accessed untagged memories/models. Content: {refreshed['content']}"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)

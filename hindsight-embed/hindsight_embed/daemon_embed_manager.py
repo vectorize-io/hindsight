@@ -108,6 +108,13 @@ class DaemonEmbedManager(EmbedManager):
         daemon_log = paths.log
         port = paths.port
 
+        # Load profile's .env file and merge with provided config
+        # This fixes issue #305 where profile env vars were ignored
+        profile_config = self._profile_manager.load_profile_config(profile)
+        # Merge: profile config first, then override with explicitly provided config
+        merged_config = {**profile_config, **config}
+        config = merged_config
+
         # Build environment with LLM config
         # Support both formats: simple keys ("llm_api_key") and env var format ("HINDSIGHT_API_LLM_API_KEY")
         env = os.environ.copy()
