@@ -90,11 +90,11 @@ def print_startup_info(
     if version:
         print(f"  {dim('Version:')} {color(f'v{version}', 0.1)}")
     print(f"  {dim('URL:')} {color(f'http://{host}:{port}', 0.2)}")
+    print(f"  {dim('LLM:')} {color(f'{llm_provider} / {llm_model}', 0.4)}")
+    print(f"  {dim('Embeddings:')} {color(embeddings_provider, 0.6)}")
+    print(f"  {dim('Reranker:')} {color(reranker_provider, 0.8)}")
     # database_url is sensitive info and avoid showing full URL
-    # print(f"  {dim('Database:')} {color(database_url, 0.4)}")
-    print(f"  {dim('LLM:')} {color(f'{llm_provider} / {llm_model}', 0.6)}")
-    print(f"  {dim('Embeddings:')} {color(embeddings_provider, 0.8)}")
-    print(f"  {dim('Reranker:')} {color(reranker_provider, 1.0)}")
+    # print(f"  {dim('Database:')} {color(database_url, 1.0)}")
     if mcp_enabled:
         print(f"  {dim('MCP:')} {color_end('enabled at /mcp')}")
     print()
