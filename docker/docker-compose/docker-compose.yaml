@@ -28,7 +28,7 @@ services:
       POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:?Please set the HINDSIGHT_DB_PASSWORD env variable}
       POSTGRES_DB: ${HINDSIGHT_DB_NAME:-hindsight_db}
     volumes:
-      - postgres_data:/var/lib/postgresql/${HINDSIGHT_DB_VERSION:-18}/docker
+      - pg_data:/var/lib/postgresql/${HINDSIGHT_DB_VERSION:-18}/docker
     networks:
       - hindsight-net
 
@@ -40,8 +40,6 @@ services:
       - "8888:8888"
       - "9999:9999"
     environment:
-      # For more LLM providers see https://hindsight.vectorize.io/developer/configuration#llm-provider
-
       # LLM-configuration for Grog
       # - HINDSIGHT_API_LLM_PROVIDER=groq
       # - HINDSIGHT_API_LLM_API_KEY=${GROG_API_KEY?Please set the GROG_API_KEY env variable}
@@ -75,8 +73,6 @@ services:
 
       # disable if you don't want automatic migrations on startup 
       - HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP=true
-    volumes:
-      - ~/.hindsight-docker:/home/hindsight/.pg0
     depends_on:
       - db
     networks:
@@ -87,4 +83,4 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  pg_data:
