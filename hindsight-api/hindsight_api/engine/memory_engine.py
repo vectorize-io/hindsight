@@ -977,6 +977,7 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"Failed to run schema migrations: {e}")
 
         logger.info(f"Connecting to PostgreSQL")
+        # db_url is sensitive info, log at debug level only
         logger.debug(f"PostgreSQL connection URL: {self.db_url}")
 
         # Create connection pool
