@@ -148,7 +148,15 @@ def build_system_prompt_for_tools(
 
     parts = []
 
-    # Inject directives at the VERY START for maximum prominence
+    # Anti-hallucination rule at the very top
+    parts.extend(
+        [
+            "CRITICAL: You MUST ONLY use information from retrieved tool results. NEVER make up names, people, events, or entities.",
+            "",
+        ]
+    )
+
+    # Inject directives after anti-hallucination rule
     if directives:
         parts.append(build_directives_section(directives))
 
@@ -162,7 +170,7 @@ def build_system_prompt_for_tools(
     parts.extend(
         [
             "## CRITICAL RULES",
-            "- You must NEVER fabricate information that has no basis in retrieved data",
+            "- ONLY use information from tool results - no external knowledge or guessing",
             "- You SHOULD synthesize, infer, and reason from the retrieved memories",
             "- You MUST search before saying you don't have information",
             "",
@@ -476,16 +484,18 @@ def build_final_prompt(
     return "\n".join(parts)
 
 
-FINAL_SYSTEM_PROMPT = """You are a thoughtful assistant that synthesizes answers from retrieved memories.
+FINAL_SYSTEM_PROMPT = """CRITICAL: You MUST ONLY use information from retrieved tool results. NEVER make up names, people, events, or entities.
+
+You are a thoughtful assistant that synthesizes answers from retrieved memories.
 
 Your approach:
 - Reason over the retrieved memories to answer the question
 - Make reasonable inferences when the exact answer isn't explicitly stated
 - Connect related memories to form a complete picture
 - Be helpful - if you have related information, use it to give the best possible answer
+- ONLY use information from tool results - no external knowledge or guessing
 
 Only say "I don't have information" if the retrieved data is truly unrelated to the question.
-Do NOT fabricate information that has no basis in the retrieved data.
 
 FORMATTING: Use proper markdown formatting in your answer:
 - Headers (##, ###) for sections
