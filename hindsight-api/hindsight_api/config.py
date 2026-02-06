@@ -447,6 +447,22 @@ class HindsightConfig:
     # Reflect agent settings
     reflect_max_iterations: int
 
+    def validate(self) -> None:
+        """Validate configuration values and raise errors for invalid combinations."""
+        # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
+        # to ensure the LLM has enough output capacity to extract facts from chunks
+        if self.retain_max_completion_tokens <= self.retain_chunk_size:
+            raise ValueError(
+                f"Invalid configuration: HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS "
+                f"({self.retain_max_completion_tokens}) must be greater than "
+                f"HINDSIGHT_API_RETAIN_CHUNK_SIZE ({self.retain_chunk_size}). "
+                f"\n\nYou have two options to fix this:"
+                f"\n  1. Increase HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS to a value > {self.retain_chunk_size}"
+                f"\n  2. Use a model that supports at least {self.retain_max_completion_tokens} output tokens"
+                f"\n     (current model: {self.retain_llm_model or self.llm_model}, "
+                f"provider: {self.retain_llm_provider or self.llm_provider})"
+            )
+
     @classmethod
     def from_env(cls) -> "HindsightConfig":
         """Create configuration from environment variables."""
@@ -454,7 +470,7 @@ class HindsightConfig:
         llm_provider = os.getenv(ENV_LLM_PROVIDER, DEFAULT_LLM_PROVIDER)
         llm_model = os.getenv(ENV_LLM_MODEL) or _get_default_model_for_provider(llm_provider)
 
-        return cls(
+        config = cls(
             # Database
             database_url=os.getenv(ENV_DATABASE_URL, DEFAULT_DATABASE_URL),
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
@@ -631,6 +647,8 @@ class HindsightConfig:
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
         )
+        config.validate()
+        return config
 
     def get_llm_base_url(self) -> str:
         """Get the LLM base URL, with provider-specific defaults."""

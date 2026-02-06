@@ -65,9 +65,25 @@ class ProfileManager:
         """Initialize the profile manager."""
         self._ensure_directories()
 
+    def _get_config_dir(self) -> Path:
+        """Get config directory path dynamically (supports testing with temp HOME)."""
+        return Path.home() / ".hindsight"
+
+    def _get_profiles_dir(self) -> Path:
+        """Get profiles directory path dynamically."""
+        return self._get_config_dir() / "profiles"
+
+    def _get_metadata_file(self) -> Path:
+        """Get metadata file path dynamically."""
+        return self._get_profiles_dir() / "metadata.json"
+
+    def _get_active_profile_file(self) -> Path:
+        """Get active profile file path dynamically."""
+        return self._get_config_dir() / "active_profile"
+
     def _ensure_directories(self):
         """Ensure profile directories exist."""
-        PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        self._get_profiles_dir().mkdir(parents=True, exist_ok=True)
 
     def list_profiles(self) -> list[ProfileInfo]:
         """List all profiles with their status.
@@ -80,7 +96,7 @@ class ProfileManager:
         profiles = []
 
         # Add default profile if config exists
-        default_config = CONFIG_DIR / "embed"
+        default_config = self._get_config_dir() / "embed"
         if default_config.exists():
             profiles.append(
                 ProfileInfo(
@@ -119,10 +135,10 @@ class ProfileManager:
         """
         if not name:
             # Default profile exists if config file exists
-            return (CONFIG_DIR / "embed").exists()
+            return (self._get_config_dir() / "embed").exists()
 
         # Named profile exists if config file exists
-        config_path = PROFILES_DIR / f"{name}.env"
+        config_path = self._get_profiles_dir() / f"{name}.env"
         return config_path.exists()
 
     def get_profile(self, name: str) -> Optional[ProfileInfo]:
@@ -186,7 +202,7 @@ class ProfileManager:
                 port = self._allocate_port(name)
 
         # Write config file
-        config_path = PROFILES_DIR / f"{name}.env"
+        config_path = self._get_profiles_dir() / f"{name}.env"
         config_lines = [f"{key}={value}" for key, value in config.items()]
         config_path.write_text("\n".join(config_lines) + "\n")
 
@@ -223,17 +239,17 @@ class ProfileManager:
             raise ValueError(f"Profile '{name}' does not exist")
 
         # Remove config file
-        config_path = PROFILES_DIR / f"{name}.env"
+        config_path = self._get_profiles_dir() / f"{name}.env"
         if config_path.exists():
             config_path.unlink()
 
         # Remove lock file
-        lock_path = PROFILES_DIR / f"{name}.lock"
+        lock_path = self._get_profiles_dir() / f"{name}.lock"
         if lock_path.exists():
             lock_path.unlink()
 
         # Remove log file
-        log_path = PROFILES_DIR / f"{name}.log"
+        log_path = self._get_profiles_dir() / f"{name}.log"
         if log_path.exists():
             log_path.unlink()
 
@@ -259,12 +275,13 @@ class ProfileManager:
         if name and not self.profile_exists(name):
             raise ValueError(f"Profile '{name}' does not exist")
 
+        active_file = self._get_active_profile_file()
         if name:
-            ACTIVE_PROFILE_FILE.write_text(name)
+            active_file.write_text(name)
         else:
             # Clear active profile
-            if ACTIVE_PROFILE_FILE.exists():
-                ACTIVE_PROFILE_FILE.unlink()
+            if active_file.exists():
+                active_file.unlink()
 
     def get_active_profile(self) -> str:
         """Get the currently active profile name.
@@ -272,8 +289,9 @@ class ProfileManager:
         Returns:
             Profile name, or empty string if no active profile.
         """
-        if ACTIVE_PROFILE_FILE.exists():
-            return ACTIVE_PROFILE_FILE.read_text().strip()
+        active_file = self._get_active_profile_file()
+        if active_file.exists():
+            return active_file.read_text().strip()
         return ""
 
     def resolve_profile_paths(self, name: str) -> ProfilePaths:
@@ -285,12 +303,16 @@ class ProfileManager:
         Returns:
             ProfilePaths with config, lock, log, and port.
         """
+        # Use dynamic path resolution to support testing with temporary HOME directories
+        config_dir = Path.home() / ".hindsight"
+        profiles_dir = config_dir / "profiles"
+
         if not name:
             # Default profile
             return ProfilePaths(
-                config=CONFIG_DIR / "embed",
-                lock=CONFIG_DIR / "daemon.lock",
-                log=CONFIG_DIR / "daemon.log",
+                config=config_dir / "embed",
+                lock=config_dir / "daemon.lock",
+                log=config_dir / "daemon.log",
                 port=DEFAULT_PORT,
             )
 
@@ -299,11 +321,59 @@ class ProfileManager:
         port = metadata.profiles.get(name, {}).get("port", self._allocate_port(name))
 
         return ProfilePaths(
-            config=PROFILES_DIR / f"{name}.env",
-            lock=PROFILES_DIR / f"{name}.lock",
-            log=PROFILES_DIR / f"{name}.log",
+            config=profiles_dir / f"{name}.env",
+            lock=profiles_dir / f"{name}.lock",
+            log=profiles_dir / f"{name}.log",
             port=port,
         )
+
+    def load_profile_config(self, name: str) -> dict[str, str]:
+        """Load configuration from a profile's .env file.
+
+        Args:
+            name: Profile name (empty string for default).
+
+        Returns:
+            Dictionary of environment variable key-value pairs from the profile's .env file.
+            Also includes simple key aliases (e.g., 'idle_timeout' for 'HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT').
+        """
+        paths = self.resolve_profile_paths(name)
+        config = {}
+
+        if not paths.config.exists():
+            return config
+
+        # Parse .env file
+        with open(paths.config) as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith("#"):
+                    continue
+                # Handle 'export VAR=value' format
+                if line.startswith("export "):
+                    line = line[7:]
+                # Parse KEY=VALUE
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    config[key.strip()] = value.strip()
+
+        # Add simple key aliases for backward compatibility
+        # Some code checks config.get("idle_timeout") instead of the full env var name
+        key_aliases = {
+            "HINDSIGHT_API_LLM_API_KEY": "llm_api_key",
+            "HINDSIGHT_API_LLM_PROVIDER": "llm_provider",
+            "HINDSIGHT_API_LLM_MODEL": "llm_model",
+            "HINDSIGHT_API_LLM_BASE_URL": "llm_base_url",
+            "HINDSIGHT_API_LOG_LEVEL": "log_level",
+            "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT": "idle_timeout",
+        }
+
+        for env_key, simple_key in key_aliases.items():
+            if env_key in config and simple_key not in config:
+                config[simple_key] = config[env_key]
+
+        return config
 
     def _allocate_port(self, name: str) -> int:
         """Allocate a port for a profile using hash-based strategy.
@@ -359,11 +429,12 @@ class ProfileManager:
         Returns:
             ProfileMetadata object.
         """
-        if not METADATA_FILE.exists():
+        metadata_file = self._get_metadata_file()
+        if not metadata_file.exists():
             return ProfileMetadata()
 
         try:
-            with open(METADATA_FILE) as f:
+            with open(metadata_file) as f:
                 data = json.load(f)
                 return ProfileMetadata(version=data.get("version", 1), profiles=data.get("profiles", {}))
         except (json.JSONDecodeError, IOError) as e:
@@ -372,9 +443,9 @@ class ProfileManager:
                 file=sys.stderr,
             )
             # Backup corrupted metadata
-            backup_path = METADATA_FILE.with_suffix(".json.bak")
-            if METADATA_FILE.exists():
-                METADATA_FILE.rename(backup_path)
+            backup_path = metadata_file.with_suffix(".json.bak")
+            if metadata_file.exists():
+                metadata_file.rename(backup_path)
             return ProfileMetadata()
 
     def _save_metadata(self, metadata: ProfileMetadata):
@@ -386,7 +457,8 @@ class ProfileManager:
         self._ensure_directories()
 
         # Use atomic write with temp file
-        temp_file = METADATA_FILE.with_suffix(".json.tmp")
+        metadata_file = self._get_metadata_file()
+        temp_file = metadata_file.with_suffix(".json.tmp")
 
         with open(temp_file, "w") as f:
             # Acquire exclusive lock
@@ -403,7 +475,7 @@ class ProfileManager:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Atomic rename
-        temp_file.rename(METADATA_FILE)
+        temp_file.rename(metadata_file)
 
 
 def resolve_active_profile() -> str:

@@ -6,28 +6,40 @@
 # Can be run locally or in CI pipelines.
 #
 # Usage:
-#   ./scripts/docker-smoke-test.sh <image> [target]
+#   ./docker/test-image.sh <image> [target]
 #
 # Arguments:
 #   image   - Docker image to test (e.g., hindsight-api:test, ghcr.io/vectorize-io/hindsight:latest)
 #   target  - Optional: 'cp-only' for control plane, otherwise assumes API image (default: api)
 #
 # Environment variables:
-#   GROQ_API_KEY              - Required for API/standalone images (LLM verification)
-#   HINDSIGHT_API_LLM_PROVIDER - LLM provider (default: groq)
-#   HINDSIGHT_API_LLM_MODEL    - LLM model (default: llama-3.3-70b-versatile)
-#   SMOKE_TEST_TIMEOUT        - Timeout in seconds (default: 120)
-#   SMOKE_TEST_CONTAINER_NAME - Container name (default: hindsight-smoke-test)
+#   GROQ_API_KEY                                - Required for API/standalone images (LLM verification)
+#   HINDSIGHT_API_LLM_PROVIDER                  - LLM provider (default: groq)
+#   HINDSIGHT_API_LLM_MODEL                     - LLM model (default: llama-3.3-70b-versatile)
+#   HINDSIGHT_API_EMBEDDINGS_PROVIDER           - Embeddings provider (optional, for slim images: openai, cohere, tei)
+#   HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY     - OpenAI API key for embeddings (optional)
+#   HINDSIGHT_API_RERANKER_PROVIDER             - Reranker provider (optional, for slim images: cohere, tei)
+#   HINDSIGHT_API_COHERE_API_KEY                - Cohere API key for reranking (optional)
+#   SMOKE_TEST_TIMEOUT                          - Timeout in seconds (default: 120)
+#   SMOKE_TEST_CONTAINER_NAME                   - Container name (default: hindsight-smoke-test)
 #
 # Examples:
-#   # Test a locally built image
-#   ./scripts/docker-smoke-test.sh hindsight-api:test
+#   # Test a locally built full image
+#   ./docker/test-image.sh hindsight-api:test
 #
 #   # Test a released image
-#   ./scripts/docker-smoke-test.sh ghcr.io/vectorize-io/hindsight:latest
+#   ./docker/test-image.sh ghcr.io/vectorize-io/hindsight:latest
 #
 #   # Test control plane image
-#   ./scripts/docker-smoke-test.sh hindsight-control-plane:test cp-only
+#   ./docker/test-image.sh hindsight-control-plane:test cp-only
+#
+#   # Test slim image with external providers
+#   export GROQ_API_KEY=gsk_xxx
+#   export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
+#   export HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=sk-xxx
+#   export HINDSIGHT_API_RERANKER_PROVIDER=cohere
+#   export HINDSIGHT_API_COHERE_API_KEY=xxx
+#   ./docker/test-image.sh hindsight-slim:test
 #
 # Exit codes:
 #   0 - Success (container healthy)
@@ -108,12 +120,32 @@ if [ "$TARGET" = "cp-only" ]; then
         -p "${HEALTH_PORT}:${HEALTH_PORT}" \
         "$IMAGE"
 else
-    docker run -d --name "$CONTAINER_NAME" \
-        -e HINDSIGHT_API_LLM_PROVIDER="$LLM_PROVIDER" \
-        -e HINDSIGHT_API_LLM_API_KEY="${GROQ_API_KEY}" \
-        -e HINDSIGHT_API_LLM_MODEL="$LLM_MODEL" \
-        -p "${HEALTH_PORT}:${HEALTH_PORT}" \
-        "$IMAGE"
+    # Build docker run command with required and optional env vars
+    DOCKER_CMD="docker run -d --name $CONTAINER_NAME"
+    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_PROVIDER=$LLM_PROVIDER"
+    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_API_KEY=${GROQ_API_KEY}"
+    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_MODEL=$LLM_MODEL"
+
+    # Add optional embeddings provider config
+    if [ -n "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:-}" ]; then
+        DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_EMBEDDINGS_PROVIDER=${HINDSIGHT_API_EMBEDDINGS_PROVIDER}"
+    fi
+    if [ -n "${HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:-}" ]; then
+        DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=${HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY}"
+    fi
+
+    # Add optional reranker provider config
+    if [ -n "${HINDSIGHT_API_RERANKER_PROVIDER:-}" ]; then
+        DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_RERANKER_PROVIDER=${HINDSIGHT_API_RERANKER_PROVIDER}"
+    fi
+    if [ -n "${HINDSIGHT_API_COHERE_API_KEY:-}" ]; then
+        DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_COHERE_API_KEY=${HINDSIGHT_API_COHERE_API_KEY}"
+    fi
+
+    DOCKER_CMD="$DOCKER_CMD -p ${HEALTH_PORT}:${HEALTH_PORT}"
+    DOCKER_CMD="$DOCKER_CMD $IMAGE"
+
+    eval $DOCKER_CMD
 fi
 
 # Wait for health endpoint

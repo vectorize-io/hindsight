@@ -1011,6 +1011,29 @@ Text:
 
         except BadRequestError as e:
             last_error = e
+            error_str = str(e).lower()
+
+            # Check if error is related to max_tokens/completion_tokens not being supported
+            if any(
+                keyword in error_str
+                for keyword in [
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "maximum context",
+                    "token limit",
+                    "context length",
+                ]
+            ):
+                # Provide helpful error message with configuration suggestions
+                raise ValueError(
+                    f"Model does not support the required output token limit.\n\n"
+                    f"The model '{llm_config.model}' (provider: {llm_config.provider}) failed with: {e}\n\n"
+                    f"You have two options to fix this:\n"
+                    f"  1. Use a different model that supports at least {config.retain_max_completion_tokens} output tokens\n"
+                    f"  2. Decrease HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS to a value your model supports\n"
+                    f"     (current value: {config.retain_max_completion_tokens}, must be > RETAIN_CHUNK_SIZE={config.retain_chunk_size})"
+                ) from e
+
             if "json_validate_failed" in str(e):
                 logger.warning(
                     f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{max_retries} failed with JSON validation error: {e}"

@@ -91,6 +91,20 @@ export HINDSIGHT_API_RETAIN_LLM_PROVIDER=anthropic
 
 Other LLM models not listed above may work with Hindsight, but they must support **at least 65,000 output tokens** to ensure reliable fact extraction. If you need support for a specific model that doesn't meet this requirement, please [open an issue](https://github.com/hindsight-ai/hindsight/issues) to request an exception.
 
+:::tip Models with Limited Output Tokens
+If your model only supports 32k or fewer output tokens (e.g., some older models), you can reduce the retain completion token limit:
+
+```bash
+# For models that support 32k output tokens
+export HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=32000
+
+# For models that support 16k output tokens
+export HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=16000
+```
+
+**Important:** `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` must be greater than `HINDSIGHT_API_RETAIN_CHUNK_SIZE` (default: 3000). The system will validate this on startup and provide an error message if the configuration is invalid.
+:::
+
 ### Configuration
 
 ```bash
@@ -175,19 +189,39 @@ You can use any model supported by OpenAI Codex CLI
 - Usage is billed to your ChatGPT subscription (not separate API costs)
 - For personal development use only (see ChatGPT Terms of Service)
 
-**Troubleshooting:**
-
-If authentication fails:
-```bash
-# Re-login to refresh tokens
-codex auth login
-```
-
 ---
 
 ### Claude Code Setup (Claude Pro/Max)
 
 Use your Claude Pro or Max subscription for Hindsight without separate Anthropic API costs.
+
+
+:::warning Terms of Service Notice
+
+This integration uses the Claude Agent SDK with your personal Claude Pro/Max subscription
+credentials. You must be logged into Claude Code on your own machine before using this provider.
+
+**Please be aware:**
+
+- Anthropic's [Agent SDK documentation](https://docs.claude.com/en/api/agent-sdk/overview)
+  states that third-party developers should not offer claude.ai login or rate limits for
+  their products. Hindsight does **not** perform any login on your behalf — it uses
+  credentials you've already authenticated via `claude auth login`.
+- In January 2026, Anthropic [enforced restrictions](https://paddo.dev/blog/anthropic-walled-garden-crackdown/)
+  against third-party tools using Claude subscription OAuth tokens. Those restrictions
+  targeted tools that **spoofed the Claude Code client identity** — Hindsight uses the
+  official Claude Agent SDK instead.
+- This provider is intended for **local, personal development use only**. Do not use it
+  in production deployments or shared environments.
+- Anthropic's terms may change. If you want guaranteed compliance, use the `anthropic`
+  provider with an API key instead.
+- Usage counts against your Claude Pro/Max subscription limits.
+
+For production or team use, we recommend using `HINDSIGHT_API_LLM_PROVIDER=anthropic` with
+an API key from the [Anthropic Console](https://console.anthropic.com/).
+
+:::
+
 
 **Prerequisites:**
 - Active Claude Pro or Max subscription
@@ -232,6 +266,7 @@ You can use any model supported by Claude Code CLI.
 - Credentials managed securely by Claude Code
 - Usage billed to your Claude subscription (not separate API costs)
 - For personal development use only (see Claude Terms of Service)
+
 
 ---
 
