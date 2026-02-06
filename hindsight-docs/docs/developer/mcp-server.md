@@ -194,54 +194,6 @@ Generate thoughtful analysis by synthesizing stored memories with the bank's per
 
 ---
 
-### search_docs
-
-Search Hindsight documentation using semantic search.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | Yes | Natural language search query |
-| `source` | string | No | Which docs to search: `core`, `cloud`, or `all` (default: `all`) |
-| `num_results` | integer | No | Results per source (default: 5, max: 10) |
-
-**Example:**
-```json
-{
-  "name": "search_docs",
-  "arguments": {
-    "query": "How do I configure embeddings?",
-    "source": "core",
-    "num_results": 3
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "results": [
-    {
-      "source": "hindsight-core",
-      "url": "https://hindsight.vectorize.io/developer/configuration",
-      "similarity": 0.85,
-      "text": "Embeddings configuration options..."
-    }
-  ]
-}
-```
-
-**When to use:**
-- Understanding Hindsight APIs or features
-- Finding configuration options or environment variables
-- Looking for code examples or integration patterns
-- Troubleshooting Hindsight-related issues
-
-:::note
-The `search_docs` tool requires Vectorize configuration. See [Configuration - Documentation Search](./configuration#documentation-search-search_docs-tool) for setup instructions.
-:::
-
----
-
 ## Integration with AI Assistants
 
 The MCP server can be used with any MCP-compatible AI assistant. See the [Authentication](#authentication) section above for Claude Code and Claude Desktop configuration examples.

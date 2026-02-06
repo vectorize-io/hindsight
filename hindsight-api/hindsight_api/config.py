@@ -150,13 +150,6 @@ ENV_WORKER_CONSOLIDATION_MAX_SLOTS = "HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLO
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 
-# Vectorize RAG configuration (for search_docs MCP tool)
-ENV_VECTORIZE_ORG_ID = "HINDSIGHT_API_VECTORIZE_ORG_ID"
-ENV_VECTORIZE_API_TOKEN = "HINDSIGHT_API_VECTORIZE_API_TOKEN"
-ENV_VECTORIZE_CORE_PIPELINE_ID = "HINDSIGHT_API_VECTORIZE_CORE_PIPELINE_ID"
-ENV_VECTORIZE_CLOUD_PIPELINE_ID = "HINDSIGHT_API_VECTORIZE_CLOUD_PIPELINE_ID"
-ENV_VECTORIZE_API_BASE_URL = "HINDSIGHT_API_VECTORIZE_API_BASE_URL"
-
 # Default values
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_DATABASE_SCHEMA = "public"
@@ -257,9 +250,6 @@ DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS = 2  # Max concurrent consolidation tasks
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
-
-# Vectorize RAG defaults
-DEFAULT_VECTORIZE_API_BASE_URL = "https://api.vectorize.io"
 
 # Default MCP tool descriptions (can be customized via env vars)
 DEFAULT_MCP_RETAIN_DESCRIPTION = """Store important information to long-term memory.
@@ -456,13 +446,6 @@ class HindsightConfig:
 
     # Reflect agent settings
     reflect_max_iterations: int
-
-    # Vectorize RAG configuration (for search_docs MCP tool)
-    vectorize_org_id: str | None
-    vectorize_api_token: str | None
-    vectorize_core_pipeline_id: str | None
-    vectorize_cloud_pipeline_id: str | None
-    vectorize_api_base_url: str
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
@@ -663,12 +646,6 @@ class HindsightConfig:
             ),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
-            # Vectorize RAG configuration
-            vectorize_org_id=os.getenv(ENV_VECTORIZE_ORG_ID) or None,
-            vectorize_api_token=os.getenv(ENV_VECTORIZE_API_TOKEN) or None,
-            vectorize_core_pipeline_id=os.getenv(ENV_VECTORIZE_CORE_PIPELINE_ID) or None,
-            vectorize_cloud_pipeline_id=os.getenv(ENV_VECTORIZE_CLOUD_PIPELINE_ID) or None,
-            vectorize_api_base_url=os.getenv(ENV_VECTORIZE_API_BASE_URL, DEFAULT_VECTORIZE_API_BASE_URL),
         )
         config.validate()
         return config

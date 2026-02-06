@@ -507,28 +507,6 @@ Configuration for MCP server endpoints.
 | `HINDSIGHT_API_MCP_LOCAL_BANK_ID` | Memory bank ID for local MCP | `mcp` |
 | `HINDSIGHT_API_MCP_INSTRUCTIONS` | Additional instructions appended to retain/recall tool descriptions | - |
 
-### Documentation Search (search_docs tool)
-
-The `search_docs` MCP tool enables AI assistants to search Hindsight documentation using semantic search via [Vectorize](https://vectorize.io) RAG pipelines.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HINDSIGHT_API_VECTORIZE_ORG_ID` | Vectorize organization ID | - |
-| `HINDSIGHT_API_VECTORIZE_API_TOKEN` | Vectorize API token for retrieval | - |
-| `HINDSIGHT_API_VECTORIZE_CORE_PIPELINE_ID` | Pipeline ID for hindsight-core (OSS) docs | - |
-| `HINDSIGHT_API_VECTORIZE_CLOUD_PIPELINE_ID` | Pipeline ID for hindsight-cloud docs | - |
-| `HINDSIGHT_API_VECTORIZE_API_BASE_URL` | Vectorize API base URL | `https://api.vectorize.io` |
-
-When configured, the `search_docs` tool becomes available in MCP, allowing AI assistants to search documentation for API usage, configuration options, and integration patterns.
-
-```bash
-# Enable documentation search
-export HINDSIGHT_API_VECTORIZE_ORG_ID=your-org-id
-export HINDSIGHT_API_VECTORIZE_API_TOKEN=your-api-token
-export HINDSIGHT_API_VECTORIZE_CORE_PIPELINE_ID=your-core-pipeline-id
-export HINDSIGHT_API_VECTORIZE_CLOUD_PIPELINE_ID=your-cloud-pipeline-id
-```
-
 **MCP Authentication:**
 
 By default, the MCP endpoint is open. For production deployments, set `HINDSIGHT_API_MCP_AUTH_TOKEN` to require Bearer token authentication:

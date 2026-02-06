@@ -7,20 +7,16 @@ This module provides the core tool logic used by both:
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from typing import Any, Callable
 
-import httpx
 from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config import (
     DEFAULT_MCP_RECALL_DESCRIPTION,
     DEFAULT_MCP_RETAIN_DESCRIPTION,
-    get_config,
 )
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
@@ -111,14 +107,6 @@ def build_content_dict(
     return content_dict, None
 
 
-class DocsSource(Enum):
-    """Source for documentation search."""
-
-    CORE = "core"  # hindsight-core OSS docs
-    CLOUD = "cloud"  # hindsight-cloud docs
-    ALL = "all"  # Search both
-
-
 def register_mcp_tools(
     mcp: FastMCP,
     memory: MemoryEngine,
@@ -131,7 +119,7 @@ def register_mcp_tools(
         memory: MemoryEngine instance
         config: Tool configuration
     """
-    tools_to_register = config.tools or {"retain", "recall", "reflect", "list_banks", "create_bank", "search_docs"}
+    tools_to_register = config.tools or {"retain", "recall", "reflect", "list_banks", "create_bank"}
 
     if "retain" in tools_to_register:
         _register_retain(mcp, memory, config)
@@ -147,9 +135,6 @@ def register_mcp_tools(
 
     if "create_bank" in tools_to_register:
         _register_create_bank(mcp, memory, config)
-
-    if "search_docs" in tools_to_register:
-        _register_search_docs(mcp)
 
 
 def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
@@ -526,161 +511,3 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         except Exception as e:
             logger.error(f"Error creating bank: {e}", exc_info=True)
             return f'{{"error": "{e}"}}'
-
-
-def _clean_text(text: str) -> str:
-    """Clean HTML/XML tags from text."""
-    # Remove HTML tags
-    text = re.sub(r"<[^>]+>", " ", text)
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-async def _search_vectorize_pipeline(
-    api_base_url: str,
-    org_id: str,
-    pipeline_id: str,
-    api_token: str,
-    query: str,
-    num_results: int = 5,
-) -> dict:
-    """Search a Vectorize RAG pipeline.
-
-    Args:
-        api_base_url: Vectorize API base URL
-        org_id: Vectorize organization ID
-        pipeline_id: Pipeline ID to search
-        api_token: Vectorize API token
-        query: Search query
-        num_results: Number of results to return
-
-    Returns:
-        Response dict from Vectorize API
-    """
-    url = f"{api_base_url}/v1/org/{org_id}/pipelines/{pipeline_id}/retrieval"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
-    data = {
-        "question": query,
-        "numResults": num_results,
-    }
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=data, timeout=30.0)
-        response.raise_for_status()
-        return response.json()
-
-
-def _register_search_docs(mcp: FastMCP) -> None:
-    """Register the search_docs tool for searching Hindsight documentation."""
-
-    @mcp.tool()
-    async def search_docs(
-        query: str,
-        source: str = "all",
-        num_results: int = 5,
-    ) -> str:
-        """
-        Search Hindsight documentation using semantic search.
-
-        Use this tool to find information about Hindsight APIs, configuration,
-        architecture, and usage patterns. Returns relevant documentation snippets
-        ranked by relevance.
-
-        WHEN TO USE THIS TOOL:
-        - When you need to understand Hindsight APIs or features
-        - When looking for configuration options or environment variables
-        - When you need code examples or integration patterns
-        - When troubleshooting or debugging Hindsight-related issues
-
-        Args:
-            query: Natural language search query (e.g., "How do I configure embeddings?", "What is the retain API?")
-            source: Which docs to search - 'core' (OSS), 'cloud', or 'all' (default: 'all')
-            num_results: Number of results per source (default: 5, max: 10)
-
-        Returns:
-            JSON with search results including source URLs, relevance scores, and text snippets.
-        """
-        try:
-            config = get_config()
-
-            # Validate Vectorize configuration
-            if not config.vectorize_org_id or not config.vectorize_api_token:
-                return json.dumps(
-                    {
-                        "error": "Vectorize not configured. Set HINDSIGHT_API_VECTORIZE_ORG_ID and HINDSIGHT_API_VECTORIZE_API_TOKEN.",
-                        "results": [],
-                    },
-                    indent=2,
-                )
-
-            # Parse source
-            try:
-                docs_source = DocsSource(source.lower())
-            except ValueError:
-                docs_source = DocsSource.ALL
-
-            # Clamp num_results
-            num_results = max(1, min(10, num_results))
-
-            results = []
-
-            # Search core docs
-            if docs_source in (DocsSource.CORE, DocsSource.ALL) and config.vectorize_core_pipeline_id:
-                try:
-                    core_results = await _search_vectorize_pipeline(
-                        api_base_url=config.vectorize_api_base_url,
-                        org_id=config.vectorize_org_id,
-                        pipeline_id=config.vectorize_core_pipeline_id,
-                        api_token=config.vectorize_api_token,
-                        query=query,
-                        num_results=num_results,
-                    )
-                    for doc in core_results.get("documents", []):
-                        results.append(
-                            {
-                                "source": "hindsight-core",
-                                "url": doc.get("source", ""),
-                                "similarity": doc.get("similarity", 0),
-                                "text": _clean_text(doc.get("text", ""))[:500],
-                            }
-                        )
-                except Exception as e:
-                    logger.error(f"Error searching core docs: {e}", exc_info=True)
-                    results.append({"source": "hindsight-core", "error": str(e)})
-
-            # Search cloud docs
-            if docs_source in (DocsSource.CLOUD, DocsSource.ALL) and config.vectorize_cloud_pipeline_id:
-                try:
-                    cloud_results = await _search_vectorize_pipeline(
-                        api_base_url=config.vectorize_api_base_url,
-                        org_id=config.vectorize_org_id,
-                        pipeline_id=config.vectorize_cloud_pipeline_id,
-                        api_token=config.vectorize_api_token,
-                        query=query,
-                        num_results=num_results,
-                    )
-                    for doc in cloud_results.get("documents", []):
-                        results.append(
-                            {
-                                "source": "hindsight-cloud",
-                                "url": doc.get("source", ""),
-                                "similarity": doc.get("similarity", 0),
-                                "text": _clean_text(doc.get("text", ""))[:500],
-                            }
-                        )
-                except Exception as e:
-                    logger.error(f"Error searching cloud docs: {e}", exc_info=True)
-                    results.append({"source": "hindsight-cloud", "error": str(e)})
-
-            # Sort by similarity (highest first)
-            results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
-
-            return json.dumps({"results": results}, indent=2)
-
-        except Exception as e:
-            logger.error(f"Error in search_docs: {e}", exc_info=True)
-            return json.dumps({"error": str(e), "results": []}, indent=2)

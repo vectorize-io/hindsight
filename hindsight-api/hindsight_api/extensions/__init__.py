@@ -20,6 +20,7 @@ from hindsight_api.extensions.builtin import ApiKeyTenantExtension
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
 from hindsight_api.extensions.http import HttpExtension
 from hindsight_api.extensions.loader import load_extension
+from hindsight_api.extensions.mcp import MCPExtension
 from hindsight_api.extensions.operation_validator import (
     # Consolidation operation
     ConsolidateContext,
@@ -57,6 +58,8 @@ __all__ = [
     "DefaultExtensionContext",
     # HTTP Extension
     "HttpExtension",
+    # MCP Extension
+    "MCPExtension",
     # Operation Validator - Core
     "OperationValidationError",
     "OperationValidatorExtension",

@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
 from hindsight_api.engine.memory_engine import _current_schema
+from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.mcp_tools import MCPToolsConfig, register_mcp_tools
 from hindsight_api.models import RequestContext
@@ -76,6 +77,12 @@ def create_mcp_server(memory: MemoryEngine) -> FastMCP:
     )
 
     register_mcp_tools(mcp, memory, config)
+
+    # Load and register additional tools from MCP extension if configured
+    mcp_extension = load_extension("MCP", MCPExtension)
+    if mcp_extension:
+        logger.info(f"Loading MCP extension: {mcp_extension.__class__.__name__}")
+        mcp_extension.register_tools(mcp, memory)
 
     return mcp
 
