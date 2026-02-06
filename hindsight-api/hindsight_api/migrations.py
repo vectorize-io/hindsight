@@ -54,7 +54,8 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     """
     schema_name = schema or "public"
     logger.info(f"Running database migrations to head for schema '{schema_name}'...")
-    logger.info(f"Database URL: {database_url}")
+    # database_url is sensitive info, log at debug level only
+    logger.debug(f"Database URL: {database_url}")
     logger.info(f"Script location: {script_location}")
 
     # Create Alembic configuration programmatically (no alembic.ini needed)

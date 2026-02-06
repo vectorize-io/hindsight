@@ -1,0 +1,90 @@
+# Docker Compose file for Hindsight with PostgreSQL and pgvector
+#
+# Make sure to set the required environment variables before running:
+# - HINDSIGHT_DB_PASSWORD: Password for the PostgreSQL user
+# - Configure LLM provider variables as needed (see below in the hindsight service)
+#
+# Usage:
+# docker compose up -d
+#
+# Optional environment variables with defaults:
+# - HINDSIGHT_VERSION: Hindsight application version (default: latest)
+# - HINDSIGHT_DB_USER: PostgreSQL user (default: hindsight_user)
+# - HINDSIGHT_DB_NAME: PostgreSQL database name (default: hindsight_db)
+# - HINDSIGHT_DB_VERSION: PostgreSQL version (default: 18)
+
+services:
+  db:
+    # Use a PostgreSQL-Image with pgvector extension pre-installed
+    # see https://hub.docker.com/r/pgvector/pgvector 
+    image: pgvector/pgvector:pg${HINDSIGHT_DB_VERSION:-18}
+    container_name: hindsight-db
+    restart: always
+    # Expose PostgreSQL port
+    # ports:
+      # - "5432:5432"
+    environment:
+      POSTGRES_USER: ${HINDSIGHT_DB_USER:-hindsight_user}
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:?Please set the HINDSIGHT_DB_PASSWORD env variable}
+      POSTGRES_DB: ${HINDSIGHT_DB_NAME:-hindsight_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/${HINDSIGHT_DB_VERSION:-18}/docker
+    networks:
+      - hindsight-net
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest}
+    container_name: hindsight-app
+    pull_policy: always
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      # For more LLM providers see https://hindsight.vectorize.io/developer/configuration#llm-provider
+
+      # LLM-configuration for Grog
+      # - HINDSIGHT_API_LLM_PROVIDER=groq
+      # - HINDSIGHT_API_LLM_API_KEY=${GROG_API_KEY?Please set the GROG_API_KEY env variable}
+      # - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL:-openai/gpt-oss-20b}
+
+      # LLM-configuration for OpenAI
+      # - HINDSIGHT_API_LLM_PROVIDER=openai
+      # - HINDSIGHT_API_LLM_API_KEY=${OPENAI_API_KEY?Please set the OPENAI_API_KEY env variable}
+      # - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL:-gpt-4o}
+
+      # Gemini
+      # - HINDSIGHT_API_LLM_PROVIDER=gemini
+      # - HINDSIGHT_API_LLM_API_KEY=${GEMINI_API_KEY?Please set the GEMINI_API_KEY env variable}
+      # - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL:-gemini-2.0-flash}
+
+      # Anthropic
+      # - HINDSIGHT_API_LLM_PROVIDER=anthropic
+      # - HINDSIGHT_API_LLM_API_KEY=${ANTHROPIC_API_KEY?Please set the ANTHROPIC_API_KEY env variable}
+      # - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL:-claude-sonnet-4-20250514}
+
+      # LLM-configuration for Ollama (local, no API key)
+      # - HINDSIGHT_API_LLM_PROVIDER=ollama
+      # - HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_API_LLM_BASE_URL:-http://127.0.0.1:11434/v1}
+      # - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_API_LLM_MODEL:-llama3.2}
+
+
+      # Configuration for the external Postgres database
+      - HINDSIGHT_API_DATABASE_URL=postgresql://${HINDSIGHT_DB_USER:-hindsight_user}:${HINDSIGHT_DB_PASSWORD:?Please set the HINDSIGHT_DB_PASSWORD env variable}@db:5432/${HINDSIGHT_DB_NAME:-hindsight_db}
+      # use public schema, otherwise the app start fails (2026-02-06)
+      - HINDSIGHT_API_DATABASE_SCHEMA=public
+
+      # disable if you don't want automatic migrations on startup 
+      - HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP=true
+    volumes:
+      - ~/.hindsight-docker:/home/hindsight/.pg0
+    depends_on:
+      - db
+    networks:
+      - hindsight-net
+
+networks:
+  hindsight-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
