@@ -201,6 +201,10 @@ class MCPMiddleware:
         elif path == "/mcp":
             path = "/"
 
+        # Ensure path has leading slash (needed after stripping mount path)
+        if path and not path.startswith("/"):
+            path = "/" + path
+
         # Try to get bank_id from header first (for Claude Code compatibility)
         bank_id = self._get_header(scope, "X-Bank-Id")
         bank_id_from_path = False

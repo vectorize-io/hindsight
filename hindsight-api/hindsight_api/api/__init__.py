@@ -72,22 +72,24 @@ def create_app(
 
     # Mount MCP server and chain its lifespan if enabled
     if mcp_app is not None:
-        # Get the MCP app's underlying Starlette app for lifespan access
-        mcp_starlette_app = mcp_app.mcp_app
+        # Get both MCP apps' underlying Starlette apps for lifespan access
+        multi_bank_starlette_app = mcp_app.multi_bank_app
+        single_bank_starlette_app = mcp_app.single_bank_app
 
         # Store the original lifespan
         original_lifespan = app.router.lifespan_context
 
         @asynccontextmanager
         async def chained_lifespan(app_instance: FastAPI):
-            """Chain the MCP lifespan with the main app lifespan."""
-            # Start MCP lifespan first
-            async with mcp_starlette_app.router.lifespan_context(mcp_starlette_app):
-                logger.info("MCP lifespan started")
-                # Then start the original app lifespan
-                async with original_lifespan(app_instance):
-                    yield
-            logger.info("MCP lifespan stopped")
+            """Chain both MCP lifespans with the main app lifespan."""
+            # Start both MCP lifespans (multi-bank and single-bank)
+            async with multi_bank_starlette_app.router.lifespan_context(multi_bank_starlette_app):
+                async with single_bank_starlette_app.router.lifespan_context(single_bank_starlette_app):
+                    logger.info("MCP lifespans started (multi-bank and single-bank)")
+                    # Then start the original app lifespan
+                    async with original_lifespan(app_instance):
+                        yield
+                logger.info("MCP lifespans stopped")
 
         # Replace the app's lifespan with the chained version
         app.router.lifespan_context = chained_lifespan

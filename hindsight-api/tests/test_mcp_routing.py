@@ -264,15 +264,20 @@ async def test_routing_logic_from_url_path():
 
     # Simulate different URL patterns and verify routing
     test_cases = [
-        # (path, expected_bank_id_from_path, description)
-        ("/alice/messages", True, "Bank ID in path"),
-        ("/my-agent-123/", True, "Bank ID in path with trailing slash"),
-        ("/messages", False, "MCP endpoint, no bank ID"),
-        ("/", False, "Root path, no bank ID"),
+        # (path_after_stripping_mcp, expected_bank_id_from_path, expected_bank_id, description)
+        ("/alice/messages", True, "alice", "Bank ID in path with endpoint"),
+        ("/my-agent-123/", True, "my-agent-123", "Bank ID in path with trailing slash"),
+        ("ciccio/messages", True, "ciccio", "Bank ID without leading slash (after mount strip)"),
+        ("bob", True, "bob", "Bank ID only, no leading slash"),
+        ("/messages", False, None, "MCP endpoint, no bank ID"),
+        ("/", False, None, "Root path, no bank ID"),
     ]
 
-    for path, expected_bank_from_path, description in test_cases:
-        # Simulate the path parsing logic
+    for path, expected_bank_from_path, expected_bank_id, description in test_cases:
+        # Simulate the path parsing logic with leading slash normalization
+        if path and not path.startswith("/"):
+            path = "/" + path
+
         bank_id = None
         bank_id_from_path = False
         MCP_ENDPOINTS = {"sse", "messages"}
@@ -284,3 +289,4 @@ async def test_routing_logic_from_url_path():
                 bank_id_from_path = True
 
         assert bank_id_from_path == expected_bank_from_path, f"Failed for: {description} (path={path})"
+        assert bank_id == expected_bank_id, f"Failed bank_id for: {description} (path={path}, got={bank_id})"
