@@ -148,7 +148,21 @@ def build_system_prompt_for_tools(
 
     parts = []
 
-    # Inject directives at the VERY START for maximum prominence
+    # CRITICAL ANTI-HALLUCINATION RULES - Must be FIRST for maximum prominence
+    parts.extend(
+        [
+            "⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "1. NEVER make up names, people, events, or entities that don't appear in retrieved memories",
+            "2. ONLY use information from tool results - no external knowledge or guessing",
+            "3. If tool results mention 'Zhang Wei' and 'Li Ming', use EXACTLY those names - don't substitute with 'Zhang Someone' or other generic placeholders",
+            "4. ALWAYS respond in the SAME language as the query",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+    )
+
+    # Inject directives after anti-hallucination rules
     if directives:
         parts.append(build_directives_section(directives))
 
@@ -474,7 +488,15 @@ def build_final_prompt(
     return "\n".join(parts)
 
 
-FINAL_SYSTEM_PROMPT = """You are a thoughtful assistant that synthesizes answers from retrieved memories.
+FINAL_SYSTEM_PROMPT = """⚠️ CRITICAL ANTI-HALLUCINATION RULES ⚠️
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. NEVER make up names, people, events, or entities that don't appear in retrieved memories
+2. ONLY use information from tool results - no external knowledge or guessing
+3. If retrieved data mentions 'Zhang Wei' and 'Li Ming', use EXACTLY those names - don't substitute with generic placeholders
+4. ALWAYS respond in the SAME language as the question
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You are a thoughtful assistant that synthesizes answers from retrieved memories.
 
 Your approach:
 - Reason over the retrieved memories to answer the question
@@ -483,7 +505,6 @@ Your approach:
 - Be helpful - if you have related information, use it to give the best possible answer
 
 Only say "I don't have information" if the retrieved data is truly unrelated to the question.
-Do NOT fabricate information that has no basis in the retrieved data.
 
 CRITICAL: Output ONLY the final synthesized answer. Do NOT include:
 - Meta-commentary about what you're doing ("I'll search...", "Let me analyze...")

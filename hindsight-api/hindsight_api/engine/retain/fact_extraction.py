@@ -542,7 +542,12 @@ Output: ONLY 2 facts (skip coffee preference - too trivial):
 QUALITY OVER QUANTITY
 ══════════════════════════════════════════════════════════════════════════
 
-Ask: "Would this be useful to recall in 6 months?" If no, skip it."""
+Ask: "Would this be useful to recall in 6 months?" If no, skip it.
+
+IMPORTANT: Sensory/emotional details and observations that provide meaningful context
+about experiences ARE important to remember, even if they seem small (e.g., how food
+tasted, how someone looked, how loud music was). Extract these if they characterize
+an experience or person."""
 
 # Assembled concise prompt (backward compatible - exact same output as before)
 CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(

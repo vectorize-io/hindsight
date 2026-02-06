@@ -77,6 +77,10 @@ def should_skip_provider(provider: str, model: str = "") -> tuple[bool, str]:
     if provider == "ollama" and "gemma" in model.lower():
         return True, f"Ollama {model} does not support tool calling"
 
+    # Skip groq-openai/gpt-oss-120b (extremely slow, times out frequently)
+    if provider == "groq" and "gpt-oss-120b" in model.lower():
+        return True, f"Groq {model} is too slow and times out frequently"
+
     # Other providers need an API key
     if provider not in ("ollama", "claude-code", "openai-codex", "mock"):
         api_key = get_api_key_for_provider(provider)
@@ -189,7 +193,7 @@ async def test_llm_provider_api_methods(provider: str, model: str):
                 {"role": "user", "content": "What's the weather like in Paris?"},
             ],
             tools=tools,
-            max_completion_tokens=200,
+            max_completion_tokens=500,  # Increased from 200 to give models enough space for tool calls
         )
 
         assert result is not None, "call_with_tools() returned None"
