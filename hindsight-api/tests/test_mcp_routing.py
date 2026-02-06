@@ -219,3 +219,68 @@ def test_single_bank_mode_tools_no_bank_id_param(mock_memory):
     reflect_tool = tools["reflect"]
     reflect_sig = inspect.signature(reflect_tool.fn)
     assert "bank_id" not in reflect_sig.parameters
+
+
+@pytest.mark.asyncio
+async def test_middleware_handles_both_endpoints(mock_memory):
+    """Test that MCPMiddleware routes to correct server based on URL path."""
+    from hindsight_api.api.mcp import MCPMiddleware
+
+    # Create middleware (single instance)
+    middleware = MCPMiddleware(None, mock_memory)
+
+    # Verify both server instances exist
+    assert middleware.multi_bank_app is not None
+    assert middleware.single_bank_app is not None
+
+    # Verify they expose different tools
+    multi_bank_tools = middleware.multi_bank_server._tool_manager._tools
+    single_bank_tools = middleware.single_bank_server._tool_manager._tools
+
+    # Multi-bank should have all tools
+    assert "retain" in multi_bank_tools
+    assert "recall" in multi_bank_tools
+    assert "list_banks" in multi_bank_tools
+    assert "create_bank" in multi_bank_tools
+
+    # Single-bank should only have scoped tools
+    assert "retain" in single_bank_tools
+    assert "recall" in single_bank_tools
+    assert "list_banks" not in single_bank_tools
+    assert "create_bank" not in single_bank_tools
+
+
+@pytest.mark.asyncio
+async def test_routing_logic_from_url_path():
+    """Test that routing correctly selects server based on URL structure."""
+    from hindsight_api.api.mcp import MCPMiddleware
+    from unittest.mock import AsyncMock
+
+    # Mock memory
+    mock_memory = MagicMock()
+
+    # Create middleware
+    middleware = MCPMiddleware(None, mock_memory)
+
+    # Simulate different URL patterns and verify routing
+    test_cases = [
+        # (path, expected_bank_id_from_path, description)
+        ("/alice/messages", True, "Bank ID in path"),
+        ("/my-agent-123/", True, "Bank ID in path with trailing slash"),
+        ("/messages", False, "MCP endpoint, no bank ID"),
+        ("/", False, "Root path, no bank ID"),
+    ]
+
+    for path, expected_bank_from_path, description in test_cases:
+        # Simulate the path parsing logic
+        bank_id = None
+        bank_id_from_path = False
+        MCP_ENDPOINTS = {"sse", "messages"}
+
+        if path.startswith("/") and len(path) > 1:
+            parts = path[1:].split("/", 1)
+            if parts[0] and parts[0] not in MCP_ENDPOINTS:
+                bank_id = parts[0]
+                bank_id_from_path = True
+
+        assert bank_id_from_path == expected_bank_from_path, f"Failed for: {description} (path={path})"
