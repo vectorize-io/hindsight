@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Button } from "@/components/ui/button";
@@ -302,8 +303,24 @@ export function MentalModelsView() {
                           <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
                             {m.source_query}
                           </p>
-                          <div className="text-sm text-foreground line-clamp-6 mb-3 border-t border-border pt-3">
-                            {m.content}
+                          <div className="text-sm text-foreground mb-3 border-t border-border pt-3">
+                            {/* Check if content has tables or complex markdown */}
+                            {m.content.includes("|") ||
+                            m.content.includes("```") ||
+                            m.content.includes("\n\n") ? (
+                              // Show plain text preview for complex content
+                              <div className="line-clamp-3 text-muted-foreground italic">
+                                {m.content.substring(0, 150)}...{" "}
+                                <span className="text-primary">Click to view full content</span>
+                              </div>
+                            ) : (
+                              // Render simple markdown with line clamp
+                              <div className="line-clamp-6 prose prose-sm dark:prose-invert max-w-none">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {m.content}
+                                </ReactMarkdown>
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center justify-between text-xs border-t border-border pt-3">
                             <div className="flex items-center gap-2">
@@ -1115,7 +1132,7 @@ function MentalModelDetailPanel({
               Content
             </div>
             <div className="prose prose-base dark:prose-invert max-w-none">
-              <ReactMarkdown>{mentalModel.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{mentalModel.content}</ReactMarkdown>
             </div>
           </div>
 

@@ -32,6 +32,8 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict";
 type ViewMode = "answer" | "trace" | "json";
@@ -364,7 +366,9 @@ export function ThinkView() {
                   <CardTitle>Answer</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-base leading-relaxed whitespace-pre-wrap">{result.text}</div>
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.text}</ReactMarkdown>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -967,9 +971,11 @@ export function ThinkView() {
               <div className="space-y-4">
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground">Text</h3>
-                  <p className="mt-1 font-medium">
-                    {fullObservation?.text || selectedObservation.text}
-                  </p>
+                  <div className="mt-1 prose prose-sm max-w-none dark:prose-invert">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {fullObservation?.text || selectedObservation.text}
+                    </ReactMarkdown>
+                  </div>
                 </div>
                 {fullObservation?.tags && fullObservation.tags.length > 0 && (
                   <div>
