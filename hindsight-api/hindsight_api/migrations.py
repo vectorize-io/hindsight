@@ -24,6 +24,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import create_engine, text
+from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,7 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     """
     schema_name = schema or "public"
     logger.info(f"Running database migrations to head for schema '{schema_name}'...")
-    # database_url is sensitive info, log at debug level only
-    logger.debug(f"Database URL: {database_url}")
+    logger.info(f"Database URL: {mask_network_location(database_url)}")
     logger.info(f"Script location: {script_location}")
 
     # Create Alembic configuration programmatically (no alembic.ini needed)
