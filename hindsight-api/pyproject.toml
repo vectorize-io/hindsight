@@ -25,6 +25,7 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "tiktoken>=0.12.0",
     "httpx>=0.27.0",
+    "PyJWT[crypto]>=2.8.0",
     "fastmcp>=2.14.0", # CVE-2025-66416
     "pg0-embedded>=0.11.0",
     "python-dateutil>=2.8.0",

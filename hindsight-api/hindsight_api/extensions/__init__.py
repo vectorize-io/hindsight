@@ -16,7 +16,7 @@ with the system (e.g., running migrations for tenant schemas).
 """
 
 from hindsight_api.extensions.base import Extension
-from hindsight_api.extensions.builtin import ApiKeyTenantExtension
+from hindsight_api.extensions.builtin import ApiKeyTenantExtension, SupabaseTenantExtension
 from hindsight_api.extensions.context import DefaultExtensionContext, ExtensionContext
 from hindsight_api.extensions.http import HttpExtension
 from hindsight_api.extensions.loader import load_extension
@@ -80,6 +80,7 @@ __all__ = [
     "MentalModelRefreshResult",
     # Tenant/Auth
     "ApiKeyTenantExtension",
+    "SupabaseTenantExtension",
     "AuthenticationError",
     "RequestContext",
     "Tenant",
