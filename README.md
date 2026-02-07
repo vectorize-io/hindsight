@@ -135,10 +135,16 @@ npm install @vectorize-io/hindsight-client
 ```javascript
 const { HindsightClient } = require('@vectorize-io/hindsight-client');
 
-const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
+const example = async () => {
+  const client = new HindsightClient({ baseUrl: 'http://localhost:8888' });
 
-await client.retain('my-bank', 'Alice loves hiking in Yosemite');
-await client.recall('my-bank', 'What does Alice like?');
+  await client.retain('my-bank', 'Alice loves hiking in Yosemite');
+
+  const results = await client.recall('my-bank', 'What does Alice like?');
+  console.log(results);
+}
+
+example();
 ```
 
 ---
