@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import get_config
 from ..metrics import get_metrics_collector
+from ..utils import mask_network_location
 from .db_budget import budgeted_operation
 
 # Context variable for current schema (async-safe, per-task isolation)
@@ -976,7 +977,7 @@ class MemoryEngine(MemoryEngineInterface):
             except Exception as e:
                 logger.warning(f"Failed to run schema migrations: {e}")
 
-        logger.info(f"Connecting to PostgreSQL at {self.db_url}")
+        logger.info(f"Connecting to PostgreSQL at {mask_network_location(self.db_url)}")
 
         # Create connection pool
         # For read-heavy workloads with many parallel think/search operations,
