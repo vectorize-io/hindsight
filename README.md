@@ -64,7 +64,7 @@ You can modify the LLM provider by setting `HINDSIGHT_API_LLM_PROVIDER`. Valid o
 ```bash
 cd docker/docker-compose
 
-# edit the docker compose file with your favorit editor
+# edit the docker compose file with your favorite editor
 nano docker-compose.yaml
 
 # start hindsight with an external PostgeSQL
