@@ -269,9 +269,12 @@ RUN apt-get update && apt-get install -y \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
+    && pip install --no-cache-dir uv \
+    && npm install -g @anthropic-ai/claude-code
 
-RUN useradd -m -s /bin/bash hindsight
+RUN useradd -m -s /bin/bash hindsight \
+    && mkdir -p /home/hindsight/.claude \
+    && chown hindsight:hindsight /home/hindsight/.claude
 
 # Copy API with virtual environment from builder
 COPY --from=api-builder /app/api /app/api
