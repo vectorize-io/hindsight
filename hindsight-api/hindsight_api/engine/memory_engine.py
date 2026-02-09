@@ -525,6 +525,66 @@ class MemoryEngine(MemoryEngineInterface):
         _current_schema.set(tenant_context.schema_name)
         return tenant_context.schema_name
 
+    async def _get_bank_llm_config(
+        self, bank_id: str, operation: str, context: "RequestContext | None" = None
+    ) -> "LLMProvider":
+        """
+        Get LLM configuration for a specific bank and operation with hierarchical overrides.
+
+        Resolution order:
+        1. Global config (from environment variables) - used as defaults
+        2. Tenant config overrides (from TenantExtension.get_tenant_config())
+        3. Bank config overrides (from banks.config JSONB)
+
+        Args:
+            bank_id: Bank identifier
+            operation: Operation type ("retain", "reflect", "consolidation", or "default")
+            context: Request context for tenant config resolution
+
+        Returns:
+            LLMProvider instance with resolved configuration (pooled for efficiency)
+        """
+        from ..llm_client_pool import LLMClientPool
+
+        # Get resolved config for this bank
+        config_dict = await self._config_resolver.get_bank_config(bank_id, context)
+
+        # Determine which LLM config to use based on operation
+        # Per-operation configs fall back to default LLM config
+        if operation == "retain":
+            provider = config_dict.get("retain_llm_provider") or config_dict["llm_provider"]
+            api_key = config_dict.get("retain_llm_api_key") or config_dict.get("llm_api_key")
+            model = config_dict.get("retain_llm_model") or config_dict["llm_model"]
+            base_url = config_dict.get("retain_llm_base_url") or config_dict.get("llm_base_url", "")
+        elif operation == "reflect":
+            provider = config_dict.get("reflect_llm_provider") or config_dict["llm_provider"]
+            api_key = config_dict.get("reflect_llm_api_key") or config_dict.get("llm_api_key")
+            model = config_dict.get("reflect_llm_model") or config_dict["llm_model"]
+            base_url = config_dict.get("reflect_llm_base_url") or config_dict.get("llm_base_url", "")
+        elif operation == "consolidation":
+            provider = config_dict.get("consolidation_llm_provider") or config_dict["llm_provider"]
+            api_key = config_dict.get("consolidation_llm_api_key") or config_dict.get("llm_api_key")
+            model = config_dict.get("consolidation_llm_model") or config_dict["llm_model"]
+            base_url = config_dict.get("consolidation_llm_base_url") or config_dict.get("llm_base_url", "")
+        else:  # Default LLM config
+            provider = config_dict["llm_provider"]
+            api_key = config_dict.get("llm_api_key")
+            model = config_dict["llm_model"]
+            base_url = config_dict.get("llm_base_url", "")
+
+        # Get or create LLM client from pool (reuses clients with same config)
+        llm_provider = LLMClientPool.get_or_create(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url or "",
+            model=model,
+            reasoning_effort="low",  # Default reasoning effort
+        )
+
+        logger.debug(f"Resolved LLM config for bank {bank_id}, operation {operation}: {provider}/{model}")
+
+        return llm_provider
+
     async def _handle_batch_retain(self, task_dict: dict[str, Any]):
         """
         Handler for batch retain tasks.
@@ -1017,6 +1077,12 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize entity resolver with pool
         self.entity_resolver = EntityResolver(self._pool)
+
+        # Initialize config resolver for hierarchical configuration
+        from ..config_resolver import ConfigResolver
+
+        self._config_resolver = ConfigResolver(pool=self._pool, tenant_extension=self._tenant_extension)
+        logger.debug("Config resolver initialized for hierarchical configuration")
 
         # Set executor for task backend and initialize
         self._task_backend.set_executor(self.execute_task)

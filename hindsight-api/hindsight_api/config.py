@@ -8,8 +8,9 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
+from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -17,6 +18,66 @@ from dotenv import find_dotenv, load_dotenv
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
 logger = logging.getLogger(__name__)
+
+
+# Configuration field markers for hierarchical configuration
+def hierarchical(default_value):
+    """
+    Mark a config field as hierarchical (can be overridden per-tenant/bank).
+
+    Hierarchical fields can be customized at the tenant or bank level via database
+    configuration. Examples: LLM settings, retention parameters, retrieval settings.
+    """
+    return field(default=default_value, metadata={"hierarchical": True})
+
+
+def static(default_value):
+    """
+    Mark a config field as static (server-level only, cannot be overridden).
+
+    Static fields are infrastructure-level settings that affect the entire server
+    and cannot vary per tenant or bank. Examples: database URL, API port, worker settings.
+    """
+    return field(default=default_value, metadata={"hierarchical": False})
+
+
+# Configuration key normalization utilities
+def normalize_config_key(key: str) -> str:
+    """
+    Convert environment variable format to Python field name format.
+
+    Examples:
+        HINDSIGHT_API_LLM_PROVIDER -> llm_provider
+        LLM_MODEL -> llm_model
+        llm_model -> llm_model (already normalized)
+
+    Args:
+        key: Environment variable name or Python field name
+
+    Returns:
+        Normalized Python field name (lowercase snake_case)
+    """
+    if key.startswith("HINDSIGHT_API_"):
+        key = key[len("HINDSIGHT_API_") :]
+    return key.lower()
+
+
+def normalize_config_dict(config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize all keys in a config dict to Python field names.
+
+    Allows users to provide config overrides in either format:
+    - Python field format: {"llm_provider": "openai"}
+    - Env var format: {"HINDSIGHT_API_LLM_PROVIDER": "openai"}
+
+    Args:
+        config: Dict with env var or Python field names as keys
+
+    Returns:
+        Dict with all keys normalized to Python field names
+    """
+    return {normalize_config_key(k): v for k, v in config.items()}
+
 
 # Environment variable names
 ENV_DATABASE_URL = "HINDSIGHT_API_DATABASE_URL"
@@ -497,6 +558,102 @@ class HindsightConfig:
     otel_exporter_otlp_headers: str | None
     otel_service_name: str
     otel_deployment_environment: str
+
+    # Class-level sets for hierarchical configuration categorization
+    _HIERARCHICAL_FIELDS = {
+        # LLM Configuration
+        "llm_provider",
+        "llm_api_key",
+        "llm_model",
+        "llm_base_url",
+        "llm_max_concurrent",
+        "llm_max_retries",
+        "llm_initial_backoff",
+        "llm_max_backoff",
+        "llm_timeout",
+        # Vertex AI
+        "llm_vertexai_project_id",
+        "llm_vertexai_region",
+        "llm_vertexai_service_account_key",
+        # Retain LLM
+        "retain_llm_provider",
+        "retain_llm_api_key",
+        "retain_llm_model",
+        "retain_llm_base_url",
+        "retain_llm_max_concurrent",
+        "retain_llm_max_retries",
+        "retain_llm_initial_backoff",
+        "retain_llm_max_backoff",
+        "retain_llm_timeout",
+        # Reflect LLM
+        "reflect_llm_provider",
+        "reflect_llm_api_key",
+        "reflect_llm_model",
+        "reflect_llm_base_url",
+        "reflect_llm_max_concurrent",
+        "reflect_llm_max_retries",
+        "reflect_llm_initial_backoff",
+        "reflect_llm_max_backoff",
+        "reflect_llm_timeout",
+        # Consolidation LLM
+        "consolidation_llm_provider",
+        "consolidation_llm_api_key",
+        "consolidation_llm_model",
+        "consolidation_llm_base_url",
+        "consolidation_llm_max_concurrent",
+        "consolidation_llm_max_retries",
+        "consolidation_llm_initial_backoff",
+        "consolidation_llm_max_backoff",
+        "consolidation_llm_timeout",
+        # Retention settings
+        "retain_max_completion_tokens",
+        "retain_chunk_size",
+        "retain_extract_causal_links",
+        "retain_extraction_mode",
+        "retain_custom_instructions",
+        # Recall/Retrieval
+        "graph_retriever",
+        "mpfp_top_k_neighbors",
+        "recall_connection_budget",
+        # Consolidation
+        "enable_observations",
+        "consolidation_batch_size",
+        "consolidation_max_tokens",
+        # Optimization flags
+        "skip_llm_verification",
+        "lazy_reranker",
+        # Reflect settings
+        "reflect_max_iterations",
+    }
+
+    @classmethod
+    def get_hierarchical_fields(cls) -> set[str]:
+        """
+        Get set of field names that are hierarchical (can be overridden per-tenant/bank).
+
+        Hierarchical fields can be customized at the tenant or bank level.
+        These include LLM settings, retention parameters, retrieval settings, etc.
+
+        Returns:
+            Set of hierarchical field names
+        """
+        return cls._HIERARCHICAL_FIELDS.copy()
+
+    @classmethod
+    def get_static_fields(cls) -> set[str]:
+        """
+        Get set of field names that are static (server-level only).
+
+        Static fields are infrastructure-level settings that cannot vary
+        per tenant or bank. These include database config, API port, worker settings, etc.
+
+        Returns:
+            Set of static field names
+        """
+        # Get all field names from dataclass
+        all_fields = {f.name for f in fields(cls)}
+        # Static fields = all fields - hierarchical fields
+        return all_fields - cls._HIERARCHICAL_FIELDS
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""

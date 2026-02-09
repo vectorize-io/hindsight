@@ -60,6 +60,52 @@ export type BackgroundResponse = {
 };
 
 /**
+ * BankConfigResponse
+ *
+ * Response model for bank configuration.
+ */
+export type BankConfigResponse = {
+  /**
+   * Bank Id
+   *
+   * Bank identifier
+   */
+  bank_id: string;
+  /**
+   * Config
+   *
+   * Fully resolved configuration with all hierarchical overrides applied (Python field names)
+   */
+  config: {
+    [key: string]: unknown;
+  };
+  /**
+   * Overrides
+   *
+   * Bank-specific configuration overrides only (Python field names)
+   */
+  overrides: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * BankConfigUpdate
+ *
+ * Request model for updating bank configuration.
+ */
+export type BankConfigUpdate = {
+  /**
+   * Updates
+   *
+   * Configuration overrides. Keys can be in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER). Only hierarchical fields can be overridden per-bank.
+   */
+  updates: {
+    [key: string]: unknown;
+  };
+};
+
+/**
  * BankListItem
  *
  * Bank list item with profile summary.
@@ -3425,6 +3471,119 @@ export type ClearObservationsResponses = {
 
 export type ClearObservationsResponse =
   ClearObservationsResponses[keyof ClearObservationsResponses];
+
+export type ResetBankConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/config";
+};
+
+export type ResetBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ResetBankConfigError =
+  ResetBankConfigErrors[keyof ResetBankConfigErrors];
+
+export type ResetBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankConfigResponse;
+};
+
+export type ResetBankConfigResponse =
+  ResetBankConfigResponses[keyof ResetBankConfigResponses];
+
+export type GetBankConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/config";
+};
+
+export type GetBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetBankConfigError = GetBankConfigErrors[keyof GetBankConfigErrors];
+
+export type GetBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankConfigResponse;
+};
+
+export type GetBankConfigResponse =
+  GetBankConfigResponses[keyof GetBankConfigResponses];
+
+export type UpdateBankConfigData = {
+  body: BankConfigUpdate;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/config";
+};
+
+export type UpdateBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateBankConfigError =
+  UpdateBankConfigErrors[keyof UpdateBankConfigErrors];
+
+export type UpdateBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankConfigResponse;
+};
+
+export type UpdateBankConfigResponse =
+  UpdateBankConfigResponses[keyof UpdateBankConfigResponses];
 
 export type TriggerConsolidationData = {
   body?: never;

@@ -39,6 +39,9 @@ import type {
   GetAgentStatsData,
   GetAgentStatsErrors,
   GetAgentStatsResponses,
+  GetBankConfigData,
+  GetBankConfigErrors,
+  GetBankConfigResponses,
   GetBankProfileData,
   GetBankProfileErrors,
   GetBankProfileResponses,
@@ -108,12 +111,18 @@ import type {
   RegenerateEntityObservationsData,
   RegenerateEntityObservationsErrors,
   RegenerateEntityObservationsResponses,
+  ResetBankConfigData,
+  ResetBankConfigErrors,
+  ResetBankConfigResponses,
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
   TriggerConsolidationData,
   TriggerConsolidationErrors,
   TriggerConsolidationResponses,
+  UpdateBankConfigData,
+  UpdateBankConfigErrors,
+  UpdateBankConfigResponses,
   UpdateBankData,
   UpdateBankDispositionData,
   UpdateBankDispositionErrors,
@@ -807,6 +816,55 @@ export const clearObservations = <ThrowOnError extends boolean = false>(
     ClearObservationsErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/observations", ...options });
+
+/**
+ * Reset bank configuration
+ *
+ * Reset bank configuration to defaults by removing all bank-specific overrides. The bank will then use global and tenant-level configuration only.
+ */
+export const resetBankConfig = <ThrowOnError extends boolean = false>(
+  options: Options<ResetBankConfigData, ThrowOnError>,
+) =>
+  (options.client ?? client).delete<
+    ResetBankConfigResponses,
+    ResetBankConfigErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/config", ...options });
+
+/**
+ * Get bank configuration
+ *
+ * Get fully resolved configuration for a bank including all hierarchical overrides (global → tenant → bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.
+ */
+export const getBankConfig = <ThrowOnError extends boolean = false>(
+  options: Options<GetBankConfigData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetBankConfigResponses,
+    GetBankConfigErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/config", ...options });
+
+/**
+ * Update bank configuration
+ *
+ * Update configuration overrides for a bank. Only hierarchical fields can be overridden (LLM settings, retention parameters, etc.). Keys can be provided in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER).
+ */
+export const updateBankConfig = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateBankConfigData, ThrowOnError>,
+) =>
+  (options.client ?? client).patch<
+    UpdateBankConfigResponses,
+    UpdateBankConfigErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/config",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
 
 /**
  * Trigger consolidation

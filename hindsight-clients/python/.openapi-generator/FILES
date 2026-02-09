@@ -16,6 +16,8 @@ hindsight_client_api/models/__init__.py
 hindsight_client_api/models/add_background_request.py
 hindsight_client_api/models/async_operation_submit_response.py
 hindsight_client_api/models/background_response.py
+hindsight_client_api/models/bank_config_response.py
+hindsight_client_api/models/bank_config_update.py
 hindsight_client_api/models/bank_list_item.py
 hindsight_client_api/models/bank_list_response.py
 hindsight_client_api/models/bank_profile_response.py

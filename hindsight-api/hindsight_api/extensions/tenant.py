@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from hindsight_api.extensions.base import Extension
 from hindsight_api.models import RequestContext
@@ -87,6 +88,29 @@ class TenantExtension(Extension, ABC):
             For single-tenant setups, return [Tenant(schema="public")].
         """
         ...
+
+    async def get_tenant_config(self, context: RequestContext) -> dict[str, Any]:
+        """
+        Get tenant-specific configuration overrides.
+
+        This method is called during hierarchical configuration resolution to get
+        tenant-level config overrides. The returned dict should contain Python field
+        names (lowercase snake_case) as keys, not environment variable names.
+
+        Example:
+            {"llm_model": "gpt-4", "retain_extraction_mode": "verbose"}
+
+        The default implementation returns an empty dict (no tenant-specific config).
+        Override this method in custom extensions to provide tenant-specific configuration.
+
+        Args:
+            context: The request context containing tenant information.
+
+        Returns:
+            Dict of config field names to values (only hierarchical fields).
+            Empty dict if no tenant-specific config.
+        """
+        return {}
 
     async def authenticate_mcp(self, context: RequestContext) -> TenantContext:
         """

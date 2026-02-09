@@ -2749,6 +2749,189 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/config": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Get bank configuration",
+        "description": "Get fully resolved configuration for a bank including all hierarchical overrides (global \u2192 tenant \u2192 bank). The 'config' field contains all resolved config values. The 'overrides' field shows only bank-specific overrides.",
+        "operationId": "get_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Update bank configuration",
+        "description": "Update configuration overrides for a bank. Only hierarchical fields can be overridden (LLM settings, retention parameters, etc.). Keys can be provided in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER).",
+        "operationId": "update_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Reset bank configuration",
+        "description": "Reset bank configuration to defaults by removing all bank-specific overrides. The bank will then use global and tenant-level configuration only.",
+        "operationId": "reset_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/consolidate": {
       "post": {
         "tags": [
@@ -3040,6 +3223,70 @@
         "description": "Response model for background update. Deprecated: use MissionResponse instead.",
         "example": {
           "mission": "I was born in Texas. I am a software engineer with 10 years of experience."
+        }
+      },
+      "BankConfigResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank identifier"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config",
+            "description": "Fully resolved configuration with all hierarchical overrides applied (Python field names)"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Overrides",
+            "description": "Bank-specific configuration overrides only (Python field names)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "config",
+          "overrides"
+        ],
+        "title": "BankConfigResponse",
+        "description": "Response model for bank configuration.",
+        "example": {
+          "bank_id": "my-bank",
+          "config": {
+            "llm_model": "gpt-4",
+            "llm_provider": "openai",
+            "retain_extraction_mode": "verbose"
+          },
+          "overrides": {
+            "llm_model": "gpt-4",
+            "retain_extraction_mode": "verbose"
+          }
+        }
+      },
+      "BankConfigUpdate": {
+        "properties": {
+          "updates": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Updates",
+            "description": "Configuration overrides. Keys can be in Python field format (llm_provider) or environment variable format (HINDSIGHT_API_LLM_PROVIDER). Only hierarchical fields can be overridden per-bank."
+          }
+        },
+        "type": "object",
+        "required": [
+          "updates"
+        ],
+        "title": "BankConfigUpdate",
+        "description": "Request model for updating bank configuration.",
+        "example": {
+          "updates": {
+            "llm_model": "claude-sonnet-4-5",
+            "retain_custom_instructions": "Extract technical details carefully",
+            "retain_extraction_mode": "verbose"
+          }
         }
       },
       "BankListItem": {
