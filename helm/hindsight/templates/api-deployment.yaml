@@ -60,6 +60,9 @@ spec:
         - name: HINDSIGHT_API_WORKER_ENABLED
           value: "false"
         {{- end }}
+        {{- /* Explicitly set port to override K8s service discovery env var (HINDSIGHT_API_PORT) */}}
+        - name: HINDSIGHT_API_PORT
+          value: {{ .Values.api.service.targetPort | quote }}
         {{- range $key, $value := .Values.api.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
