@@ -33,7 +33,7 @@ spec:
       - name: control-plane
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Values.version }}"
+        image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag | default .Values.version | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
         ports:
         - name: http

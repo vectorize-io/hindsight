@@ -1,5 +1,6 @@
 from urllib.parse import urlparse, urlunparse
 
+
 def mask_network_location(url):
     if not url:
         return url

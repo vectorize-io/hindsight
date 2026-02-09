@@ -1,7 +1,8 @@
 # Default values for hindsight
 
-# Chart version - use this to set a consistent image tag across all components
-version: "0.1.1"
+# Global version override - use this to set a consistent image tag across all components
+# If not set, defaults to Chart.appVersion from Chart.yaml
+# version: ""
 
 # Use an existing secret instead of creating one from values
 # When set, all keys from this secret are injected as environment variables via envFrom
@@ -75,7 +76,7 @@ worker:
   image:
     repository: ghcr.io/vectorize-io/hindsight-api
     pullPolicy: IfNotPresent
-    # tag defaults to .Values.version if not specified
+    # tag: ""  # defaults to .Values.version, then Chart.appVersion if not specified
 
   service:
     # Service for metrics scraping (headless for StatefulSet)

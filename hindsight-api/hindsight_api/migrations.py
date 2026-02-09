@@ -24,6 +24,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import create_engine, text
+
 from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
