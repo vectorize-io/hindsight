@@ -323,13 +323,8 @@ jobs:
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-      with:
-        driver-opts: |
-          network=host
 
-    - name: Build ${{ matrix.name }} image (${{ matrix.variant }}) (attempt 1)
-      id: docker_build_1
-      continue-on-error: true
+    - name: Build ${{ matrix.name }} image (${{ matrix.variant }})
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -339,30 +334,9 @@ jobs:
         push: false
         load: ${{ matrix.variant == 'slim' }}
         tags: hindsight-${{ matrix.name }}:test
-        cache-from: type=gha,scope=${{ matrix.name }}
-        cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-      timeout-minutes: 30
-
-    - name: Wait before retry
-      if: steps.docker_build_1.outcome == 'failure'
-      run: |
-        echo "Build failed, waiting 30s before retry..."
-        sleep 30
-
-    - name: Build ${{ matrix.name }} image (${{ matrix.variant }}) (attempt 2)
-      if: steps.docker_build_1.outcome == 'failure'
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: docker/standalone/Dockerfile
-        target: ${{ matrix.target }}
-        build-args: ${{ matrix.build_args }}
-        push: false
-        load: ${{ matrix.variant == 'slim' }}
-        tags: hindsight-${{ matrix.name }}:test
-        cache-from: type=gha,scope=${{ matrix.name }}
-        cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-      timeout-minutes: 30
+        # Removed GitHub Actions cache (type=gha) - it frequently returns 502 errors
+        # causing buildx to fail with "failed to parse error response 502"
+        # Build will be slower but more reliable
 
     # Only test slim variants to save disk space (they're much smaller)
     # Slim variants require external embedding providers
