@@ -58,6 +58,15 @@ api:
     timeoutSeconds: 3
     failureThreshold: 3
 
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
+
   # Environment variables
   env:
     #HINDSIGHT_API_LLM_PROVIDER: "groq"
@@ -122,6 +131,15 @@ worker:
     # HTTP port for metrics/health (matches service.targetPort)
     HINDSIGHT_API_WORKER_HTTP_PORT: "8889"
 
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
+
   # Secret environment variables (inherited from api.secrets if not specified)
   secrets: {}
 
@@ -164,6 +182,15 @@ controlPlane:
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 3
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+
+  # Pod affinity/anti-affinity (overrides global affinity for this component)
+  # affinity: {}
 
   # Environment variables
   env:
@@ -263,7 +290,7 @@ nodeSelector: {}
 # Tolerations
 tolerations: []
 
-# Affinity
+# Affinity (applied to all components unless overridden per-component)
 affinity: {}
 
 # Autoscaling
