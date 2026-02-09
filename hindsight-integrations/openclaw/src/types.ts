@@ -42,6 +42,7 @@ export interface PluginConfig {
   hindsightApiToken?: string; // API token for external Hindsight API authentication
   dynamicBankId?: boolean; // Enable per-channel memory banks (default: true)
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
+  excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
 }
 
 export interface ServiceConfig {

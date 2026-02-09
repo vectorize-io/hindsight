@@ -270,6 +270,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     // Dynamic bank ID options (default: enabled)
     dynamicBankId: config.dynamicBankId !== false,
     bankIdPrefix: config.bankIdPrefix,
+    excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
   };
 }
 
@@ -549,6 +550,12 @@ export default function (api: MoltbotPluginAPI) {
         }
         currentAgentContext = ctx;
 
+        // Check if this provider is excluded
+        if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
+          console.log(`[Hindsight] Skipping recall for excluded provider: ${ctx.messageProvider}`);
+          return;
+        }
+
         // Derive bank ID from context
         const bankId = deriveBankId(ctx, pluginConfig);
         console.log(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
@@ -646,6 +653,12 @@ User message: ${prompt}
       try {
         // Use context from this hook, or fall back to context captured in before_agent_start
         const effectiveCtx = ctx || currentAgentContext;
+
+        // Check if this provider is excluded
+        if (effectiveCtx?.messageProvider && pluginConfig.excludeProviders?.includes(effectiveCtx.messageProvider)) {
+          console.log(`[Hindsight] Skipping retain for excluded provider: ${effectiveCtx.messageProvider}`);
+          return;
+        }
 
         // Derive bank ID from context
         const bankId = deriveBankId(effectiveCtx, pluginConfig);
