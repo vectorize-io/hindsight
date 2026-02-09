@@ -370,7 +370,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 )
 
                 # Record trace span
-                from hindsight_api.tracing import get_span_recorder
+                from hindsight_api.tracing import _serialize_for_span, get_span_recorder
 
                 finish_reason = response.choices[0].finish_reason if response.choices else None
                 span_recorder = get_span_recorder()
@@ -379,7 +379,7 @@ class OpenAICompatibleLLM(LLMInterface):
                     model=self.model,
                     scope=scope,
                     messages=messages,
-                    response_content=result if isinstance(result, str) else json.dumps(result),
+                    response_content=_serialize_for_span(result),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     duration=duration,

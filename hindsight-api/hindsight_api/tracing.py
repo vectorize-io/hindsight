@@ -25,6 +25,26 @@ from opentelemetry.trace import Status, StatusCode
 logger = logging.getLogger(__name__)
 
 
+def _serialize_for_span(obj: Any) -> str:
+    """Serialize an object for span recording, handling Pydantic models."""
+    if isinstance(obj, str):
+        return obj
+    if hasattr(obj, "model_dump_json"):
+        # Pydantic v2 model
+        return obj.model_dump_json()
+    if hasattr(obj, "json"):
+        # Pydantic v1 model
+        return obj.json()
+    if hasattr(obj, "model_dump"):
+        # Pydantic v2 model - convert to dict then json
+        return json.dumps(obj.model_dump())
+    if hasattr(obj, "dict"):
+        # Pydantic v1 model - convert to dict then json
+        return json.dumps(obj.dict())
+    # Fallback to json.dumps for dicts and other types
+    return json.dumps(obj)
+
+
 # No-op tracer for when tracing is disabled
 class NoOpTracer:
     """No-op tracer that provides the same interface as OpenTelemetry Tracer but does nothing."""
