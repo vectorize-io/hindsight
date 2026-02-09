@@ -238,26 +238,61 @@ def process(data: UserData) -> str:
 
 ### Adding New API Configuration Flags
 
-When adding a new environment variable configuration:
+Configuration follows a hierarchical system: **Global (env vars) → Tenant (via extension) → Bank (database)**.
+
+Fields must be categorized as either **hierarchical** (can be overridden per-tenant/bank) or **static** (server-level only).
+
+#### Adding a New Configuration Field
 
 1. **config.py** (`hindsight-api/hindsight_api/config.py`):
-   - Add `ENV_*` constant for the environment variable name
+   - Add `ENV_*` constant for the environment variable name (e.g., `ENV_MY_SETTING = "HINDSIGHT_API_MY_SETTING"`)
    - Add `DEFAULT_*` constant for the default value
-   - Add field to `HindsightConfig` dataclass
+   - Add field to `HindsightConfig` dataclass with type annotation
+   - **Mark as hierarchical or static** by adding to `_HIERARCHICAL_FIELDS` set (hierarchical) or leaving it out (static)
    - Add initialization in `from_env()` method
+
+   ```python
+   # Hierarchical field (can be overridden per-bank)
+   _HIERARCHICAL_FIELDS = {
+       ...,
+       "my_setting",  # Add here for hierarchical
+   }
+
+   # Static field - just don't add to _HIERARCHICAL_FIELDS
+   ```
 
 2. **main.py** (`hindsight-api/hindsight_api/main.py`):
    - Add field to the manual `HindsightConfig()` constructor call (search for "CLI override")
 
-3. **Use the config** in code:
+3. **Use hierarchical config in MemoryEngine**:
+   ```python
+   # Config is resolved automatically per bank via ConfigResolver
+   config_dict = await self._config_resolver.get_bank_config(bank_id, context)
+   value = config_dict["my_setting"]
+   ```
+
+4. **Use static config** (non-hierarchical):
    ```python
    from ...config import get_config
    config = get_config()
-   value = config.your_new_field
+   value = config.my_static_field
    ```
 
-4. **Documentation** (`hindsight-docs/docs/developer/configuration.md`):
+5. **Documentation** (`hindsight-docs/docs/developer/configuration.md`):
    - Add to appropriate section table with Variable, Description, Default
+   - Mark if it's hierarchical (can be overridden per-bank)
+
+#### Hierarchical vs Static Guidelines
+
+**Hierarchical** (per-bank overridable):
+- LLM settings (provider, model, API key, base URL)
+- Operation-specific settings (retain mode, chunk size, etc.)
+- Feature flags that vary by customer/bank
+
+**Static** (server-level only):
+- Infrastructure settings (database URL, port, host)
+- Global limits (max concurrent operations)
+- System-wide feature flags
 
 ## Environment Setup
 
