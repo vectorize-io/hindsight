@@ -585,7 +585,6 @@ The tracing implementation uses standard OTLP HTTP protocol, so it works with an
 - **Grafana LGTM** (Recommended for local dev): All-in-one stack with Tempo traces, Loki logs, Mimir metrics, and Grafana UI
 - **Langfuse**: LLM-focused observability and analytics
 - **OpenLIT**: Built-in LLM dashboards, cost tracking
-- **SigNoz**: Full observability platform
 - **DataDog, New Relic, Honeycomb**: Commercial platforms
 
 **Example Configuration:**
