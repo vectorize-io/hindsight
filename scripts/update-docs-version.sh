@@ -120,6 +120,11 @@ else
     print_warn "           To update ${MAJOR_MINOR} docs, use patch releases (e.g., ${MAJOR_MINOR}.1)"
 fi
 
+# Generate documentation skill for AI agents
+echo ""
+print_info "Generating documentation skill for AI agents..."
+"$SCRIPT_DIR/generate-docs-skill.sh"
+
 echo ""
 print_info "Next steps:"
 echo "  1. Review changes: git diff $DOCS_DIR"

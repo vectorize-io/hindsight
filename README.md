@@ -42,6 +42,16 @@ If you need more control over how and when your agent stores and recalls memorie
 
 ![Hindsight Banner](./hindsight-docs/static/img/migration-code.png)
 
+---
+
+> 🤖 **Using a coding agent?** Install the Hindsight documentation skill for instant access to docs while you code:
+> ```bash
+> npx skills add https://github.com/vectorize-io/hindsight --skill hindsight-docs
+> ```
+> Works with Claude Code, Cursor, and other AI coding assistants.
+
+---
+
 
 ## Quick Start
 

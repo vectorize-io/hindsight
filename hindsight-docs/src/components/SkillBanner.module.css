@@ -1,0 +1,115 @@
+.container {
+  margin: 0 0 20px 0;
+  width: 100%;
+}
+
+.banner {
+  background: linear-gradient(135deg, #0074d9 0%, #005db0 100%);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 116, 217, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: box-shadow 0.2s ease;
+}
+
+.banner:hover {
+  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.2);
+}
+
+.icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+  color: white;
+}
+
+.commandWrapper {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.command {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6f7f8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.copyButton {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  height: 28px;
+  width: 28px;
+}
+
+.copyButton:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.05);
+}
+
+.copyButton:active {
+  transform: scale(0.95);
+}
+
+.copyButton svg {
+  display: block;
+}
+
+/* Dark mode - make it stand out even more */
+html[data-theme='dark'] .banner {
+  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.2),
+              0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+html[data-theme='dark'] .banner:hover {
+  box-shadow: 0 6px 16px rgba(0, 116, 217, 0.3),
+              0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+/* Light mode adjustments */
+html[data-theme='light'] .banner {
+  box-shadow: 0 4px 12px rgba(0, 116, 217, 0.15),
+              0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme='light'] .banner:hover {
+  box-shadow: 0 6px 16px rgba(0, 116, 217, 0.25),
+              0 4px 8px rgba(0, 0, 0, 0.08);
+}

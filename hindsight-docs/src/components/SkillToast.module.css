@@ -1,0 +1,124 @@
+.toastContainer {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+}
+
+.toastContainer.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.toast {
+  background: linear-gradient(135deg, #0074d9 0%, #005db0 100%);
+  color: white;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2),
+              0 0 0 1px rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 420px;
+  min-width: 320px;
+  backdrop-filter: blur(10px);
+}
+
+.icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.message {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.95;
+}
+
+.command {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
+  display: block;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6f7f8;
+  overflow-x: auto;
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.closeButton:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.closeButton:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .toastContainer {
+    bottom: 16px;
+    right: 16px;
+    left: 16px;
+  }
+
+  .toast {
+    min-width: unset;
+    max-width: unset;
+    width: 100%;
+    padding: 14px 16px;
+  }
+
+  .command {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+}
+
+/* Dark mode adjustments (if needed) */
+html[data-theme='dark'] .toast {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4),
+              0 0 0 1px rgba(255, 255, 255, 0.15);
+}

@@ -1,0 +1,138 @@
+
+
+<div className="cookbook-page">
+
+# Cookbook
+
+Learn how to build with Hindsight through practical examples:
+
+- **[Recipes](#recipes)** - Step-by-step guides and patterns for common use cases
+- **[Applications](#applications)** - Complete, runnable applications demonstrating Hindsight integration
+
+<RecipeCarousel
+  title="Recipes"
+  items={[
+    {
+      title: "Hindsight Quickstart",
+      href: "/cookbook/recipes/quickstart",
+      description: "Learn the basics: retain, recall, and reflect",
+      tags: { sdk: "hindsight-client", topic: "Quick Start" }
+    },
+    {
+      title: "Per-User Memory",
+      href: "/cookbook/recipes/per-user-memory",
+      description: "Build a chatbot with per-user memory isolation",
+      tags: { sdk: "hindsight-client", topic: "Learning" }
+    },
+    {
+      title: "Support Agent with Shared Knowledge",
+      href: "/cookbook/recipes/support-agent-shared-knowledge",
+      description: "Combine per-user memory with shared product documentation",
+      tags: { sdk: "hindsight-client", topic: "Learning" }
+    },
+    {
+      title: "Memory with LiteLLM",
+      href: "/cookbook/recipes/litellm-memory-demo",
+      description: "Add automatic memory to any LLM app using LiteLLM callbacks",
+      tags: { sdk: "hindsight-litellm", topic: "Quick Start" }
+    },
+    {
+      title: "Routing Tool Learning",
+      href: "/cookbook/recipes/tool-learning-demo",
+      description: "Teach an LLM which tool to use through feedback and memory",
+      tags: { sdk: "hindsight-litellm", topic: "Learning" }
+    },
+    {
+      title: "Fitness Coach with Hindsight Memory",
+      href: "/cookbook/recipes/fitness_tracker",
+      description: "Track workouts, diet, and progress with a personalized fitness coach",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Healthcare Assistant with Hindsight Memory",
+      href: "/cookbook/recipes/healthcare_assistant",
+      description: "A supportive chatbot that remembers patient history and preferences",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Movie Recommendation Assistant with Hindsight Memory",
+      href: "/cookbook/recipes/movie_recommendation",
+      description: "Get personalized movie recommendations that improve over time",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Personal AI Assistant with Hindsight Memory",
+      href: "/cookbook/recipes/personal_assistant",
+      description: "A general-purpose assistant that remembers your life and preferences",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Personalized Search Agent with Hindsight Memory",
+      href: "/cookbook/recipes/personalized_search",
+      description: "Search assistant that learns your location, diet, and lifestyle",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Study Buddy with Hindsight Memory",
+      href: "/cookbook/recipes/study_buddy",
+      description: "Track study sessions, identify knowledge gaps, and get personalized review suggestions",
+      tags: { sdk: "hindsight-client", topic: "Learning" }
+    }
+  ]}
+/>
+
+<RecipeCarousel
+  title="Applications"
+  items={[
+    {
+      title: "Chat Memory App",
+      href: "/cookbook/applications/chat-memory",
+      description: "Real-time chat app with per-user memory using Groq and Hindsight",
+      tags: { sdk: "hindsight-client", topic: "Chat" }
+    },
+    {
+      title: "Deliveryman Demo",
+      href: "/cookbook/applications/deliveryman-demo",
+      description: "Delivery agent simulation demonstrating learning through mental models",
+      tags: { sdk: "hindsight-client", topic: "Learning" }
+    },
+    {
+      title: "Memory Approaches Comparison Demo",
+      href: "/cookbook/applications/hindsight-litellm-demo",
+      description: "Interactive comparison of memory approaches: none, full history, and semantic retrieval",
+      tags: { sdk: "hindsight-litellm", topic: "Quick Start" }
+    },
+    {
+      title: "Tool Learning Demo",
+      href: "/cookbook/applications/hindsight-tool-learning-demo",
+      description: "Show how Hindsight helps LLMs learn which tool to use when names are ambiguous",
+      tags: { sdk: "hindsight-litellm", topic: "Learning" }
+    },
+    {
+      title: "OpenAI Agent + Hindsight Memory Integration",
+      href: "/cookbook/applications/openai-fitness-coach",
+      description: "Fitness coach using OpenAI Assistants with Hindsight as memory backend",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Sanity CMS Blog Memory",
+      href: "/cookbook/applications/sanity-blog-memory",
+      description: "Sync Sanity CMS blog posts to Hindsight for semantic search and AI insights",
+      tags: { sdk: "hindsight-client", topic: "Learning" }
+    },
+    {
+      title: "Stance Tracker",
+      href: "/cookbook/applications/stancetracker",
+      description: "Track political candidates' stances over time with automated web scraping",
+      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+    },
+    {
+      title: "Hindsight AI SDK - Personal Chef",
+      href: "/cookbook/applications/taste-ai",
+      description: "Personal food assistant with AI SDK v6 showcasing recall, mental models, and directives",
+      tags: { sdk: "@vectorize-io/hindsight-ai-sdk", topic: "Recommendation" }
+    }
+  ]}
+/>
+
+</div>

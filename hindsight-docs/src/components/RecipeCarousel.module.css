@@ -136,7 +136,7 @@
 }
 
 [data-theme='dark'] .cardDescription {
-  color: var(--ifm-color-emphasis-700);
+  color: var(--ifm-color-emphasis-600);
 }
 
 .cardTags {
