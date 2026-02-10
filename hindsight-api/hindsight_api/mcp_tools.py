@@ -35,6 +35,12 @@ class MCPToolsConfig:
     # How to resolve API key for tenant auth (optional)
     api_key_resolver: Callable[[], str | None] | None = None
 
+    # How to resolve tenant_id for usage metering (set by MCP middleware after auth)
+    tenant_id_resolver: Callable[[], str | None] | None = None
+
+    # How to resolve api_key_id for usage metering (set by MCP middleware after auth)
+    api_key_id_resolver: Callable[[], str | None] | None = None
+
     # Whether to include bank_id as a parameter on tools (for multi-bank support)
     include_bank_id_param: bool = False
 
@@ -50,13 +56,15 @@ class MCPToolsConfig:
 
 
 def _get_request_context(config: MCPToolsConfig) -> RequestContext:
-    """Create RequestContext with API key from resolver if available.
+    """Create RequestContext with auth details from resolvers.
 
-    This enables tenant auth to work with MCP tools by propagating
-    the Bearer token from the MCP middleware to the memory engine.
+    This enables tenant auth and usage metering to work with MCP tools by propagating
+    the authentication results from the MCP middleware to the memory engine.
     """
     api_key = config.api_key_resolver() if config.api_key_resolver else None
-    return RequestContext(api_key=api_key)
+    tenant_id = config.tenant_id_resolver() if config.tenant_id_resolver else None
+    api_key_id = config.api_key_id_resolver() if config.api_key_id_resolver else None
+    return RequestContext(api_key=api_key, tenant_id=tenant_id, api_key_id=api_key_id)
 
 
 def parse_timestamp(timestamp: str) -> datetime | None:

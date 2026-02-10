@@ -43,6 +43,10 @@ _current_bank_id: ContextVar[str | None] = ContextVar("current_bank_id", default
 # Context variable to hold the current API key (for tenant auth propagation)
 _current_api_key: ContextVar[str | None] = ContextVar("current_api_key", default=None)
 
+# Context variables for tenant_id and api_key_id (set by authenticate, used by usage metering)
+_current_tenant_id: ContextVar[str | None] = ContextVar("current_tenant_id", default=None)
+_current_api_key_id: ContextVar[str | None] = ContextVar("current_api_key_id", default=None)
+
 
 def get_current_bank_id() -> str | None:
     """Get the current bank_id from context."""
@@ -52,6 +56,16 @@ def get_current_bank_id() -> str | None:
 def get_current_api_key() -> str | None:
     """Get the current API key from context."""
     return _current_api_key.get()
+
+
+def get_current_tenant_id() -> str | None:
+    """Get the current tenant_id from context."""
+    return _current_tenant_id.get()
+
+
+def get_current_api_key_id() -> str | None:
+    """Get the current api_key_id from context."""
+    return _current_api_key_id.get()
 
 
 def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
@@ -73,6 +87,8 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     config = MCPToolsConfig(
         bank_id_resolver=get_current_bank_id,
         api_key_resolver=get_current_api_key,  # Propagate API key for tenant auth
+        tenant_id_resolver=get_current_tenant_id,  # Propagate tenant_id for usage metering
+        api_key_id_resolver=get_current_api_key_id,  # Propagate api_key_id for usage metering
         include_bank_id_param=multi_bank,
         tools=None if multi_bank else {"retain", "recall", "reflect"},  # Scoped tools for single-bank mode
         retain_fire_and_forget=False,  # HTTP MCP supports sync/async modes
@@ -165,6 +181,8 @@ class MCPMiddleware:
 
         # Authenticate: check legacy MCP_AUTH_TOKEN first, then TenantExtension
         tenant_context = None
+        auth_tenant_id: str | None = None
+        auth_api_key_id: str | None = None
         if MCP_AUTH_TOKEN:
             # Legacy authentication mode - validate against static token
             if not auth_token:
@@ -178,7 +196,11 @@ class MCPMiddleware:
         else:
             # Use TenantExtension.authenticate_mcp() for auth
             try:
-                tenant_context = await self.tenant_extension.authenticate_mcp(RequestContext(api_key=auth_token))
+                auth_context = RequestContext(api_key=auth_token)
+                tenant_context = await self.tenant_extension.authenticate_mcp(auth_context)
+                # Capture tenant_id and api_key_id set by authenticate() for usage metering
+                auth_tenant_id = auth_context.tenant_id
+                auth_api_key_id = auth_context.api_key_id
             except AuthenticationError as e:
                 await self._send_error(send, 401, str(e))
                 return
@@ -233,10 +255,13 @@ class MCPMiddleware:
         # - Header/env bank_id → multi-bank app (bank_id param, all tools)
         target_app = self.single_bank_app if bank_id_from_path else self.multi_bank_app
 
-        # Set bank_id and api_key context
+        # Set bank_id, api_key, tenant_id, and api_key_id context
         bank_id_token = _current_bank_id.set(bank_id)
         # Store the auth token for tenant extension to validate
         api_key_token = _current_api_key.set(auth_token) if auth_token else None
+        # Store tenant_id and api_key_id from authentication for usage metering
+        tenant_id_token = _current_tenant_id.set(auth_tenant_id) if auth_tenant_id else None
+        api_key_id_token = _current_api_key_id.set(auth_api_key_id) if auth_api_key_id else None
         try:
             new_scope = scope.copy()
             new_scope["path"] = new_path
@@ -258,6 +283,10 @@ class MCPMiddleware:
             _current_bank_id.reset(bank_id_token)
             if api_key_token is not None:
                 _current_api_key.reset(api_key_token)
+            if tenant_id_token is not None:
+                _current_tenant_id.reset(tenant_id_token)
+            if api_key_id_token is not None:
+                _current_api_key_id.reset(api_key_id_token)
             if schema_token is not None:
                 _current_schema.reset(schema_token)
 

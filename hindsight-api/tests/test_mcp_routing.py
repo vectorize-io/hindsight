@@ -143,6 +143,72 @@ async def test_mcp_tools_propagate_api_key(mock_memory):
         _current_api_key.reset(api_key_token)
 
 
+@pytest.mark.asyncio
+async def test_tenant_id_context_variable():
+    """Test that tenant_id and api_key_id context variables work correctly."""
+    from hindsight_api.api.mcp import (
+        get_current_tenant_id, _current_tenant_id,
+        get_current_api_key_id, _current_api_key_id,
+    )
+
+    # Initially None
+    assert get_current_tenant_id() is None
+    assert get_current_api_key_id() is None
+
+    # Set and verify
+    tenant_token = _current_tenant_id.set("org-123")
+    key_id_token = _current_api_key_id.set("key-456")
+    try:
+        assert get_current_tenant_id() == "org-123"
+        assert get_current_api_key_id() == "key-456"
+    finally:
+        _current_tenant_id.reset(tenant_token)
+        _current_api_key_id.reset(key_id_token)
+
+    # Back to None after reset
+    assert get_current_tenant_id() is None
+    assert get_current_api_key_id() is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_propagate_tenant_id_and_api_key_id(mock_memory):
+    """Test that MCP tools propagate tenant_id and api_key_id to RequestContext.
+
+    This is the critical test for usage metering: the UsageMeteringValidator reads
+    request_context.tenant_id to identify the org for billing. Without this,
+    MCP operations get tenant_id="unknown" and billing is skipped entirely.
+    """
+    from hindsight_api.api.mcp import (
+        create_mcp_server,
+        _current_bank_id, _current_api_key,
+        _current_tenant_id, _current_api_key_id,
+    )
+
+    mcp_server = create_mcp_server(mock_memory)
+    tools = mcp_server._tool_manager._tools
+
+    # Set all context vars (simulating what MCPMiddleware does after authenticate_mcp)
+    bank_token = _current_bank_id.set("test-bank")
+    api_key_token = _current_api_key.set("hsk_test_key")
+    tenant_token = _current_tenant_id.set("org-billing-123")
+    key_id_token = _current_api_key_id.set("key-uuid-456")
+    try:
+        retain_tool = tools["retain"]
+        await retain_tool.fn(content="test content", context="test_context", async_processing=False)
+
+        # Verify the RequestContext passed to memory engine has all auth fields
+        mock_memory.retain_batch_async.assert_called_once()
+        request_context = mock_memory.retain_batch_async.call_args.kwargs["request_context"]
+        assert request_context.api_key == "hsk_test_key"
+        assert request_context.tenant_id == "org-billing-123"
+        assert request_context.api_key_id == "key-uuid-456"
+    finally:
+        _current_bank_id.reset(bank_token)
+        _current_api_key.reset(api_key_token)
+        _current_tenant_id.reset(tenant_token)
+        _current_api_key_id.reset(key_id_token)
+
+
 def test_multi_bank_mode_exposes_all_tools(mock_memory):
     """Test that multi-bank mode exposes all tools including bank management."""
     from hindsight_api.api.mcp import create_mcp_server
