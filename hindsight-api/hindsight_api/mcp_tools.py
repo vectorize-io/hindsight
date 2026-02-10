@@ -127,7 +127,19 @@ def register_mcp_tools(
         memory: MemoryEngine instance
         config: Tool configuration
     """
-    tools_to_register = config.tools or {"retain", "recall", "reflect", "list_banks", "create_bank"}
+    tools_to_register = config.tools or {
+        "retain",
+        "recall",
+        "reflect",
+        "list_banks",
+        "create_bank",
+        "list_mental_models",
+        "get_mental_model",
+        "create_mental_model",
+        "update_mental_model",
+        "delete_mental_model",
+        "refresh_mental_model",
+    }
 
     if "retain" in tools_to_register:
         _register_retain(mcp, memory, config)
@@ -143,6 +155,25 @@ def register_mcp_tools(
 
     if "create_bank" in tools_to_register:
         _register_create_bank(mcp, memory, config)
+
+    # Mental model tools
+    if "list_mental_models" in tools_to_register:
+        _register_list_mental_models(mcp, memory, config)
+
+    if "get_mental_model" in tools_to_register:
+        _register_get_mental_model(mcp, memory, config)
+
+    if "create_mental_model" in tools_to_register:
+        _register_create_mental_model(mcp, memory, config)
+
+    if "update_mental_model" in tools_to_register:
+        _register_update_mental_model(mcp, memory, config)
+
+    if "delete_mental_model" in tools_to_register:
+        _register_delete_mental_model(mcp, memory, config)
+
+    if "refresh_mental_model" in tools_to_register:
+        _register_refresh_mental_model(mcp, memory, config)
 
 
 def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
@@ -519,3 +550,530 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
         except Exception as e:
             logger.error(f"Error creating bank: {e}", exc_info=True)
             return f'{{"error": "{e}"}}'
+
+
+# =========================================================================
+# MENTAL MODEL TOOLS
+# =========================================================================
+
+
+def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the list_mental_models tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def list_mental_models(
+            tags: list[str] | None = None,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            List mental models (pinned reflections) for a memory bank.
+
+            Mental models are living documents that stay current by periodically re-running
+            a source query through reflect. Use them to maintain up-to-date summaries,
+            preferences, or synthesized knowledge.
+
+            Args:
+                tags: Optional tags to filter by (returns models matching any tag)
+                bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured", "items": []}'
+
+                models = await memory.list_mental_models(
+                    bank_id=target_bank,
+                    tags=tags,
+                    request_context=_get_request_context(config),
+                )
+                return json.dumps({"items": models}, indent=2, default=str)
+            except Exception as e:
+                logger.error(f"Error listing mental models: {e}", exc_info=True)
+                return f'{{"error": "{e}", "items": []}}'
+
+    else:
+
+        @mcp.tool()
+        async def list_mental_models(
+            tags: list[str] | None = None,
+        ) -> dict:
+            """
+            List mental models (pinned reflections) for this memory bank.
+
+            Mental models are living documents that stay current by periodically re-running
+            a source query through reflect. Use them to maintain up-to-date summaries,
+            preferences, or synthesized knowledge.
+
+            Args:
+                tags: Optional tags to filter by (returns models matching any tag)
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured", "items": []}
+
+                models = await memory.list_mental_models(
+                    bank_id=target_bank,
+                    tags=tags,
+                    request_context=_get_request_context(config),
+                )
+                return {"items": models}
+            except Exception as e:
+                logger.error(f"Error listing mental models: {e}", exc_info=True)
+                return {"error": str(e), "items": []}
+
+
+def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the get_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def get_mental_model(
+            mental_model_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Get a specific mental model by ID.
+
+            Returns the full mental model including its generated content, source query,
+            and metadata. Use list_mental_models first to discover available model IDs.
+
+            Args:
+                mental_model_id: The ID of the mental model to retrieve
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                model = await memory.get_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if model is None:
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                return json.dumps(model, indent=2, default=str)
+            except Exception as e:
+                logger.error(f"Error getting mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def get_mental_model(
+            mental_model_id: str,
+        ) -> dict:
+            """
+            Get a specific mental model by ID.
+
+            Returns the full mental model including its generated content, source query,
+            and metadata. Use list_mental_models first to discover available model IDs.
+
+            Args:
+                mental_model_id: The ID of the mental model to retrieve
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                model = await memory.get_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if model is None:
+                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                return model
+            except Exception as e:
+                logger.error(f"Error getting mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the create_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def create_mental_model(
+            name: str,
+            source_query: str,
+            mental_model_id: str | None = None,
+            tags: list[str] | None = None,
+            max_tokens: int = 2048,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Create a new mental model (pinned reflection).
+
+            A mental model is a living document generated by running the source_query through
+            reflect. The content is auto-generated asynchronously - use the returned operation_id
+            to track progress.
+
+            EXAMPLES:
+            - name="Coding Preferences", source_query="What coding patterns and tools does the user prefer?"
+            - name="Project Goals", source_query="What are the user's current project goals and priorities?"
+            - name="Communication Style", source_query="How does the user prefer to communicate?"
+
+            Args:
+                name: Human-readable name for the mental model
+                source_query: The query to run through reflect to generate content
+                mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
+                tags: Optional tags for scoped visibility filtering
+                max_tokens: Maximum tokens for generated content (256-8192, default: 2048)
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                request_context = _get_request_context(config)
+
+                # Create with placeholder content
+                model = await memory.create_mental_model(
+                    bank_id=target_bank,
+                    name=name,
+                    source_query=source_query,
+                    content="Generating content...",
+                    mental_model_id=mental_model_id,
+                    tags=tags,
+                    max_tokens=max_tokens,
+                    request_context=request_context,
+                )
+
+                # Schedule async refresh to generate actual content
+                result = await memory.submit_async_refresh_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=model["id"],
+                    request_context=request_context,
+                )
+
+                return json.dumps(
+                    {
+                        "mental_model_id": model["id"],
+                        "operation_id": result["operation_id"],
+                        "status": "created",
+                        "message": f"Mental model '{name}' created. Content is being generated asynchronously.",
+                    }
+                )
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
+            except Exception as e:
+                logger.error(f"Error creating mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def create_mental_model(
+            name: str,
+            source_query: str,
+            mental_model_id: str | None = None,
+            tags: list[str] | None = None,
+            max_tokens: int = 2048,
+        ) -> dict:
+            """
+            Create a new mental model (pinned reflection).
+
+            A mental model is a living document generated by running the source_query through
+            reflect. The content is auto-generated asynchronously - use the returned operation_id
+            to track progress.
+
+            EXAMPLES:
+            - name="Coding Preferences", source_query="What coding patterns and tools does the user prefer?"
+            - name="Project Goals", source_query="What are the user's current project goals and priorities?"
+            - name="Communication Style", source_query="How does the user prefer to communicate?"
+
+            Args:
+                name: Human-readable name for the mental model
+                source_query: The query to run through reflect to generate content
+                mental_model_id: Optional custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided.
+                tags: Optional tags for scoped visibility filtering
+                max_tokens: Maximum tokens for generated content (256-8192, default: 2048)
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                request_context = _get_request_context(config)
+
+                model = await memory.create_mental_model(
+                    bank_id=target_bank,
+                    name=name,
+                    source_query=source_query,
+                    content="Generating content...",
+                    mental_model_id=mental_model_id,
+                    tags=tags,
+                    max_tokens=max_tokens,
+                    request_context=request_context,
+                )
+
+                result = await memory.submit_async_refresh_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=model["id"],
+                    request_context=request_context,
+                )
+
+                return {
+                    "mental_model_id": model["id"],
+                    "operation_id": result["operation_id"],
+                    "status": "created",
+                    "message": f"Mental model '{name}' created. Content is being generated asynchronously.",
+                }
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error creating mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the update_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def update_mental_model(
+            mental_model_id: str,
+            name: str | None = None,
+            source_query: str | None = None,
+            max_tokens: int | None = None,
+            tags: list[str] | None = None,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Update a mental model's metadata.
+
+            Changes the name, source query, or tags of an existing mental model.
+            To regenerate the content, use refresh_mental_model after updating the source query.
+
+            Args:
+                mental_model_id: The ID of the mental model to update
+                name: New name (leave None to keep current)
+                source_query: New source query (leave None to keep current)
+                max_tokens: New max tokens for content generation (256-8192, leave None to keep current)
+                tags: New tags (leave None to keep current)
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                model = await memory.update_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    name=name,
+                    source_query=source_query,
+                    max_tokens=max_tokens,
+                    tags=tags,
+                    request_context=_get_request_context(config),
+                )
+                if model is None:
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                return json.dumps(model, indent=2, default=str)
+            except Exception as e:
+                logger.error(f"Error updating mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def update_mental_model(
+            mental_model_id: str,
+            name: str | None = None,
+            source_query: str | None = None,
+            max_tokens: int | None = None,
+            tags: list[str] | None = None,
+        ) -> dict:
+            """
+            Update a mental model's metadata.
+
+            Changes the name, source query, or tags of an existing mental model.
+            To regenerate the content, use refresh_mental_model after updating the source query.
+
+            Args:
+                mental_model_id: The ID of the mental model to update
+                name: New name (leave None to keep current)
+                source_query: New source query (leave None to keep current)
+                max_tokens: New max tokens for content generation (256-8192, leave None to keep current)
+                tags: New tags (leave None to keep current)
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                model = await memory.update_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    name=name,
+                    source_query=source_query,
+                    max_tokens=max_tokens,
+                    tags=tags,
+                    request_context=_get_request_context(config),
+                )
+                if model is None:
+                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                return model
+            except Exception as e:
+                logger.error(f"Error updating mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_delete_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the delete_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def delete_mental_model(
+            mental_model_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Delete a mental model.
+
+            Permanently removes a mental model and its generated content.
+
+            Args:
+                mental_model_id: The ID of the mental model to delete
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                deleted = await memory.delete_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if not deleted:
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                return json.dumps({"status": "deleted", "mental_model_id": mental_model_id})
+            except Exception as e:
+                logger.error(f"Error deleting mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def delete_mental_model(
+            mental_model_id: str,
+        ) -> dict:
+            """
+            Delete a mental model.
+
+            Permanently removes a mental model and its generated content.
+
+            Args:
+                mental_model_id: The ID of the mental model to delete
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                deleted = await memory.delete_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                if not deleted:
+                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                return {"status": "deleted", "mental_model_id": mental_model_id}
+            except Exception as e:
+                logger.error(f"Error deleting mental model: {e}", exc_info=True)
+                return {"error": str(e)}
+
+
+def _register_refresh_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the refresh_mental_model tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def refresh_mental_model(
+            mental_model_id: str,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Refresh a mental model by re-running its source query.
+
+            Schedules an async task to re-run the source query through reflect and update the
+            mental model's content with fresh results. Use this after adding new memories or
+            when the mental model's content may be stale.
+
+            Args:
+                mental_model_id: The ID of the mental model to refresh
+                bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return '{"error": "No bank_id configured"}'
+
+                result = await memory.submit_async_refresh_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                return json.dumps(
+                    {
+                        "operation_id": result["operation_id"],
+                        "status": "queued",
+                        "message": f"Refresh queued for mental model '{mental_model_id}'.",
+                    }
+                )
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
+            except Exception as e:
+                logger.error(f"Error refreshing mental model: {e}", exc_info=True)
+                return f'{{"error": "{e}"}}'
+
+    else:
+
+        @mcp.tool()
+        async def refresh_mental_model(
+            mental_model_id: str,
+        ) -> dict:
+            """
+            Refresh a mental model by re-running its source query.
+
+            Schedules an async task to re-run the source query through reflect and update the
+            mental model's content with fresh results. Use this after adding new memories or
+            when the mental model's content may be stale.
+
+            Args:
+                mental_model_id: The ID of the mental model to refresh
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"error": "No bank_id configured"}
+
+                result = await memory.submit_async_refresh_mental_model(
+                    bank_id=target_bank,
+                    mental_model_id=mental_model_id,
+                    request_context=_get_request_context(config),
+                )
+                return {
+                    "operation_id": result["operation_id"],
+                    "status": "queued",
+                    "message": f"Refresh queued for mental model '{mental_model_id}'.",
+                }
+            except ValueError as e:
+                return {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error refreshing mental model: {e}", exc_info=True)
+                return {"error": str(e)}
