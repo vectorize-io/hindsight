@@ -15,9 +15,17 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      # Mount Prometheus config for scraping Hindsight API metrics
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Mount dashboards directory if we add custom dashboards
+      - ./dashboards:/etc/grafana/provisioning/dashboards:ro
     restart: unless-stopped
     networks:
       - hindsight
+    extra_hosts:
+      # Allow container to reach host services (Hindsight API on localhost:8888)
+      - "host.docker.internal:host-gateway"
 
 networks:
   hindsight:

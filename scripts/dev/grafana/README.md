@@ -45,12 +45,41 @@ HINDSIGHT_API_OTEL_DEPLOYMENT_ENVIRONMENT=development
 5. Click "Search" to see recent traces
 6. Click on a trace to see the full span hierarchy
 
+## View Metrics & Dashboards
+
+1. Open Grafana: http://localhost:3000
+2. Go to **Dashboards** (dashboard icon in sidebar)
+3. Open **Hindsight GenAI Metrics** dashboard
+4. View metrics:
+   - LLM call rates and durations
+   - Token usage (input/output)
+   - Operation rates and durations (retain, recall, reflect, consolidation)
+
+**Note**: Metrics require the Hindsight API to be running on `localhost:8888`. Prometheus scrapes the `/metrics` endpoint every 10 seconds.
+
+### Explore Raw Metrics
+
+1. Go to **Explore** (compass icon)
+2. Select **Prometheus** as data source
+3. Query examples:
+   ```promql
+   # LLM call rate by scope
+   rate(hindsight_llm_calls_total[5m])
+
+   # P95 operation latency
+   histogram_quantile(0.95, rate(hindsight_operation_duration_seconds_bucket[5m]))
+
+   # Token usage rate
+   rate(hindsight_llm_input_tokens_total[5m])
+   ```
+
 ## Features
 
 - **Traces**: Full OpenTelemetry trace support with GenAI semantic conventions
-- **Metrics**: Prometheus-compatible metrics (future)
+- **Metrics**: Prometheus scraping of Hindsight API `/metrics` endpoint
+- **Dashboards**: Pre-configured GenAI dashboard with LLM metrics, token usage, and latencies
 - **Logs**: Loki log aggregation (future)
-- **Single Container**: Everything in one Docker image (~200MB)
+- **Single Container**: Everything in one Docker image (~515MB)
 
 ## Ports
 

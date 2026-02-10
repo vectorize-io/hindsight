@@ -1,0 +1,119 @@
+{
+  "dashboard": {
+    "title": "Hindsight GenAI Metrics",
+    "tags": ["hindsight", "genai", "llm"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "LLM Call Rate",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(hindsight_llm_calls_total[5m])",
+            "legendFormat": "{{provider}} - {{model}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Calls/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "LLM Call Duration (p95)",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by(le, scope) (rate(hindsight_llm_duration_seconds_bucket[5m])))",
+            "legendFormat": "{{scope}} p95",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.50, sum by(le, scope) (rate(hindsight_llm_duration_seconds_bucket[5m])))",
+            "legendFormat": "{{scope}} p50",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Token Usage (Input)",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(hindsight_llm_input_tokens_total[5m])",
+            "legendFormat": "{{scope}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Tokens/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Token Usage (Output)",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(hindsight_llm_output_tokens_total[5m])",
+            "legendFormat": "{{scope}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Tokens/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Operations Rate",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(hindsight_operations_total[5m])",
+            "legendFormat": "{{operation}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Operations/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Operation Duration (p95)",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by(le, operation) (rate(hindsight_operation_duration_seconds_bucket[5m])))",
+            "legendFormat": "{{operation}} p95",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}
