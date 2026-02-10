@@ -4690,6 +4690,18 @@ class MemoryEngine(MemoryEngineInterface):
             Pinned mental model dict or None if not found
         """
         await self._authenticate_tenant(request_context)
+
+        # Pre-operation validation (credit check / usage metering)
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelGetContext
+
+            ctx = MentalModelGetContext(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_mental_model_get(ctx))
+
         pool = await self._get_pool()
 
         async with acquire_with_retry(pool) as conn:
@@ -4705,7 +4717,28 @@ class MemoryEngine(MemoryEngineInterface):
                 mental_model_id,
             )
 
-            return self._row_to_mental_model(row) if row else None
+            result = self._row_to_mental_model(row) if row else None
+
+        # Post-operation hook (usage recording)
+        if result and self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelGetResult
+
+            content = result.get("content", "")
+            output_tokens = len(content) // 4 if content else 0
+
+            result_ctx = MentalModelGetResult(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+                output_tokens=output_tokens,
+                success=True,
+            )
+            try:
+                await self._operation_validator.on_mental_model_get_complete(result_ctx)
+            except Exception as hook_err:
+                logger.warning(f"Post-mental-model-get hook error (non-fatal): {hook_err}")
+
+        return result
 
     async def create_mental_model(
         self,
@@ -4737,6 +4770,18 @@ class MemoryEngine(MemoryEngineInterface):
             The created pinned mental model dict
         """
         await self._authenticate_tenant(request_context)
+
+        # Pre-operation validation (credit check for upcoming refresh)
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelRefreshContext
+
+            ctx = MentalModelRefreshContext(
+                bank_id=bank_id,
+                mental_model_id=None,  # Not yet created
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
+
         pool = await self._get_pool()
 
         # Generate embedding for the content
@@ -5695,6 +5740,17 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with operation_id
         """
         await self._authenticate_tenant(request_context)
+
+        # Pre-operation validation (credit check)
+        if self._operation_validator:
+            from hindsight_api.extensions.operation_validator import MentalModelRefreshContext
+
+            ctx = MentalModelRefreshContext(
+                bank_id=bank_id,
+                mental_model_id=mental_model_id,
+                request_context=request_context,
+            )
+            await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
 
         # Verify mental model exists
         mental_model = await self.get_mental_model(bank_id, mental_model_id, request_context=request_context)
