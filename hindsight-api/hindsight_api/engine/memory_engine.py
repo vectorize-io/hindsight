@@ -1706,136 +1706,157 @@ class MemoryEngine(MemoryEngineInterface):
             tags_info = f", tags={tags} ({tags_match})" if tags else ""
             logger.info(f"[RECALL {bank_id[:8]}] Starting recall for query: {query[:50]}...{tags_info}")
 
-        # Backpressure: limit concurrent recalls to prevent overwhelming the database
-        result = None
-        error_msg = None
-        semaphore_wait_start = time.time()
-        async with self._search_semaphore:
-            semaphore_wait = time.time() - semaphore_wait_start
-            # Retry loop for connection errors
-            max_retries = 3
-            for attempt in range(max_retries + 1):
-                try:
-                    result = await self._search_with_retries(
-                        bank_id,
-                        query,
-                        fact_type,
-                        thinking_budget,
-                        max_tokens,
-                        enable_trace,
-                        question_date,
-                        include_entities,
-                        max_entity_tokens,
-                        include_chunks,
-                        max_chunk_tokens,
-                        request_context,
-                        semaphore_wait=semaphore_wait,
-                        tags=tags,
-                        tags_match=tags_match,
-                        connection_budget=_connection_budget,
-                        quiet=_quiet,
-                    )
-                    break  # Success - exit retry loop
-                except Exception as e:
-                    # Check if it's a connection error
-                    is_connection_error = (
-                        isinstance(e, asyncpg.TooManyConnectionsError)
-                        or isinstance(e, asyncpg.CannotConnectNowError)
-                        or (isinstance(e, asyncpg.PostgresError) and "connection" in str(e).lower())
-                    )
+        # Create parent span for recall operation
+        from ..tracing import get_tracer, is_tracing_enabled
 
-                    if is_connection_error and attempt < max_retries:
-                        # Wait with exponential backoff before retry
-                        wait_time = 0.5 * (2**attempt)  # 0.5s, 1s, 2s
-                        logger.warning(
-                            f"Connection error on search attempt {attempt + 1}/{max_retries + 1}: {str(e)}. "
-                            f"Retrying in {wait_time:.1f}s..."
-                        )
-                        await asyncio.sleep(wait_time)
-                    else:
-                        # Not a connection error or out of retries - call post-hook and raise
-                        error_msg = str(e)
-                        if self._operation_validator:
-                            from hindsight_api.extensions.operation_validator import RecallResult
+        tracer = get_tracer()
+        if is_tracing_enabled():
+            # Use start_as_current_span to ensure child spans are linked properly
+            recall_span_context = tracer.start_as_current_span("hindsight.recall")
+            recall_span = recall_span_context.__enter__()
+            recall_span.set_attribute("hindsight.bank_id", bank_id)
+            recall_span.set_attribute("hindsight.query", query[:100])
+            recall_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
+            recall_span.set_attribute("hindsight.thinking_budget", thinking_budget)
+            recall_span.set_attribute("hindsight.max_tokens", max_tokens)
+        else:
+            recall_span_context = None
+            recall_span = None
 
-                            result_ctx = RecallResult(
-                                bank_id=bank_id,
-                                query=query,
-                                request_context=request_context,
-                                budget=budget,
-                                max_tokens=max_tokens,
-                                enable_trace=enable_trace,
-                                fact_types=list(fact_type),
-                                question_date=question_date,
-                                include_entities=include_entities,
-                                max_entity_tokens=max_entity_tokens,
-                                include_chunks=include_chunks,
-                                max_chunk_tokens=max_chunk_tokens,
-                                result=None,
-                                success=False,
-                                error=error_msg,
-                            )
-                            try:
-                                await self._operation_validator.on_recall_complete(result_ctx)
-                            except Exception as hook_err:
-                                logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
-                        raise
-            else:
-                # Exceeded max retries
-                error_msg = "Exceeded maximum retries for search due to connection errors."
-                if self._operation_validator:
-                    from hindsight_api.extensions.operation_validator import RecallResult
-
-                    result_ctx = RecallResult(
-                        bank_id=bank_id,
-                        query=query,
-                        request_context=request_context,
-                        budget=budget,
-                        max_tokens=max_tokens,
-                        enable_trace=enable_trace,
-                        fact_types=list(fact_type),
-                        question_date=question_date,
-                        include_entities=include_entities,
-                        max_entity_tokens=max_entity_tokens,
-                        include_chunks=include_chunks,
-                        max_chunk_tokens=max_chunk_tokens,
-                        result=None,
-                        success=False,
-                        error=error_msg,
-                    )
+        try:
+            # Backpressure: limit concurrent recalls to prevent overwhelming the database
+            result = None
+            error_msg = None
+            semaphore_wait_start = time.time()
+            async with self._search_semaphore:
+                semaphore_wait = time.time() - semaphore_wait_start
+                # Retry loop for connection errors
+                max_retries = 3
+                for attempt in range(max_retries + 1):
                     try:
-                        await self._operation_validator.on_recall_complete(result_ctx)
-                    except Exception as hook_err:
-                        logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
-                raise Exception(error_msg)
+                        result = await self._search_with_retries(
+                            bank_id,
+                            query,
+                            fact_type,
+                            thinking_budget,
+                            max_tokens,
+                            enable_trace,
+                            question_date,
+                            include_entities,
+                            max_entity_tokens,
+                            include_chunks,
+                            max_chunk_tokens,
+                            request_context,
+                            semaphore_wait=semaphore_wait,
+                            tags=tags,
+                            tags_match=tags_match,
+                            connection_budget=_connection_budget,
+                            quiet=_quiet,
+                        )
+                        break  # Success - exit retry loop
+                    except Exception as e:
+                        # Check if it's a connection error
+                        is_connection_error = (
+                            isinstance(e, asyncpg.TooManyConnectionsError)
+                            or isinstance(e, asyncpg.CannotConnectNowError)
+                            or (isinstance(e, asyncpg.PostgresError) and "connection" in str(e).lower())
+                        )
 
-        # Call post-operation hook for success
-        if self._operation_validator and result is not None:
-            from hindsight_api.extensions.operation_validator import RecallResult
+                        if is_connection_error and attempt < max_retries:
+                            # Wait with exponential backoff before retry
+                            wait_time = 0.5 * (2**attempt)  # 0.5s, 1s, 2s
+                            logger.warning(
+                                f"Connection error on search attempt {attempt + 1}/{max_retries + 1}: {str(e)}. "
+                                f"Retrying in {wait_time:.1f}s..."
+                            )
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # Not a connection error or out of retries - call post-hook and raise
+                            error_msg = str(e)
+                            if self._operation_validator:
+                                from hindsight_api.extensions.operation_validator import RecallResult
 
-            result_ctx = RecallResult(
-                bank_id=bank_id,
-                query=query,
-                request_context=request_context,
-                budget=budget,
-                max_tokens=max_tokens,
-                enable_trace=enable_trace,
-                fact_types=list(fact_type),
-                question_date=question_date,
-                include_entities=include_entities,
-                max_entity_tokens=max_entity_tokens,
-                include_chunks=include_chunks,
-                max_chunk_tokens=max_chunk_tokens,
-                result=result,
-                success=True,
-                error=None,
-            )
-            try:
-                await self._operation_validator.on_recall_complete(result_ctx)
-            except Exception as e:
-                logger.warning(f"Post-recall hook error (non-fatal): {e}")
+                                result_ctx = RecallResult(
+                                    bank_id=bank_id,
+                                    query=query,
+                                    request_context=request_context,
+                                    budget=budget,
+                                    max_tokens=max_tokens,
+                                    enable_trace=enable_trace,
+                                    fact_types=list(fact_type),
+                                    question_date=question_date,
+                                    include_entities=include_entities,
+                                    max_entity_tokens=max_entity_tokens,
+                                    include_chunks=include_chunks,
+                                    max_chunk_tokens=max_chunk_tokens,
+                                    result=None,
+                                    success=False,
+                                    error=error_msg,
+                                )
+                                try:
+                                    await self._operation_validator.on_recall_complete(result_ctx)
+                                except Exception as hook_err:
+                                    logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
+                            raise
+                else:
+                    # Exceeded max retries
+                    error_msg = "Exceeded maximum retries for search due to connection errors."
+                    if self._operation_validator:
+                        from hindsight_api.extensions.operation_validator import RecallResult
 
-        return result
+                        result_ctx = RecallResult(
+                            bank_id=bank_id,
+                            query=query,
+                            request_context=request_context,
+                            budget=budget,
+                            max_tokens=max_tokens,
+                            enable_trace=enable_trace,
+                            fact_types=list(fact_type),
+                            question_date=question_date,
+                            include_entities=include_entities,
+                            max_entity_tokens=max_entity_tokens,
+                            include_chunks=include_chunks,
+                            max_chunk_tokens=max_chunk_tokens,
+                            result=None,
+                            success=False,
+                            error=error_msg,
+                        )
+                        try:
+                            await self._operation_validator.on_recall_complete(result_ctx)
+                        except Exception as hook_err:
+                            logger.warning(f"Post-recall hook error (non-fatal): {hook_err}")
+                    raise Exception(error_msg)
+
+            # Call post-operation hook for success
+            if self._operation_validator and result is not None:
+                from hindsight_api.extensions.operation_validator import RecallResult
+
+                result_ctx = RecallResult(
+                    bank_id=bank_id,
+                    query=query,
+                    request_context=request_context,
+                    budget=budget,
+                    max_tokens=max_tokens,
+                    enable_trace=enable_trace,
+                    fact_types=list(fact_type),
+                    question_date=question_date,
+                    include_entities=include_entities,
+                    max_entity_tokens=max_entity_tokens,
+                    include_chunks=include_chunks,
+                    max_chunk_tokens=max_chunk_tokens,
+                    result=result,
+                    success=True,
+                    error=None,
+                )
+                try:
+                    await self._operation_validator.on_recall_complete(result_ctx)
+                except Exception as e:
+                    logger.warning(f"Post-recall hook error (non-fatal): {e}")
+
+            return result
+        finally:
+            if recall_span_context:
+                recall_span_context.__exit__(None, None, None)
 
     async def _search_with_retries(
         self,
@@ -1902,12 +1923,29 @@ class MemoryEngine(MemoryEngineInterface):
             f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens}{tags_info})"
         )
 
+        # Import tracing utilities
+        from ..tracing import get_tracer, is_tracing_enabled
+
+        tracer_otel = get_tracer()
+
         try:
             # Step 1: Generate query embedding (for semantic search)
             step_start = time.time()
-            query_embedding = embedding_utils.generate_embedding(self.embeddings, query)
-            step_duration = time.time() - step_start
-            log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
+
+            if is_tracing_enabled():
+                embedding_span = tracer_otel.start_span("hindsight.recall_embedding")
+                embedding_span.set_attribute("hindsight.bank_id", bank_id)
+                embedding_span.set_attribute("hindsight.query", query[:100])
+            else:
+                embedding_span = None
+
+            try:
+                query_embedding = embedding_utils.generate_embedding(self.embeddings, query)
+                step_duration = time.time() - step_start
+                log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
+            finally:
+                if embedding_span:
+                    embedding_span.end()
 
             if tracer:
                 tracer.record_query_embedding(query_embedding)
@@ -1928,30 +1966,42 @@ class MemoryEngine(MemoryEngineInterface):
             # Track each retrieval start time
             retrieval_start = time.time()
 
-            # Run optimized retrieval with connection budget
-            config = get_config()
-            effective_connection_budget = (
-                connection_budget if connection_budget is not None else config.recall_connection_budget
-            )
-            async with budgeted_operation(
-                max_connections=effective_connection_budget,
-                operation_id=f"recall-{recall_id}",
-            ) as op:
-                budgeted_pool = op.wrap_pool(pool)
-                parallel_start = time.time()
-                multi_result = await retrieve_all_fact_types_parallel(
-                    budgeted_pool,
-                    query,
-                    query_embedding_str,
-                    bank_id,
-                    fact_type,  # Pass all fact types at once
-                    thinking_budget,
-                    question_date,
-                    self.query_analyzer,
-                    tags=tags,
-                    tags_match=tags_match,
+            if is_tracing_enabled():
+                retrieval_span = tracer_otel.start_span("hindsight.recall_retrieval")
+                retrieval_span.set_attribute("hindsight.bank_id", bank_id)
+                retrieval_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
+                retrieval_span.set_attribute("hindsight.thinking_budget", thinking_budget)
+            else:
+                retrieval_span = None
+
+            try:
+                # Run optimized retrieval with connection budget
+                config = get_config()
+                effective_connection_budget = (
+                    connection_budget if connection_budget is not None else config.recall_connection_budget
                 )
-                parallel_duration = time.time() - parallel_start
+                async with budgeted_operation(
+                    max_connections=effective_connection_budget,
+                    operation_id=f"recall-{recall_id}",
+                ) as op:
+                    budgeted_pool = op.wrap_pool(pool)
+                    parallel_start = time.time()
+                    multi_result = await retrieve_all_fact_types_parallel(
+                        budgeted_pool,
+                        query,
+                        query_embedding_str,
+                        bank_id,
+                        fact_type,  # Pass all fact types at once
+                        thinking_budget,
+                        question_date,
+                        self.query_analyzer,
+                        tags=tags,
+                        tags_match=tags_match,
+                    )
+                    parallel_duration = time.time() - parallel_start
+            finally:
+                if retrieval_span:
+                    retrieval_span.end()
 
             # Combine all results from all fact types and aggregate timings
             semantic_results = []
@@ -2138,16 +2188,31 @@ class MemoryEngine(MemoryEngineInterface):
             step_start = time.time()
             from .search.fusion import reciprocal_rank_fusion
 
-            # Merge 3 or 4 result lists depending on temporal constraint
-            if temporal_results:
-                merged_candidates = reciprocal_rank_fusion(
-                    [semantic_results, bm25_results, graph_results, temporal_results]
-                )
+            if is_tracing_enabled():
+                fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
+                fusion_span.set_attribute("hindsight.bank_id", bank_id)
+                fusion_span.set_attribute("hindsight.semantic_count", len(semantic_results))
+                fusion_span.set_attribute("hindsight.bm25_count", len(bm25_results))
+                fusion_span.set_attribute("hindsight.graph_count", len(graph_results))
+                fusion_span.set_attribute("hindsight.temporal_count", len(temporal_results) if temporal_results else 0)
             else:
-                merged_candidates = reciprocal_rank_fusion([semantic_results, bm25_results, graph_results])
+                fusion_span = None
 
-            step_duration = time.time() - step_start
-            log_buffer.append(f"  [3] RRF merge: {len(merged_candidates)} unique candidates in {step_duration:.3f}s")
+            try:
+                # Merge 3 or 4 result lists depending on temporal constraint
+                if temporal_results:
+                    merged_candidates = reciprocal_rank_fusion(
+                        [semantic_results, bm25_results, graph_results, temporal_results]
+                    )
+                else:
+                    merged_candidates = reciprocal_rank_fusion([semantic_results, bm25_results, graph_results])
+
+                step_duration = time.time() - step_start
+                log_buffer.append(f"  [3] RRF merge: {len(merged_candidates)} unique candidates in {step_duration:.3f}s")
+            finally:
+                if fusion_span:
+                    fusion_span.set_attribute("hindsight.merged_count", len(merged_candidates))
+                    fusion_span.end()
 
             if tracer:
                 # Convert MergedCandidate to old tuple format for tracer
@@ -2162,27 +2227,41 @@ class MemoryEngine(MemoryEngineInterface):
             step_start = time.time()
             reranker_instance = self._cross_encoder_reranker
 
-            # Ensure reranker is initialized (for lazy initialization mode)
-            await reranker_instance.ensure_initialized()
+            if is_tracing_enabled():
+                rerank_span = tracer_otel.start_span("hindsight.recall_rerank")
+                rerank_span.set_attribute("hindsight.bank_id", bank_id)
+                rerank_span.set_attribute("hindsight.candidates_count", len(merged_candidates))
+            else:
+                rerank_span = None
 
-            # Pre-filter candidates to reduce reranking cost (RRF already provides good ranking)
-            # This is especially important for remote rerankers with network latency
-            reranker_max_candidates = get_config().reranker_max_candidates
-            pre_filtered_count = 0
-            if len(merged_candidates) > reranker_max_candidates:
-                # Sort by RRF score and take top candidates
-                merged_candidates.sort(key=lambda mc: mc.rrf_score, reverse=True)
-                pre_filtered_count = len(merged_candidates) - reranker_max_candidates
-                merged_candidates = merged_candidates[:reranker_max_candidates]
+            try:
+                # Ensure reranker is initialized (for lazy initialization mode)
+                await reranker_instance.ensure_initialized()
 
-            # Rerank using cross-encoder
-            scored_results = await reranker_instance.rerank(query, merged_candidates)
+                # Pre-filter candidates to reduce reranking cost (RRF already provides good ranking)
+                # This is especially important for remote rerankers with network latency
+                reranker_max_candidates = get_config().reranker_max_candidates
+                pre_filtered_count = 0
+                if len(merged_candidates) > reranker_max_candidates:
+                    # Sort by RRF score and take top candidates
+                    merged_candidates.sort(key=lambda mc: mc.rrf_score, reverse=True)
+                    pre_filtered_count = len(merged_candidates) - reranker_max_candidates
+                    merged_candidates = merged_candidates[:reranker_max_candidates]
 
-            step_duration = time.time() - step_start
-            pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
-            log_buffer.append(
-                f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s{pre_filter_note}"
-            )
+                # Rerank using cross-encoder
+                scored_results = await reranker_instance.rerank(query, merged_candidates)
+
+                step_duration = time.time() - step_start
+                pre_filter_note = f" (pre-filtered {pre_filtered_count})" if pre_filtered_count > 0 else ""
+                log_buffer.append(
+                    f"  [4] Reranking: {len(scored_results)} candidates scored in {step_duration:.3f}s{pre_filter_note}"
+                )
+            finally:
+                if rerank_span:
+                    rerank_span.set_attribute("hindsight.scored_count", len(scored_results))
+                    if pre_filtered_count > 0:
+                        rerank_span.set_attribute("hindsight.pre_filtered_count", pre_filtered_count)
+                    rerank_span.end()
 
             # Step 4.5: Combine cross-encoder score with retrieval signals
             # This preserves retrieval work (RRF, temporal, recency) instead of pure cross-encoder ranking
@@ -3576,6 +3655,7 @@ class MemoryEngine(MemoryEngineInterface):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         exclude_mental_model_ids: list[str] | None = None,
+        _skip_span: bool = False,
     ) -> ReflectResult:
         """
         Reflect and formulate an answer using an agentic loop with tools.
@@ -3732,8 +3812,14 @@ class MemoryEngine(MemoryEngineInterface):
         if has_mental_models:
             logger.info(f"[REFLECT {reflect_id}] Bank has {mental_model_count} mental models")
 
-        # Run the agent with parent span for reflect operation
-        with create_operation_span("reflect", bank_id):
+        # Run the agent with parent span for reflect operation (skip if called from another operation)
+        if not _skip_span:
+            span_context = create_operation_span("reflect", bank_id)
+            span_context.__enter__()
+        else:
+            span_context = None
+
+        try:
             agent_result = await run_reflect_agent(
                 llm_config=self._reflect_llm_config,
                 bank_id=bank_id,
@@ -3752,200 +3838,203 @@ class MemoryEngine(MemoryEngineInterface):
                 budget=effective_budget,
             )
 
-        total_time = time.time() - reflect_start
-        logger.info(
-            f"[REFLECT {reflect_id}] Complete: {len(agent_result.text)} chars, "
-            f"{agent_result.iterations} iterations, {agent_result.tools_called} tool calls | {total_time:.3f}s"
-        )
-
-        # Convert agent tool trace to ToolCallTrace objects
-        tool_trace_result = [
-            ToolCallTrace(
-                tool=tc.tool,
-                reason=tc.reason,
-                input=tc.input,
-                output=tc.output,
-                duration_ms=tc.duration_ms,
-                iteration=tc.iteration,
+            total_time = time.time() - reflect_start
+            logger.info(
+                f"[REFLECT {reflect_id}] Complete: {len(agent_result.text)} chars, "
+                f"{agent_result.iterations} iterations, {agent_result.tools_called} tool calls | {total_time:.3f}s"
             )
-            for tc in agent_result.tool_trace
-        ]
 
-        # Convert agent LLM trace to LLMCallTrace objects
-        llm_trace_result = [LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace]
+            # Convert agent tool trace to ToolCallTrace objects
+            tool_trace_result = [
+                ToolCallTrace(
+                    tool=tc.tool,
+                    reason=tc.reason,
+                    input=tc.input,
+                    output=tc.output,
+                    duration_ms=tc.duration_ms,
+                    iteration=tc.iteration,
+                )
+                for tc in agent_result.tool_trace
+            ]
 
-        # Extract memories from recall tool outputs - only include memories the agent actually used
+            # Convert agent LLM trace to LLMCallTrace objects
+            llm_trace_result = [LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace]
+
+            # Extract memories from recall tool outputs - only include memories the agent actually used
         # agent_result.used_memory_ids contains validated IDs from the done action
-        used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
-        # based_on stores facts, mental models, and directives
-        # Note: directives list stores raw directive dicts (not MemoryFact), which will be converted to Directive objects
-        based_on: dict[str, list[MemoryFact] | list[dict[str, Any]]] = {
-            "world": [],
-            "experience": [],
-            "opinion": [],
-            "observation": [],
-            "mental-models": [],
-            "directives": [],
-        }
-        seen_memory_ids: set[str] = set()
-        for tc in agent_result.tool_trace:
-            if tc.tool == "recall" and "memories" in tc.output:
-                for memory_data in tc.output["memories"]:
-                    memory_id = memory_data.get("id")
-                    # Only include memories that the agent declared as used (or all if none specified)
-                    if memory_id and memory_id not in seen_memory_ids:
-                        if used_memory_ids_set and memory_id not in used_memory_ids_set:
-                            continue  # Skip memories not actually used by the agent
-                        seen_memory_ids.add(memory_id)
-                        fact_type = memory_data.get("type", "world")
-                        if fact_type in based_on:
-                            based_on[fact_type].append(
+            used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
+            # based_on stores facts, mental models, and directives
+            # Note: directives list stores raw directive dicts (not MemoryFact), which will be converted to Directive objects
+            based_on: dict[str, list[MemoryFact] | list[dict[str, Any]]] = {
+                "world": [],
+                "experience": [],
+                "opinion": [],
+                "observation": [],
+                "mental-models": [],
+                "directives": [],
+            }
+            seen_memory_ids: set[str] = set()
+            for tc in agent_result.tool_trace:
+                if tc.tool == "recall" and "memories" in tc.output:
+                    for memory_data in tc.output["memories"]:
+                        memory_id = memory_data.get("id")
+                        # Only include memories that the agent declared as used (or all if none specified)
+                        if memory_id and memory_id not in seen_memory_ids:
+                            if used_memory_ids_set and memory_id not in used_memory_ids_set:
+                                continue  # Skip memories not actually used by the agent
+                            seen_memory_ids.add(memory_id)
+                            fact_type = memory_data.get("type", "world")
+                            if fact_type in based_on:
+                                based_on[fact_type].append(
+                                    MemoryFact(
+                                        id=memory_id,
+                                        text=memory_data.get("text", ""),
+                                        fact_type=fact_type,
+                                        context=None,
+                                        occurred_start=memory_data.get("occurred"),
+                                        occurred_end=memory_data.get("occurred"),
+                                    )
+                                )
+
+            # Extract mental models from tool outputs - only include models the agent actually used
+            # agent_result.used_mental_model_ids contains validated IDs from the done action
+            used_model_ids_set = set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
+            based_on["mental-models"] = []
+            seen_model_ids: set[str] = set()
+            for tc in agent_result.tool_trace:
+                if tc.tool == "get_mental_model":
+                    # Single model lookup (with full details)
+                    if tc.output.get("found") and "model" in tc.output:
+                        model = tc.output["model"]
+                        model_id = model.get("id")
+                        if model_id and model_id not in seen_model_ids:
+                            # Only include models that the agent declared as used (or all if none specified)
+                            if used_model_ids_set and model_id not in used_model_ids_set:
+                                continue  # Skip models not actually used by the agent
+                            seen_model_ids.add(model_id)
+                            # Add to based_on as MemoryFact with type "mental-models"
+                            model_name = model.get("name", "")
+                            model_summary = model.get("summary") or model.get("description", "")
+                            based_on["mental-models"].append(
                                 MemoryFact(
-                                    id=memory_id,
-                                    text=memory_data.get("text", ""),
-                                    fact_type=fact_type,
-                                    context=None,
-                                    occurred_start=memory_data.get("occurred"),
-                                    occurred_end=memory_data.get("occurred"),
+                                    id=model_id,
+                                    text=f"{model_name}: {model_summary}",
+                                    fact_type="mental-models",
+                                    context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
+                                    occurred_start=None,
+                                    occurred_end=None,
                                 )
                             )
+                elif tc.tool == "search_mental_models":
+                    # Search mental models - include all returned models (filtered by used_model_ids_set if specified)
+                    for model in tc.output.get("mental_models", []):
+                        model_id = model.get("id")
+                        if model_id and model_id not in seen_model_ids:
+                            # Only include models that the agent declared as used (or all if none specified)
+                            if used_model_ids_set and model_id not in used_model_ids_set:
+                                continue  # Skip models not actually used by the agent
+                            seen_model_ids.add(model_id)
+                            # Add to based_on as MemoryFact with type "mental-models"
+                            model_name = model.get("name", "")
+                            model_summary = model.get("summary") or model.get("description", "")
+                            based_on["mental-models"].append(
+                                MemoryFact(
+                                    id=model_id,
+                                    text=f"{model_name}: {model_summary}",
+                                    fact_type="mental-models",
+                                    context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
+                                    occurred_start=None,
+                                    occurred_end=None,
+                                )
+                            )
+                elif tc.tool == "search_mental_models":
+                    # Search mental models - include all returned mental models (filtered by used_mental_model_ids_set if specified)
+                    used_mental_model_ids_set = (
+                        set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
+                    )
+                    for mental_model in tc.output.get("mental_models", []):
+                        mental_model_id = mental_model.get("id")
+                        if mental_model_id and mental_model_id not in seen_model_ids:
+                            # Only include mental models that the agent declared as used (or all if none specified)
+                            if used_mental_model_ids_set and mental_model_id not in used_mental_model_ids_set:
+                                continue  # Skip mental models not actually used by the agent
+                            seen_model_ids.add(mental_model_id)
+                            # Add to based_on as MemoryFact with type "mental-models" (mental models are synthesized knowledge)
+                            mental_model_name = mental_model.get("name", "")
+                            mental_model_content = mental_model.get("content", "")
+                            based_on["mental-models"].append(
+                                MemoryFact(
+                                    id=mental_model_id,
+                                    text=f"{mental_model_name}: {mental_model_content}",
+                                    fact_type="mental-models",
+                                    context="mental model (user-curated)",
+                                    occurred_start=None,
+                                    occurred_end=None,
+                                )
+                            )
+                    # List all models lookup - don't add to based_on (too verbose, just a listing)
 
-        # Extract mental models from tool outputs - only include models the agent actually used
-        # agent_result.used_mental_model_ids contains validated IDs from the done action
-        used_model_ids_set = set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
-        based_on["mental-models"] = []
-        seen_model_ids: set[str] = set()
-        for tc in agent_result.tool_trace:
-            if tc.tool == "get_mental_model":
-                # Single model lookup (with full details)
-                if tc.output.get("found") and "model" in tc.output:
-                    model = tc.output["model"]
-                    model_id = model.get("id")
-                    if model_id and model_id not in seen_model_ids:
-                        # Only include models that the agent declared as used (or all if none specified)
-                        if used_model_ids_set and model_id not in used_model_ids_set:
-                            continue  # Skip models not actually used by the agent
-                        seen_model_ids.add(model_id)
-                        # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
-                        based_on["mental-models"].append(
-                            MemoryFact(
-                                id=model_id,
-                                text=f"{model_name}: {model_summary}",
-                                fact_type="mental-models",
-                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
-                                occurred_start=None,
-                                occurred_end=None,
-                            )
-                        )
-            elif tc.tool == "search_mental_models":
-                # Search mental models - include all returned models (filtered by used_model_ids_set if specified)
-                for model in tc.output.get("mental_models", []):
-                    model_id = model.get("id")
-                    if model_id and model_id not in seen_model_ids:
-                        # Only include models that the agent declared as used (or all if none specified)
-                        if used_model_ids_set and model_id not in used_model_ids_set:
-                            continue  # Skip models not actually used by the agent
-                        seen_model_ids.add(model_id)
-                        # Add to based_on as MemoryFact with type "mental-models"
-                        model_name = model.get("name", "")
-                        model_summary = model.get("summary") or model.get("description", "")
-                        based_on["mental-models"].append(
-                            MemoryFact(
-                                id=model_id,
-                                text=f"{model_name}: {model_summary}",
-                                fact_type="mental-models",
-                                context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
-                                occurred_start=None,
-                                occurred_end=None,
-                            )
-                        )
-            elif tc.tool == "search_mental_models":
-                # Search mental models - include all returned mental models (filtered by used_mental_model_ids_set if specified)
-                used_mental_model_ids_set = (
-                    set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
+            # Add directives to based_on["directives"]
+            # Store raw directive dicts (with id, name, content) for http.py to convert to ReflectDirective
+            for directive_raw in directives_raw:
+                based_on["directives"].append(
+                    {
+                        "id": directive_raw["id"],
+                        "name": directive_raw["name"],
+                        "content": directive_raw["content"],
+                    }
                 )
-                for mental_model in tc.output.get("mental_models", []):
-                    mental_model_id = mental_model.get("id")
-                    if mental_model_id and mental_model_id not in seen_model_ids:
-                        # Only include mental models that the agent declared as used (or all if none specified)
-                        if used_mental_model_ids_set and mental_model_id not in used_mental_model_ids_set:
-                            continue  # Skip mental models not actually used by the agent
-                        seen_model_ids.add(mental_model_id)
-                        # Add to based_on as MemoryFact with type "mental-models" (mental models are synthesized knowledge)
-                        mental_model_name = mental_model.get("name", "")
-                        mental_model_content = mental_model.get("content", "")
-                        based_on["mental-models"].append(
-                            MemoryFact(
-                                id=mental_model_id,
-                                text=f"{mental_model_name}: {mental_model_content}",
-                                fact_type="mental-models",
-                                context="mental model (user-curated)",
-                                occurred_start=None,
-                                occurred_end=None,
-                            )
-                        )
-                # List all models lookup - don't add to based_on (too verbose, just a listing)
 
-        # Add directives to based_on["directives"]
-        # Store raw directive dicts (with id, name, content) for http.py to convert to ReflectDirective
-        for directive_raw in directives_raw:
-            based_on["directives"].append(
-                {
-                    "id": directive_raw["id"],
-                    "name": directive_raw["name"],
-                    "content": directive_raw["content"],
-                }
+            # Build directives_applied from agent result
+            from hindsight_api.engine.response_models import DirectiveRef
+
+            directives_applied_result = [
+                DirectiveRef(id=d.id, name=d.name, content=d.content) for d in agent_result.directives_applied
+            ]
+
+            # Convert agent usage to TokenUsage format
+            from hindsight_api.engine.response_models import TokenUsage
+
+            usage = TokenUsage(
+                input_tokens=agent_result.usage.input_tokens,
+                output_tokens=agent_result.usage.output_tokens,
+                total_tokens=agent_result.usage.total_tokens,
             )
 
-        # Build directives_applied from agent result
-        from hindsight_api.engine.response_models import DirectiveRef
-
-        directives_applied_result = [
-            DirectiveRef(id=d.id, name=d.name, content=d.content) for d in agent_result.directives_applied
-        ]
-
-        # Convert agent usage to TokenUsage format
-        from hindsight_api.engine.response_models import TokenUsage
-
-        usage = TokenUsage(
-            input_tokens=agent_result.usage.input_tokens,
-            output_tokens=agent_result.usage.output_tokens,
-            total_tokens=agent_result.usage.total_tokens,
-        )
-
-        # Return response (compatible with existing API)
-        result = ReflectResult(
-            text=agent_result.text,
-            based_on=based_on,
-            structured_output=agent_result.structured_output,
-            usage=usage,
-            tool_trace=tool_trace_result,
-            llm_trace=llm_trace_result,
-            directives_applied=directives_applied_result,
-        )
-
-        # Call post-operation hook if validator is configured
-        if self._operation_validator:
-            from hindsight_api.extensions.operation_validator import ReflectResultContext
-
-            result_ctx = ReflectResultContext(
-                bank_id=bank_id,
-                query=query,
-                request_context=request_context,
-                budget=budget,
-                context=context,
-                result=result,
-                success=True,
-                error=None,
+            # Return response (compatible with existing API)
+            result = ReflectResult(
+                text=agent_result.text,
+                based_on=based_on,
+                structured_output=agent_result.structured_output,
+                usage=usage,
+                tool_trace=tool_trace_result,
+                llm_trace=llm_trace_result,
+                directives_applied=directives_applied_result,
             )
-            try:
-                await self._operation_validator.on_reflect_complete(result_ctx)
-            except Exception as e:
-                logger.warning(f"Post-reflect hook error (non-fatal): {e}")
 
-        return result
+            # Call post-operation hook if validator is configured
+            if self._operation_validator:
+                from hindsight_api.extensions.operation_validator import ReflectResultContext
+
+                result_ctx = ReflectResultContext(
+                    bank_id=bank_id,
+                    query=query,
+                    request_context=request_context,
+                    budget=budget,
+                    context=context,
+                    result=result,
+                    success=True,
+                    error=None,
+                )
+                try:
+                    await self._operation_validator.on_reflect_complete(result_ctx)
+                except Exception as e:
+                    logger.warning(f"Post-reflect hook error (non-fatal): {e}")
+
+            return result
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
 
     async def list_entities(
         self,
@@ -4754,6 +4843,7 @@ class MemoryEngine(MemoryEngineInterface):
             tags_match = "all_strict" if tags else "any"
 
             # Run reflect with the source query, excluding the mental model being refreshed
+            # Skip creating a nested "hindsight.reflect" span since we already have "hindsight.mental_model_refresh"
             reflect_result = await self.reflect_async(
                 bank_id=bank_id,
                 query=mental_model["source_query"],
@@ -4761,6 +4851,7 @@ class MemoryEngine(MemoryEngineInterface):
                 tags=tags,
                 tags_match=tags_match,
                 exclude_mental_model_ids=[mental_model_id],
+                _skip_span=True,
             )
 
             # Build reflect_response payload to store

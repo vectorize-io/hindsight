@@ -402,7 +402,7 @@ async def run_reflect_agent(
                     {"role": "system", "content": FINAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                scope="reflect_generation",
+                scope="reflect",
                 max_completion_tokens=max_tokens,
                 return_usage=True,
             )
@@ -479,7 +479,7 @@ async def run_reflect_agent(
                     {"role": "system", "content": FINAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                scope="reflect_generation",
+                scope="reflect",
                 max_completion_tokens=max_tokens,
                 return_usage=True,
             )
@@ -550,7 +550,7 @@ async def run_reflect_agent(
                     {"role": "system", "content": FINAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                scope="reflect_generation",
+                scope="reflect",
                 max_completion_tokens=max_tokens,
                 return_usage=True,
             )
@@ -617,16 +617,16 @@ async def run_reflect_agent(
                 )
                 continue
 
-            # Process done tool - wrap with generation span
+            # Process done tool - wrap with tool call span
             from hindsight_api.tracing import get_tracer, is_tracing_enabled
 
             if is_tracing_enabled():
                 tracer = get_tracer()
-                span_name = "hindsight.reflect_generation"
+                span_name = "hindsight.reflect_tool_call"
                 with tracer.start_as_current_span(span_name) as span:
                     if span and hasattr(span, "set_attribute"):
-                        span.set_attribute("hindsight.scope", "reflect_generation")
-                        span.set_attribute("hindsight.operation", "reflect_generation")
+                        span.set_attribute("hindsight.scope", "reflect_tool_call")
+                        span.set_attribute("hindsight.operation", "reflect_tool_call")
                     return await _process_done_tool(
                         done_call,
                         available_memory_ids,
