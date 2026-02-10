@@ -39,12 +39,18 @@ async def test_mcp_endpoint_routing_integration(memory):
 
                     multi_tools = {t.name for t in multi_result.tools}
 
-                    # Multi-bank should have all tools including bank management
+                    # Multi-bank should have all tools including bank management and mental models
                     assert "retain" in multi_tools
                     assert "recall" in multi_tools
                     assert "reflect" in multi_tools
                     assert "list_banks" in multi_tools, "Multi-bank should expose list_banks"
                     assert "create_bank" in multi_tools, "Multi-bank should expose create_bank"
+                    assert "list_mental_models" in multi_tools, "Multi-bank should expose list_mental_models"
+                    assert "create_mental_model" in multi_tools, "Multi-bank should expose create_mental_model"
+                    assert "get_mental_model" in multi_tools, "Multi-bank should expose get_mental_model"
+                    assert "update_mental_model" in multi_tools, "Multi-bank should expose update_mental_model"
+                    assert "delete_mental_model" in multi_tools, "Multi-bank should expose delete_mental_model"
+                    assert "refresh_mental_model" in multi_tools, "Multi-bank should expose refresh_mental_model"
 
                     # Multi-bank retain should have bank_id parameter
                     retain_tool = next((t for t in multi_result.tools if t.name == "retain"), None)
@@ -64,10 +70,12 @@ async def test_mcp_endpoint_routing_integration(memory):
 
                     single_tools = {t.name for t in single_result.tools}
 
-                    # Single-bank should only have scoped tools (no bank management)
+                    # Single-bank should have scoped tools including mental models (no bank management)
                     assert "retain" in single_tools
                     assert "recall" in single_tools
                     assert "reflect" in single_tools
+                    assert "list_mental_models" in single_tools, "Single-bank should expose list_mental_models"
+                    assert "create_mental_model" in single_tools, "Single-bank should expose create_mental_model"
                     assert "list_banks" not in single_tools, "Single-bank should NOT expose list_banks"
                     assert "create_bank" not in single_tools, "Single-bank should NOT expose create_bank"
 

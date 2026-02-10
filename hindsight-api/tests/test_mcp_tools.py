@@ -172,6 +172,38 @@ class TestMentalModelToolRegistration:
         }
         assert expected == set(tools.keys())
 
+    @pytest.mark.asyncio
+    async def test_list_mental_models_propagates_request_context(self, mock_memory):
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            api_key_resolver=lambda: "test-api-key",
+            include_bank_id_param=True,
+            tools={"list_mental_models"},
+        )
+        register_mcp_tools(mcp, mock_memory, config)
+        await _tools(mcp)["list_mental_models"].fn()
+        request_context = mock_memory.list_mental_models.call_args.kwargs["request_context"]
+        assert request_context.api_key == "test-api-key"
+
+    @pytest.mark.asyncio
+    async def test_create_mental_model_propagates_request_context(self, mock_memory):
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            api_key_resolver=lambda: "test-api-key",
+            include_bank_id_param=True,
+            tools={"create_mental_model"},
+        )
+        register_mcp_tools(mcp, mock_memory, config)
+        await _tools(mcp)["create_mental_model"].fn(name="Test", source_query="query")
+        request_context = mock_memory.create_mental_model.call_args.kwargs["request_context"]
+        assert request_context.api_key == "test-api-key"
+
     def test_mental_model_tools_in_default_set(self):
         """Mental model tools should be in the default tools set when config.tools is None."""
         from fastmcp import FastMCP

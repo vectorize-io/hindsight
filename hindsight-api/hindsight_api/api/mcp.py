@@ -90,7 +90,19 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         tenant_id_resolver=get_current_tenant_id,  # Propagate tenant_id for usage metering
         api_key_id_resolver=get_current_api_key_id,  # Propagate api_key_id for usage metering
         include_bank_id_param=multi_bank,
-        tools=None if multi_bank else {"retain", "recall", "reflect"},  # Scoped tools for single-bank mode
+        tools=None
+        if multi_bank
+        else {
+            "retain",
+            "recall",
+            "reflect",
+            "list_mental_models",
+            "get_mental_model",
+            "create_mental_model",
+            "update_mental_model",
+            "delete_mental_model",
+            "refresh_mental_model",
+        },  # Scoped tools for single-bank mode (excludes bank management: list_banks, create_bank)
         retain_fire_and_forget=False,  # HTTP MCP supports sync/async modes
     )
 
