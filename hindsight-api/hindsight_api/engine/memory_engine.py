@@ -545,16 +545,19 @@ class MemoryEngine(MemoryEngineInterface):
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
         )
 
-        # Restore tenant_id/api_key_id from task payload so downstream operations
-        # (e.g., consolidation and mental model refreshes) can attribute usage.
+        # Restore tenant_id/api_key_id from task payload so extensions
+        # (e.g., operation validators) can attribute the operation correctly.
+        # internal=True to skip extension auth (worker has no API key),
+        # user_initiated=True so extensions know this originated from a user request.
         from hindsight_api.models import RequestContext
 
-        internal_context = RequestContext(
+        context = RequestContext(
             internal=True,
+            user_initiated=True,
             tenant_id=task_dict.get("_tenant_id"),
             api_key_id=task_dict.get("_api_key_id"),
         )
-        await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=internal_context)
+        await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=context)
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
 
