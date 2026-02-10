@@ -4773,18 +4773,6 @@ class MemoryEngine(MemoryEngineInterface):
             The created pinned mental model dict
         """
         await self._authenticate_tenant(request_context)
-
-        # Pre-operation validation (credit check for upcoming refresh)
-        if self._operation_validator:
-            from hindsight_api.extensions.operation_validator import MentalModelRefreshContext
-
-            ctx = MentalModelRefreshContext(
-                bank_id=bank_id,
-                mental_model_id=None,  # Not yet created
-                request_context=request_context,
-            )
-            await self._validate_operation(self._operation_validator.validate_mental_model_refresh(ctx))
-
         pool = await self._get_pool()
 
         # Generate embedding for the content
