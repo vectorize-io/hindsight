@@ -655,3 +655,157 @@ pub fn clear_observations(
         Err(e) => Err(e),
     }
 }
+
+pub fn config(
+    client: &api::Client,
+    bank_id: &str,
+    overrides_only: bool,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    let spinner = if output_format == OutputFormat::Pretty {
+        Some(ui::create_spinner("Fetching bank configuration..."))
+    } else {
+        None
+    };
+
+    let response = client.get_bank_config(bank_id, verbose);
+
+    if let Some(mut sp) = spinner {
+        sp.finish();
+    }
+
+    match response {
+        Ok(result) => {
+            if output_format == OutputFormat::Pretty {
+                ui::print_success(&format!("Configuration for bank '{}'", bank_id));
+                println!();
+                if overrides_only {
+                    println!("Bank-specific overrides:");
+                    if result.overrides.is_empty() {
+                        println!("  (none - using defaults)");
+                    } else {
+                        for (key, value) in result.overrides.iter() {
+                            println!("  {}: {:?}", key, value);
+                        }
+                    }
+                } else {
+                    println!("Resolved configuration (with all overrides applied):");
+                    for (key, value) in result.config.iter() {
+                        println!("  {}: {:?}", key, value);
+                    }
+                }
+            } else {
+                if overrides_only {
+                    output::print_output(&result.overrides, output_format)?;
+                } else {
+                    output::print_output(&result, output_format)?;
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn set_config(
+    client: &api::Client,
+    bank_id: &str,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
+    llm_api_key: Option<String>,
+    llm_base_url: Option<String>,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    use std::collections::HashMap;
+
+    let mut updates: HashMap<String, serde_json::Value> = HashMap::new();
+
+    if let Some(provider) = llm_provider {
+        updates.insert("llm_provider".to_string(), serde_json::Value::String(provider));
+    }
+    if let Some(model) = llm_model {
+        updates.insert("llm_model".to_string(), serde_json::Value::String(model));
+    }
+    if let Some(api_key) = llm_api_key {
+        updates.insert("llm_api_key".to_string(), serde_json::Value::String(api_key));
+    }
+    if let Some(base_url) = llm_base_url {
+        updates.insert("llm_base_url".to_string(), serde_json::Value::String(base_url));
+    }
+
+    if updates.is_empty() {
+        return Err(errors::Error::Generic("No config updates provided. Use --llm-provider, --llm-model, --llm-api-key, or --llm-base-url".to_string()));
+    }
+
+    let spinner = if output_format == OutputFormat::Pretty {
+        Some(ui::create_spinner("Updating bank configuration..."))
+    } else {
+        None
+    };
+
+    let response = client.update_bank_config(bank_id, updates, verbose);
+
+    if let Some(mut sp) = spinner {
+        sp.finish();
+    }
+
+    match response {
+        Ok(result) => {
+            if output_format == OutputFormat::Pretty {
+                ui::print_success(&format!("Configuration updated for bank '{}'", bank_id));
+                println!("\nUpdated overrides:");
+                for (key, value) in result.overrides.iter() {
+                    println!("  {}: {:?}", key, value);
+                }
+            } else {
+                output::print_output(&result, output_format)?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn reset_config(
+    client: &api::Client,
+    bank_id: &str,
+    yes: bool,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    if !yes && output_format == OutputFormat::Pretty {
+        if !ui::confirm(&format!(
+            "Reset all configuration overrides for bank '{}'?",
+            bank_id
+        )) {
+            ui::print_info("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let spinner = if output_format == OutputFormat::Pretty {
+        Some(ui::create_spinner("Resetting bank configuration..."))
+    } else {
+        None
+    };
+
+    let response = client.reset_bank_config(bank_id, verbose);
+
+    if let Some(mut sp) = spinner {
+        sp.finish();
+    }
+
+    match response {
+        Ok(result) => {
+            if output_format == OutputFormat::Pretty {
+                ui::print_success(&format!("Configuration reset to defaults for bank '{}'", bank_id));
+            } else {
+                output::print_output(&result, output_format)?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}

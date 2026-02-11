@@ -279,6 +279,48 @@ enum BankCommands {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+
+    /// Get bank configuration (hierarchical overrides)
+    Config {
+        /// Bank ID
+        bank_id: String,
+
+        /// Show only bank-specific overrides (not full resolved config)
+        #[arg(long)]
+        overrides_only: bool,
+    },
+
+    /// Update bank configuration (set hierarchical overrides)
+    SetConfig {
+        /// Bank ID
+        bank_id: String,
+
+        /// LLM provider override
+        #[arg(long)]
+        llm_provider: Option<String>,
+
+        /// LLM model override
+        #[arg(long)]
+        llm_model: Option<String>,
+
+        /// LLM API key override
+        #[arg(long)]
+        llm_api_key: Option<String>,
+
+        /// LLM base URL override
+        #[arg(long)]
+        llm_base_url: Option<String>,
+    },
+
+    /// Reset bank configuration to defaults (remove all overrides)
+    ResetConfig {
+        /// Bank ID
+        bank_id: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -775,6 +817,15 @@ fn run() -> Result<()> {
             }
             BankCommands::ClearObservations { bank_id, yes } => {
                 commands::bank::clear_observations(&client, &bank_id, yes, verbose, output_format)
+            }
+            BankCommands::Config { bank_id, overrides_only } => {
+                commands::bank::config(&client, &bank_id, overrides_only, verbose, output_format)
+            }
+            BankCommands::SetConfig { bank_id, llm_provider, llm_model, llm_api_key, llm_base_url } => {
+                commands::bank::set_config(&client, &bank_id, llm_provider, llm_model, llm_api_key, llm_base_url, verbose, output_format)
+            }
+            BankCommands::ResetConfig { bank_id, yes } => {
+                commands::bank::reset_config(&client, &bank_id, yes, verbose, output_format)
             }
         },
 

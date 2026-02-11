@@ -387,6 +387,41 @@ impl ApiClient {
         })
     }
 
+    pub fn get_bank_config(
+        &self,
+        bank_id: &str,
+        _verbose: bool,
+    ) -> Result<types::BankConfigResponse> {
+        self.runtime.block_on(async {
+            let response = self.client.get_bank_config(bank_id, None).await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn update_bank_config(
+        &self,
+        bank_id: &str,
+        updates: std::collections::HashMap<String, serde_json::Value>,
+        _verbose: bool,
+    ) -> Result<types::BankConfigResponse> {
+        self.runtime.block_on(async {
+            let request = types::BankConfigUpdate { updates };
+            let response = self.client.update_bank_config(bank_id, None, &request).await?;
+            Ok(response.into_inner())
+        })
+    }
+
+    pub fn reset_bank_config(
+        &self,
+        bank_id: &str,
+        _verbose: bool,
+    ) -> Result<types::BankConfigResponse> {
+        self.runtime.block_on(async {
+            let response = self.client.reset_bank_config(bank_id, None).await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Tag Methods ---
 
     pub fn list_tags(
