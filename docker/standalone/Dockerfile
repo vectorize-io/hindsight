@@ -112,6 +112,10 @@ RUN rm -f package-lock.json && sed -i '/"@vectorize-io\/hindsight-client":/d' pa
 # Copy built SDK directly into node_modules (more reliable than npm link in Docker)
 COPY --from=sdk-builder /app/hindsight-clients/typescript ./node_modules/@vectorize-io/hindsight-client
 
+# Accept base path as build argument for reverse proxy deployments
+# Usage: docker build --build-arg NEXT_PUBLIC_BASE_PATH=/hindsight ...
+ARG NEXT_PUBLIC_BASE_PATH=""
+
 # Build Control Plane - run next build first, then custom standalone copy
 # (The build:standalone script expects a specific path structure that differs in Docker)
 RUN npm exec -- next build
