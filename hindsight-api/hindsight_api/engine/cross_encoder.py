@@ -16,25 +16,17 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from ..config import (
-    DEFAULT_LITELLM_API_BASE,
-    DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
-    DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LOCAL_FORCE_CPU,
     DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_PROVIDER,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
-    ENV_COHERE_API_KEY,
-    ENV_LITELLM_API_BASE,
-    ENV_LITELLM_API_KEY,
-    ENV_RERANKER_COHERE_BASE_URL,
-    ENV_RERANKER_COHERE_MODEL,
+    ENV_RERANKER_COHERE_API_KEY,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
-    ENV_RERANKER_LITELLM_MODEL,
     ENV_RERANKER_LOCAL_FORCE_CPU,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
@@ -849,21 +841,24 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             force_cpu=config.reranker_local_force_cpu,
         )
     elif provider == "cohere":
-        api_key = os.environ.get(ENV_COHERE_API_KEY)
+        api_key = config.reranker_cohere_api_key
         if not api_key:
-            raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
-        model = os.environ.get(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL)
-        base_url = os.environ.get(ENV_RERANKER_COHERE_BASE_URL) or None
-        return CohereCrossEncoder(api_key=api_key, model=model, base_url=base_url)
+            raise ValueError(f"{ENV_RERANKER_COHERE_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'cohere'")
+        return CohereCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_cohere_model,
+            base_url=config.reranker_cohere_base_url,
+        )
     elif provider == "flashrank":
         model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
         cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)
         return FlashRankCrossEncoder(model_name=model, cache_dir=cache_dir)
     elif provider == "litellm":
-        api_base = os.environ.get(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE)
-        api_key = os.environ.get(ENV_LITELLM_API_KEY)
-        model = os.environ.get(ENV_RERANKER_LITELLM_MODEL, DEFAULT_RERANKER_LITELLM_MODEL)
-        return LiteLLMCrossEncoder(api_base=api_base, api_key=api_key, model=model)
+        return LiteLLMCrossEncoder(
+            api_base=config.reranker_litellm_api_base,
+            api_key=config.reranker_litellm_api_key,
+            model=config.reranker_litellm_model,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     else:

@@ -17,17 +17,11 @@ from abc import ABC, abstractmethod
 import httpx
 
 from ..config import (
-    DEFAULT_EMBEDDINGS_COHERE_MODEL,
-    DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
     DEFAULT_EMBEDDINGS_LOCAL_MODEL,
     DEFAULT_EMBEDDINGS_OPENAI_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
-    DEFAULT_LITELLM_API_BASE,
-    ENV_COHERE_API_KEY,
-    ENV_EMBEDDINGS_COHERE_BASE_URL,
-    ENV_EMBEDDINGS_COHERE_MODEL,
-    ENV_EMBEDDINGS_LITELLM_MODEL,
+    ENV_EMBEDDINGS_COHERE_API_KEY,
     ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
     ENV_EMBEDDINGS_OPENAI_API_KEY,
@@ -35,8 +29,6 @@ from ..config import (
     ENV_EMBEDDINGS_OPENAI_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
     ENV_EMBEDDINGS_TEI_URL,
-    ENV_LITELLM_API_BASE,
-    ENV_LITELLM_API_KEY,
     ENV_LLM_API_KEY,
 )
 
@@ -754,17 +746,20 @@ def create_embeddings_from_env() -> Embeddings:
         base_url = os.environ.get(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None
         return OpenAIEmbeddings(api_key=api_key, model=model, base_url=base_url)
     elif provider == "cohere":
-        api_key = os.environ.get(ENV_COHERE_API_KEY)
+        api_key = config.embeddings_cohere_api_key
         if not api_key:
-            raise ValueError(f"{ENV_COHERE_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'cohere'")
-        model = os.environ.get(ENV_EMBEDDINGS_COHERE_MODEL, DEFAULT_EMBEDDINGS_COHERE_MODEL)
-        base_url = os.environ.get(ENV_EMBEDDINGS_COHERE_BASE_URL) or None
-        return CohereEmbeddings(api_key=api_key, model=model, base_url=base_url)
+            raise ValueError(f"{ENV_EMBEDDINGS_COHERE_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'cohere'")
+        return CohereEmbeddings(
+            api_key=api_key,
+            model=config.embeddings_cohere_model,
+            base_url=config.embeddings_cohere_base_url,
+        )
     elif provider == "litellm":
-        api_base = os.environ.get(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE)
-        api_key = os.environ.get(ENV_LITELLM_API_KEY)
-        model = os.environ.get(ENV_EMBEDDINGS_LITELLM_MODEL, DEFAULT_EMBEDDINGS_LITELLM_MODEL)
-        return LiteLLMEmbeddings(api_base=api_base, api_key=api_key, model=model)
+        return LiteLLMEmbeddings(
+            api_base=config.embeddings_litellm_api_base,
+            api_key=config.embeddings_litellm_api_key,
+            model=config.embeddings_litellm_model,
+        )
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. Supported: 'local', 'tei', 'openai', 'cohere', 'litellm'"

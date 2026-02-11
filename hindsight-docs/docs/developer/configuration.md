@@ -273,11 +273,11 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` | OpenAI API key (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
 | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI) | - |
-| `HINDSIGHT_API_COHERE_API_KEY` | Cohere API key (shared for embeddings and reranker) | - |
+| `HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY` | Cohere API key for embeddings | - |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL` | Cohere embedding model | `embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
-| `HINDSIGHT_API_LITELLM_API_BASE` | LiteLLM proxy base URL (shared for embeddings and reranker) | `http://localhost:4000` |
-| `HINDSIGHT_API_LITELLM_API_KEY` | LiteLLM proxy API key (optional, depends on proxy config) | - |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings | `http://localhost:4000` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
 
 ```bash
@@ -302,19 +302,19 @@ export HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080
 
 # Cohere - cloud-based embeddings
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere
-export HINDSIGHT_API_COHERE_API_KEY=your-api-key
+export HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0  # 1024 dimensions
 
 # Azure-hosted Cohere - embeddings via custom endpoint
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere
-export HINDSIGHT_API_COHERE_API_KEY=your-azure-api-key
+export HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY=your-azure-api-key
 export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0
 export HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL=https://your-azure-cohere-endpoint.com
 
 # LiteLLM proxy - unified gateway for multiple providers
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
-export HINDSIGHT_API_LITELLM_API_BASE=http://localhost:4000
-export HINDSIGHT_API_LITELLM_API_KEY=your-litellm-key  # optional
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE=http://localhost:4000
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small  # or cohere/embed-english-v3.0
 ```
 
@@ -344,8 +344,11 @@ Supported OpenAI embedding dimensions:
 | `HINDSIGHT_API_RERANKER_TEI_URL` | TEI server URL | - |
 | `HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE` | Batch size for TEI reranking | `128` |
 | `HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT` | Max concurrent TEI reranking requests | `8` |
+| `HINDSIGHT_API_RERANKER_COHERE_API_KEY` | Cohere API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_COHERE_MODEL` | Cohere rerank model | `rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
+| `HINDSIGHT_API_RERANKER_LITELLM_API_BASE` | LiteLLM proxy base URL for reranking | `http://localhost:4000` |
+| `HINDSIGHT_API_RERANKER_LITELLM_API_KEY` | LiteLLM proxy API key for reranking (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_MODEL` | LiteLLM rerank model (use provider prefix, e.g., `cohere/rerank-english-v3.0`) | `cohere/rerank-english-v3.0` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_MODEL` | FlashRank model for fast CPU-based reranking | `ms-marco-MiniLM-L-12-v2` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
@@ -361,19 +364,19 @@ export HINDSIGHT_API_RERANKER_TEI_URL=http://localhost:8081
 
 # Cohere - cloud-based reranking
 export HINDSIGHT_API_RERANKER_PROVIDER=cohere
-export HINDSIGHT_API_COHERE_API_KEY=your-api-key  # shared with embeddings
+export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 
 # Azure-hosted Cohere - reranking via custom endpoint
 export HINDSIGHT_API_RERANKER_PROVIDER=cohere
-export HINDSIGHT_API_COHERE_API_KEY=your-azure-api-key
+export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-azure-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 export HINDSIGHT_API_RERANKER_COHERE_BASE_URL=https://your-azure-cohere-endpoint.com
 
 # LiteLLM proxy - unified gateway for multiple reranking providers
 export HINDSIGHT_API_RERANKER_PROVIDER=litellm
-export HINDSIGHT_API_LITELLM_API_BASE=http://localhost:4000
-export HINDSIGHT_API_LITELLM_API_KEY=your-litellm-key  # optional
+export HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://localhost:4000
+export HINDSIGHT_API_RERANKER_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_RERANKER_LITELLM_MODEL=cohere/rerank-english-v3.0  # or voyage/rerank-2, together_ai/...
 ```
 
