@@ -21,6 +21,25 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _detect_vector_extension() -> str:
+    """
+    Detect available vector extension: 'vchord' or 'pgvector'.
+    Prefers vchord if both available. Raises error if neither found.
+    """
+    conn = op.get_bind()
+    vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+    if vchord_check:
+        return "vchord"
+
+    pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+    if pgvector_check:
+        return "pgvector"
+
+    raise RuntimeError(
+        "Neither vchord nor pgvector extension found. Install one: CREATE EXTENSION vchord; or CREATE EXTENSION vector;"
+    )
+
+
 def upgrade() -> None:
     """Upgrade schema - create all tables from scratch."""
 
@@ -201,18 +220,15 @@ def upgrade() -> None:
         postgresql_where=sa.text("fact_type = 'observation'"),
     )
     # Create vector index - conditional based on available extension
-    # Detect which vector extension is available
-    conn = op.get_bind()
-    vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
-    pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+    vector_ext = _detect_vector_extension()
 
-    if vchord_check:
+    if vector_ext == "vchord":
         # Use vchordrq index for vchord (supports high-dimensional embeddings)
         op.execute("""
             CREATE INDEX idx_memory_units_embedding ON memory_units
             USING vchordrq (embedding vector_l2_ops)
         """)
-    elif pgvector_check:
+    else:  # pgvector
         # Use HNSW index for pgvector
         op.create_index(
             "idx_memory_units_embedding",
@@ -220,11 +236,6 @@ def upgrade() -> None:
             ["embedding"],
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
-        )
-    else:
-        raise RuntimeError(
-            "Neither vchord nor pgvector extension found. "
-            "Install one: CREATE EXTENSION vchord; or CREATE EXTENSION vector;"
         )
 
     # Create BM25 full-text search index on search_vector
