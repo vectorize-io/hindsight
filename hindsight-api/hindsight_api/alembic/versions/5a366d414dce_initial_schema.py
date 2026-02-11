@@ -200,13 +200,32 @@ def upgrade() -> None:
         ["bank_id", sa.text("event_date DESC")],
         postgresql_where=sa.text("fact_type = 'observation'"),
     )
-    op.create_index(
-        "idx_memory_units_embedding",
-        "memory_units",
-        ["embedding"],
-        postgresql_using="hnsw",
-        postgresql_ops={"embedding": "vector_cosine_ops"},
-    )
+    # Create vector index - conditional based on available extension
+    # Detect which vector extension is available
+    conn = op.get_bind()
+    vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+    pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+
+    if vchord_check:
+        # Use vchordrq index for vchord (supports high-dimensional embeddings)
+        op.execute("""
+            CREATE INDEX idx_memory_units_embedding ON memory_units
+            USING vchordrq (embedding vector_l2_ops)
+        """)
+    elif pgvector_check:
+        # Use HNSW index for pgvector
+        op.create_index(
+            "idx_memory_units_embedding",
+            "memory_units",
+            ["embedding"],
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        )
+    else:
+        raise RuntimeError(
+            "Neither vchord nor pgvector extension found. "
+            "Install one: CREATE EXTENSION vchord; or CREATE EXTENSION vector;"
+        )
 
     # Create BM25 full-text search index on search_vector
     op.execute("""

@@ -13,6 +13,7 @@ This migration:
 from collections.abc import Sequence
 
 from alembic import context, op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "n9i0j1k2l3m4"
@@ -27,9 +28,31 @@ def _get_schema_prefix() -> str:
     return f'"{schema}".' if schema else ""
 
 
+def _detect_vector_extension() -> str:
+    """
+    Detect available vector extension: 'vchord' or 'pgvector'.
+    Prefers vchord if both available. Raises error if neither found.
+    """
+    conn = op.get_bind()
+    vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+    if vchord_check:
+        return "vchord"
+
+    pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+    if pgvector_check:
+        return "pgvector"
+
+    raise RuntimeError(
+        "Neither vchord nor pgvector extension found. Install one: CREATE EXTENSION vchord; or CREATE EXTENSION vector;"
+    )
+
+
 def upgrade() -> None:
     """Create learnings and pinned_reflections tables."""
     schema = _get_schema_prefix()
+
+    # Detect which vector extension is available
+    vector_ext = _detect_vector_extension()
 
     # 1. Create learnings table
     op.execute(f"""
@@ -57,10 +80,19 @@ def upgrade() -> None:
 
     # Indexes for learnings
     op.execute(f"CREATE INDEX idx_learnings_bank_id ON {schema}learnings(bank_id)")
-    op.execute(f"""
-        CREATE INDEX idx_learnings_embedding ON {schema}learnings
-        USING hnsw (embedding vector_cosine_ops)
-    """)
+
+    # Create vector index based on detected extension
+    if vector_ext == "vchord":
+        op.execute(f"""
+            CREATE INDEX idx_learnings_embedding ON {schema}learnings
+            USING vchordrq (embedding vector_l2_ops)
+        """)
+    else:  # pgvector
+        op.execute(f"""
+            CREATE INDEX idx_learnings_embedding ON {schema}learnings
+            USING hnsw (embedding vector_cosine_ops)
+        """)
+
     op.execute(f"CREATE INDEX idx_learnings_tags ON {schema}learnings USING GIN(tags)")
 
     # Full-text search for learnings
@@ -94,10 +126,19 @@ def upgrade() -> None:
 
     # Indexes for pinned_reflections
     op.execute(f"CREATE INDEX idx_pinned_reflections_bank_id ON {schema}pinned_reflections(bank_id)")
-    op.execute(f"""
-        CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-        USING hnsw (embedding vector_cosine_ops)
-    """)
+
+    # Create vector index based on detected extension
+    if vector_ext == "vchord":
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
+            USING vchordrq (embedding vector_l2_ops)
+        """)
+    else:  # pgvector
+        op.execute(f"""
+            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
+            USING hnsw (embedding vector_cosine_ops)
+        """)
+
     op.execute(f"CREATE INDEX idx_pinned_reflections_tags ON {schema}pinned_reflections USING GIN(tags)")
 
     # Full-text search for pinned_reflections

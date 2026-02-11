@@ -33,6 +33,37 @@ logger = logging.getLogger(__name__)
 MIGRATION_LOCK_ID = 123456789
 
 
+def _detect_vector_extension(conn) -> str:
+    """
+    Detect available vector extension: 'vchord' or 'pgvector'.
+    Prefers vchord if both available. Raises error if neither found.
+
+    Args:
+        conn: SQLAlchemy connection object
+
+    Returns:
+        "vchord" or "pgvector"
+
+    Raises:
+        RuntimeError: If neither extension is installed
+    """
+    # Check vchord first (preferred for high-dimensional embeddings)
+    vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+    if vchord_check:
+        logger.debug("Detected vector extension: vchord")
+        return "vchord"
+
+    # Fall back to pgvector
+    pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+    if pgvector_check:
+        logger.debug("Detected vector extension: pgvector")
+        return "pgvector"
+
+    raise RuntimeError(
+        "Neither vchord nor pgvector extension found. Install one: CREATE EXTENSION vchord; or CREATE EXTENSION vector;"
+    )
+
+
 def _get_schema_lock_id(schema: str) -> int:
     """
     Generate a unique advisory lock ID for a schema.
@@ -361,6 +392,10 @@ def ensure_embedding_dimension(
             logger.debug(f"memory_units table does not exist in schema '{schema_name}', skipping dimension check")
             return
 
+        # Detect which vector extension is available
+        vector_ext = _detect_vector_extension(conn)
+        logger.info(f"Detected vector extension: {vector_ext}")
+
         # Get current column dimension from pg_attribute
         # pgvector stores dimension in atttypmod
         current_dim = conn.execute(
@@ -408,8 +443,7 @@ def ensure_embedding_dimension(
         # Table is empty, safe to alter column
         logger.info(f"Altering embedding column dimension from {current_dimension} to {required_dimension}")
 
-        # Drop the HNSW index on embedding column if it exists
-        # Only drop indexes that use 'hnsw' and reference the 'embedding' column
+        # Drop existing vector index (works for both HNSW and vchordrq)
         conn.execute(
             text(f"""
                 DO $$
@@ -419,7 +453,7 @@ def ensure_embedding_dimension(
                         SELECT indexname FROM pg_indexes
                         WHERE schemaname = '{schema_name}'
                           AND tablename = 'memory_units'
-                          AND indexdef LIKE '%hnsw%'
+                          AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%')
                           AND indexdef LIKE '%embedding%'
                     LOOP
                         EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
@@ -434,15 +468,26 @@ def ensure_embedding_dimension(
         )
         conn.commit()
 
-        # Recreate the HNSW index
-        conn.execute(
-            text(f"""
-                CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_hnsw
-                ON {schema_name}.memory_units
-                USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64)
-            """)
-        )
+        # Recreate index with appropriate type based on detected extension
+        if vector_ext == "vchord":
+            conn.execute(
+                text(f"""
+                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_vchordrq
+                    ON {schema_name}.memory_units
+                    USING vchordrq (embedding vector_l2_ops)
+                """)
+            )
+            logger.info(f"Created vchordrq index for {required_dimension}-dimensional embeddings")
+        else:  # pgvector
+            conn.execute(
+                text(f"""
+                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_hnsw
+                    ON {schema_name}.memory_units
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """)
+            )
+            logger.info(f"Created HNSW index for {required_dimension}-dimensional embeddings")
         conn.commit()
 
         logger.info(f"Successfully changed embedding dimension to {required_dimension}")
