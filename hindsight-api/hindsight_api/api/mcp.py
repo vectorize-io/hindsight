@@ -114,7 +114,37 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         logger.info(f"Loading MCP extension: {mcp_extension.__class__.__name__}")
         mcp_extension.register_tools(mcp, memory)
 
+    # Make all tools tolerant of extra arguments from LLMs (e.g., "explanation")
+    _make_tools_tolerant(mcp)
+
     return mcp
+
+
+def _make_tools_tolerant(mcp: FastMCP) -> None:
+    """Wrap all tool run methods to strip unknown arguments before validation.
+
+    LLMs frequently add extra fields like "explanation" or "reasoning" to tool calls.
+    FastMCP's Pydantic TypeAdapter rejects these with "Unexpected keyword argument".
+    This wraps each tool's run() to filter arguments to only known parameters.
+    """
+    try:
+        for name, tool in mcp._tool_manager._tools.items():
+            if hasattr(tool, "parameters") and tool.parameters:
+                allowed = set(tool.parameters.get("properties", {}).keys())
+                original_run = tool.run
+
+                async def _tolerant_run(arguments, _allowed=allowed, _orig=original_run):
+                    extra_keys = set(arguments.keys()) - _allowed
+                    if extra_keys:
+                        logger.debug(f"Stripping unknown arguments from tool call: {extra_keys}")
+                        arguments = {k: v for k, v in arguments.items() if k in _allowed}
+                    return await _orig(arguments)
+
+                # FunctionTool is a Pydantic model with extra='forbid', so use
+                # object.__setattr__ to bypass Pydantic's setter validation.
+                object.__setattr__(tool, "run", _tolerant_run)
+    except (AttributeError, KeyError) as e:
+        logger.warning(f"Could not make tools tolerant of extra arguments: {e}")
 
 
 class MCPMiddleware:
@@ -141,6 +171,11 @@ class MCPMiddleware:
        - No bank_id parameter (comes from URL)
        - No bank management tools (list_banks, create_bank)
        - Recommended for agent isolation
+
+    Bank ID resolution priority:
+        1. URL path (e.g., /mcp/{bank_id}/) → single-bank mode
+        2. X-Bank-Id header → multi-bank mode
+        3. HINDSIGHT_MCP_BANK_ID env var → multi-bank mode (default: "default")
 
     Examples:
         # Single-bank mode (recommended for agent isolation)
@@ -242,19 +277,24 @@ class MCPMiddleware:
             _current_schema.set(tenant_context.schema_name) if tenant_context and tenant_context.schema_name else None
         )
 
-        # Try to get bank_id from header first (for Claude Code compatibility)
-        bank_id = self._get_header(scope, "X-Bank-Id")
+        # Resolve bank_id: path takes priority over header.
+        # Path = user's explicit connection endpoint (e.g., /mcp/my-bank/).
+        # X-Bank-Id header = per-request override for multi-bank mode only.
+        bank_id = None
         bank_id_from_path = False
-
-        # If no header, try to extract from path: /{bank_id}/...
         new_path = path
-        if not bank_id and path.startswith("/") and len(path) > 1:
+
+        # First, try to extract from path: /{bank_id}/...
+        if path.startswith("/") and len(path) > 1:
             parts = path[1:].split("/", 1)
             if parts[0]:
-                # First segment looks like a bank_id
                 bank_id = parts[0]
                 bank_id_from_path = True
                 new_path = "/" + parts[1] if len(parts) > 1 else "/"
+
+        # If no path-based bank_id, try X-Bank-Id header (multi-bank mode)
+        if not bank_id:
+            bank_id = self._get_header(scope, "X-Bank-Id")
 
         # Fall back to default bank_id
         if not bank_id:
