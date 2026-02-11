@@ -118,7 +118,10 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
 
 
 class MCPMiddleware:
-    """ASGI middleware that handles authentication and routes to appropriate MCP server.
+    """ASGI middleware that intercepts MCP requests and routes to appropriate MCP server.
+
+    This middleware wraps the main FastAPI app and intercepts requests matching the
+    configured prefix (default: /mcp). Non-MCP requests pass through to the inner app.
 
     Authentication:
         1. If HINDSIGHT_API_MCP_AUTH_TOKEN is set (legacy), validates against that token
@@ -149,27 +152,33 @@ class MCPMiddleware:
             --header "X-Bank-Id: my-bank" --header "Authorization: Bearer <token>"
     """
 
-    def __init__(self, app, memory: MemoryEngine):
+    def __init__(
+        self,
+        app,
+        memory: MemoryEngine,
+        prefix: str = "/mcp",
+        multi_bank_app=None,
+        single_bank_app=None,
+        multi_bank_server=None,
+        single_bank_server=None,
+    ):
         self.app = app
+        self.prefix = prefix
         self.memory = memory
         self.tenant_extension = memory._tenant_extension
 
-        # Create two server instances:
-        # 1. Multi-bank server (for /mcp/ root endpoint)
-        self.multi_bank_server = create_mcp_server(memory, multi_bank=True)
-        self.multi_bank_app = self.multi_bank_server.http_app(path="/")
-
-        # 2. Single-bank server (for /mcp/{bank_id}/ endpoints)
-        self.single_bank_server = create_mcp_server(memory, multi_bank=False)
-        self.single_bank_app = self.single_bank_server.http_app(path="/")
-
-        # Backward compatibility: expose multi_bank_app as mcp_app
-        self.mcp_app = self.multi_bank_app
-
-        # Expose the lifespan for the parent app to chain (use multi-bank as default)
-        self.lifespan = (
-            self.multi_bank_app.lifespan_handler if hasattr(self.multi_bank_app, "lifespan_handler") else None
-        )
+        if multi_bank_app and single_bank_app:
+            # Pre-created servers (used when called via add_middleware from create_app)
+            self.multi_bank_app = multi_bank_app
+            self.single_bank_app = single_bank_app
+            self.multi_bank_server = multi_bank_server
+            self.single_bank_server = single_bank_server
+        else:
+            # Create servers internally (for direct construction / tests)
+            self.multi_bank_server = create_mcp_server(memory, multi_bank=True)
+            self.multi_bank_app = self.multi_bank_server.http_app(path="/")
+            self.single_bank_server = create_mcp_server(memory, multi_bank=False)
+            self.single_bank_app = self.single_bank_server.http_app(path="/")
 
     def _get_header(self, scope: dict, name: str) -> str | None:
         """Extract a header value from ASGI scope."""
@@ -181,8 +190,19 @@ class MCPMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
-            await self.multi_bank_app(scope, receive, send)
+            await self.app(scope, receive, send)
             return
+
+        path = scope.get("path", "")
+
+        # Check if this is an MCP request (matches prefix)
+        if not (path == self.prefix or path.startswith(self.prefix + "/")):
+            # Not an MCP request — pass through to the inner app
+            await self.app(scope, receive, send)
+            return
+
+        # Strip prefix from path
+        path = path[len(self.prefix) :] or "/"
 
         # Extract auth token from header (for tenant auth propagation)
         auth_header = self._get_header(scope, "Authorization")
@@ -222,36 +242,15 @@ class MCPMiddleware:
             _current_schema.set(tenant_context.schema_name) if tenant_context and tenant_context.schema_name else None
         )
 
-        path = scope.get("path", "")
-
-        # Strip any mount prefix (e.g., /mcp) that FastAPI might not have stripped
-        root_path = scope.get("root_path", "")
-        if root_path and path.startswith(root_path):
-            path = path[len(root_path) :] or "/"
-
-        # Also handle case where mount path wasn't stripped (e.g., /mcp/...)
-        if path.startswith("/mcp/"):
-            path = path[4:]  # Remove /mcp prefix
-        elif path == "/mcp":
-            path = "/"
-
-        # Ensure path has leading slash (needed after stripping mount path)
-        if path and not path.startswith("/"):
-            path = "/" + path
-
         # Try to get bank_id from header first (for Claude Code compatibility)
         bank_id = self._get_header(scope, "X-Bank-Id")
         bank_id_from_path = False
-
-        # MCP endpoint paths that should not be treated as bank_ids
-        MCP_ENDPOINTS = {"sse", "messages"}
 
         # If no header, try to extract from path: /{bank_id}/...
         new_path = path
         if not bank_id and path.startswith("/") and len(path) > 1:
             parts = path[1:].split("/", 1)
-            # Don't treat MCP endpoints as bank_ids
-            if parts[0] and parts[0] not in MCP_ENDPOINTS:
+            if parts[0]:
                 # First segment looks like a bank_id
                 bank_id = parts[0]
                 bank_id_from_path = True
@@ -280,9 +279,19 @@ class MCPMiddleware:
             # Clear root_path since we're passing directly to the app
             new_scope["root_path"] = ""
 
-            # Wrap send to rewrite the SSE endpoint URL to include bank_id if using path-based routing
+            # Wrap send to rewrite the SSE endpoint URL to include bank_id if using path-based routing.
+            # Only rewrite SSE (text/event-stream) responses to avoid corrupting tool results
+            # that might contain the literal string "data: /messages".
+            is_sse_response = False
+
             async def send_wrapper(message):
-                if message["type"] == "http.response.body" and bank_id_from_path:
+                nonlocal is_sse_response
+                if message["type"] == "http.response.start":
+                    for header_name, header_value in message.get("headers", []):
+                        if header_name == b"content-type" and b"text/event-stream" in header_value:
+                            is_sse_response = True
+                            break
+                if message["type"] == "http.response.body" and bank_id_from_path and is_sse_response:
                     body = message.get("body", b"")
                     if body and b"/messages" in body:
                         # Rewrite /messages to /{bank_id}/messages in SSE endpoint event
@@ -320,30 +329,19 @@ class MCPMiddleware:
         )
 
 
-def create_mcp_app(memory: MemoryEngine):
-    """
-    Create an ASGI app that handles MCP requests with dynamic tool exposure.
+def create_mcp_servers(memory: MemoryEngine):
+    """Create multi-bank and single-bank MCP servers and their Starlette apps.
 
-    Authentication:
-        Uses the TenantExtension from the MemoryEngine (same auth as REST API).
-
-    Two modes based on URL structure:
-
-    1. Single-bank mode (recommended for agent isolation):
-       - URL: /mcp/{bank_id}/
-       - Tools: retain, recall, reflect (no bank_id parameter)
-       - Example: claude mcp add --transport http my-agent http://localhost:8888/mcp/my-agent-bank/
-
-    2. Multi-bank mode (for cross-bank operations):
-       - URL: /mcp/
-       - Tools: retain, recall, reflect, list_banks, create_bank (all with bank_id parameter)
-       - Bank ID from: X-Bank-Id header or HINDSIGHT_MCP_BANK_ID env var (default: "default")
-       - Example: claude mcp add --transport http hindsight http://localhost:8888/mcp --header "X-Bank-Id: my-bank"
-
-    Args:
-        memory: MemoryEngine instance
+    Returns the servers and apps separately so lifespans can be chained before
+    the middleware wraps the main app.
 
     Returns:
-        ASGI application
+        Tuple of (multi_bank_server, single_bank_server, multi_bank_app, single_bank_app)
     """
-    return MCPMiddleware(None, memory)
+    multi_bank_server = create_mcp_server(memory, multi_bank=True)
+    multi_bank_app = multi_bank_server.http_app(path="/")
+
+    single_bank_server = create_mcp_server(memory, multi_bank=False)
+    single_bank_app = single_bank_server.http_app(path="/")
+
+    return multi_bank_server, single_bank_server, multi_bank_app, single_bank_app

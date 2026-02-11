@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from hindsight_api.mcp_tools import MCPToolsConfig, build_content_dict, parse_timestamp, register_mcp_tools
+from hindsight_api.mcp_tools import (
+    MCPToolsConfig,
+    _validate_mental_model_inputs,
+    build_content_dict,
+    parse_timestamp,
+    register_mcp_tools,
+)
 
 
 class TestParseTimestamp:
@@ -546,3 +552,95 @@ class TestRefreshMentalModel:
         mock_memory.submit_async_refresh_mental_model.side_effect = RuntimeError("DB error")
         result = await _tools(mcp_server_with_mental_models)["refresh_mental_model"].fn(mental_model_id="mm-1")
         assert "error" in result
+
+
+class TestValidateMentalModelInputs:
+    """Tests for the _validate_mental_model_inputs helper."""
+
+    def test_valid_inputs(self):
+        assert _validate_mental_model_inputs(name="Test", source_query="query", max_tokens=2048) is None
+
+    def test_none_inputs(self):
+        assert _validate_mental_model_inputs() is None
+
+    def test_empty_name(self):
+        result = _validate_mental_model_inputs(name="")
+        assert result == "name cannot be empty"
+
+    def test_whitespace_name(self):
+        result = _validate_mental_model_inputs(name="   ")
+        assert result == "name cannot be empty"
+
+    def test_empty_source_query(self):
+        result = _validate_mental_model_inputs(source_query="")
+        assert result == "source_query cannot be empty"
+
+    def test_whitespace_source_query(self):
+        result = _validate_mental_model_inputs(source_query="  \t  ")
+        assert result == "source_query cannot be empty"
+
+    def test_max_tokens_too_low(self):
+        result = _validate_mental_model_inputs(max_tokens=0)
+        assert "max_tokens must be between 256 and 8192" in result
+
+    def test_max_tokens_too_high(self):
+        result = _validate_mental_model_inputs(max_tokens=10000)
+        assert "max_tokens must be between 256 and 8192" in result
+
+    def test_max_tokens_at_lower_bound(self):
+        assert _validate_mental_model_inputs(max_tokens=256) is None
+
+    def test_max_tokens_at_upper_bound(self):
+        assert _validate_mental_model_inputs(max_tokens=8192) is None
+
+
+@pytest.mark.asyncio
+class TestMentalModelInputValidation:
+    """Tests that validation is applied in create/update tools before engine calls."""
+
+    async def test_create_empty_name_returns_error_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(name="", source_query="query")
+        assert "name cannot be empty" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_create_empty_source_query_returns_error_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(name="Test", source_query="")
+        assert "source_query cannot be empty" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_create_max_tokens_too_low_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["create_mental_model"].fn(
+            name="Test", source_query="query", max_tokens=0
+        )
+        assert "max_tokens must be between 256 and 8192" in result
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_create_max_tokens_too_high_single_bank(self, mcp_server_single_bank, mock_memory):
+        result = await _tools(mcp_server_single_bank)["create_mental_model"].fn(
+            name="Test", source_query="query", max_tokens=10000
+        )
+        assert isinstance(result, dict)
+        assert "max_tokens must be between 256 and 8192" in result["error"]
+        mock_memory.create_mental_model.assert_not_called()
+
+    async def test_update_empty_name_returns_error_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        result = await _tools(mcp_server_with_mental_models)["update_mental_model"].fn(mental_model_id="mm-1", name="")
+        assert "name cannot be empty" in result
+        mock_memory.update_mental_model.assert_not_called()
+
+    async def test_update_empty_name_returns_error_single_bank(self, mcp_server_single_bank, mock_memory):
+        result = await _tools(mcp_server_single_bank)["update_mental_model"].fn(mental_model_id="mm-1", name="  ")
+        assert isinstance(result, dict)
+        assert "name cannot be empty" in result["error"]
+        mock_memory.update_mental_model.assert_not_called()
+
+    async def test_not_found_error_includes_bank_id_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        mock_memory.get_mental_model.return_value = None
+        result = await _tools(mcp_server_with_mental_models)["get_mental_model"].fn(mental_model_id="missing")
+        assert "test-bank" in result
+
+    async def test_not_found_error_includes_bank_id_single_bank(self, mcp_server_single_bank, mock_memory):
+        mock_memory.get_mental_model.return_value = None
+        result = await _tools(mcp_server_single_bank)["get_mental_model"].fn(mental_model_id="missing")
+        assert isinstance(result, dict)
+        assert "fixed-bank" in result["error"]

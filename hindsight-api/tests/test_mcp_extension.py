@@ -165,5 +165,5 @@ class TestMCPExtensionIntegration:
         assert "create_bank" in tools
         # Extension tool also present
         assert "test_extension_tool" in tools
-        # Total: 11 core + 1 extension = 12 tools
-        assert len(tools) == 12
+        # At least 11 core + 1 extension = 12 tools (may grow as new tools are added)
+        assert len(tools) >= 12

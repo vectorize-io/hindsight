@@ -552,6 +552,19 @@ def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
             return f'{{"error": "{e}"}}'
 
 
+def _validate_mental_model_inputs(
+    name: str | None = None, source_query: str | None = None, max_tokens: int | None = None
+) -> str | None:
+    """Validate mental model inputs, returning an error message or None if valid."""
+    if name is not None and not name.strip():
+        return "name cannot be empty"
+    if source_query is not None and not source_query.strip():
+        return "source_query cannot be empty"
+    if max_tokens is not None and (max_tokens < 256 or max_tokens > 8192):
+        return f"max_tokens must be between 256 and 8192, got {max_tokens}"
+    return None
+
+
 # =========================================================================
 # MENTAL MODEL TOOLS
 # =========================================================================
@@ -656,7 +669,7 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                     request_context=_get_request_context(config),
                 )
                 if model is None:
-                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"})
                 return json.dumps(model, indent=2, default=str)
             except Exception as e:
                 logger.error(f"Error getting mental model: {e}", exc_info=True)
@@ -688,7 +701,7 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                     request_context=_get_request_context(config),
                 )
                 if model is None:
-                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                    return {"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"}
                 return model
             except Exception as e:
                 logger.error(f"Error getting mental model: {e}", exc_info=True)
@@ -733,6 +746,12 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 target_bank = bank_id or config.bank_id_resolver()
                 if target_bank is None:
                     return '{"error": "No bank_id configured"}'
+
+                validation_error = _validate_mental_model_inputs(
+                    name=name, source_query=source_query, max_tokens=max_tokens
+                )
+                if validation_error:
+                    return json.dumps({"error": validation_error})
 
                 request_context = _get_request_context(config)
 
@@ -803,6 +822,12 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 if target_bank is None:
                     return {"error": "No bank_id configured"}
 
+                validation_error = _validate_mental_model_inputs(
+                    name=name, source_query=source_query, max_tokens=max_tokens
+                )
+                if validation_error:
+                    return {"error": validation_error}
+
                 request_context = _get_request_context(config)
 
                 model = await memory.create_mental_model(
@@ -868,6 +893,12 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 if target_bank is None:
                     return '{"error": "No bank_id configured"}'
 
+                validation_error = _validate_mental_model_inputs(
+                    name=name, source_query=source_query, max_tokens=max_tokens
+                )
+                if validation_error:
+                    return json.dumps({"error": validation_error})
+
                 model = await memory.update_mental_model(
                     bank_id=target_bank,
                     mental_model_id=mental_model_id,
@@ -878,7 +909,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     request_context=_get_request_context(config),
                 )
                 if model is None:
-                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"})
                 return json.dumps(model, indent=2, default=str)
             except Exception as e:
                 logger.error(f"Error updating mental model: {e}", exc_info=True)
@@ -912,6 +943,12 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                 if target_bank is None:
                     return {"error": "No bank_id configured"}
 
+                validation_error = _validate_mental_model_inputs(
+                    name=name, source_query=source_query, max_tokens=max_tokens
+                )
+                if validation_error:
+                    return {"error": validation_error}
+
                 model = await memory.update_mental_model(
                     bank_id=target_bank,
                     mental_model_id=mental_model_id,
@@ -922,7 +959,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     request_context=_get_request_context(config),
                 )
                 if model is None:
-                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                    return {"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"}
                 return model
             except Exception as e:
                 logger.error(f"Error updating mental model: {e}", exc_info=True)
@@ -959,7 +996,7 @@ def _register_delete_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     request_context=_get_request_context(config),
                 )
                 if not deleted:
-                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found"})
+                    return json.dumps({"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"})
                 return json.dumps({"status": "deleted", "mental_model_id": mental_model_id})
             except Exception as e:
                 logger.error(f"Error deleting mental model: {e}", exc_info=True)
@@ -990,7 +1027,7 @@ def _register_delete_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
                     request_context=_get_request_context(config),
                 )
                 if not deleted:
-                    return {"error": f"Mental model '{mental_model_id}' not found"}
+                    return {"error": f"Mental model '{mental_model_id}' not found in bank '{target_bank}'"}
                 return {"status": "deleted", "mental_model_id": mental_model_id}
             except Exception as e:
                 logger.error(f"Error deleting mental model: {e}", exc_info=True)

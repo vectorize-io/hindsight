@@ -354,9 +354,11 @@ async def test_middleware_handles_both_endpoints(mock_memory):
 
 @pytest.mark.asyncio
 async def test_routing_logic_from_url_path():
-    """Test that routing correctly selects server based on URL structure."""
-    from unittest.mock import AsyncMock
+    """Test that routing correctly selects server based on URL structure.
 
+    Simulates the path parsing logic from MCPMiddleware.__call__ after the
+    prefix has been stripped. Any first path segment is treated as a bank_id.
+    """
     from hindsight_api.api.mcp import MCPMiddleware
 
     # Mock memory
@@ -366,28 +368,23 @@ async def test_routing_logic_from_url_path():
     middleware = MCPMiddleware(None, mock_memory)
 
     # Simulate different URL patterns and verify routing
+    # Path is what remains after stripping the /mcp prefix
     test_cases = [
-        # (path_after_stripping_mcp, expected_bank_id_from_path, expected_bank_id, description)
+        # (path_after_prefix_strip, expected_bank_id_from_path, expected_bank_id, description)
         ("/alice/messages", True, "alice", "Bank ID in path with endpoint"),
         ("/my-agent-123/", True, "my-agent-123", "Bank ID in path with trailing slash"),
-        ("ciccio/messages", True, "ciccio", "Bank ID without leading slash (after mount strip)"),
-        ("bob", True, "bob", "Bank ID only, no leading slash"),
-        ("/messages", False, None, "MCP endpoint, no bank ID"),
+        ("/sse/", True, "sse", "Bank named 'sse' routes to single-bank"),
+        ("/messages/", True, "messages", "Bank named 'messages' routes to single-bank"),
         ("/", False, None, "Root path, no bank ID"),
     ]
 
     for path, expected_bank_from_path, expected_bank_id, description in test_cases:
-        # Simulate the path parsing logic with leading slash normalization
-        if path and not path.startswith("/"):
-            path = "/" + path
-
         bank_id = None
         bank_id_from_path = False
-        MCP_ENDPOINTS = {"sse", "messages"}
 
         if path.startswith("/") and len(path) > 1:
             parts = path[1:].split("/", 1)
-            if parts[0] and parts[0] not in MCP_ENDPOINTS:
+            if parts[0]:
                 bank_id = parts[0]
                 bank_id_from_path = True
 
