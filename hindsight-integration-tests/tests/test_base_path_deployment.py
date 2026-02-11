@@ -50,15 +50,27 @@ def check_docker_available() -> bool:
     return result.returncode == 0
 
 
+def get_docker_compose_command() -> list[str]:
+    """Get the docker-compose command (modern or legacy)."""
+    import shutil
+    # Try modern docker compose plugin first
+    if shutil.which("docker"):
+        result = run_command(["docker", "compose", "version"])
+        if result.returncode == 0:
+            return ["docker", "compose"]
+    # Fall back to legacy docker-compose
+    if shutil.which("docker-compose"):
+        return ["docker-compose"]
+    raise RuntimeError("docker-compose not available")
+
+
 def check_docker_compose_available() -> bool:
     """Check if docker-compose is available."""
-    # Try modern docker compose plugin first
-    result = run_command(["docker", "compose", "version"])
-    if result.returncode == 0:
+    try:
+        get_docker_compose_command()
         return True
-    # Fall back to legacy docker-compose
-    result = run_command(["docker-compose", "--version"])
-    return result.returncode == 0
+    except RuntimeError:
+        return False
 
 
 class APIServer:
@@ -143,6 +155,7 @@ class DockerComposeStack:
     def __init__(self, compose_file: Path, project_name: str = "hindsight-test"):
         self.compose_file = compose_file
         self.project_name = project_name
+        self.compose_cmd = get_docker_compose_command()
         self.env = os.environ.copy()
         # Set required env vars for docker-compose
         self.env["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "test-key")
@@ -155,14 +168,14 @@ class DockerComposeStack:
 
         # Pull images first (but don't fail if it doesn't work)
         run_command(
-            ["docker", "compose", "-f", str(self.compose_file), "-p", self.project_name, "pull"],
+            self.compose_cmd + ["-f", str(self.compose_file), "-p", self.project_name, "pull"],
             cwd=self.compose_file.parent,
             env=self.env,
         )
 
         # Start services
         result = run_command(
-            ["docker", "compose", "-f", str(self.compose_file), "-p", self.project_name, "up", "-d", "--build"],
+            self.compose_cmd + ["-f", str(self.compose_file), "-p", self.project_name, "up", "-d", "--build"],
             cwd=self.compose_file.parent,
             env=self.env,
         )
@@ -175,7 +188,7 @@ class DockerComposeStack:
         start_time = time.time()
         while time.time() - start_time < timeout:
             result = run_command(
-                ["docker", "compose", "-f", str(self.compose_file), "-p", self.project_name, "ps", "--format", "json"],
+                self.compose_cmd + ["-f", str(self.compose_file), "-p", self.project_name, "ps", "--format", "json"],
                 cwd=self.compose_file.parent,
                 env=self.env,
             )
@@ -194,7 +207,7 @@ class DockerComposeStack:
     def show_logs(self):
         """Show docker-compose logs."""
         result = run_command(
-            ["docker", "compose", "-f", str(self.compose_file), "-p", self.project_name, "logs", "--tail=100"],
+            self.compose_cmd + ["-f", str(self.compose_file), "-p", self.project_name, "logs", "--tail=100"],
             cwd=self.compose_file.parent,
             env=self.env,
         )
@@ -204,7 +217,7 @@ class DockerComposeStack:
         """Stop and remove the docker-compose stack."""
         print(f"Stopping docker-compose stack: {self.compose_file.name}")
         result = run_command(
-            ["docker", "compose", "-f", str(self.compose_file), "-p", self.project_name, "down", "-v"],
+            self.compose_cmd + ["-f", str(self.compose_file), "-p", self.project_name, "down", "-v"],
             cwd=self.compose_file.parent,
             env=self.env,
         )
