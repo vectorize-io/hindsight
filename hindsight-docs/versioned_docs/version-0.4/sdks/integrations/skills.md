@@ -161,11 +161,11 @@ uvx hindsight-embed configure
 
 ## Cloud Mode Setup
 
-Cloud mode connects to [Hindsight Cloud](https://vectorize.io/hindsight/cloud), allowing teams to share memories about a codebase. When one team member learns something, everyone benefits.
+Cloud mode connects to [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup), allowing teams to share memories about a codebase. When one team member learns something, everyone benefits.
 
 ### Prerequisites
 
-1. A Hindsight Cloud account ([request access](https://vectorize.io/hindsight/cloud))
+1. A Hindsight Cloud account ([sign up](https://ui.hindsight.vectorize.io/signup))
 2. An API key from your team admin
 3. A bank ID for your project (e.g., `team-acme-frontend`)
 

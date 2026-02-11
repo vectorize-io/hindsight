@@ -226,7 +226,7 @@ const config: Config = {
           className: 'navbar-item-changelog',
         },
         {
-          href: 'https://vectorize.io/hindsight/cloud',
+          href: 'https://ui.hindsight.vectorize.io/signup',
           position: 'right',
           label: 'Hindsight Cloud',
           className: 'navbar-item-cloud',
@@ -285,7 +285,7 @@ const config: Config = {
             },
             {
               label: 'Hindsight Cloud',
-              href: 'https://vectorize.io/hindsight/cloud',
+              href: 'https://ui.hindsight.vectorize.io/signup',
             },
           ],
         },
