@@ -209,7 +209,7 @@ class TestLargeBatchRetain:
                 raise
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(120)
+    @pytest.mark.timeout(240)  # Increased timeout for VectorChord BM25 tokenization
     async def test_batch_chunking_behavior(self, memory_with_mock_llm, request_context):
         """
         Test that large batches are properly chunked into sub-batches.

@@ -1,0 +1,98 @@
+name: hindsight
+# Docker Compose file for Hindsight with PostgreSQL and vectorchord
+# docker compose -f docker/docker-compose/docker-compose.yaml down && sleep 2 && docker compose -f docker/docker-compose/docker-compose.yaml up -d
+# Make sure to set the required environment variables before running:
+# - HINDSIGHT_DB_PASSWORD: Password for the PostgreSQL user
+# - Configure LLM provider variables as needed (see below in the hindsight service)
+#
+# Usage:
+# docker compose up -d
+#
+# Optional environment variables with defaults:
+# - HINDSIGHT_VERSION: Hindsight application version (default: latest)
+# - HINDSIGHT_DB_USER: PostgreSQL user (default: hindsight_user)
+# - HINDSIGHT_DB_NAME: PostgreSQL database name (default: hindsight_db)
+# - HINDSIGHT_DB_VERSION: PostgreSQL version (default: 18)
+
+services:
+  db:
+    # Use a PostgreSQL-Image with vectorchord extension pre-installed
+    image: tensorchord/vchord-suite:pg${HINDSIGHT_DB_VERSION:-18-latest}
+    container_name: hindsight-db
+    restart: always
+    # Expose PostgreSQL port
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_USER: ${HINDSIGHT_DB_USER:-hindsight_user}
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+      POSTGRES_DB: ${HINDSIGHT_DB_NAME:-hindsight_db}
+    volumes:
+      - pg_data:/var/lib/postgresql/${HINDSIGHT_DB_VERSION:-18}/docker
+    networks:
+      - hindsight-net
+
+  vectorchord-init:
+    image: tensorchord/vchord-suite:pg18-latest
+    #container_name: vectorchord-init
+    depends_on:
+      - db
+    environment:
+      - PGPASSWORD=${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+    command: >
+      bash -c "
+        echo 'Waiting for PostgreSQL to be ready...';
+        until pg_isready -h hindsight-db -p 5432 -U hindsight_user; do
+          echo 'PostgreSQL is unavailable - sleeping';
+          sleep 2;
+        done;
+        echo 'PostgreSQL is ready - creating hindsight_db database';
+        psql -h hindsight-db -p 5432 -U hindsight_user -c 'CREATE DATABASE hindsight_db;' 2>/dev/null || echo 'Database already exists';
+        echo 'Creating extensions in hindsight_db database';
+        psql -h hindsight-db -p 5432 -U hindsight_user -d hindsight_db -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE;';
+        psql -h hindsight-db -p 5432 -U hindsight_user -d hindsight_db -c 'CREATE EXTENSION IF NOT EXISTS pg_tokenizer CASCADE;';
+        psql -h hindsight-db -p 5432 -U hindsight_user -d hindsight_db -c 'CREATE EXTENSION IF NOT EXISTS vchord_bm25 CASCADE;';
+        echo 'Creating llmlingua2 tokenizer';
+        psql -h hindsight-db -p 5432 -U hindsight_user -d hindsight_db -c \"SELECT create_tokenizer('llmlingua2', \\$\\$ model = \\\"llmlingua2\\\" \\$\\$);\" 2>/dev/null || echo 'Tokenizer already exists or creation skipped';
+        echo 'Database and extensions created successfully';
+      "
+    restart: "no"
+    networks:
+      - hindsight-net
+
+  hindsight:
+    build:
+      context: ../../..
+      dockerfile: docker/standalone/Dockerfile
+    image: hindsight:local
+    container_name: hindsight-app
+    env_file:
+      - ../../../.env
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      # LLM Configuration (uses OpenAI for testing vchord)
+      # LLM configuration
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY:-your-api-key}
+
+      # Database Configuration
+      HINDSIGHT_API_DATABASE_URL: postgresql://${HINDSIGHT_DB_USER:-hindsight_user}:${HINDSIGHT_DB_PASSWORD:-hindsight_password}@db:5432/${HINDSIGHT_DB_NAME:-hindsight_db}
+
+      # Vector and Text Search Extensions
+      HINDSIGHT_API_VECTOR_EXTENSION: vchord
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION: vchord
+
+    depends_on:
+      - db
+    networks:
+      - hindsight-net
+
+
+networks:
+  hindsight-net:
+    driver: bridge
+
+volumes:
+  pg_data:
