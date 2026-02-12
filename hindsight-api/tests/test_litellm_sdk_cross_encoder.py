@@ -367,8 +367,8 @@ class TestFactoryFunction:
 class TestLiteLLMSDKCohereCrossEncoder:
     """Tests for LiteLLM SDK calling Cohere (runs in CI with COHERE_API_KEY)."""
 
-    @pytest.fixture(scope="class")
-    def litellm_cohere_cross_encoder(self):
+    @pytest.fixture
+    async def litellm_cohere_cross_encoder(self):
         """Create LiteLLM SDK cross-encoder instance for Cohere."""
         if not os.environ.get("COHERE_API_KEY"):
             pytest.skip("Cohere API key not available (set COHERE_API_KEY)")
@@ -377,16 +377,11 @@ class TestLiteLLMSDKCohereCrossEncoder:
             api_key=os.environ["COHERE_API_KEY"],
             model="cohere/rerank-english-v3.0",
         )
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(encoder.initialize())
-        finally:
-            loop.close()
+        await encoder.initialize()
         return encoder
 
-    def test_litellm_sdk_cohere_initialization(self, litellm_cohere_cross_encoder):
+    @pytest.mark.asyncio
+    async def test_litellm_sdk_cohere_initialization(self, litellm_cohere_cross_encoder):
         """Test that LiteLLM SDK Cohere cross-encoder initializes correctly."""
         assert litellm_cohere_cross_encoder.provider_name == "litellm-sdk"
         assert litellm_cohere_cross_encoder.model == "cohere/rerank-english-v3.0"
