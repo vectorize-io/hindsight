@@ -5,7 +5,7 @@ Resolves config values through the hierarchy:
   Global (env vars) → Tenant config (via extension) → Bank config (database)
 
 Config values are resolved on every request to ensure consistency across
-multiple API servers. LLM provider instances are pooled separately.
+multiple API servers.
 """
 
 import json
@@ -97,7 +97,7 @@ class ConfigResolver:
         3. Bank config overrides (from banks.config JSONB)
 
         Note: Config is resolved on every call (not cached) to ensure consistency
-        across multiple API servers. LLM provider instances are pooled separately.
+        across multiple API servers.
 
         SECURITY:
         - Only returns configurable fields (excludes static/infrastructure fields)
@@ -111,29 +111,9 @@ class ConfigResolver:
         Returns:
             Dict of allowed configurable fields only (never includes credentials or static fields)
         """
-        # Start with global config (all fields)
-        config_dict = asdict(self._global_config)
-
-        # Load tenant config overrides (if tenant extension available)
-        if self.tenant_extension and context:
-            try:
-                tenant_overrides = await self.tenant_extension.get_tenant_config(context)
-                if tenant_overrides:
-                    # Normalize keys and filter to configurable fields only
-                    normalized_tenant = normalize_config_dict(tenant_overrides)
-                    configurable_tenant = {k: v for k, v in normalized_tenant.items() if k in self._configurable_fields}
-                    config_dict.update(configurable_tenant)
-                    logger.debug(
-                        f"Applied tenant config overrides for bank {bank_id}: {list(configurable_tenant.keys())}"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to load tenant config for bank {bank_id}: {e}")
-
-        # Load bank config overrides
-        bank_overrides = await self._load_bank_config(bank_id)
-        if bank_overrides:
-            config_dict.update(bank_overrides)
-            logger.debug(f"Applied bank config overrides for bank {bank_id}: {list(bank_overrides.keys())}")
+        # Resolve full config with all hierarchical overrides
+        resolved_config = await self.resolve_full_config(bank_id, context)
+        config_dict = asdict(resolved_config)
 
         # SECURITY: Filter to only configurable fields (exclude static/infrastructure)
         filtered = {k: v for k, v in config_dict.items() if k in self._configurable_fields}
