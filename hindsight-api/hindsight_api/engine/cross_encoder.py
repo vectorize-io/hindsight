@@ -883,37 +883,6 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         except ImportError:
             raise ImportError("litellm is required for LiteLLMSDKCrossEncoder. Install it with: pip install litellm")
 
-        # Set provider-specific environment variable for API key
-        # LiteLLM SDK reads API keys from provider-specific env vars
-        provider_prefix = self.model.split("/")[0].lower()
-        env_var_map = {
-            "cohere": "COHERE_API_KEY",
-            "deepinfra": "DEEPINFRA_API_KEY",
-            "together_ai": "TOGETHERAI_API_KEY",
-            "huggingface": "HUGGINGFACE_API_KEY",
-            "jina_ai": "JINA_API_KEY",
-            "voyage": "VOYAGE_API_KEY",
-        }
-
-        env_var = env_var_map.get(provider_prefix)
-        if env_var:
-            os.environ[env_var] = self.api_key
-        else:
-            # For unknown providers, try setting the API key directly
-            # LiteLLM may support it via custom_llm_provider
-            logger.warning(
-                f"Unknown provider prefix '{provider_prefix}' in model '{self.model}'. "
-                f"API key may not be set correctly."
-            )
-
-        # Configure timeout
-        if hasattr(self._litellm, "request_timeout"):
-            self._litellm.request_timeout = self.timeout
-
-        # Configure API base if provided
-        if self.api_base:
-            os.environ["LITELLM_API_BASE"] = self.api_base
-
         api_base_msg = f" at {self.api_base}" if self.api_base else ""
         logger.info(f"Reranker: initializing LiteLLM SDK provider with model {self.model}{api_base_msg}")
 

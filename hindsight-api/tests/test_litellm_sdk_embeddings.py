@@ -87,22 +87,6 @@ class TestLiteLLMSDKEmbeddings:
                 api_key="test_key",
             )
 
-    async def test_initialization_sets_provider_env_vars(self, mock_litellm):
-        """Test that initialization sets provider-specific environment variables."""
-        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
-            emb = LiteLLMSDKEmbeddings(
-                api_key="my_cohere_key",
-                model="cohere/embed-english-v3.0",
-                api_base=None,
-                batch_size=100,
-                timeout=60.0,
-            )
-
-            await emb.initialize()
-
-            # Check that COHERE_API_KEY was set
-            assert os.environ.get("COHERE_API_KEY") == "my_cohere_key"
-
     async def test_initialization_missing_package(self):
         """Test initialization fails gracefully when litellm is not installed."""
         def mock_import(name, *args):
@@ -261,32 +245,6 @@ class TestLiteLLMSDKEmbeddings:
 
         with pytest.raises(RuntimeError, match="not initialized"):
             _ = emb.dimension
-
-    async def test_different_providers(self, mock_litellm):
-        """Test different provider configurations."""
-        providers = [
-            ("cohere/embed-english-v3.0", "COHERE_API_KEY"),
-            ("openai/text-embedding-3-small", "OPENAI_API_KEY"),
-            ("together_ai/togethercomputer/m2-bert-80M-8k-retrieval", "TOGETHERAI_API_KEY"),
-            ("huggingface/sentence-transformers/all-MiniLM-L6-v2", "HUGGINGFACE_API_KEY"),
-        ]
-
-        with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
-            for model, env_var in providers:
-                emb = LiteLLMSDKEmbeddings(
-                    api_key=f"test_key_{env_var}",
-                    model=model,
-                    api_base=None,
-                    batch_size=100,
-                    timeout=60.0,
-                )
-
-                await emb.initialize()
-
-                # Check that provider-specific env var was set
-                prefix = model.split("/")[0]
-                if prefix in ["cohere", "openai", "together_ai", "huggingface"]:
-                    assert env_var in os.environ
 
     async def test_custom_api_base(self, mock_litellm):
         """Test custom API base URL is passed to embedding calls."""

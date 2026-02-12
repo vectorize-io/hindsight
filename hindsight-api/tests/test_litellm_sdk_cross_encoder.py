@@ -33,8 +33,6 @@ class TestLiteLLMSDKCrossEncoder:
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             await encoder.initialize()
             assert encoder._initialized is True
-            # Check that DeepInfra API key was set
-            assert os.environ.get("DEEPINFRA_API_KEY") == "test_key"
 
     @pytest.mark.asyncio
     async def test_initialization_missing_package(self):
@@ -200,33 +198,6 @@ class TestLiteLLMSDKCrossEncoder:
                 await encoder.predict(pairs)
 
     @pytest.mark.asyncio
-    async def test_provider_specific_api_keys(self):
-        """Test that provider-specific API keys are set correctly."""
-        test_cases = [
-            ("cohere/rerank-english-v3.0", "COHERE_API_KEY"),
-            ("deepinfra/Qwen3-reranker-8B", "DEEPINFRA_API_KEY"),
-            ("together_ai/Salesforce/Llama-Rank-V1", "TOGETHERAI_API_KEY"),
-            ("huggingface/BAAI/bge-reranker-v2-m3", "HUGGINGFACE_API_KEY"),
-            ("jina_ai/jina-reranker-v2", "JINA_API_KEY"),
-            ("voyage/rerank-2", "VOYAGE_API_KEY"),
-        ]
-
-        for model, expected_env_var in test_cases:
-            # Clear env var before test
-            if expected_env_var in os.environ:
-                del os.environ[expected_env_var]
-
-            encoder = LiteLLMSDKCrossEncoder(
-                api_key="test_key_123",
-                model=model,
-            )
-
-            mock_litellm = MagicMock()
-            with patch.dict("sys.modules", {"litellm": mock_litellm}):
-                await encoder.initialize()
-                assert os.environ.get(expected_env_var) == "test_key_123"
-
-    @pytest.mark.asyncio
     async def test_custom_api_base(self):
         """Test that custom API base URL is passed to rerank calls."""
         encoder = LiteLLMSDKCrossEncoder(
@@ -245,7 +216,6 @@ class TestLiteLLMSDKCrossEncoder:
 
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             await encoder.initialize()
-            assert os.environ.get("LITELLM_API_BASE") == "https://custom.api.example.com"
 
             # Test that api_base is passed to arerank
             pairs = [("query", "document")]
