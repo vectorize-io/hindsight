@@ -70,6 +70,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
     return Field(default_factory=default_factory, json_schema_extra=json_extra, **kwargs)
 
 
+from hindsight_api.config import get_config
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.reflect.observations import Observation
@@ -1404,6 +1405,7 @@ class FeaturesInfo(BaseModel):
     observations: bool = Field(description="Whether observations (auto-consolidation) are enabled")
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
+    bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
 
 
 class VersionResponse(BaseModel):
@@ -1417,6 +1419,7 @@ class VersionResponse(BaseModel):
                     "observations": False,
                     "mcp": True,
                     "worker": True,
+                    "bank_config_api": False,
                 },
             }
         }
@@ -1696,17 +1699,21 @@ def _register_routes(app: FastAPI):
 
         Returns version info and feature flags that can be used by clients
         to determine which capabilities are available.
+
+        Note: observations flag shows the global default. Individual banks
+        may override this setting via bank-specific configuration.
         """
         from hindsight_api import __version__
-        from hindsight_api.config import get_config
+        from hindsight_api.config import _get_raw_config
 
-        config = get_config()
+        config = _get_raw_config()
         return VersionResponse(
             api_version=__version__,
             features=FeaturesInfo(
                 observations=config.enable_observations,
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
+                bank_config_api=config.enable_bank_config_api,
             ),
         )
 
@@ -3371,9 +3378,9 @@ def _register_routes(app: FastAPI):
     )
     async def api_get_bank_config(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Get configuration for a bank with all hierarchical overrides applied."""
-        if not app.state.config.enable_bank_config_api:
+        if not get_config().enable_bank_config_api:
             raise HTTPException(
-                status_code=403,
+                status_code=404,
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:
@@ -3406,14 +3413,14 @@ def _register_routes(app: FastAPI):
         bank_id: str, request: BankConfigUpdate, request_context: RequestContext = Depends(get_request_context)
     ):
         """Update configuration overrides for a bank."""
-        if not app.state.config.enable_bank_config_api:
+        if not get_config().enable_bank_config_api:
             raise HTTPException(
-                status_code=403,
+                status_code=404,
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:
-            # Update config via config resolver (validates hierarchical fields)
-            await app.state.memory._config_resolver.update_bank_config(bank_id, request.updates)
+            # Update config via config resolver (validates configurable fields and permissions)
+            await app.state.memory._config_resolver.update_bank_config(bank_id, request.updates, request_context)
 
             # Return updated config
             config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
@@ -3443,9 +3450,9 @@ def _register_routes(app: FastAPI):
     )
     async def api_reset_bank_config(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Reset bank configuration to defaults (remove all overrides)."""
-        if not app.state.config.enable_bank_config_api:
+        if not get_config().enable_bank_config_api:
             raise HTTPException(
-                status_code=403,
+                status_code=404,
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:

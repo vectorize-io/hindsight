@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useBank } from "@/lib/bank-context";
+import { useFeatures } from "@/lib/features-context";
 import {
   Search,
   Sparkles,
@@ -11,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Box,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -24,6 +26,7 @@ interface SidebarProps {
 
 export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const { currentBank } = useBank();
+  const { features } = useFeatures();
   const [isCollapsed, setIsCollapsed] = useState(true);
 
   if (!currentBank) {
@@ -36,7 +39,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "reflect" as NavItem, label: "Reflect", icon: Sparkles },
     { id: "documents" as NavItem, label: "Documents", icon: FileText },
     { id: "entities" as NavItem, label: "Entities", icon: Users },
-    { id: "profile" as NavItem, label: "Memory Bank", icon: Box },
+    { id: "profile" as NavItem, label: "Bank Configuration", icon: Settings },
   ];
 
   return (

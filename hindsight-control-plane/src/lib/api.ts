@@ -684,8 +684,47 @@ export class ControlPlaneClient {
         observations: boolean;
         mcp: boolean;
         worker: boolean;
+        bank_config_api: boolean;
       };
     }>("/api/version");
+  }
+
+  /**
+   * Get bank configuration (resolved with hierarchy)
+   */
+  async getBankConfig(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(`/api/banks/${bankId}/config`);
+  }
+
+  /**
+   * Update bank configuration overrides
+   */
+  async updateBankConfig(bankId: string, updates: Record<string, any>) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(`/api/banks/${bankId}/config`, {
+      method: "PATCH",
+      body: JSON.stringify({ updates }),
+    });
+  }
+
+  /**
+   * Reset bank configuration to defaults
+   */
+  async resetBankConfig(bankId: string) {
+    return this.fetchApi<{
+      bank_id: string;
+      config: Record<string, any>;
+      overrides: Record<string, any>;
+    }>(`/api/banks/${bankId}/config`, {
+      method: "DELETE",
+    });
   }
 }
 

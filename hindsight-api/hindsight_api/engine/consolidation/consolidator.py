@@ -82,9 +82,8 @@ async def run_consolidation_job(
     Returns:
         Dict with consolidation results
     """
-    from ...config import get_config
-
-    config = get_config()
+    # Resolve bank-specific config with hierarchical overrides
+    config = await memory_engine._config_resolver.resolve_full_config(bank_id, request_context)
     perf = ConsolidationPerfLog(bank_id)
     max_memories_per_batch = config.consolidation_batch_size
 

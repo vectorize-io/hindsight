@@ -7,6 +7,7 @@ interface Features {
   observations: boolean;
   mcp: boolean;
   worker: boolean;
+  bank_config_api: boolean;
 }
 
 interface FeaturesContextType {
@@ -19,6 +20,7 @@ const defaultFeatures: Features = {
   observations: false,
   mcp: false,
   worker: false,
+  bank_config_api: false,
 };
 
 const FeaturesContext = createContext<FeaturesContextType | undefined>(undefined);

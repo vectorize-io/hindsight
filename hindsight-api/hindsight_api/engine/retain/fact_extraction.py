@@ -702,6 +702,7 @@ async def _extract_facts_from_chunk(
     event_date: datetime,
     context: str,
     llm_config: "LLMConfig",
+    config,
     agent_name: str = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
@@ -721,7 +722,6 @@ async def _extract_facts_from_chunk(
     fact_types_instruction = "Extract ONLY 'world' and 'assistant' type facts."
 
     # Check config for extraction mode and causal link extraction
-    config = get_config()
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
@@ -1055,6 +1055,7 @@ async def _extract_facts_with_auto_split(
     event_date: datetime,
     context: str,
     llm_config: LLMConfig,
+    config,
     agent_name: str = None,
 ) -> tuple[list[dict[str, str]], TokenUsage]:
     """
@@ -1070,6 +1071,7 @@ async def _extract_facts_with_auto_split(
         event_date: Reference date for temporal information
         context: Context about the conversation/document
         llm_config: LLM configuration to use
+        config: Resolved HindsightConfig for this bank
         agent_name: Optional agent name (memory owner)
 
     Returns:
@@ -1088,6 +1090,7 @@ async def _extract_facts_with_auto_split(
             event_date=event_date,
             context=context,
             llm_config=llm_config,
+            config=config,
             agent_name=agent_name,
         )
     except OutputTooLongError:
@@ -1132,6 +1135,7 @@ async def _extract_facts_with_auto_split(
                 event_date=event_date,
                 context=context,
                 llm_config=llm_config,
+                config=config,
                 agent_name=agent_name,
             ),
             _extract_facts_with_auto_split(
@@ -1141,6 +1145,7 @@ async def _extract_facts_with_auto_split(
                 event_date=event_date,
                 context=context,
                 llm_config=llm_config,
+                config=config,
                 agent_name=agent_name,
             ),
         ]
@@ -1164,6 +1169,7 @@ async def extract_facts_from_text(
     event_date: datetime,
     llm_config: LLMConfig,
     agent_name: str,
+    config,
     context: str = "",
 ) -> tuple[list[Fact], list[tuple[str, int]], TokenUsage]:
     """
@@ -1178,9 +1184,10 @@ async def extract_facts_from_text(
     Args:
         text: Input text (conversation, article, etc.)
         event_date: Reference date for resolving relative times
-        context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Agent name (memory owner)
+        config: Resolved HindsightConfig for this bank
+        context: Context about the conversation/document
 
     Returns:
         Tuple of (facts, chunks, usage) where:
@@ -1188,7 +1195,6 @@ async def extract_facts_from_text(
         - chunks: List of tuples (chunk_text, fact_count) for each chunk
         - usage: Aggregated token usage across all LLM calls
     """
-    config = get_config()
     chunks = chunk_text(text, max_chars=config.retain_chunk_size)
 
     # Log chunk count before starting LLM requests
@@ -1207,6 +1213,7 @@ async def extract_facts_from_text(
             event_date=event_date,
             context=context,
             llm_config=llm_config,
+            config=config,
             agent_name=agent_name,
         )
         for i, chunk in enumerate(chunks)
@@ -1239,7 +1246,7 @@ SECONDS_PER_FACT = 10
 
 
 async def extract_facts_from_contents(
-    contents: list[RetainContent], llm_config, agent_name: str
+    contents: list[RetainContent], llm_config, agent_name: str, config
 ) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
@@ -1254,6 +1261,7 @@ async def extract_facts_from_contents(
         contents: List of RetainContent objects to process
         llm_config: LLM configuration for fact extraction
         agent_name: Name of the agent (for agent-related fact detection)
+        config: Resolved HindsightConfig for this bank
 
     Returns:
         Tuple of (extracted_facts, chunks_metadata, usage)
@@ -1272,6 +1280,7 @@ async def extract_facts_from_contents(
             context=item.context,
             llm_config=llm_config,
             agent_name=agent_name,
+            config=config,
         )
         fact_extraction_tasks.append(task)
 

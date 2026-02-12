@@ -76,6 +76,7 @@ async def retain_batch(
     duplicate_checker_fn,
     bank_id: str,
     contents_dicts: list[RetainContentDict],
+    config,
     document_id: str | None = None,
     is_first_batch: bool = True,
     fact_type_override: str | None = None,
@@ -94,6 +95,7 @@ async def retain_batch(
         duplicate_checker_fn: Function to check for duplicate facts
         bank_id: Bank identifier
         contents_dicts: List of content dictionaries
+        config: Resolved HindsightConfig for this bank
         document_id: Optional document ID
         is_first_batch: Whether this is the first batch
         fact_type_override: Override fact type for all facts
@@ -144,7 +146,9 @@ async def retain_batch(
     # Step 1: Extract facts from all contents
     step_start = time.time()
 
-    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(contents, llm_config, agent_name)
+    extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
+        contents, llm_config, agent_name, config
+    )
     log_buffer.append(
         f"[1] Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks from {len(contents)} contents in {time.time() - step_start:.3f}s"
     )

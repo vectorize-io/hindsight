@@ -1513,6 +1513,7 @@ class MemoryEngine(MemoryEngineInterface):
                 sub_results, sub_usage = await self._retain_batch_async_internal(
                     bank_id=bank_id,
                     contents=sub_batch,
+                    request_context=request_context,
                     document_id=document_id,
                     is_first_batch=i == 1,  # Only upsert on first batch
                     fact_type_override=fact_type_override,
@@ -1532,6 +1533,7 @@ class MemoryEngine(MemoryEngineInterface):
             result, total_usage = await self._retain_batch_async_internal(
                 bank_id=bank_id,
                 contents=contents,
+                request_context=request_context,
                 document_id=document_id,
                 is_first_batch=True,
                 fact_type_override=fact_type_override,
@@ -1563,9 +1565,8 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"Post-retain hook error (non-fatal): {e}")
 
         # Trigger consolidation as a tracked async operation if enabled
-        from ..config import get_config
-
-        config = get_config()
+        # Resolve bank-specific config to check if observations are enabled for this bank
+        config = await self._config_resolver.resolve_full_config(bank_id, request_context)
         if config.enable_observations:
             try:
                 await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
@@ -1581,6 +1582,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         contents: list[RetainContentDict],
+        request_context: "RequestContext",
         document_id: str | None = None,
         is_first_batch: bool = True,
         fact_type_override: str | None = None,
@@ -1598,6 +1600,7 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Unique identifier for the bank
             contents: List of dicts with content, context, event_date
+            request_context: Request context for config resolution
             document_id: Optional document ID (always upserts if exists)
             is_first_batch: Whether this is the first batch (for chunked operations, only delete on first batch)
             fact_type_override: Override fact type for all facts
@@ -1613,6 +1616,9 @@ class MemoryEngine(MemoryEngineInterface):
             from .retain import orchestrator
 
             pool = await self._get_pool()
+
+            # Resolve bank-specific config for this operation
+            resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
 
             # Create parent span for retain operation
             with create_operation_span("retain", bank_id):
@@ -1630,6 +1636,7 @@ class MemoryEngine(MemoryEngineInterface):
                     fact_type_override=fact_type_override,
                     confidence_score=confidence_score,
                     document_tags=document_tags,
+                    config=resolved_config,
                 )
 
     def recall(

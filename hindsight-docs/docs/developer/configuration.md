@@ -661,7 +661,60 @@ export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
 
 Hindsight supports per-bank configuration overrides through a hierarchical system: **Global (env vars) → Tenant → Bank**.
 
-Configuration can be customized at the bank level via REST API for configurable fields (retention parameters, observation settings, etc.). Static fields (database URL, port, LLM config) cannot be overridden.
+#### Type-Safe Config Access
+
+To prevent accidentally using global defaults when bank-specific overrides exist, Hindsight enforces type-safe config access:
+
+**In Application Code:**
+```python
+from hindsight_api.config import get_config
+
+# ✅ Access static (infrastructure) fields
+config = get_config()
+host = config.host  # OK - static field
+port = config.port  # OK - static field
+
+# ❌ Attempting to access bank-configurable fields raises an error
+chunk_size = config.retain_chunk_size  # ConfigFieldAccessError!
+```
+
+**Error Message:**
+```
+ConfigFieldAccessError: Field 'retain_chunk_size' is bank-configurable and cannot
+be accessed from global config. Use ConfigResolver.resolve_full_config(bank_id, context)
+to get bank-specific config.
+```
+
+**For Bank-Specific Config:**
+```python
+# Internal code that needs bank-specific settings
+from hindsight_api.config_resolver import ConfigResolver
+
+# Resolve full config for a specific bank
+config = await config_resolver.resolve_full_config(bank_id, request_context)
+chunk_size = config.retain_chunk_size  # ✅ Uses bank-specific value
+```
+
+This design prevents bugs where global defaults are used instead of bank overrides, making it impossible to make this mistake at compile/development time.
+
+#### Security Model
+
+Configuration fields are categorized for security:
+
+1. **Configurable Fields** - Safe behavioral settings that can be customized per-bank:
+   - Retention: `retain_chunk_size`, `retain_extraction_mode`, `retain_custom_instructions`
+   - Consolidation: `enable_observations`
+
+2. **Credential Fields** - NEVER exposed or configurable via API:
+   - API keys: `*_api_key` (all LLM API keys)
+   - Infrastructure: `*_base_url` (all base URLs)
+
+3. **Static Fields** - Server-level only, cannot be overridden:
+   - Infrastructure: `database_url`, `port`, `host`, `worker_count`
+   - Provider/Model selection: `llm_provider`, `llm_model` (requires presets - not yet implemented)
+   - Performance tuning: `llm_max_concurrent`, `llm_timeout`, retrieval settings, optimization flags
+
+#### Enabling the API
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -673,18 +726,57 @@ Configuration can be customized at the bank level via REST API for configurable 
 export HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true
 ```
 
-**API Endpoints:**
-- `GET /v1/default/banks/{bank_id}/config` - View resolved config
-- `PATCH /v1/default/banks/{bank_id}/config` - Update bank overrides
+#### API Endpoints
+
+- `GET /v1/default/banks/{bank_id}/config` - View resolved config (filtered by permissions)
+- `PATCH /v1/default/banks/{bank_id}/config` - Update bank overrides (only allowed fields)
 - `DELETE /v1/default/banks/{bank_id}/config` - Reset to defaults
 
-**Example:**
+#### Permission System
+
+Tenant extensions can control which fields banks are allowed to modify via `get_allowed_config_fields()`:
+
+```python
+class CustomTenantExtension(TenantExtension):
+    async def get_allowed_config_fields(self, context, bank_id):
+        # Option 1: Allow all configurable fields
+        return None
+
+        # Option 2: Allow specific fields only
+        return {"retain_chunk_size", "retain_custom_instructions"}
+
+        # Option 3: Read-only (no modifications)
+        return set()
+```
+
+#### Examples
+
 ```bash
-# Enable observations for a specific bank
+# Update retention settings for a bank
 curl -X PATCH http://localhost:8888/v1/default/banks/my-bank/config \
   -H "Content-Type: application/json" \
-  -d '{"updates": {"enable_observations": true}}'
+  -d '{
+    "updates": {
+      "retain_chunk_size": 4000,
+      "retain_extraction_mode": "custom",
+      "retain_custom_instructions": "Focus on technical details and implementation specifics"
+    }
+  }'
+
+# Note: retain_extraction_mode must be "custom" to use retain_custom_instructions
+
+# View resolved config (respects permissions)
+curl http://localhost:8888/v1/default/banks/my-bank/config
+
+# Reset to defaults
+curl -X DELETE http://localhost:8888/v1/default/banks/my-bank/config
 ```
+
+**Security Notes:**
+- Credentials (API keys, base URLs) are never returned in responses
+- Only configurable fields can be modified
+- Responses are filtered by tenant permissions
+- Attempting to set credentials returns 400 error
 
 ### Reverse Proxy / Subpath Deployment
 

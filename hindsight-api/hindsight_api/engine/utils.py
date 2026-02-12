@@ -19,6 +19,7 @@ async def extract_facts(
     context: str = "",
     llm_config: "LLMConfig" = None,
     agent_name: str = None,
+    config=None,
 ) -> tuple[list["Fact"], list[tuple[str, int]]]:
     """
     Extract semantic facts from text using LLM.
@@ -35,6 +36,7 @@ async def extract_facts(
         context: Context about the conversation/document
         llm_config: LLM configuration to use
         agent_name: Optional agent name to help identify agent-related facts
+        config: HindsightConfig to use (defaults to global config if not provided)
 
     Returns:
         Tuple of (facts, chunks) where:
@@ -47,12 +49,19 @@ async def extract_facts(
     if not text or not text.strip():
         return [], []
 
+    # Use provided config or fall back to global config
+    if config is None:
+        from ..config import _get_raw_config
+
+        config = _get_raw_config()
+
     facts, chunks, _ = await extract_facts_from_text(
         text,
         event_date,
-        context=context,
         llm_config=llm_config,
         agent_name=agent_name,
+        config=config,
+        context=context,
     )
 
     if not facts:

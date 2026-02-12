@@ -58,8 +58,22 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
         );
     }
 
-    // 404 Not Found
+    // 404 Not Found - check for disabled features first
     if err_str.contains("404") {
+        if err_str.contains("Bank configuration API is disabled") {
+            return format!(
+                "{} {}\n\n{}\n  {}\n\n{}\n  {}\n\n{}\n  {}",
+                "✗".bright_red().bold(),
+                "Bank configuration API is disabled".bright_red().bold(),
+                "API URL:".bright_yellow(),
+                api_url.bright_white(),
+                "This feature is disabled by default for security.".bright_yellow(),
+                "To enable, set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true on the API server".bright_white(),
+                "Note:".bright_cyan(),
+                "This allows per-bank LLM configuration overrides via API".bright_white()
+            );
+        }
+
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}",
             "✗".bright_red().bold(),
@@ -74,8 +88,8 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
         );
     }
 
-    // 401/403 Authentication
-    if err_str.contains("401") || err_str.contains("403") {
+    // 401 Authentication failed
+    if err_str.contains("401") {
         return format!(
             "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}",
             "✗".bright_red().bold(),
@@ -87,6 +101,22 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
             "Invalid or missing credentials".bright_white(),
             "Try:".bright_green(),
             "Check if the API requires an API key or token".bright_white()
+        );
+    }
+
+    // 403 Forbidden
+    if err_str.contains("403") {
+        return format!(
+            "{} {}\n\n{}\n  {}\n\n{}\n  • {}\n  • {}\n\n{}\n  {}",
+            "✗".bright_red().bold(),
+            "Permission denied (403)".bright_red().bold(),
+            "API URL:".bright_yellow(),
+            api_url.bright_white(),
+            "Possible causes:".bright_yellow(),
+            "This operation is not allowed".bright_white(),
+            "The feature may be disabled on the server".bright_white(),
+            "Try:".bright_green(),
+            "Check server configuration or contact your administrator".bright_white()
         );
     }
 

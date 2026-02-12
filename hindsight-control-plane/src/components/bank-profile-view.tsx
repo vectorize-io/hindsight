@@ -151,66 +151,6 @@ const TRAIT_LABELS: Record<
   },
 };
 
-function DispositionEditor({
-  disposition,
-  editMode,
-  editDisposition,
-  onEditChange,
-}: {
-  disposition: DispositionTraits;
-  editMode: boolean;
-  editDisposition: DispositionTraits;
-  onEditChange: (trait: keyof DispositionTraits, value: number) => void;
-}) {
-  const data = editMode ? editDisposition : disposition;
-
-  return (
-    <div className="space-y-4">
-      {(Object.keys(TRAIT_LABELS) as Array<keyof DispositionTraits>).map((trait) => (
-        <div key={trait} className="space-y-2">
-          <div className="flex justify-between items-center">
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                {TRAIT_LABELS[trait].label}
-              </label>
-              <p className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].description}</p>
-            </div>
-            <span className="text-sm font-bold text-primary">{data[trait]}/5</span>
-          </div>
-          {editMode ? (
-            <>
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{TRAIT_LABELS[trait].lowLabel}</span>
-                <span>{TRAIT_LABELS[trait].highLabel}</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="5"
-                step="1"
-                value={editDisposition[trait]}
-                onChange={(e) => onEditChange(trait, parseInt(e.target.value))}
-                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-              />
-            </>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].lowLabel}</span>
-              <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all"
-                  style={{ width: `${((data[trait] - 1) / 4) * 100}%` }}
-                />
-              </div>
-              <span className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].highLabel}</span>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function BankProfileView() {
   const router = useRouter();
   const { currentBank, setCurrentBank, loadBanks } = useBank();
@@ -223,8 +163,8 @@ export function BankProfileView() {
   const [directives, setDirectives] = useState<Directive[]>([]);
   const [mentalModelsCount, setMentalModelsCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editMode, setEditMode] = useState(false);
+  const [showDispositionDialog, setShowDispositionDialog] = useState(false);
+  const [showMissionDialog, setShowMissionDialog] = useState(false);
 
   // Directive state
   const [showCreateDirective, setShowCreateDirective] = useState(false);
@@ -234,12 +174,6 @@ export function BankProfileView() {
     name: string;
   } | null>(null);
   const [deletingDirective, setDeletingDirective] = useState(false);
-
-  // Ref to track editMode for polling (avoids stale closure)
-  const editModeRef = useRef(editMode);
-  useEffect(() => {
-    editModeRef.current = editMode;
-  }, [editMode]);
 
   // Delete state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -257,14 +191,6 @@ export function BankProfileView() {
   const [opsLimit] = useState(10);
   const [opsOffset, setOpsOffset] = useState(0);
   const [cancellingOpId, setCancellingOpId] = useState<string | null>(null);
-
-  // Edit state
-  const [editMission, setEditMission] = useState("");
-  const [editDisposition, setEditDisposition] = useState<DispositionTraits>({
-    skepticism: 3,
-    literalism: 3,
-    empathy: 3,
-  });
 
   const loadOperations = async (
     statusFilter: string | null = opsStatusFilter,
@@ -319,45 +245,12 @@ export function BankProfileView() {
       setDirectives(directivesData.items || []);
       setMentalModelsCount(mentalModelsData.items?.length || 0);
       await loadOperations();
-
-      // Only initialize edit state when not in edit mode
-      if (!editModeRef.current) {
-        setEditMission(profileData.mission || "");
-        setEditDisposition(profileData.disposition);
-      }
     } catch (error) {
       console.error("Error loading bank profile:", error);
       alert("Error loading bank profile: " + (error as Error).message);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSave = async () => {
-    if (!currentBank) return;
-
-    setSaving(true);
-    try {
-      await client.updateBankProfile(currentBank, {
-        mission: editMission,
-        disposition: editDisposition,
-      });
-      await loadData();
-      setEditMode(false);
-    } catch (error) {
-      console.error("Error saving bank profile:", error);
-      alert("Error saving bank profile: " + (error as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    if (profile) {
-      setEditMission(profile.mission || "");
-      setEditDisposition(profile.disposition);
-    }
-    setEditMode(false);
   };
 
   const handleDeleteBank = async () => {
@@ -501,238 +394,58 @@ export function BankProfileView() {
 
   return (
     <div className="space-y-6">
-      {/* Header with actions */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">{profile?.name || currentBank}</h2>
-          <p className="text-sm text-muted-foreground font-mono">{currentBank}</p>
-        </div>
-        <div className="flex gap-2">
-          {editMode ? (
-            <>
-              <Button onClick={handleCancel} variant="secondary" disabled={saving}>
-                Cancel
-              </Button>
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Changes
-                  </>
-                )}
-              </Button>
-            </>
-          ) : (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  Actions
-                  <MoreVertical className="w-4 h-4 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={() => setEditMode(true)}>
-                  <Pencil className="w-4 h-4 mr-2" />
-                  Edit Profile
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={handleTriggerConsolidation}
-                  disabled={isConsolidating || !observationsEnabled}
-                  title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
-                >
-                  {isConsolidating ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Brain className="w-4 h-4 mr-2" />
-                  )}
-                  {isConsolidating ? "Consolidating..." : "Run Consolidation"}
-                  {!observationsEnabled && (
-                    <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setShowClearObservationsDialog(true)}
-                  disabled={!observationsEnabled}
-                  className="text-amber-600 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-300"
-                  title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Clear Observations
-                  {!observationsEnabled && (
-                    <span className="ml-auto text-xs text-muted-foreground">Off</span>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setShowDeleteDialog(true)}
-                  className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Bank
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-      </div>
-
-      {/* Stats Overview - Compact cards */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border-blue-500/20">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/20">
-                  <Database className="w-5 h-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">Memories</p>
-                  <p className="text-2xl font-bold text-foreground">{stats.total_nodes}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-purple-500/10 to-purple-600/5 border-purple-500/20">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-purple-500/20">
-                  <Link2 className="w-5 h-5 text-purple-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">Links</p>
-                  <p className="text-2xl font-bold text-foreground">{stats.total_links}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border-emerald-500/20">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-emerald-500/20">
-                  <FolderOpen className="w-5 h-5 text-emerald-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">Documents</p>
-                  <p className="text-2xl font-bold text-foreground">{stats.total_documents}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className={`bg-gradient-to-br ${stats.pending_operations > 0 ? "from-amber-500/10 to-amber-600/5 border-amber-500/20" : "from-slate-500/10 to-slate-600/5 border-slate-500/20"}`}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`p-2 rounded-lg ${stats.pending_operations > 0 ? "bg-amber-500/20" : "bg-slate-500/20"}`}
-                >
-                  <Activity
-                    className={`w-5 h-5 ${stats.pending_operations > 0 ? "text-amber-500 animate-pulse" : "text-slate-500"}`}
-                  />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">Pending</p>
-                  <p className="text-2xl font-bold text-foreground">{stats.pending_operations}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Memory Type Breakdown */}
-      {stats && (
-        <div className="grid grid-cols-5 gap-3">
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 text-center">
-            <p className="text-xs text-blue-600 dark:text-blue-400 font-semibold uppercase tracking-wide">
-              World Facts
-            </p>
-            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
-              {stats.nodes_by_fact_type?.world || 0}
-            </p>
-          </div>
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 text-center">
-            <p className="text-xs text-purple-600 dark:text-purple-400 font-semibold uppercase tracking-wide">
-              Experience
-            </p>
-            <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">
-              {stats.nodes_by_fact_type?.experience || 0}
-            </p>
-          </div>
-          <div
-            className={`rounded-xl p-4 text-center ${
-              observationsEnabled
-                ? "bg-amber-500/10 border border-amber-500/20"
-                : "bg-muted/50 border border-muted"
-            }`}
-            title={!observationsEnabled ? "Observations feature is not enabled" : undefined}
-          >
-            <p
-              className={`text-xs font-semibold uppercase tracking-wide ${
-                observationsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-              }`}
-            >
-              Observations
-              {!observationsEnabled && <span className="ml-1 normal-case">(Off)</span>}
-            </p>
-            <p
-              className={`text-2xl font-bold mt-1 ${
-                observationsEnabled ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-              }`}
-            >
-              {observationsEnabled ? stats.total_mental_models || 0 : "—"}
-            </p>
-          </div>
-          <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4 text-center">
-            <p className="text-xs text-cyan-600 dark:text-cyan-400 font-semibold uppercase tracking-wide">
-              Mental Models
-            </p>
-            <p className="text-2xl font-bold text-cyan-600 dark:text-cyan-400 mt-1">
-              {mentalModelsCount}
-            </p>
-          </div>
-          <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-center">
-            <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold uppercase tracking-wide">
-              Directives
-            </p>
-            <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
-              {directives.length}
-            </p>
-          </div>
-        </div>
-      )}
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Disposition Chart */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Brain className="w-5 h-5 text-primary" />
-              Disposition Profile
-            </CardTitle>
-            <CardDescription>
-              Traits that shape how observations are formed via Reflect
-            </CardDescription>
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Brain className="w-5 h-5 text-primary" />
+                  Disposition Profile
+                </CardTitle>
+                <CardDescription>Traits that shape the reasoning and perspective</CardDescription>
+              </div>
+              <Button onClick={() => setShowDispositionDialog(true)} variant="ghost" size="sm">
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {profile && (
-              <DispositionEditor
-                disposition={profile.disposition}
-                editMode={editMode}
-                editDisposition={editDisposition}
-                onEditChange={(trait, value) =>
-                  setEditDisposition((prev) => ({ ...prev, [trait]: value }))
-                }
-              />
+              <div className="space-y-4">
+                {(Object.keys(TRAIT_LABELS) as Array<keyof DispositionTraits>).map((trait) => (
+                  <div key={trait} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <label className="text-sm font-medium text-foreground">
+                          {TRAIT_LABELS[trait].label}
+                        </label>
+                        <p className="text-xs text-muted-foreground">
+                          {TRAIT_LABELS[trait].description}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-primary">
+                        {profile.disposition[trait]}/5
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {TRAIT_LABELS[trait].lowLabel}
+                      </span>
+                      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary rounded-full transition-all"
+                          style={{ width: `${((profile.disposition[trait] - 1) / 4) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {TRAIT_LABELS[trait].highLabel}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>
@@ -740,30 +453,26 @@ export function BankProfileView() {
         {/* Mission */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Target className="w-5 h-5 text-primary" />
-              Mission
-            </CardTitle>
-            <CardDescription>
-              Who the agent is and what they&apos;re trying to accomplish. Used for mental models
-              and reflect.
-            </CardDescription>
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Target className="w-5 h-5 text-primary" />
+                  Mission
+                </CardTitle>
+                <CardDescription>
+                  Affects how observations, reflect, and mental models are created
+                </CardDescription>
+              </div>
+              <Button onClick={() => setShowMissionDialog(true)} variant="ghost" size="sm">
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {editMode ? (
-              <Textarea
-                value={editMission}
-                onChange={(e) => setEditMission(e.target.value)}
-                placeholder="e.g., I am a PM for the engineering team. I help coordinate sprints and track project progress..."
-                rows={6}
-                className="resize-none"
-              />
-            ) : (
-              <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                {profile?.mission ||
-                  "No mission set. Set a mission to derive structural mental models and personalize reflect responses."}
-              </p>
-            )}
+            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+              {profile?.mission ||
+                "No mission set. Set a mission to derive structural mental models and personalize reflect responses."}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -837,158 +546,6 @@ export function BankProfileView() {
                 No directives yet. Directives are hard rules that must be followed during reflect.
               </p>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Operations Section */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Activity className="w-5 h-5 text-primary" />
-                Background Operations
-                <button
-                  onClick={() => loadOperations()}
-                  className="p-1 rounded hover:bg-muted transition-colors"
-                  title="Refresh operations"
-                >
-                  <RefreshCw className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                </button>
-              </CardTitle>
-              <CardDescription>
-                {totalOperations} operation{totalOperations !== 1 ? "s" : ""}
-                {opsStatusFilter ? ` (${opsStatusFilter})` : ""}
-              </CardDescription>
-            </div>
-            <div className="flex gap-1 bg-muted p-1 rounded-lg">
-              {[
-                { value: null, label: "All" },
-                { value: "pending", label: "Pending" },
-                { value: "completed", label: "Completed" },
-                { value: "failed", label: "Failed" },
-              ].map((filter) => (
-                <button
-                  key={filter.value ?? "all"}
-                  onClick={() => handleOpsFilterChange(filter.value)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    opsStatusFilter === filter.value
-                      ? "bg-background shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {operations.length > 0 ? (
-            <>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[100px]">ID</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-[80px]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {operations.map((op) => (
-                      <TableRow
-                        key={op.id}
-                        className={op.status === "failed" ? "bg-red-500/5" : ""}
-                      >
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {op.id.substring(0, 8)}
-                        </TableCell>
-                        <TableCell className="font-medium">{op.task_type}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {new Date(op.created_at).toLocaleString()}
-                        </TableCell>
-                        <TableCell>
-                          {op.status === "pending" && (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                              <Clock className="w-3 h-3" />
-                              pending
-                            </span>
-                          )}
-                          {op.status === "failed" && (
-                            <span
-                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
-                              title={op.error_message ?? undefined}
-                            >
-                              <AlertCircle className="w-3 h-3" />
-                              failed
-                            </span>
-                          )}
-                          {op.status === "completed" && (
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                              <CheckCircle className="w-3 h-3" />
-                              completed
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {op.status === "pending" && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs text-muted-foreground hover:text-red-600 dark:hover:text-red-400"
-                              onClick={() => handleCancelOperation(op.id)}
-                              disabled={cancellingOpId === op.id}
-                            >
-                              {cancellingOpId === op.id ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <X className="w-3 h-3 mr-1" />
-                              )}
-                              {cancellingOpId === op.id ? "" : "Cancel"}
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              {/* Pagination */}
-              {totalOperations > opsLimit && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {opsOffset + 1}-{Math.min(opsOffset + opsLimit, totalOperations)} of{" "}
-                    {totalOperations}
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleOpsPageChange(Math.max(0, opsOffset - opsLimit))}
-                      disabled={opsOffset === 0}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleOpsPageChange(opsOffset + opsLimit)}
-                      disabled={opsOffset + opsLimit >= totalOperations}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-muted-foreground text-center py-8 text-sm">
-              No {opsStatusFilter ? `${opsStatusFilter} ` : ""}operations
-            </p>
           )}
         </CardContent>
       </Card>
@@ -1142,7 +699,194 @@ export function BankProfileView() {
           }}
         />
       )}
+
+      {/* Disposition Edit Dialog */}
+      {showDispositionDialog && profile && (
+        <DispositionEditDialog
+          disposition={profile.disposition}
+          onClose={() => setShowDispositionDialog(false)}
+          onSaved={async () => {
+            await loadData();
+            setShowDispositionDialog(false);
+          }}
+        />
+      )}
+
+      {/* Mission Edit Dialog */}
+      {showMissionDialog && profile && (
+        <MissionEditDialog
+          mission={profile.mission || ""}
+          onClose={() => setShowMissionDialog(false)}
+          onSaved={async () => {
+            await loadData();
+            setShowMissionDialog(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ============= DISPOSITION EDIT DIALOG =============
+
+function DispositionEditDialog({
+  disposition,
+  onClose,
+  onSaved,
+}: {
+  disposition: DispositionTraits;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { currentBank } = useBank();
+  const [saving, setSaving] = useState(false);
+  const [editDisposition, setEditDisposition] = useState<DispositionTraits>(disposition);
+
+  const handleSave = async () => {
+    if (!currentBank) return;
+
+    setSaving(true);
+    try {
+      await client.updateBankProfile(currentBank, {
+        disposition: editDisposition,
+      });
+      onSaved();
+    } catch (error) {
+      console.error("Error saving disposition:", error);
+      alert("Error saving disposition: " + (error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Edit Disposition Traits</DialogTitle>
+          <DialogDescription>Traits that shape the reasoning and perspective</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          {(Object.keys(TRAIT_LABELS) as Array<keyof DispositionTraits>).map((trait) => (
+            <div key={trait} className="space-y-2">
+              <div className="flex justify-between items-center">
+                <div>
+                  <label className="text-sm font-medium text-foreground">
+                    {TRAIT_LABELS[trait].label}
+                  </label>
+                  <p className="text-xs text-muted-foreground">{TRAIT_LABELS[trait].description}</p>
+                </div>
+                <span className="text-sm font-bold text-primary">{editDisposition[trait]}/5</span>
+              </div>
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>{TRAIT_LABELS[trait].lowLabel}</span>
+                <span>{TRAIT_LABELS[trait].highLabel}</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={editDisposition[trait]}
+                onChange={(e) =>
+                  setEditDisposition((prev) => ({ ...prev, [trait]: parseInt(e.target.value) }))
+                }
+                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+            </div>
+          ))}
+        </div>
+
+        <DialogFooter>
+          <Button onClick={onClose} variant="outline" disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save Changes"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============= MISSION EDIT DIALOG =============
+
+function MissionEditDialog({
+  mission,
+  onClose,
+  onSaved,
+}: {
+  mission: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { currentBank } = useBank();
+  const [saving, setSaving] = useState(false);
+  const [editMission, setEditMission] = useState(mission);
+
+  const handleSave = async () => {
+    if (!currentBank) return;
+
+    setSaving(true);
+    try {
+      await client.updateBankProfile(currentBank, {
+        mission: editMission,
+      });
+      onSaved();
+    } catch (error) {
+      console.error("Error saving mission:", error);
+      alert("Error saving mission: " + (error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Edit Mission</DialogTitle>
+          <DialogDescription>
+            Affects how observations, reflect, and mental models are created
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2 py-4">
+          <Textarea
+            value={editMission}
+            onChange={(e) => setEditMission(e.target.value)}
+            placeholder="e.g., I am a PM for the engineering team. I help coordinate sprints and track project progress..."
+            rows={8}
+            className="resize-none"
+          />
+        </div>
+
+        <DialogFooter>
+          <Button onClick={onClose} variant="outline" disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save Changes"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

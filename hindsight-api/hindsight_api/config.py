@@ -20,6 +20,43 @@ load_dotenv(find_dotenv(usecwd=True), override=True)
 logger = logging.getLogger(__name__)
 
 
+class ConfigFieldAccessError(AttributeError):
+    """Raised when trying to access a bank-configurable field from global config."""
+
+    pass
+
+
+class StaticConfigProxy:
+    """
+    Proxy that wraps HindsightConfig and only allows access to static (non-configurable) fields.
+
+    Raises ConfigFieldAccessError when trying to access configurable fields that vary per-bank.
+    Forces developers to use get_resolved_config(bank_id, context) for bank-specific settings.
+    """
+
+    def __init__(self, config: "HindsightConfig"):
+        object.__setattr__(self, "_config", config)
+        object.__setattr__(self, "_configurable_fields", HindsightConfig.get_configurable_fields())
+
+    def __getattribute__(self, name: str):
+        if name.startswith("_"):
+            return object.__getattribute__(self, name)
+
+        configurable_fields = object.__getattribute__(self, "_configurable_fields")
+        if name in configurable_fields:
+            raise ConfigFieldAccessError(
+                f"Field '{name}' is bank-configurable and cannot be accessed from global config. "
+                f"Use ConfigResolver.resolve_full_config(bank_id, context) to get bank-specific config. "
+                f"This prevents accidentally using global defaults when bank-specific overrides exist."
+            )
+
+        config = object.__getattribute__(self, "_config")
+        return getattr(config, name)
+
+    def __setattr__(self, name: str, value):
+        raise AttributeError("Config is read-only. Modifications must go through ConfigResolver.")
+
+
 # Configuration field markers for hierarchical configuration
 def hierarchical(default_value):
     """
@@ -562,85 +599,74 @@ class HindsightConfig:
     otel_service_name: str
     otel_deployment_environment: str
 
-    # Class-level sets for hierarchical configuration categorization
-    _HIERARCHICAL_FIELDS = {
-        # LLM Configuration
-        "llm_provider",
+    # Class-level sets for configuration categorization
+
+    # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
+    _CREDENTIAL_FIELDS = {
+        # API Keys
         "llm_api_key",
-        "llm_model",
-        "llm_base_url",
-        "llm_max_concurrent",
-        "llm_max_retries",
-        "llm_initial_backoff",
-        "llm_max_backoff",
-        "llm_timeout",
-        # Vertex AI
-        "llm_vertexai_project_id",
-        "llm_vertexai_region",
-        "llm_vertexai_service_account_key",
-        # Retain LLM
-        "retain_llm_provider",
         "retain_llm_api_key",
-        "retain_llm_model",
-        "retain_llm_base_url",
-        "retain_llm_max_concurrent",
-        "retain_llm_max_retries",
-        "retain_llm_initial_backoff",
-        "retain_llm_max_backoff",
-        "retain_llm_timeout",
-        # Reflect LLM
-        "reflect_llm_provider",
         "reflect_llm_api_key",
-        "reflect_llm_model",
-        "reflect_llm_base_url",
-        "reflect_llm_max_concurrent",
-        "reflect_llm_max_retries",
-        "reflect_llm_initial_backoff",
-        "reflect_llm_max_backoff",
-        "reflect_llm_timeout",
-        # Consolidation LLM
-        "consolidation_llm_provider",
         "consolidation_llm_api_key",
-        "consolidation_llm_model",
+        # Base URLs (could expose infrastructure)
+        "llm_base_url",
+        "retain_llm_base_url",
+        "reflect_llm_base_url",
         "consolidation_llm_base_url",
-        "consolidation_llm_max_concurrent",
-        "consolidation_llm_max_retries",
-        "consolidation_llm_initial_backoff",
-        "consolidation_llm_max_backoff",
-        "consolidation_llm_timeout",
-        # Retention settings
-        "retain_max_completion_tokens",
+        "embeddings_tei_base_url",
+        "reranker_tei_base_url",
+        "reranker_cohere_base_url",
+        # Service Account Keys
+        "llm_vertexai_service_account_key",
+    }
+
+    # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
+    # These fields are manually tagged as safe to expose and modify.
+    # Excludes credentials, infrastructure config, provider/model selection, and performance tuning.
+    _CONFIGURABLE_FIELDS = {
+        # Retention settings (behavioral)
         "retain_chunk_size",
-        "retain_extract_causal_links",
         "retain_extraction_mode",
         "retain_custom_instructions",
-        # Recall/Retrieval
-        "graph_retriever",
-        "mpfp_top_k_neighbors",
-        "recall_connection_budget",
-        # Consolidation
+        # Consolidation settings
         "enable_observations",
-        "consolidation_batch_size",
-        "consolidation_max_tokens",
-        # Optimization flags
-        "skip_llm_verification",
-        "lazy_reranker",
-        # Reflect settings
-        "reflect_max_iterations",
     }
+
+    @classmethod
+    def get_configurable_fields(cls) -> set[str]:
+        """
+        Get set of field names that are configurable per-tenant/bank via API.
+
+        Configurable fields are manually tagged behavioral settings that are safe
+        to expose and modify (e.g., retain_chunk_size, custom_instructions).
+        Excludes credentials, infrastructure config, and provider/model selection.
+
+        Returns:
+            Set of configurable field names
+        """
+        return cls._CONFIGURABLE_FIELDS.copy()
+
+    @classmethod
+    def get_credential_fields(cls) -> set[str]:
+        """
+        Get set of field names that are credentials (NEVER exposed via API).
+
+        Credential fields include API keys, base URLs, and service account keys.
+        These must never be returned in API responses or accepted in updates.
+
+        Returns:
+            Set of credential field names
+        """
+        return cls._CREDENTIAL_FIELDS.copy()
 
     @classmethod
     def get_hierarchical_fields(cls) -> set[str]:
         """
-        Get set of field names that are hierarchical (can be overridden per-tenant/bank).
+        DEPRECATED: Use get_configurable_fields() instead.
 
-        Hierarchical fields can be customized at the tenant or bank level.
-        These include LLM settings, retention parameters, retrieval settings, etc.
-
-        Returns:
-            Set of hierarchical field names
+        Kept for backward compatibility during migration.
         """
-        return cls._HIERARCHICAL_FIELDS.copy()
+        return cls.get_configurable_fields()
 
     @classmethod
     def get_static_fields(cls) -> set[str]:
@@ -649,14 +675,15 @@ class HindsightConfig:
 
         Static fields are infrastructure-level settings that cannot vary
         per tenant or bank. These include database config, API port, worker settings, etc.
+        Also includes credential fields which are never configurable.
 
         Returns:
             Set of static field names
         """
         # Get all field names from dataclass
         all_fields = {f.name for f in fields(cls)}
-        # Static fields = all fields - hierarchical fields
-        return all_fields - cls._HIERARCHICAL_FIELDS
+        # Static fields = all fields - configurable fields
+        return all_fields - cls._CONFIGURABLE_FIELDS
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
@@ -971,8 +998,35 @@ class HindsightConfig:
 _config_cache: HindsightConfig | None = None
 
 
-def get_config() -> HindsightConfig:
-    """Get the cached configuration, loading from environment on first call."""
+def get_config() -> StaticConfigProxy:
+    """
+    Get global configuration with ONLY static (non-configurable) fields accessible.
+
+    This returns a proxy that prevents access to bank-configurable fields
+    (like enable_observations, retain_chunk_size, etc.).
+
+    For bank-specific configuration, use:
+        config_resolver.resolve_full_config(bank_id, context)
+
+    This design prevents accidentally using global defaults when bank-specific
+    overrides exist.
+
+    Returns:
+        StaticConfigProxy that only exposes static infrastructure fields
+
+    Raises:
+        ConfigFieldAccessError: If you try to access a bank-configurable field
+    """
+    return StaticConfigProxy(_get_raw_config())
+
+
+def _get_raw_config() -> HindsightConfig:
+    """
+    Get raw config (internal use only).
+
+    INTERNAL USE ONLY. Do not use this directly in application code.
+    Use get_config() for static fields or ConfigResolver.resolve_full_config() for bank-specific config.
+    """
     global _config_cache
     if _config_cache is None:
         _config_cache = HindsightConfig.from_env()

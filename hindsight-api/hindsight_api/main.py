@@ -23,7 +23,7 @@ import uvicorn
 from . import MemoryEngine, __version__
 from .api import create_app
 from .banner import print_banner
-from .config import DEFAULT_WORKERS, ENV_WORKERS, HindsightConfig, get_config
+from .config import DEFAULT_WORKERS, ENV_WORKERS, HindsightConfig, _get_raw_config
 from .daemon import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_IDLE_TIMEOUT,
@@ -68,7 +68,7 @@ def main():
     global _memory
 
     # Load configuration from environment (for CLI args defaults)
-    config = get_config()
+    config = _get_raw_config()
 
     parser = argparse.ArgumentParser(
         prog="hindsight-api",
