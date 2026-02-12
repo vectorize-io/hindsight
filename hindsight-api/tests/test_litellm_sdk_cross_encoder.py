@@ -377,13 +377,7 @@ class TestLiteLLMSDKCohereCrossEncoder:
             api_key=os.environ["COHERE_API_KEY"],
             model="cohere/rerank-english-v3.0",
         )
-
-        try:
-            await encoder.initialize()
-        except Exception as e:
-            # Skip if API key is invalid or initialization fails
-            pytest.skip(f"Cohere API initialization failed: {e}")
-
+        await encoder.initialize()
         return encoder
 
     @pytest.mark.asyncio
