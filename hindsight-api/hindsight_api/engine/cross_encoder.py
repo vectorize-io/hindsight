@@ -950,44 +950,33 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
             texts = [text for _, text in indexed_texts]
             indices = [idx for idx, _ in indexed_texts]
 
-            try:
-                # Build kwargs for rerank call
-                rerank_kwargs = {
-                    "model": self.model,
-                    "query": query,
-                    "documents": texts,
-                    "api_key": self.api_key,
-                }
-                if self.api_base:
-                    rerank_kwargs["api_base"] = self.api_base
+            # Build kwargs for rerank call
+            rerank_kwargs = {
+                "model": self.model,
+                "query": query,
+                "documents": texts,
+                "api_key": self.api_key,
+            }
+            if self.api_base:
+                rerank_kwargs["api_base"] = self.api_base
 
-                response = await self._litellm.arerank(**rerank_kwargs)
+            response = await self._litellm.arerank(**rerank_kwargs)
 
-                # Map scores back to original positions
-                # Response format: RerankResponse with results list
-                # Each result is a TypedDict with "index" and "relevance_score"
-                if hasattr(response, "results") and response.results:
-                    for result in response.results:
-                        # Results are TypedDicts, use dict-style access
-                        original_idx = result["index"]
-                        score = result.get("relevance_score", result.get("score", 0.0))
-                        all_scores[indices[original_idx]] = score
-                elif isinstance(response, list):
-                    # Direct list of scores (unlikely but defensive)
-                    for i, score in enumerate(response):
-                        all_scores[indices[i]] = score
-                else:
-                    logger.warning(f"Unexpected response format from LiteLLM rerank: {type(response)}")
-
-            except Exception as e:
-                import traceback
-
-                logger.error(
-                    f"Error in LiteLLM rerank for query '{query[:50]}...': {e}\nTraceback: {traceback.format_exc()}"
-                )
-                # Return zeros for failed queries
-                for idx in indices:
-                    all_scores[idx] = 0.0
+            # Map scores back to original positions
+            # Response format: RerankResponse with results list
+            # Each result is a TypedDict with "index" and "relevance_score"
+            if hasattr(response, "results") and response.results:
+                for result in response.results:
+                    # Results are TypedDicts, use dict-style access
+                    original_idx = result["index"]
+                    score = result.get("relevance_score", result.get("score", 0.0))
+                    all_scores[indices[original_idx]] = score
+            elif isinstance(response, list):
+                # Direct list of scores (unlikely but defensive)
+                for i, score in enumerate(response):
+                    all_scores[indices[i]] = score
+            else:
+                logger.warning(f"Unexpected response format from LiteLLM rerank: {type(response)}")
 
         return all_scores
 

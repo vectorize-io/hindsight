@@ -178,7 +178,7 @@ class TestLiteLLMSDKCrossEncoder:
 
     @pytest.mark.asyncio
     async def test_predict_error_handling(self):
-        """Test that errors during prediction are handled gracefully."""
+        """Test that errors during prediction are raised."""
         encoder = LiteLLMSDKCrossEncoder(
             api_key="test_key",
             model="cohere/rerank-english-v3.0",
@@ -195,10 +195,9 @@ class TestLiteLLMSDKCrossEncoder:
                 ("What is Python?", "Python is a programming language"),
             ]
 
-            scores = await encoder.predict(pairs)
-
-            # Should return zeros for failed queries
-            assert scores == [0.0]
+            # Should raise the exception
+            with pytest.raises(Exception, match="API Error"):
+                await encoder.predict(pairs)
 
     @pytest.mark.asyncio
     async def test_provider_specific_api_keys(self):
