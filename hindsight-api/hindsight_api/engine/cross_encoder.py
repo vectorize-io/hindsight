@@ -865,6 +865,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         self.api_base = api_base
         self.timeout = timeout
         self._initialized = False
+        self._litellm = None  # Will be set during initialization
 
     @property
     def provider_name(self) -> str:
@@ -877,6 +878,8 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
 
         try:
             import litellm
+
+            self._litellm = litellm  # Store reference
         except ImportError:
             raise ImportError("litellm is required for LiteLLMSDKCrossEncoder. Install it with: pip install litellm")
 
@@ -904,8 +907,8 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
             )
 
         # Configure timeout
-        if hasattr(litellm, "request_timeout"):
-            litellm.request_timeout = self.timeout
+        if hasattr(self._litellm, "request_timeout"):
+            self._litellm.request_timeout = self.timeout
 
         # Configure API base if provided
         if self.api_base:
@@ -933,9 +936,6 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
         if not pairs:
             return []
 
-        # Import litellm here (after initialization check)
-        import litellm
-
         # Group pairs by query for efficient batching
         # LiteLLM rerank expects one query with multiple documents
         query_groups: dict[str, list[tuple[int, str]]] = {}
@@ -952,8 +952,8 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
 
             try:
                 # Use async arerank if available, otherwise fall back to sync
-                if hasattr(litellm, "arerank"):
-                    response = await litellm.arerank(
+                if hasattr(self._litellm, "arerank"):
+                    response = await self._litellm.arerank(
                         model=self.model,
                         query=query,
                         documents=texts,
@@ -963,7 +963,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                     loop = asyncio.get_event_loop()
                     response = await loop.run_in_executor(
                         None,
-                        lambda: litellm.rerank(
+                        lambda: self._litellm.rerank(
                             model=self.model,
                             query=query,
                             documents=texts,
@@ -987,7 +987,12 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                     logger.warning(f"Unexpected response format from LiteLLM rerank: {type(response)}")
 
             except Exception as e:
-                logger.error(f"Error in LiteLLM rerank for query '{query[:50]}...': {e}")
+                import traceback
+
+                logger.error(
+                    f"Error in LiteLLM rerank for query '{query[:50]}...': {e}\n"
+                    f"Traceback: {traceback.format_exc()}"
+                )
                 # Return zeros for failed queries
                 for idx in indices:
                     all_scores[idx] = 0.0
