@@ -147,7 +147,6 @@ Search memories to provide personalized responses.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Natural language search query |
-| `max_results` | integer | No | Maximum results to return (default: 10) |
 | `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
 
 **Example:**
@@ -204,6 +203,7 @@ Create a mental model — a living document that stays current with your memorie
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query used to generate and refresh the model |
+| `mental_model_id` | string | No | Custom ID (alphanumeric lowercase with hyphens). Auto-generated if not provided |
 | `tags` | list[string] | No | Tags for organizing and filtering models |
 | `max_tokens` | integer | No | Maximum tokens for model content (default: 2048) |
 
@@ -290,6 +290,8 @@ Create a new memory bank or retrieve an existing one.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `bank_id` | string | Yes | The ID for the new bank |
+| `name` | string | No | Human-friendly name for the bank |
+| `mission` | string | No | Mission describing who the agent is and what they're trying to accomplish |
 
 ---
 

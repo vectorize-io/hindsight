@@ -132,7 +132,6 @@ Search memories to provide personalized responses.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Natural language search query |
 | `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
-| `budget` | string | No | Search depth: `low`, `mid`, or `high` (default: `low`) |
 
 **Example:**
 ```json
@@ -140,8 +139,7 @@ Search memories to provide personalized responses.
   "name": "recall",
   "arguments": {
     "query": "What are the user's color preferences?",
-    "max_tokens": 2048,
-    "budget": "mid"
+    "max_tokens": 2048
   }
 }
 ```
