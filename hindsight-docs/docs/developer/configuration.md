@@ -344,7 +344,7 @@ Supported OpenAI embedding dimensions:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `flashrank`, `litellm`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `flashrank`, `litellm`, `litellm-sdk`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -356,7 +356,10 @@ Supported OpenAI embedding dimensions:
 | `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_API_BASE` | LiteLLM proxy base URL for reranking | `http://localhost:4000` |
 | `HINDSIGHT_API_RERANKER_LITELLM_API_KEY` | LiteLLM proxy API key for reranking (optional, depends on proxy config) | - |
-| `HINDSIGHT_API_RERANKER_LITELLM_MODEL` | LiteLLM rerank model (use provider prefix, e.g., `cohere/rerank-english-v3.0`) | `cohere/rerank-english-v3.0` |
+| `HINDSIGHT_API_RERANKER_LITELLM_MODEL` | LiteLLM **proxy** rerank model (use provider prefix, e.g., `cohere/rerank-english-v3.0`) | `cohere/rerank-english-v3.0` |
+| `HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY` | LiteLLM **SDK** API key for direct reranking (no proxy needed) | - |
+| `HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL` | LiteLLM SDK rerank model (e.g., `deepinfra/Qwen3-reranker-8B`) | `cohere/rerank-english-v3.0` |
+| `HINDSIGHT_API_RERANKER_LITELLM_SDK_API_BASE` | Custom API base URL for LiteLLM SDK (optional) | - |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_MODEL` | FlashRank model for fast CPU-based reranking | `ms-marco-MiniLM-L-12-v2` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
 
@@ -386,19 +389,31 @@ export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-azure-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 export HINDSIGHT_API_RERANKER_COHERE_BASE_URL=https://your-azure-cohere-endpoint.com
 
-# LiteLLM proxy - unified gateway for multiple reranking providers
+# LiteLLM proxy - unified gateway for multiple reranking providers (requires running LiteLLM proxy server)
 export HINDSIGHT_API_RERANKER_PROVIDER=litellm
 export HINDSIGHT_API_RERANKER_LITELLM_API_BASE=http://localhost:4000
 export HINDSIGHT_API_RERANKER_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_RERANKER_LITELLM_MODEL=cohere/rerank-english-v3.0  # or voyage/rerank-2, together_ai/...
+
+# LiteLLM SDK - direct API access without proxy (recommended for simplicity)
+export HINDSIGHT_API_RERANKER_PROVIDER=litellm-sdk
+export HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY=your-deepinfra-api-key
+export HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL=deepinfra/Qwen3-reranker-8B  # or cohere/rerank-english-v3.0, etc.
 ```
 
-LiteLLM supports multiple reranking providers via the `/rerank` endpoint:
-- Cohere (`cohere/rerank-english-v3.0`, `cohere/rerank-multilingual-v3.0`)
-- Together AI (`together_ai/...`)
-- Voyage AI (`voyage/rerank-2`)
-- Jina AI (`jina_ai/...`)
-- AWS Bedrock (`bedrock/...`)
+#### LiteLLM Proxy vs SDK
+
+- **`litellm`**: Requires running a separate LiteLLM proxy server. Good for centralized configuration, rate limiting, and caching.
+- **`litellm-sdk`**: Direct API access without proxy. Simpler setup, lower latency, fewer infrastructure components.
+
+Both support the same providers:
+- **Cohere** (`cohere/rerank-english-v3.0`, `cohere/rerank-multilingual-v3.0`)
+- **DeepInfra** (`deepinfra/Qwen3-reranker-8B`, `deepinfra/bge-reranker-v2-m3`)
+- **Together AI** (`together_ai/Salesforce/Llama-Rank-V1`)
+- **HuggingFace** (`huggingface/BAAI/bge-reranker-v2-m3`)
+- **Voyage AI** (`voyage/rerank-2`)
+- **Jina AI** (`jina_ai/jina-reranker-v2`)
+- **AWS Bedrock** (`bedrock/...`)
 
 ### Authentication
 

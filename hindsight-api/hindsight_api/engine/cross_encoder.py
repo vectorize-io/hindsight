@@ -21,6 +21,7 @@ from ..config import (
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
     DEFAULT_RERANKER_LITELLM_MODEL,
+    DEFAULT_RERANKER_LITELLM_SDK_MODEL,
     DEFAULT_RERANKER_LOCAL_FORCE_CPU,
     DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT,
     DEFAULT_RERANKER_LOCAL_MODEL,
@@ -32,6 +33,7 @@ from ..config import (
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
+    ENV_RERANKER_LITELLM_SDK_API_KEY,
     ENV_RERANKER_LOCAL_FORCE_CPU,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
     ENV_RERANKER_LOCAL_MODEL,
@@ -828,6 +830,171 @@ class LiteLLMCrossEncoder(CrossEncoderModel):
         return all_scores
 
 
+class LiteLLMSDKCrossEncoder(CrossEncoderModel):
+    """
+    LiteLLM SDK cross-encoder for direct API integration.
+
+    Supports reranking via LiteLLM SDK without requiring a proxy server.
+    Supported providers: Cohere, DeepInfra, Together AI, HuggingFace, Jina AI, Voyage AI, AWS Bedrock.
+
+    Example model names:
+    - cohere/rerank-english-v3.0
+    - deepinfra/Qwen3-reranker-8B
+    - together_ai/Salesforce/Llama-Rank-V1
+    - huggingface/BAAI/bge-reranker-v2-m3
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_LITELLM_SDK_MODEL,
+        api_base: str | None = None,
+        timeout: float = 60.0,
+    ):
+        """
+        Initialize LiteLLM SDK cross-encoder client.
+
+        Args:
+            api_key: API key for the reranking provider
+            model: Model name with provider prefix (e.g., "deepinfra/Qwen3-reranker-8B")
+            api_base: Custom base URL for API (optional)
+            timeout: Request timeout in seconds (default: 60.0)
+        """
+        self.api_key = api_key
+        self.model = model
+        self.api_base = api_base
+        self.timeout = timeout
+        self._initialized = False
+
+    @property
+    def provider_name(self) -> str:
+        return "litellm-sdk"
+
+    async def initialize(self) -> None:
+        """Initialize the LiteLLM SDK client."""
+        if self._initialized:
+            return
+
+        try:
+            import litellm
+        except ImportError:
+            raise ImportError("litellm is required for LiteLLMSDKCrossEncoder. Install it with: pip install litellm")
+
+        # Set provider-specific environment variable for API key
+        # LiteLLM SDK reads API keys from provider-specific env vars
+        provider_prefix = self.model.split("/")[0].lower()
+        env_var_map = {
+            "cohere": "COHERE_API_KEY",
+            "deepinfra": "DEEPINFRA_API_KEY",
+            "together_ai": "TOGETHERAI_API_KEY",
+            "huggingface": "HUGGINGFACE_API_KEY",
+            "jina_ai": "JINA_API_KEY",
+            "voyage": "VOYAGE_API_KEY",
+        }
+
+        env_var = env_var_map.get(provider_prefix)
+        if env_var:
+            os.environ[env_var] = self.api_key
+        else:
+            # For unknown providers, try setting the API key directly
+            # LiteLLM may support it via custom_llm_provider
+            logger.warning(
+                f"Unknown provider prefix '{provider_prefix}' in model '{self.model}'. "
+                f"API key may not be set correctly."
+            )
+
+        # Configure timeout
+        if hasattr(litellm, "request_timeout"):
+            litellm.request_timeout = self.timeout
+
+        # Configure API base if provided
+        if self.api_base:
+            os.environ["LITELLM_API_BASE"] = self.api_base
+
+        api_base_msg = f" at {self.api_base}" if self.api_base else ""
+        logger.info(f"Reranker: initializing LiteLLM SDK provider with model {self.model}{api_base_msg}")
+
+        self._initialized = True
+        logger.info("Reranker: LiteLLM SDK provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Score query-document pairs using the LiteLLM SDK.
+
+        Args:
+            pairs: List of (query, document) tuples to score
+
+        Returns:
+            List of relevance scores
+        """
+        if not self._initialized:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        if not pairs:
+            return []
+
+        # Import litellm here (after initialization check)
+        import litellm
+
+        # Group pairs by query for efficient batching
+        # LiteLLM rerank expects one query with multiple documents
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            texts = [text for _, text in indexed_texts]
+            indices = [idx for idx, _ in indexed_texts]
+
+            try:
+                # Use async arerank if available, otherwise fall back to sync
+                if hasattr(litellm, "arerank"):
+                    response = await litellm.arerank(
+                        model=self.model,
+                        query=query,
+                        documents=texts,
+                    )
+                else:
+                    # Fall back to sync in thread pool
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: litellm.rerank(
+                            model=self.model,
+                            query=query,
+                            documents=texts,
+                        ),
+                    )
+
+                # Map scores back to original positions
+                # Response format: RerankResponse with results list
+                # Each result is a TypedDict with "index" and "relevance_score"
+                if hasattr(response, "results") and response.results:
+                    for result in response.results:
+                        # Results are TypedDicts, use dict-style access
+                        original_idx = result["index"]
+                        score = result.get("relevance_score", result.get("score", 0.0))
+                        all_scores[indices[original_idx]] = score
+                elif isinstance(response, list):
+                    # Direct list of scores (unlikely but defensive)
+                    for i, score in enumerate(response):
+                        all_scores[indices[i]] = score
+                else:
+                    logger.warning(f"Unexpected response format from LiteLLM rerank: {type(response)}")
+
+            except Exception as e:
+                logger.error(f"Error in LiteLLM rerank for query '{query[:50]}...': {e}")
+                # Return zeros for failed queries
+                for idx in indices:
+                    all_scores[idx] = 0.0
+
+        return all_scores
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on configuration.
@@ -877,9 +1044,20 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=config.reranker_litellm_api_key,
             model=config.reranker_litellm_model,
         )
+    elif provider == "litellm-sdk":
+        api_key = config.reranker_litellm_sdk_api_key
+        if not api_key:
+            raise ValueError(
+                f"{ENV_RERANKER_LITELLM_SDK_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'litellm-sdk'"
+            )
+        return LiteLLMSDKCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_litellm_sdk_model,
+            api_base=config.reranker_litellm_sdk_api_base,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'litellm', 'rrf'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'litellm', 'litellm-sdk', 'rrf'"
         )

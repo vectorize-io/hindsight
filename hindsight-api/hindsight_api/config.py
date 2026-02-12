@@ -189,6 +189,11 @@ ENV_RERANKER_LITELLM_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_API_BASE"
 ENV_RERANKER_LITELLM_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_API_KEY"
 ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
 
+# LiteLLM SDK configuration (direct API access, no proxy needed)
+ENV_RERANKER_LITELLM_SDK_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY"
+ENV_RERANKER_LITELLM_SDK_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL"
+ENV_RERANKER_LITELLM_SDK_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_BASE"
+
 # Deprecated: Legacy shared LiteLLM config (for backward compatibility)
 ENV_LITELLM_API_BASE = "HINDSIGHT_API_LITELLM_API_BASE"
 ENV_LITELLM_API_KEY = "HINDSIGHT_API_LITELLM_API_KEY"
@@ -327,6 +332,9 @@ DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
 DEFAULT_EMBEDDINGS_LITELLM_MODEL = "text-embedding-3-small"
 DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
+
+# LiteLLM SDK defaults
+DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8888
@@ -538,6 +546,9 @@ class HindsightConfig:
     reranker_litellm_api_base: str
     reranker_litellm_api_key: str | None
     reranker_litellm_model: str
+    reranker_litellm_sdk_api_key: str | None
+    reranker_litellm_sdk_model: str
+    reranker_litellm_sdk_api_base: str | None
 
     # Server
     host: str
@@ -849,6 +860,10 @@ class HindsightConfig:
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
             reranker_litellm_api_key=os.getenv(ENV_RERANKER_LITELLM_API_KEY) or os.getenv(ENV_LITELLM_API_KEY),
             reranker_litellm_model=os.getenv(ENV_RERANKER_LITELLM_MODEL, DEFAULT_RERANKER_LITELLM_MODEL),
+            # LiteLLM SDK reranker (direct API access)
+            reranker_litellm_sdk_api_key=os.getenv(ENV_RERANKER_LITELLM_SDK_API_KEY),
+            reranker_litellm_sdk_model=os.getenv(ENV_RERANKER_LITELLM_SDK_MODEL, DEFAULT_RERANKER_LITELLM_SDK_MODEL),
+            reranker_litellm_sdk_api_base=os.getenv(ENV_RERANKER_LITELLM_SDK_API_BASE) or None,
             # Server
             host=os.getenv(ENV_HOST, DEFAULT_HOST),
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
