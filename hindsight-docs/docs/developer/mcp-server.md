@@ -71,6 +71,7 @@ curl -X POST http://localhost:8888/mcp \
   -H "Authorization: Bearer your-secret-key" \
   -H "X-Bank-Id: my-bank" \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 ```
 
@@ -78,10 +79,10 @@ If the key is missing or invalid, requests will receive a `401 Unauthorized` res
 
 ## Bank Selection
 
-Specify the memory bank via:
+The memory bank is resolved in this priority order:
 
-1. **X-Bank-Id header** (recommended): `--header "X-Bank-Id: my-bank"`
-2. **URL path**: `http://localhost:8888/mcp/my-bank/`
+1. **URL path** (highest priority): `http://localhost:8888/mcp/my-bank/`
+2. **X-Bank-Id header**: `--header "X-Bank-Id: my-bank"`
 3. **Default**: Uses `HINDSIGHT_MCP_BANK_ID` env var (default: "default")
 
 ## Per-Bank Endpoints
@@ -92,6 +93,19 @@ This design:
 - **Simplifies tool usage** — no need to pass `bank_id` with every call
 - **Enforces isolation** — each MCP connection is scoped to a single bank
 - **Enables multi-tenant setups** — connect different users to different endpoints
+
+## Two Modes
+
+The MCP server operates in two modes depending on the URL:
+
+| Mode | URL | Tools | bank_id |
+|------|-----|-------|---------|
+| **Single-bank** | `/mcp/{bank_id}/` | Memory + mental model tools | Implicit from URL |
+| **Multi-bank** | `/mcp/` | All tools including bank management | Explicit `bank_id` parameter on each tool |
+
+**Single-bank mode** (recommended) scopes all operations to the bank in the URL. Tools don't expose a `bank_id` parameter.
+
+**Multi-bank mode** exposes all tools with an optional `bank_id` parameter, plus bank management tools (`list_banks`, `create_bank`).
 
 ---
 
@@ -105,6 +119,7 @@ Store information to long-term memory.
 |-----------|------|----------|-------------|
 | `content` | string | Yes | The fact or memory to store |
 | `context` | string | No | Category for the memory (default: `general`) |
+| `timestamp` | string | No | ISO 8601 timestamp for when the event occurred |
 
 **Example:**
 ```json
@@ -133,6 +148,7 @@ Search memories to provide personalized responses.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Natural language search query |
 | `max_results` | integer | No | Maximum results to return (default: 10) |
+| `max_tokens` | integer | No | Maximum tokens to return (default: 4096) |
 
 **Example:**
 ```json
@@ -141,21 +157,6 @@ Search memories to provide personalized responses.
   "arguments": {
     "query": "What are the user's programming language preferences?"
   }
-}
-```
-
-**Response:**
-```json
-{
-  "results": [
-    {
-      "id": "fact_abc123",
-      "text": "User prefers Python over JavaScript for backend development",
-      "type": "world",
-      "context": "programming_preferences",
-      "event_date": null
-    }
-  ]
 }
 ```
 
@@ -195,10 +196,107 @@ Generate thoughtful analysis by synthesizing stored memories with the bank's per
 
 ---
 
+### create_mental_model
+
+Create a mental model — a living document that stays current with your memories. Mental models are pre-computed reflections that get automatically refreshed as new memories are stored.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Human-readable name for the mental model |
+| `source_query` | string | Yes | The query used to generate and refresh the model |
+| `tags` | list[string] | No | Tags for organizing and filtering models |
+| `max_tokens` | integer | No | Maximum tokens for model content (default: 2048) |
+
+**Example:**
+```json
+{
+  "name": "create_mental_model",
+  "arguments": {
+    "name": "Team Directory",
+    "source_query": "Who works here and what do they do?",
+    "tags": ["team", "people"]
+  }
+}
+```
+
+Content generation runs asynchronously. The response includes an `operation_id` to track progress.
+
+---
+
+### list_mental_models
+
+List all mental models in a bank, optionally filtered by tags.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tags` | list[string] | No | Filter models by tags |
+
+---
+
+### get_mental_model
+
+Retrieve a specific mental model by ID, including its full content.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to retrieve |
+
+---
+
+### update_mental_model
+
+Update a mental model's metadata or settings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to update |
+| `name` | string | No | New name |
+| `source_query` | string | No | New source query |
+| `tags` | list[string] | No | New tags |
+| `max_tokens` | integer | No | New max tokens |
+
+---
+
+### delete_mental_model
+
+Permanently delete a mental model.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to delete |
+
+---
+
+### refresh_mental_model
+
+Re-generate a mental model's content from the latest memories. Runs asynchronously.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mental_model_id` | string | Yes | The ID of the mental model to refresh |
+
+---
+
+### list_banks (multi-bank mode only)
+
+List all available memory banks.
+
+---
+
+### create_bank (multi-bank mode only)
+
+Create a new memory bank or retrieve an existing one.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `bank_id` | string | Yes | The ID for the new bank |
+
+---
+
 ## Integration with AI Assistants
 
 The MCP server can be used with any MCP-compatible AI assistant. See the [Authentication](#authentication) section above for Claude Code and Claude Desktop configuration examples.
 
 Each user can have their own configuration pointing to their personal memory bank using either:
-- The `X-Bank-Id` header (recommended)
-- A bank-specific URL path like `/mcp/alice/`
+- A bank-specific URL path like `/mcp/alice/` (recommended)
+- The `X-Bank-Id` header
