@@ -13,12 +13,10 @@ from .reranking import CrossEncoderReranker
 from .retrieval import (
     ParallelRetrievalResult,
     get_default_graph_retriever,
-    retrieve_parallel,
     set_default_graph_retriever,
 )
 
 __all__ = [
-    "retrieve_parallel",
     "get_default_graph_retriever",
     "set_default_graph_retriever",
     "ParallelRetrievalResult",
