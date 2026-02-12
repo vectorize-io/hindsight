@@ -27,6 +27,7 @@ import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
 
 from hindsight_api.config import DEFAULT_LLM_TIMEOUT, ENV_LLM_TIMEOUT
+from hindsight_api.engine.batch.queue import BatchQueue
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -110,6 +111,10 @@ class OpenAICompatibleLLM(LLMInterface):
             client_kwargs["timeout"] = self.timeout
 
         self._client = AsyncOpenAI(**client_kwargs)
+
+        # Batch queue (initialized lazily when batch mode is enabled)
+        self._batch_queue: BatchQueue | None = None
+
         logger.info(
             f"OpenAI-compatible client initialized: provider={self.provider}, model={self.model}, "
             f"base_url={self.base_url or 'default'}"
@@ -135,6 +140,32 @@ class OpenAICompatibleLLM(LLMInterface):
             logger.info(f"Connection verified: {self.provider}/{self.model}")
         except Exception as e:
             raise RuntimeError(f"Connection verification failed for {self.provider}/{self.model}: {e}") from e
+
+    def init_batch_queue(self, batch_queue: BatchQueue) -> None:
+        """Set the batch queue for batch mode processing.
+
+        When a batch queue is set, calls to scopes 'retain_extract_facts' and
+        'consolidation' will be routed through the batch queue instead of
+        making synchronous API calls.
+
+        Args:
+            batch_queue: Initialized BatchQueue instance
+        """
+        self._batch_queue = batch_queue
+        logger.info(f"Batch queue initialized for {self.provider}/{self.model}")
+
+    @property
+    def batch_queue(self) -> BatchQueue | None:
+        """Get the batch queue (None if batch mode is not enabled)."""
+        return self._batch_queue
+
+    def _is_batch_eligible(self, scope: str) -> bool:
+        """Check if a call scope is eligible for batch processing.
+
+        Only retain and consolidation scopes are batched. Other scopes
+        (verification, reflect, tools) need real-time responses.
+        """
+        return self._batch_queue is not None and scope in ("retain_extract_facts", "consolidation")
 
     def _supports_reasoning_model(self) -> bool:
         """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek)."""
@@ -191,6 +222,18 @@ class OpenAICompatibleLLM(LLMInterface):
             OutputTooLongError: If output exceeds token limits.
             Exception: Re-raises API errors after retries exhausted.
         """
+        # Handle batch mode for eligible scopes
+        if self._is_batch_eligible(scope):
+            return await self._call_batch(
+                messages=messages,
+                response_format=response_format,
+                max_completion_tokens=max_completion_tokens,
+                temperature=temperature,
+                scope=scope,
+                skip_validation=skip_validation,
+                return_usage=return_usage,
+            )
+
         # Handle Ollama with native API for structured output (better schema enforcement)
         if self.provider == "ollama" and response_format is not None:
             return await self._call_ollama_native(
@@ -629,6 +672,97 @@ class OpenAICompatibleLLM(LLMInterface):
         if last_exception:
             raise last_exception
         raise RuntimeError("Tool call failed after all retries")
+
+    async def _call_batch(
+        self,
+        messages: list[dict[str, str]],
+        response_format: Any | None = None,
+        max_completion_tokens: int | None = None,
+        temperature: float | None = None,
+        scope: str = "memory",
+        skip_validation: bool = False,
+        return_usage: bool = False,
+    ) -> Any:
+        """Route a call through the batch queue instead of making a synchronous API call.
+
+        The request is added to the batch queue and a Future is returned.
+        The caller awaits the Future, which resolves when the batch completes.
+
+        If batch submission fails, falls back to the synchronous call path.
+
+        Args:
+            messages: Chat messages
+            response_format: Optional Pydantic model for structured output
+            max_completion_tokens: Max output tokens
+            temperature: Sampling temperature
+            scope: Scope identifier
+            skip_validation: Return raw JSON without validation
+            return_usage: If True, return (result, TokenUsage) tuple
+
+        Returns:
+            Same as call() - parsed response or (result, TokenUsage) tuple
+        """
+        assert self._batch_queue is not None  # Guaranteed by _is_batch_eligible
+
+        # Build response_format dict for the batch request body
+        rf_dict = None
+        if response_format is not None and hasattr(response_format, "model_json_schema"):
+            schema = response_format.model_json_schema()
+            # Append schema to system message (same as sync path soft enforcement)
+            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+            messages = list(messages)  # Don't mutate original
+            if messages and messages[0].get("role") == "system":
+                messages[0] = {**messages[0], "content": messages[0]["content"] + schema_msg}
+
+            rf_dict = {"type": "json_object"}
+
+        try:
+            future = await self._batch_queue.enqueue(
+                messages=messages,
+                temperature=temperature,
+                max_completion_tokens=max_completion_tokens,
+                response_format=rf_dict,
+                scope=scope,
+            )
+
+            # Await the future - this blocks until the batch completes
+            content = await future
+
+            # Parse the result (same as sync path)
+            if response_format is not None:
+                json_data = json.loads(content)
+                if skip_validation:
+                    result = json_data
+                else:
+                    result = response_format.model_validate(json_data)
+            else:
+                result = content
+
+            # Token usage is not available for individual batch requests
+            # (Groq provides aggregate usage per batch, not per request)
+            if return_usage:
+                return result, TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0)
+            return result
+
+        except Exception as e:
+            # Fall back to synchronous call on batch failure
+            logger.warning(f"Batch call failed for scope={scope}, falling back to sync: {e}")
+
+            # Re-call without batch (temporarily disable batch queue)
+            original_queue = self._batch_queue
+            self._batch_queue = None
+            try:
+                return await self.call(
+                    messages=messages,
+                    response_format=response_format,
+                    max_completion_tokens=max_completion_tokens,
+                    temperature=temperature,
+                    scope=scope,
+                    skip_validation=skip_validation,
+                    return_usage=return_usage,
+                )
+            finally:
+                self._batch_queue = original_queue
 
     async def _call_ollama_native(
         self,

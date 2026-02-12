@@ -167,6 +167,14 @@ ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
 ENV_WORKER_CONSOLIDATION_MAX_SLOTS = "HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS"
 
+# Batch processing configuration (Groq Batch API)
+ENV_BATCH_MODE = "HINDSIGHT_API_BATCH_MODE"
+ENV_BATCH_GROQ_API_KEY = "HINDSIGHT_API_BATCH_GROQ_API_KEY"
+ENV_BATCH_COMPLETION_WINDOW = "HINDSIGHT_API_BATCH_COMPLETION_WINDOW"
+ENV_BATCH_MAX_REQUESTS = "HINDSIGHT_API_BATCH_MAX_REQUESTS"
+ENV_BATCH_FLUSH_INTERVAL_S = "HINDSIGHT_API_BATCH_FLUSH_INTERVAL_S"
+ENV_BATCH_POLL_INTERVAL_S = "HINDSIGHT_API_BATCH_POLL_INTERVAL_S"
+
 # Reflect agent settings
 ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 
@@ -271,6 +279,14 @@ DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
 DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS = 2  # Max concurrent consolidation tasks per worker
+
+# Batch processing defaults (Groq Batch API)
+DEFAULT_BATCH_MODE = "off"  # Options: "off", "groq"
+DEFAULT_BATCH_COMPLETION_WINDOW = "24h"  # Groq batch processing window
+DEFAULT_BATCH_MAX_REQUESTS = 50000  # Max requests per batch file (Groq limit)
+DEFAULT_BATCH_FLUSH_INTERVAL_S = 60  # Seconds between queue flushes
+DEFAULT_BATCH_POLL_INTERVAL_S = 30  # Seconds between batch status polls
+BATCH_MODES = ("off", "groq")  # Allowed batch modes
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
@@ -485,6 +501,14 @@ class HindsightConfig:
     worker_max_slots: int
     worker_consolidation_max_slots: int
 
+    # Batch processing (Groq Batch API)
+    batch_mode: str
+    batch_groq_api_key: str | None
+    batch_completion_window: str
+    batch_max_requests: int
+    batch_flush_interval_s: int
+    batch_poll_interval_s: int
+
     # Reflect agent settings
     reflect_max_iterations: int
 
@@ -497,6 +521,20 @@ class HindsightConfig:
 
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
+        # Validate batch mode
+        if self.batch_mode not in BATCH_MODES:
+            raise ValueError(
+                f"Invalid batch mode '{self.batch_mode}', must be one of {BATCH_MODES}. "
+                f"Set {ENV_BATCH_MODE} to a valid value."
+            )
+
+        # Validate batch API key when batch mode is enabled
+        if self.batch_mode == "groq" and not self.batch_groq_api_key and not self.llm_api_key:
+            raise ValueError(
+                f"Batch mode 'groq' requires an API key. Set {ENV_BATCH_GROQ_API_KEY} "
+                f"or {ENV_BATCH_MODE} will fall back to the global LLM API key."
+            )
+
         # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
         # to ensure the LLM has enough output capacity to extract facts from chunks
         if self.retain_max_completion_tokens <= self.retain_chunk_size:
@@ -716,6 +754,13 @@ class HindsightConfig:
             worker_consolidation_max_slots=int(
                 os.getenv(ENV_WORKER_CONSOLIDATION_MAX_SLOTS, str(DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS))
             ),
+            # Batch processing (Groq Batch API)
+            batch_mode=os.getenv(ENV_BATCH_MODE, DEFAULT_BATCH_MODE).lower(),
+            batch_groq_api_key=os.getenv(ENV_BATCH_GROQ_API_KEY) or None,
+            batch_completion_window=os.getenv(ENV_BATCH_COMPLETION_WINDOW, DEFAULT_BATCH_COMPLETION_WINDOW),
+            batch_max_requests=int(os.getenv(ENV_BATCH_MAX_REQUESTS, str(DEFAULT_BATCH_MAX_REQUESTS))),
+            batch_flush_interval_s=int(os.getenv(ENV_BATCH_FLUSH_INTERVAL_S, str(DEFAULT_BATCH_FLUSH_INTERVAL_S))),
+            batch_poll_interval_s=int(os.getenv(ENV_BATCH_POLL_INTERVAL_S, str(DEFAULT_BATCH_POLL_INTERVAL_S))),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
             # OpenTelemetry tracing configuration
@@ -796,6 +841,13 @@ class HindsightConfig:
             consolidation_provider = self.consolidation_llm_provider or self.llm_provider
             consolidation_model = self.consolidation_llm_model or self.llm_model
             logger.info(f"LLM (consolidation): provider={consolidation_provider}, model={consolidation_model}")
+        if self.batch_mode != "off":
+            batch_api_key_source = "batch_groq_api_key" if self.batch_groq_api_key else "llm_api_key"
+            logger.info(
+                f"Batch: mode={self.batch_mode}, window={self.batch_completion_window}, "
+                f"api_key={batch_api_key_source}, flush_interval={self.batch_flush_interval_s}s, "
+                f"poll_interval={self.batch_poll_interval_s}s"
+            )
         logger.info(f"Embeddings: provider={self.embeddings_provider}")
         logger.info(f"Reranker: provider={self.reranker_provider}")
         logger.info(f"Graph retriever: {self.graph_retriever}")

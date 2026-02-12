@@ -62,6 +62,8 @@ class WorkerPoller:
         tenant_extension: "TenantExtension | None" = None,
         max_slots: int = 10,
         consolidation_max_slots: int = 2,
+        batch_queue: Any = None,
+        batch_poll_interval_s: int = 30,
     ):
         """
         Initialize the worker poller.
@@ -77,6 +79,8 @@ class WorkerPoller:
                             DefaultTenantExtension with the configured schema.
             max_slots: Maximum concurrent tasks per worker
             consolidation_max_slots: Maximum concurrent consolidation tasks per worker
+            batch_queue: Optional BatchQueue for polling Groq batch job completions
+            batch_poll_interval_s: Seconds between batch status polls
         """
         self._pool = pool
         self._worker_id = worker_id
@@ -104,6 +108,10 @@ class WorkerPoller:
         self._active_tasks: dict[str, tuple[str, str, str | None, asyncio.Task]] = {}
         # Track in-flight tasks by operation type
         self._in_flight_by_type: dict[str, int] = {}
+        # Batch queue for Groq Batch API polling
+        self._batch_queue = batch_queue
+        self._batch_poll_interval_s = batch_poll_interval_s
+        self._last_batch_poll = 0.0
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
@@ -494,6 +502,9 @@ class WorkerPoller:
                 # Log progress stats periodically
                 await self._log_progress_if_due()
 
+                # Poll batch queue for completions (if batch mode enabled)
+                await self._poll_batch_if_due()
+
             except asyncio.CancelledError:
                 logger.info(f"Worker {self._worker_id} polling loop cancelled")
                 break
@@ -504,6 +515,28 @@ class WorkerPoller:
                 await asyncio.sleep(1)
 
         logger.info(f"Worker {self._worker_id} polling loop stopped")
+
+    async def _poll_batch_if_due(self) -> None:
+        """Poll batch queue for completed batch jobs if batch mode is enabled."""
+        if self._batch_queue is None:
+            return
+
+        now = time.time()
+        if now - self._last_batch_poll < self._batch_poll_interval_s:
+            return
+
+        self._last_batch_poll = now
+
+        try:
+            if self._batch_queue.in_flight_count > 0:
+                completed = await self._batch_queue.poll_completions()
+                if completed > 0:
+                    logger.info(
+                        f"Worker {self._worker_id} batch poll: {completed} batches completed, "
+                        f"{self._batch_queue.in_flight_count} still in flight"
+                    )
+        except Exception as e:
+            logger.warning(f"Worker {self._worker_id} batch poll error: {e}")
 
     async def shutdown_graceful(self, timeout: float = 30.0):
         """
