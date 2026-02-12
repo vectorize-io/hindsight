@@ -957,6 +957,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                         model=self.model,
                         query=query,
                         documents=texts,
+                        api_key=self.api_key,  # Pass API key directly
                     )
                 else:
                     # Fall back to sync in thread pool
@@ -967,6 +968,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                             model=self.model,
                             query=query,
                             documents=texts,
+                            api_key=self.api_key,  # Pass API key directly
                         ),
                     )
 

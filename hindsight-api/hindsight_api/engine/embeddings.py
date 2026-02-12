@@ -819,6 +819,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
             response = await self._litellm.aembedding(
                 model=self.model,
                 input=["test"],
+                api_key=self.api_key,  # Pass API key directly
             )
 
             # Extract dimension from response
@@ -859,6 +860,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 response = self._litellm.embedding(
                     model=self.model,
                     input=batch,
+                    api_key=self.api_key,  # Pass API key directly
                 )
 
                 # Extract embeddings from response

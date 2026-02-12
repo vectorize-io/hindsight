@@ -84,6 +84,7 @@ class TestLiteLLMSDKEmbeddings:
             mock_litellm.aembedding.assert_called_once_with(
                 model="cohere/embed-english-v3.0",
                 input=["test"],
+                api_key="test_key",
             )
 
     async def test_initialization_sets_provider_env_vars(self, mock_litellm):
@@ -151,6 +152,7 @@ class TestLiteLLMSDKEmbeddings:
         mock_litellm.embedding.assert_called_once_with(
             model="cohere/embed-english-v3.0",
             input=["Hello world"],
+            api_key="test_key",
         )
 
     async def test_encode_multiple_texts(self, embeddings, mock_litellm):
