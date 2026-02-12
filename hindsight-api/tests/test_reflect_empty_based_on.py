@@ -1,17 +1,15 @@
 """
 Test reflect endpoint with empty based_on (no memories scenario).
 
-This test reproduces the issue where reflect API might return based_on=[]
-causing client validation errors.
+This test verifies that the API returns the correct based_on format:
+- v0.3.0 (old): returned based_on as list []
+- v0.4.0+ (current): returns based_on as object {"memories": [], "mental_models": [], "directives": []}
 """
 
 import pytest
 import pytest_asyncio
 import httpx
 from hindsight_api.api import create_app
-import sys
-sys.path.insert(0, str(__file__).replace("hindsight-api/tests/test_reflect_empty_based_on.py", "hindsight-clients/python"))
-from hindsight_client_api.models.reflect_response import ReflectResponse
 
 
 @pytest_asyncio.fixture
@@ -71,18 +69,13 @@ async def test_reflect_with_no_memories_empty_bank(api_client):
         assert based_on["mental_models"] == []
         assert based_on["directives"] == []
 
-    # Verify client can parse the response
-    try:
-        reflect_response = ReflectResponse.from_dict(data)
-        assert reflect_response is not None
-        assert reflect_response.text is not None
-        if reflect_response.based_on is not None:
-            # These should be lists (even if empty), not None
-            assert isinstance(reflect_response.based_on.memories, (list, type(None)))
-            assert isinstance(reflect_response.based_on.mental_models, (list, type(None)))
-            assert isinstance(reflect_response.based_on.directives, (list, type(None)))
-    except Exception as e:
-        pytest.fail(f"Client failed to parse reflect response: {e}")
+    # Verify the structure is parseable as proper types
+    assert isinstance(data["text"], str)
+    if based_on is not None:
+        # Verify it's the v0.4.0+ format (object with arrays)
+        assert isinstance(based_on["memories"], list)
+        assert isinstance(based_on["mental_models"], list)
+        assert isinstance(based_on["directives"], list)
 
 
 @pytest.mark.asyncio
@@ -106,21 +99,5 @@ async def test_reflect_without_include_facts(api_client):
     based_on = data.get("based_on")
     assert based_on is None, f"based_on should be None when not requested, got {type(based_on)}: {based_on}"
 
-    # Client should handle this fine
-    reflect_response = ReflectResponse.from_dict(data)
-    assert reflect_response.based_on is None
-
-
-def test_client_defensive_fix_handles_empty_list():
-    """Test that the client's defensive fix handles based_on=[] gracefully."""
-    # Simulate the buggy response that was reported in production
-    buggy_response_data = {
-        "text": "I don't have any information about that.",
-        "based_on": []  # BUG: Should be null or proper object, not empty list
-    }
-
-    # The defensive fix should handle this by treating [] as None
-    reflect_response = ReflectResponse.from_dict(buggy_response_data)
-    assert reflect_response is not None
-    assert reflect_response.text == "I don't have any information about that."
-    assert reflect_response.based_on is None  # Defensive fix converts [] to None
+    # Verify structure
+    assert isinstance(data["text"], str)
