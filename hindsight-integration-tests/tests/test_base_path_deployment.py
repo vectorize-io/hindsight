@@ -312,18 +312,22 @@ def test_reverse_proxy_simple_config():
         if platform.system() == "Linux":
             network_mode = "host"
             api_host = "localhost"
+            nginx_port = 18080  # With host mode, nginx must listen on 18080 directly
+            port_mapping = ""  # No port mapping with host mode
         else:
             network_mode = "bridge"
             api_host = "host.docker.internal"
+            nginx_port = 80  # With bridge mode, nginx listens on 80 and is mapped
+            port_mapping = """    ports:
+      - "18080:80"
+"""
 
         compose_content = f"""version: '3.8'
 
 services:
   nginx:
     image: nginx:alpine
-    ports:
-      - "18080:80"
-    volumes:
+{port_mapping}    volumes:
       - ./test-nginx.conf:/etc/nginx/nginx.conf:ro
     network_mode: {network_mode}
 """
@@ -335,7 +339,7 @@ services:
 
 http {{
     server {{
-        listen 80;
+        listen {nginx_port};
         server_name localhost;
 
         location {base_path}/ {{
