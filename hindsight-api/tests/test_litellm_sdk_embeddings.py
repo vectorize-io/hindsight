@@ -289,7 +289,7 @@ class TestLiteLLMSDKEmbeddings:
                     assert env_var in os.environ
 
     async def test_custom_api_base(self, mock_litellm):
-        """Test custom API base URL configuration."""
+        """Test custom API base URL is passed to embedding calls."""
         with patch("builtins.__import__", side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args)):
             emb = LiteLLMSDKEmbeddings(
                 api_key="test_key",
@@ -303,6 +303,19 @@ class TestLiteLLMSDKEmbeddings:
 
             # Verify api_base is set
             assert emb.api_base == "https://custom.api.com"
+
+            # Verify api_base is passed to aembedding
+            mock_litellm.aembedding.assert_called_once()
+            call_args = mock_litellm.aembedding.call_args
+            assert call_args.kwargs["api_base"] == "https://custom.api.com"
+
+            # Test encode also passes api_base
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            mock_litellm.embedding.assert_called_once()
+            call_args = mock_litellm.embedding.call_args
+            assert call_args.kwargs["api_base"] == "https://custom.api.com"
 
 
 class TestLiteLLMSDKEmbeddingsFactory:

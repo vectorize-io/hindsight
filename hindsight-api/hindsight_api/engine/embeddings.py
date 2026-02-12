@@ -815,12 +815,17 @@ class LiteLLMSDKEmbeddings(Embeddings):
 
         # Do a test embedding to detect dimension
         try:
+            # Build kwargs for embedding call
+            embed_kwargs = {
+                "model": self.model,
+                "input": ["test"],
+                "api_key": self.api_key,
+            }
+            if self.api_base:
+                embed_kwargs["api_base"] = self.api_base
+
             # Use async embedding method (standard in litellm)
-            response = await self._litellm.aembedding(
-                model=self.model,
-                input=["test"],
-                api_key=self.api_key,  # Pass API key directly
-            )
+            response = await self._litellm.aembedding(**embed_kwargs)
 
             # Extract dimension from response
             if response.data and len(response.data) > 0:
@@ -856,12 +861,17 @@ class LiteLLMSDKEmbeddings(Embeddings):
             batch = texts[i : i + self.batch_size]
 
             try:
+                # Build kwargs for embedding call
+                embed_kwargs = {
+                    "model": self.model,
+                    "input": batch,
+                    "api_key": self.api_key,
+                }
+                if self.api_base:
+                    embed_kwargs["api_base"] = self.api_base
+
                 # Use sync embedding (litellm doesn't have async in thread-safe way)
-                response = self._litellm.embedding(
-                    model=self.model,
-                    input=batch,
-                    api_key=self.api_key,  # Pass API key directly
-                )
+                response = self._litellm.embedding(**embed_kwargs)
 
                 # Extract embeddings from response
                 # Sort by index to ensure correct order

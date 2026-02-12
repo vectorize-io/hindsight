@@ -104,6 +104,7 @@ class TestLiteLLMSDKCrossEncoder:
             assert call_args.kwargs["model"] == "deepinfra/Qwen3-reranker-8B"
             assert call_args.kwargs["query"] == "What is Python?"
             assert len(call_args.kwargs["documents"]) == 3
+            assert call_args.kwargs["api_key"] == "test_key"
 
     @pytest.mark.asyncio
     async def test_predict_multiple_queries(self):
@@ -228,47 +229,33 @@ class TestLiteLLMSDKCrossEncoder:
 
     @pytest.mark.asyncio
     async def test_custom_api_base(self):
-        """Test that custom API base URL is set correctly."""
+        """Test that custom API base URL is passed to rerank calls."""
         encoder = LiteLLMSDKCrossEncoder(
             api_key="test_key",
             model="cohere/rerank-english-v3.0",
             api_base="https://custom.api.example.com",
         )
 
-        mock_litellm = MagicMock()
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
-            await encoder.initialize()
-            assert os.environ.get("LITELLM_API_BASE") == "https://custom.api.example.com"
-
-    @pytest.mark.asyncio
-    async def test_fallback_to_sync_rerank(self):
-        """Test fallback to sync rerank when arerank is not available."""
-        encoder = LiteLLMSDKCrossEncoder(
-            api_key="test_key",
-            model="cohere/rerank-english-v3.0",
-        )
-
-        # Mock litellm without arerank (only sync rerank)
-        mock_litellm = MagicMock()
-        # Don't set arerank attribute
-        mock_litellm.arerank = None
-        delattr(mock_litellm, "arerank")
-
         mock_response = MagicMock()
         mock_response.results = [
             {"index": 0, "relevance_score": 0.9},
         ]
-        mock_litellm.rerank = MagicMock(return_value=mock_response)
+
+        mock_litellm = MagicMock()
+        mock_litellm.arerank = AsyncMock(return_value=mock_response)
 
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             await encoder.initialize()
+            assert os.environ.get("LITELLM_API_BASE") == "https://custom.api.example.com"
 
+            # Test that api_base is passed to arerank
             pairs = [("query", "document")]
             scores = await encoder.predict(pairs)
 
             assert scores == [0.9]
-            # Verify sync rerank was called
-            mock_litellm.rerank.assert_called_once()
+            mock_litellm.arerank.assert_called_once()
+            call_args = mock_litellm.arerank.call_args
+            assert call_args.kwargs["api_base"] == "https://custom.api.example.com"
 
     @pytest.mark.asyncio
     async def test_response_with_direct_score_list(self):

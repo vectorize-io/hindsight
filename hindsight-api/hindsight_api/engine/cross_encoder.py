@@ -951,26 +951,17 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
             indices = [idx for idx, _ in indexed_texts]
 
             try:
-                # Use async arerank if available, otherwise fall back to sync
-                if hasattr(self._litellm, "arerank"):
-                    response = await self._litellm.arerank(
-                        model=self.model,
-                        query=query,
-                        documents=texts,
-                        api_key=self.api_key,  # Pass API key directly
-                    )
-                else:
-                    # Fall back to sync in thread pool
-                    loop = asyncio.get_event_loop()
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: self._litellm.rerank(
-                            model=self.model,
-                            query=query,
-                            documents=texts,
-                            api_key=self.api_key,  # Pass API key directly
-                        ),
-                    )
+                # Build kwargs for rerank call
+                rerank_kwargs = {
+                    "model": self.model,
+                    "query": query,
+                    "documents": texts,
+                    "api_key": self.api_key,
+                }
+                if self.api_base:
+                    rerank_kwargs["api_base"] = self.api_base
+
+                response = await self._litellm.arerank(**rerank_kwargs)
 
                 # Map scores back to original positions
                 # Response format: RerankResponse with results list
