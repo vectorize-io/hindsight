@@ -990,8 +990,7 @@ class LiteLLMSDKCrossEncoder(CrossEncoderModel):
                 import traceback
 
                 logger.error(
-                    f"Error in LiteLLM rerank for query '{query[:50]}...': {e}\n"
-                    f"Traceback: {traceback.format_exc()}"
+                    f"Error in LiteLLM rerank for query '{query[:50]}...': {e}\nTraceback: {traceback.format_exc()}"
                 )
                 # Return zeros for failed queries
                 for idx in indices:

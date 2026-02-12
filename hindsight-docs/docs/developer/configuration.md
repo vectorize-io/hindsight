@@ -267,7 +267,7 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `cohere`, or `litellm` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `cohere`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_TEI_URL` | TEI server URL | - |
@@ -280,6 +280,9 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings | `http://localhost:4000` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY` | LiteLLM SDK API key for direct embedding provider access | - |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL` | LiteLLM SDK embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `cohere/embed-english-v3.0` |
+| `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE` | Custom base URL for LiteLLM SDK embeddings (optional) | - |
 
 ```bash
 # Local (default) - uses SentenceTransformers
@@ -322,6 +325,18 @@ export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE=http://localhost:4000
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small  # or cohere/embed-english-v3.0
+
+# LiteLLM SDK - direct API access without proxy server (recommended)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=your-provider-api-key
+export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL=cohere/embed-english-v3.0
+
+# Supported LiteLLM SDK embedding providers:
+# - cohere/embed-english-v3.0 (1024 dimensions)
+# - openai/text-embedding-3-small (1536 dimensions)
+# - together_ai/togethercomputer/m2-bert-80M-8k-retrieval
+# - huggingface/sentence-transformers/all-MiniLM-L6-v2
+# - voyage/voyage-2
 ```
 
 #### Embedding Dimensions

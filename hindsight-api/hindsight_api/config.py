@@ -190,6 +190,9 @@ ENV_RERANKER_LITELLM_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_API_KEY"
 ENV_RERANKER_LITELLM_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_MODEL"
 
 # LiteLLM SDK configuration (direct API access, no proxy needed)
+ENV_EMBEDDINGS_LITELLM_SDK_API_KEY = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY"
+ENV_EMBEDDINGS_LITELLM_SDK_MODEL = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL"
+ENV_EMBEDDINGS_LITELLM_SDK_API_BASE = "HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE"
 ENV_RERANKER_LITELLM_SDK_API_KEY = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY"
 ENV_RERANKER_LITELLM_SDK_MODEL = "HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL"
 ENV_RERANKER_LITELLM_SDK_API_BASE = "HINDSIGHT_API_RERANKER_LITELLM_SDK_API_BASE"
@@ -334,6 +337,7 @@ DEFAULT_EMBEDDINGS_LITELLM_MODEL = "text-embedding-3-small"
 DEFAULT_RERANKER_LITELLM_MODEL = "cohere/rerank-english-v3.0"
 
 # LiteLLM SDK defaults
+DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL = "cohere/embed-english-v3.0"
 DEFAULT_RERANKER_LITELLM_SDK_MODEL = "cohere/rerank-english-v3.0"
 
 DEFAULT_HOST = "0.0.0.0"
@@ -529,6 +533,9 @@ class HindsightConfig:
     embeddings_litellm_api_base: str
     embeddings_litellm_api_key: str | None
     embeddings_litellm_model: str
+    embeddings_litellm_sdk_api_key: str | None
+    embeddings_litellm_sdk_model: str
+    embeddings_litellm_sdk_api_base: str | None
 
     # Reranker
     reranker_provider: str
@@ -831,6 +838,12 @@ class HindsightConfig:
             or os.getenv(ENV_LITELLM_API_BASE, DEFAULT_LITELLM_API_BASE),
             embeddings_litellm_api_key=os.getenv(ENV_EMBEDDINGS_LITELLM_API_KEY) or os.getenv(ENV_LITELLM_API_KEY),
             embeddings_litellm_model=os.getenv(ENV_EMBEDDINGS_LITELLM_MODEL, DEFAULT_EMBEDDINGS_LITELLM_MODEL),
+            # LiteLLM SDK embeddings (direct API access)
+            embeddings_litellm_sdk_api_key=os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_API_KEY),
+            embeddings_litellm_sdk_model=os.getenv(
+                ENV_EMBEDDINGS_LITELLM_SDK_MODEL, DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL
+            ),
+            embeddings_litellm_sdk_api_base=os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_API_BASE) or None,
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
