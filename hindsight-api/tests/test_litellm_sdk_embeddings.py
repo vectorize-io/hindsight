@@ -308,35 +308,46 @@ class TestLiteLLMSDKEmbeddingsFactory:
 
     def test_create_from_env_success(self, monkeypatch):
         """Test creating embeddings from environment variables."""
-        monkeypatch.setenv(ENV_EMBEDDINGS_PROVIDER, "litellm-sdk")
-        monkeypatch.setenv(ENV_EMBEDDINGS_LITELLM_SDK_API_KEY, "test_key")
-        monkeypatch.setenv(ENV_EMBEDDINGS_LITELLM_SDK_MODEL, "cohere/embed-english-v3.0")
+        # Mock get_config() to return configured HindsightConfig
+        mock_config = MagicMock()
+        mock_config.embeddings_provider = "litellm-sdk"
+        mock_config.embeddings_litellm_sdk_api_key = "test_key"
+        mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
+        mock_config.embeddings_litellm_sdk_api_base = None
 
-        embeddings = create_embeddings_from_env()
+        with patch("hindsight_api.config.get_config", return_value=mock_config):
+            embeddings = create_embeddings_from_env()
 
-        assert isinstance(embeddings, LiteLLMSDKEmbeddings)
-        assert embeddings.api_key == "test_key"
-        assert embeddings.model == "cohere/embed-english-v3.0"
+            assert isinstance(embeddings, LiteLLMSDKEmbeddings)
+            assert embeddings.api_key == "test_key"
+            assert embeddings.model == "cohere/embed-english-v3.0"
 
     def test_create_from_env_missing_api_key(self, monkeypatch):
         """Test that missing API key raises error."""
-        monkeypatch.setenv(ENV_EMBEDDINGS_PROVIDER, "litellm-sdk")
-        # Don't set API key
+        # Mock get_config() with missing API key
+        mock_config = MagicMock()
+        mock_config.embeddings_provider = "litellm-sdk"
+        mock_config.embeddings_litellm_sdk_api_key = None  # Missing key
+        mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
 
-        with pytest.raises(ValueError, match=ENV_EMBEDDINGS_LITELLM_SDK_API_KEY):
-            create_embeddings_from_env()
+        with patch("hindsight_api.config.get_config", return_value=mock_config):
+            with pytest.raises(ValueError, match=ENV_EMBEDDINGS_LITELLM_SDK_API_KEY):
+                create_embeddings_from_env()
 
     def test_create_from_env_with_api_base(self, monkeypatch):
         """Test creating embeddings with custom API base."""
-        monkeypatch.setenv(ENV_EMBEDDINGS_PROVIDER, "litellm-sdk")
-        monkeypatch.setenv(ENV_EMBEDDINGS_LITELLM_SDK_API_KEY, "test_key")
-        monkeypatch.setenv(ENV_EMBEDDINGS_LITELLM_SDK_MODEL, "cohere/embed-english-v3.0")
-        monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE", "https://custom.api.com")
+        # Mock get_config() with custom API base
+        mock_config = MagicMock()
+        mock_config.embeddings_provider = "litellm-sdk"
+        mock_config.embeddings_litellm_sdk_api_key = "test_key"
+        mock_config.embeddings_litellm_sdk_model = "cohere/embed-english-v3.0"
+        mock_config.embeddings_litellm_sdk_api_base = "https://custom.api.com"
 
-        embeddings = create_embeddings_from_env()
+        with patch("hindsight_api.config.get_config", return_value=mock_config):
+            embeddings = create_embeddings_from_env()
 
-        assert isinstance(embeddings, LiteLLMSDKEmbeddings)
-        assert embeddings.api_base == "https://custom.api.com"
+            assert isinstance(embeddings, LiteLLMSDKEmbeddings)
+            assert embeddings.api_base == "https://custom.api.com"
 
 
 class TestLiteLLMSDKCohereEmbeddings:
