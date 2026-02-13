@@ -84,7 +84,7 @@ async def test_small_async_batch_no_splitting(memory, request_context):
     assert status["status"] == "completed"
     assert status["operation_type"] == "batch_retain"
     assert "child_operations" in status
-    assert status["num_sub_batches"] == 1  # Single sub-batch
+    assert status["result_metadata"]["num_sub_batches"] == 1  # Single sub-batch
     assert len(status["child_operations"]) == 1
     assert status["child_operations"][0]["status"] == "completed"
 
@@ -133,9 +133,9 @@ async def test_large_async_batch_auto_splits(memory, request_context):
     # Should be a parent operation with children
     assert parent_status["operation_type"] == "batch_retain"
     assert "child_operations" in parent_status
-    assert "num_sub_batches" in parent_status
-    assert parent_status["num_sub_batches"] >= 2  # Should split into at least 2 batches
-    assert parent_status["total_items"] == 2
+    assert "num_sub_batches" in parent_status["result_metadata"]
+    assert parent_status["result_metadata"]["num_sub_batches"] >= 2  # Should split into at least 2 batches
+    assert parent_status["result_metadata"]["items_count"] == 2
 
     # Verify child operations
     child_ops = parent_status["child_operations"]
@@ -420,4 +420,4 @@ async def test_config_retain_batch_tokens_respected(memory, request_context):
 
     # Even small batches use parent-child pattern now (simpler code path)
     assert "child_operations" in status
-    assert status["num_sub_batches"] == 1
+    assert status["result_metadata"]["num_sub_batches"] == 1

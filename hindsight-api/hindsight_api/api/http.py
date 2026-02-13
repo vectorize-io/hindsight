@@ -1357,6 +1357,16 @@ class CancelOperationResponse(BaseModel):
     operation_id: str
 
 
+class ChildOperationStatus(BaseModel):
+    """Status of a child operation (for batch operations)."""
+
+    operation_id: str
+    status: str
+    sub_batch_index: int | None = None
+    items_count: int | None = None
+    error_message: str | None = None
+
+
 class OperationStatusResponse(BaseModel):
     """Response model for getting a single operation status."""
 
@@ -1385,7 +1395,7 @@ class OperationStatusResponse(BaseModel):
         default=None,
         description="Internal metadata for debugging. Structure may change without notice. Not for production use.",
     )
-    child_operations: list[dict[str, Any]] | None = Field(
+    child_operations: list[ChildOperationStatus] | None = Field(
         default=None, description="Child operations for batch operations (if applicable)"
     )
 
