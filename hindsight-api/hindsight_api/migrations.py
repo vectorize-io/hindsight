@@ -565,6 +565,12 @@ def ensure_embedding_dimension(
             )
             logger.info(f"Created vchordrq index for {required_dimension}-dimensional embeddings")
         else:  # pgvector
+            if required_dimension > 2000:
+                raise RuntimeError(
+                    f"Embedding dimension {required_dimension} exceeds pgvector HNSW index limit of 2000. "
+                    f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
+                    f"that supports higher dimensions (e.g., pgvectorscale/DiskANN)."
+                )
             conn.execute(
                 text(f"""
                     CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_hnsw
@@ -750,6 +756,24 @@ def ensure_vector_extension(
                     """)
                 )
             else:  # pgvector
+                # Check embedding dimension — pgvector HNSW indexes only support up to 2000 dims
+                embed_dim = conn.execute(
+                    text("""
+                        SELECT atttypmod
+                        FROM pg_attribute a
+                        JOIN pg_class c ON a.attrelid = c.oid
+                        JOIN pg_namespace n ON c.relnamespace = n.oid
+                        WHERE n.nspname = :schema AND c.relname = :table_name AND a.attname = 'embedding'
+                    """),
+                    {"schema": schema_name, "table_name": table_name},
+                ).scalar()
+
+                if embed_dim and embed_dim > 2000:
+                    raise RuntimeError(
+                        f"Embedding dimension {embed_dim} on {table_name} exceeds pgvector HNSW index limit of 2000. "
+                        f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
+                        f"that supports higher dimensions (e.g., pgvectorscale/DiskANN)."
+                    )
                 logger.info(f"Creating HNSW index on {table_name}")
                 conn.execute(
                     text(f"""
