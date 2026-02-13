@@ -59,6 +59,8 @@ The plugin will automatically:
 
 **Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens). The agent uses past context without needing to call tools.
 
+**Feedback Loop Prevention:** The plugin automatically strips injected memory tags (`<hindsight_memories>`) before storing conversations. This prevents recalled memories from being re-extracted as new facts, which would cause exponential memory growth and duplicate entries.
+
 Traditional memory systems give agents a `search_memory` tool - but models don't use it consistently. Auto-recall solves this by injecting memories automatically before every turn.
 
 ## Configuration

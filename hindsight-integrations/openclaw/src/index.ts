@@ -702,6 +702,12 @@ User message: ${prompt}
                 .join('\n');
             }
 
+            // Strip plugin-injected memory tags to prevent feedback loop
+            // Remove <hindsight_memories> blocks injected during before_agent_start
+            content = content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/g, '');
+            // Remove any <relevant_memories> blocks (legacy/alternative format)
+            content = content.replace(/<relevant_memories>[\s\S]*?<\/relevant_memories>/g, '');
+
             return `[role: ${role}]\n${content}\n[${role}:end]`;
           })
           .join('\n\n');
