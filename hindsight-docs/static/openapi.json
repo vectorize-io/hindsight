@@ -5150,6 +5150,35 @@
               }
             ],
             "title": "Error Message"
+          },
+          "result_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Metadata",
+            "description": "Internal metadata for debugging. Structure may change without notice. Not for production use."
+          },
+          "child_operations": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Child Operations",
+            "description": "Child operations for batch operations (if applicable)"
           }
         },
         "type": "object",

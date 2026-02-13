@@ -1201,6 +1201,22 @@ export type OperationStatusResponse = {
    * Error Message
    */
   error_message?: string | null;
+  /**
+   * Result Metadata
+   *
+   * Internal metadata for debugging. Structure may change without notice. Not for production use.
+   */
+  result_metadata?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Child Operations
+   *
+   * Child operations for batch operations (if applicable)
+   */
+  child_operations?: Array<{
+    [key: string]: unknown;
+  }> | null;
 };
 
 /**

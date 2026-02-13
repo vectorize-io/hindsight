@@ -353,7 +353,9 @@ export function BankOperationsView() {
                     {selectedOperation.result_metadata?.items_count !== undefined && (
                       <div>
                         <div className="text-sm font-medium text-muted-foreground">Total Items</div>
-                        <div className="mt-1 text-sm">{selectedOperation.result_metadata.items_count}</div>
+                        <div className="mt-1 text-sm">
+                          {selectedOperation.result_metadata.items_count}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -375,7 +377,10 @@ export function BankOperationsView() {
                     selectedOperation.child_operations.length > 0 && (
                       <div>
                         <div className="text-sm font-medium text-muted-foreground mb-2">
-                          Sub-batches ({selectedOperation.result_metadata?.num_sub_batches || selectedOperation.child_operations.length})
+                          Sub-batches (
+                          {selectedOperation.result_metadata?.num_sub_batches ||
+                            selectedOperation.child_operations.length}
+                          )
                         </div>
                         <div className="rounded-lg border">
                           <Table>

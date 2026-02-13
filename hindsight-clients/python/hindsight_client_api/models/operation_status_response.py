@@ -33,7 +33,9 @@ class OperationStatusResponse(BaseModel):
     updated_at: Optional[StrictStr] = None
     completed_at: Optional[StrictStr] = None
     error_message: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message"]
+    result_metadata: Optional[Dict[str, Any]] = None
+    child_operations: Optional[List[Dict[str, Any]]] = None
+    __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "created_at", "updated_at", "completed_at", "error_message", "result_metadata", "child_operations"]
 
     @field_validator('status')
     def status_validate_enum(cls, value):
@@ -106,6 +108,16 @@ class OperationStatusResponse(BaseModel):
         if self.error_message is None and "error_message" in self.model_fields_set:
             _dict['error_message'] = None
 
+        # set to None if result_metadata (nullable) is None
+        # and model_fields_set contains the field
+        if self.result_metadata is None and "result_metadata" in self.model_fields_set:
+            _dict['result_metadata'] = None
+
+        # set to None if child_operations (nullable) is None
+        # and model_fields_set contains the field
+        if self.child_operations is None and "child_operations" in self.model_fields_set:
+            _dict['child_operations'] = None
+
         return _dict
 
     @classmethod
@@ -124,7 +136,9 @@ class OperationStatusResponse(BaseModel):
             "created_at": obj.get("created_at"),
             "updated_at": obj.get("updated_at"),
             "completed_at": obj.get("completed_at"),
-            "error_message": obj.get("error_message")
+            "error_message": obj.get("error_message"),
+            "result_metadata": obj.get("result_metadata"),
+            "child_operations": obj.get("child_operations")
         })
         return _obj
 
