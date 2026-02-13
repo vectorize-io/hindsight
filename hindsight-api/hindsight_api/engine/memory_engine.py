@@ -1682,15 +1682,21 @@ class MemoryEngine(MemoryEngineInterface):
             max_entity_tokens: Maximum tokens for entity observations (default 500)
             include_chunks: Whether to include raw chunks in the response
             max_chunk_tokens: Maximum tokens for chunks (default 8192)
+                             NOTE: Chunks are fetched independently of max_tokens filtering.
+                             This means setting max_tokens=0 will return 0 facts but can still
+                             return chunks from the top-scored (reranked) results.
+                             Chunks are fetched in batches (estimated as (max_chunk_tokens // retain_chunk_size) * 2)
+                             until the token budget is exhausted or all chunks are fetched.
+                             This handles varying chunk sizes across documents.
             tags: Optional list of tags for visibility filtering (OR matching - returns
                   memories that have at least one matching tag)
 
         Returns:
             RecallResultModel containing:
-            - results: List of MemoryFact objects
+            - results: List of MemoryFact objects (filtered by max_tokens)
             - trace: Optional trace information for debugging
             - entities: Optional dict of entity states (if include_entities=True)
-            - chunks: Optional dict of chunks (if include_chunks=True)
+            - chunks: Optional dict of chunks (if include_chunks=True, independent of max_tokens)
         """
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
@@ -1918,7 +1924,8 @@ class MemoryEngine(MemoryEngineInterface):
         2. Merge: RRF to combine ranked lists
         3. Reranking: Pluggable strategy (heuristic or cross-encoder)
         4. Diversity: MMR with λ=0.5
-        5. Token Filter: Limit results to max_tokens budget
+        5. Chunks: Fetch chunks from top-scored results (BEFORE token filtering)
+        6. Token Filter: Limit facts to max_tokens budget
 
         Args:
             bank_id: bank IDentifier
@@ -1929,7 +1936,7 @@ class MemoryEngine(MemoryEngineInterface):
             enable_trace: Whether to return search trace (deprecated)
             include_entities: Whether to include entity observations
             max_entity_tokens: Maximum tokens for entity observations
-            include_chunks: Whether to include raw chunks
+            include_chunks: Whether to include raw chunks (fetched before max_tokens filtering)
             max_chunk_tokens: Maximum tokens for chunks
 
         Returns:
@@ -2352,6 +2359,85 @@ class MemoryEngine(MemoryEngineInterface):
             top_scored = scored_results[:rerank_limit]
             log_buffer.append(f"  [5] Truncated to top {len(top_scored)} results")
 
+            # Step 5.5: Fetch chunks BEFORE token filtering (chunks are independent of max_tokens)
+            # This allows max_tokens=0 to still return chunks based on top-scored results
+            chunks_dict = None
+            total_chunk_tokens = 0
+            if include_chunks and top_scored:
+                from .response_models import ChunkInfo
+
+                # Collect chunk_ids in order of fact relevance (preserving order from top_scored)
+                # Use a list to maintain order, but track seen chunks to avoid duplicates
+                chunk_ids_ordered = []
+                seen_chunk_ids = set()
+                for sr in top_scored:
+                    chunk_id = sr.retrieval.chunk_id
+                    if chunk_id and chunk_id not in seen_chunk_ids:
+                        chunk_ids_ordered.append(chunk_id)
+                        seen_chunk_ids.add(chunk_id)
+
+                if chunk_ids_ordered:
+                    # Estimate batch size based on retain_chunk_size * 2 (rough estimate)
+                    # Chunk sizes vary per document, so we fetch in batches until budget is exhausted
+                    config = get_config()
+                    estimated_batch_size = (max_chunk_tokens // config.retain_chunk_size) * 2
+
+                    chunks_dict = {}
+                    encoding = _get_tiktoken_encoding()
+                    chunk_offset = 0
+
+                    # Fetch chunks in batches until we run out of budget or chunks
+                    while chunk_offset < len(chunk_ids_ordered) and total_chunk_tokens < max_chunk_tokens:
+                        # Get next batch of chunk IDs
+                        batch_chunk_ids = chunk_ids_ordered[chunk_offset : chunk_offset + estimated_batch_size]
+                        chunk_offset += estimated_batch_size
+
+                        # Fetch chunk data from database
+                        async with acquire_with_retry(pool) as conn:
+                            chunks_rows = await conn.fetch(
+                                f"""
+                                SELECT chunk_id, chunk_text, chunk_index
+                                FROM {fq_table("chunks")}
+                                WHERE chunk_id = ANY($1::text[])
+                                """,
+                                batch_chunk_ids,
+                            )
+
+                        # Create a lookup dict for fast access (preserves order from batch_chunk_ids)
+                        chunks_lookup = {row["chunk_id"]: row for row in chunks_rows}
+
+                        # Process chunks in order, respecting token budget
+                        for chunk_id in batch_chunk_ids:
+                            if chunk_id not in chunks_lookup:
+                                continue
+
+                            row = chunks_lookup[chunk_id]
+                            chunk_text = row["chunk_text"]
+                            chunk_tokens = len(encoding.encode(chunk_text))
+
+                            # Check if adding this chunk would exceed the limit
+                            if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
+                                # Truncate the chunk to fit within the remaining budget
+                                remaining_tokens = max_chunk_tokens - total_chunk_tokens
+                                if remaining_tokens > 0:
+                                    # Truncate to remaining tokens
+                                    truncated_text = encoding.decode(encoding.encode(chunk_text)[:remaining_tokens])
+                                    chunks_dict[chunk_id] = ChunkInfo(
+                                        chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
+                                    )
+                                    total_chunk_tokens = max_chunk_tokens
+                                # Budget exhausted - stop fetching more batches
+                                break
+                            else:
+                                chunks_dict[chunk_id] = ChunkInfo(
+                                    chunk_text=chunk_text, chunk_index=row["chunk_index"], truncated=False
+                                )
+                                total_chunk_tokens += chunk_tokens
+
+                        # If we hit the budget limit in this batch, stop fetching more batches
+                        if total_chunk_tokens >= max_chunk_tokens:
+                            break
+
             # Step 6: Token budget filtering
             step_start = time.time()
 
@@ -2446,67 +2532,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Entity observations removed - always set to None
             entities_dict = None
 
-            # Fetch chunks if requested
-            chunks_dict = None
-            total_chunk_tokens = 0
-            if include_chunks and top_scored:
-                from .response_models import ChunkInfo
-
-                # Collect chunk_ids in order of fact relevance (preserving order from top_scored)
-                # Use a list to maintain order, but track seen chunks to avoid duplicates
-                chunk_ids_ordered = []
-                seen_chunk_ids = set()
-                for sr in top_scored:
-                    chunk_id = sr.retrieval.chunk_id
-                    if chunk_id and chunk_id not in seen_chunk_ids:
-                        chunk_ids_ordered.append(chunk_id)
-                        seen_chunk_ids.add(chunk_id)
-
-                if chunk_ids_ordered:
-                    # Fetch chunk data from database using chunk_ids (no ORDER BY to preserve input order)
-                    async with acquire_with_retry(pool) as conn:
-                        chunks_rows = await conn.fetch(
-                            f"""
-                            SELECT chunk_id, chunk_text, chunk_index
-                            FROM {fq_table("chunks")}
-                            WHERE chunk_id = ANY($1::text[])
-                            """,
-                            chunk_ids_ordered,
-                        )
-
-                    # Create a lookup dict for fast access
-                    chunks_lookup = {row["chunk_id"]: row for row in chunks_rows}
-
-                    # Apply token limit and build chunks_dict in the order of chunk_ids_ordered
-                    chunks_dict = {}
-                    encoding = _get_tiktoken_encoding()
-
-                    for chunk_id in chunk_ids_ordered:
-                        if chunk_id not in chunks_lookup:
-                            continue
-
-                        row = chunks_lookup[chunk_id]
-                        chunk_text = row["chunk_text"]
-                        chunk_tokens = len(encoding.encode(chunk_text))
-
-                        # Check if adding this chunk would exceed the limit
-                        if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
-                            # Truncate the chunk to fit within the remaining budget
-                            remaining_tokens = max_chunk_tokens - total_chunk_tokens
-                            if remaining_tokens > 0:
-                                # Truncate to remaining tokens
-                                truncated_text = encoding.decode(encoding.encode(chunk_text)[:remaining_tokens])
-                                chunks_dict[chunk_id] = ChunkInfo(
-                                    chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
-                                )
-                                total_chunk_tokens = max_chunk_tokens
-                            # Stop adding more chunks once we hit the limit
-                            break
-                        else:
-                            chunks_dict[chunk_id] = ChunkInfo(
-                                chunk_text=chunk_text, chunk_index=row["chunk_index"], truncated=False
-                            )
-                            total_chunk_tokens += chunk_tokens
+            # Chunks were already fetched before token filtering (see Step 5.5 above)
 
             # Finalize trace if enabled
             trace_dict = None
