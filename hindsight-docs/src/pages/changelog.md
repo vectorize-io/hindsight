@@ -8,6 +8,38 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [0.4.11](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.11)
+
+**Features**
+
+- Added support for LiteLLM SDK as an embeddings and reranking provider. ([`e408b7e`](https://github.com/vectorize-io/hindsight/commit/e408b7e))
+- Expanded Postgres search support with additional text/vector extensions, including TimescaleDB pg_textsearch and vchord/pgvector options. ([`d871c30`](https://github.com/vectorize-io/hindsight/commit/d871c30))
+- Added hierarchical configuration scopes (system, tenant, bank) for more flexible multi-tenant setup and overrides. ([`8d731f2`](https://github.com/vectorize-io/hindsight/commit/8d731f2))
+- Added reverse proxy/base-path support for running Hindsight behind a proxy. ([`93ddd41`](https://github.com/vectorize-io/hindsight/commit/93ddd41))
+- Added MCP tools to create, read, update, and delete mental models. ([`f641b30`](https://github.com/vectorize-io/hindsight/commit/f641b30))
+- Added a "docs" skill for agents/tools to access documentation-oriented capabilities. ([`dd1e098`](https://github.com/vectorize-io/hindsight/commit/dd1e098))
+- Added an OpenClaw configuration option to skip recall/retain for specific providers. ([`fb7be3e`](https://github.com/vectorize-io/hindsight/commit/fb7be3e))
+
+**Improvements**
+
+- Improved LiteLLM gateway model configuration for more reliable provider/model selection. ([`7d95a00`](https://github.com/vectorize-io/hindsight/commit/7d95a00))
+- Exposed actual LLM token usage in retain results to improve cost/usage visibility. ([`83ca669`](https://github.com/vectorize-io/hindsight/commit/83ca669))
+- Added user-initiated attribution to request context to improve async task and usage attribution. ([`90be7c6`](https://github.com/vectorize-io/hindsight/commit/90be7c6))
+- Added OpenTelemetry tracing for improved request traceability and observability. ([`69dec8e`](https://github.com/vectorize-io/hindsight/commit/69dec8e))
+- Helm chart: split TEI embedding and reranker into separate deployments for independent scaling and rollout. ([`43f9a8b`](https://github.com/vectorize-io/hindsight/commit/43f9a8b))
+- Helm chart: added PodDisruptionBudgets and per-component affinity controls for more resilient scheduling. ([`9943957`](https://github.com/vectorize-io/hindsight/commit/9943957))
+
+**Bug Fixes**
+
+- Fixed a recursion issue in memory retention that could cause failures or runaway memory usage. ([`4f11210`](https://github.com/vectorize-io/hindsight/commit/4f11210))
+- Fixed Reflect API serialization/schema issues for "based_on" so reflections are returned and stored correctly. ([`f9a8a8e`](https://github.com/vectorize-io/hindsight/commit/f9a8a8e))
+- Improved MCP server compatibility by allowing extra tool arguments when appropriate and fixing bank ID resolution priority. ([`7ee229b`](https://github.com/vectorize-io/hindsight/commit/7ee229b))
+- Added missing trust_code environment configuration support. ([`60574ee`](https://github.com/vectorize-io/hindsight/commit/60574ee))
+- Hardened the MCP server with fixes to routing/validation and more accurate usage metering. ([`e798979`](https://github.com/vectorize-io/hindsight/commit/e798979))
+- Fixed the slim Docker image to include tiktoken to prevent runtime tokenization errors. ([`6eec83b`](https://github.com/vectorize-io/hindsight/commit/6eec83b))
+- Fixed MCP operations not being tracked correctly for usage metering. ([`888b50d`](https://github.com/vectorize-io/hindsight/commit/888b50d))
+- Helm chart: fixed GKE deployments overriding the configured HINDSIGHT_API_PORT. ([`03f47e2`](https://github.com/vectorize-io/hindsight/commit/03f47e2))
+
 ## [0.4.10](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.10)
 
 **Features**

@@ -2,7 +2,6 @@
 title: How We Solved Memory Conflicts in Hindsight
 description: Learn how Hindsight handles contradictory information by tracking temporal evolution and preserving history in its memory consolidation system.
 authors: [hindsight]
-tags: [engineering, memory-systems, conflict-resolution]
 image: /img/blog/2026-02-09/consolidation-pipeline.png
 date: 2026-02-09
 ---
