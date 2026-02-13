@@ -1245,8 +1245,477 @@ logger = logging.getLogger(__name__)
 SECONDS_PER_FACT = 10
 
 
+async def extract_facts_from_contents_batch_api(
+    contents: list[RetainContent],
+    llm_config,
+    agent_name: str,
+    config,
+    pool=None,
+    operation_id: str | None = None,
+    schema: str | None = None,
+) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
+    """
+    Extract facts using LLM Batch API (OpenAI/Groq).
+
+    Submits all chunks as a single batch, polls until complete, then processes results.
+    Only called when config.retain_use_batch_api=True.
+
+    Args:
+        contents: List of RetainContent objects to process
+        llm_config: LLM configuration with batch API support
+        agent_name: Name of the agent
+        config: Resolved HindsightConfig for this bank
+        pool: Database connection pool (for storing batch state)
+        operation_id: Async operation ID (for crash recovery)
+        schema: Database schema (for multi-tenant support)
+
+    Returns:
+        Tuple of (extracted_facts, chunks_metadata, usage)
+    """
+    if not contents:
+        return [], [], TokenUsage()
+
+    logger.info(f"Using Batch API for fact extraction ({len(contents)} contents)")
+
+    # Check if provider supports batch API
+    if not await llm_config._provider_impl.supports_batch_api():
+        logger.warning(f"Batch API not supported for provider {llm_config.provider}, falling back to sync mode")
+        return await extract_facts_from_contents(contents, llm_config, agent_name, config, pool, operation_id, schema)
+
+    # Check if we're resuming an existing batch (crash recovery)
+    batch_id = None
+    if operation_id and pool:
+        from ..task_backend import fq_table
+
+        table = fq_table("async_operations", schema)
+        row = await pool.fetchrow(
+            f"SELECT result_metadata FROM {table} WHERE operation_id = $1",
+            operation_id,
+        )
+
+        if row and row["result_metadata"]:
+            metadata = row["result_metadata"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            batch_id = metadata.get("batch_id")
+
+            if batch_id:
+                logger.info(f"Resuming existing batch: batch_id={batch_id} (crash recovery)")
+
+    # Step 1: Chunk all contents and build batch requests (skip if resuming)
+    all_chunks_info = []  # List of (chunk_text, content_index, chunk_index_in_content, event_date, context)
+    batch_requests = []
+
+    for content_index, item in enumerate(contents):
+        chunks = chunk_text(item.content, max_chars=config.retain_chunk_size)
+
+        for chunk_index_in_content, chunk in enumerate(chunks):
+            all_chunks_info.append((chunk, content_index, chunk_index_in_content, item.event_date, item.context))
+
+            # Build batch request for this chunk
+            custom_id = f"chunk_{len(all_chunks_info) - 1}"  # Global chunk index
+
+            # Format event_date with day of week
+            from .orchestrator import parse_datetime_flexible
+
+            event_date = parse_datetime_flexible(item.event_date)
+            event_date_formatted = event_date.strftime("%A, %B %d, %Y")
+
+            # Build prompt (same as sync mode)
+            fact_types_instruction = "Extract ONLY 'world' and 'assistant' type facts."
+
+            extraction_mode = config.retain_extraction_mode
+            extract_causal_links = config.retain_extract_causal_links
+
+            if extraction_mode == "custom":
+                if not config.retain_custom_instructions:
+                    base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
+                    prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+                else:
+                    base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
+                    prompt = base_prompt.format(
+                        fact_types_instruction=fact_types_instruction,
+                        custom_instructions=config.retain_custom_instructions,
+                    )
+            elif extraction_mode == "verbose":
+                base_prompt = VERBOSE_FACT_EXTRACTION_PROMPT
+                prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+            else:
+                base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
+                prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+
+            if extract_causal_links:
+                prompt = prompt + CAUSAL_RELATIONSHIPS_SECTION
+
+            # Select response schema
+            if extract_causal_links:
+                if extraction_mode == "verbose":
+                    response_schema = FactExtractionResponseVerbose
+                else:
+                    response_schema = FactExtractionResponse
+            else:
+                response_schema = FactExtractionResponseNoCausal
+
+            # Sanitize input
+            sanitized_chunk = _sanitize_text(chunk)
+            sanitized_context = _sanitize_text(item.context) if item.context else "none"
+
+            user_message = f"""Extract facts from the following text chunk.
+
+Chunk: {chunk_index_in_content + 1}/{len(chunks)}
+Event Date: {event_date_formatted} ({event_date.isoformat()})
+Context: {sanitized_context}
+
+Text:
+{sanitized_chunk}"""
+
+            # Build request body
+            request_body = {
+                "model": llm_config.model,
+                "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
+                "temperature": 0.1,
+            }
+
+            # Add max_completion_tokens if configured
+            if config.retain_max_completion_tokens:
+                request_body["max_completion_tokens"] = config.retain_max_completion_tokens
+
+            # Add response_format (JSON schema)
+            schema = response_schema.model_json_schema()
+            request_body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "facts", "schema": schema},
+            }
+
+            batch_requests.append(
+                {"custom_id": custom_id, "method": "POST", "url": "/v1/chat/completions", "body": request_body}
+            )
+
+    if not batch_requests and not batch_id:  # No requests and not resuming
+        return [], [], TokenUsage()
+
+    # Step 2: Submit batch (skip if resuming)
+    if not batch_id:
+        logger.info(f"Submitting batch with {len(batch_requests)} chunk requests")
+
+        batch_metadata = await llm_config._provider_impl.submit_batch(batch_requests)
+        batch_id = batch_metadata["batch_id"]
+
+        logger.info(f"Batch submitted: {batch_id}, polling every {config.retain_batch_poll_interval}s")
+
+        # CRITICAL: Store minimal batch state in operation metadata for crash recovery
+        # This allows resuming polling if worker restarts
+        if operation_id and pool:
+            batch_state = {
+                "batch_id": batch_id,
+                "batch_provider": llm_config.provider,
+                "chunk_count": len(batch_requests),
+            }
+
+            # Update operation result_metadata
+            from ..task_backend import fq_table
+
+            table = fq_table("async_operations", schema)
+            await pool.execute(
+                f"""
+                UPDATE {table}
+                SET result_metadata = result_metadata || $1::jsonb, updated_at = now()
+                WHERE operation_id = $2
+                """,
+                json.dumps(batch_state),
+                operation_id,
+            )
+            logger.info(f"Stored batch state for operation {operation_id} (crash recovery enabled)")
+    else:
+        logger.info(f"Resuming polling for existing batch: {batch_id}")
+
+    # Step 3: Poll until complete
+    import time
+
+    start_time = time.time()
+    while True:
+        status_info = await llm_config._provider_impl.get_batch_status(batch_id)
+        status = status_info["status"]
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Batch {batch_id}: status={status}, "
+            f"completed={status_info['request_counts']['completed']}/{status_info['request_counts']['total']}, "
+            f"elapsed={elapsed:.0f}s"
+        )
+
+        if status == "completed":
+            break
+        elif status in ("failed", "expired", "cancelled"):
+            error_msg = status_info.get("errors", "Unknown error")
+            raise RuntimeError(f"Batch {batch_id} failed with status {status}: {error_msg}")
+
+        # Wait before polling again
+        await asyncio.sleep(config.retain_batch_poll_interval)
+
+    logger.info(f"Batch {batch_id} completed in {elapsed:.0f}s, retrieving results")
+
+    # Step 4: Retrieve results
+    batch_results = await llm_config._provider_impl.retrieve_batch_results(batch_id)
+
+    # Map results by custom_id
+    results_by_id = {result["custom_id"]: result for result in batch_results}
+
+    # Step 5: Parse results into facts (same as sync mode)
+    all_facts_from_llm = []
+    chunks_metadata = []
+    total_usage = TokenUsage()
+
+    for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
+        all_chunks_info
+    ):
+        custom_id = f"chunk_{chunk_idx}"
+        result = results_by_id.get(custom_id)
+
+        if not result:
+            logger.warning(f"Missing result for {custom_id}, skipping")
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        # Check for errors
+        if result.get("error"):
+            logger.error(f"Error in {custom_id}: {result['error']}")
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        # Extract response
+        response_body = result.get("response", {}).get("body", {})
+        choices = response_body.get("choices", [])
+
+        if not choices:
+            logger.warning(f"No choices in response for {custom_id}")
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        # Parse JSON content
+        message = choices[0].get("message", {})
+        content_str = message.get("content", "{}")
+
+        try:
+            extraction_response_json = json.loads(content_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON for {custom_id}: {e}")
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        # Parse facts (reuse existing logic from _extract_facts_from_chunk)
+        raw_facts = extraction_response_json.get("facts", [])
+        chunk_facts = []
+
+        for i, llm_fact in enumerate(raw_facts):
+            if not isinstance(llm_fact, dict):
+                continue
+
+            def get_value(field_name):
+                value = llm_fact.get(field_name)
+                if value and value != "" and value != [] and value != {} and str(value).upper() != "N/A":
+                    return value
+                return None
+
+            what = get_value("what")
+            if not what:
+                what = get_value("factual_core")
+            if not what:
+                continue
+
+            when = get_value("when")
+            who = get_value("who")
+            why = get_value("why")
+
+            # Critical field: fact_type
+            original_fact_type = llm_fact.get("fact_type")
+            fact_type = original_fact_type
+
+            # Convert "assistant" → "experience"
+            if fact_type == "assistant":
+                fact_type = "experience"
+
+            # Validate fact_type
+            if fact_type not in ["world", "experience", "opinion"]:
+                fact_kind = llm_fact.get("fact_kind")
+                if fact_kind == "assistant":
+                    fact_type = "experience"
+                elif fact_kind in ["world", "experience", "opinion"]:
+                    fact_type = fact_kind
+                else:
+                    fact_type = "world"
+
+            # Build combined fact text
+            combined_parts = [what]
+            if when:
+                combined_parts.append(f"When: {when}")
+            if who:
+                combined_parts.append(f"Involving: {who}")
+            if why:
+                combined_parts.append(why)
+            combined_text = " | ".join(combined_parts)
+
+            # Temporal fields
+            fact_data = {}
+            fact_kind = llm_fact.get("fact_kind", "conversation")
+            if fact_kind not in ["conversation", "event", "other"]:
+                fact_kind = "conversation"
+
+            if fact_kind == "event":
+                occurred_start = get_value("occurred_start")
+                occurred_end = get_value("occurred_end")
+
+                if not occurred_start:
+                    fact_data["occurred_start"] = _infer_temporal_date(combined_text, event_date)
+                else:
+                    fact_data["occurred_start"] = occurred_start
+
+                if occurred_end:
+                    fact_data["occurred_end"] = occurred_end
+                elif fact_data.get("occurred_start"):
+                    fact_data["occurred_end"] = fact_data["occurred_start"]
+
+            # Entities
+            entities = get_value("entities")
+            if entities:
+                validated_entities = []
+                for ent in entities:
+                    if isinstance(ent, str):
+                        validated_entities.append(Entity(text=ent))
+                    elif isinstance(ent, dict) and "text" in ent:
+                        try:
+                            validated_entities.append(Entity.model_validate(ent))
+                        except Exception:
+                            pass
+                if validated_entities:
+                    fact_data["entities"] = validated_entities
+
+            # Causal relations
+            if extract_causal_links:
+                validated_relations = []
+                causal_relations_raw = get_value("causal_relations")
+                if causal_relations_raw:
+                    for rel in causal_relations_raw:
+                        if not isinstance(rel, dict):
+                            continue
+                        target_idx = rel.get("target_index")
+                        relation_type = rel.get("relation_type")
+                        strength = rel.get("strength", 1.0)
+
+                        if target_idx is None or relation_type is None:
+                            continue
+                        if target_idx < 0 or target_idx >= i:
+                            continue
+
+                        try:
+                            validated_relations.append(
+                                CausalRelation(
+                                    target_fact_index=target_idx, relation_type=relation_type, strength=strength
+                                )
+                            )
+                        except Exception:
+                            pass
+
+                if validated_relations:
+                    fact_data["causal_relations"] = validated_relations
+
+            # Always set mentioned_at
+            fact_data["mentioned_at"] = event_date.isoformat()
+
+            try:
+                fact = Fact(fact=combined_text, fact_type=fact_type, **fact_data)
+                chunk_facts.append(fact)
+            except Exception as e:
+                logger.error(f"Failed to create Fact model for fact {i}: {e}")
+                continue
+
+        all_facts_from_llm.extend(chunk_facts)
+        chunks_metadata.append(
+            ChunkMetadata(
+                chunk_text=chunk_content,
+                fact_count=len(chunk_facts),
+                content_index=content_index,
+                chunk_index=chunk_idx,
+            )
+        )
+
+        # Track token usage
+        usage_data = response_body.get("usage", {})
+        if usage_data:
+            total_usage = total_usage + TokenUsage(
+                input_tokens=usage_data.get("prompt_tokens", 0),
+                output_tokens=usage_data.get("completion_tokens", 0),
+                total_tokens=usage_data.get("total_tokens", 0),
+            )
+
+    # Step 6: Convert to ExtractedFact objects with proper chunk mapping
+    # Group facts by chunk
+    facts_by_chunk = []  # List of (chunk_metadata, [facts])
+    fact_start_idx = 0
+
+    for chunk_meta in chunks_metadata:
+        chunk_facts = all_facts_from_llm[fact_start_idx : fact_start_idx + chunk_meta.fact_count]
+        facts_by_chunk.append((chunk_meta, chunk_facts))
+        fact_start_idx += chunk_meta.fact_count
+
+    # Now convert to ExtractedFactType
+    extracted_facts = []
+    global_fact_idx = 0
+
+    for chunk_meta, chunk_facts in facts_by_chunk:
+        content = contents[chunk_meta.content_index]
+
+        for fact_from_llm in chunk_facts:
+            extracted_fact = ExtractedFactType(
+                fact_text=fact_from_llm.fact,
+                fact_type=fact_from_llm.fact_type,
+                entities=[e.text for e in (fact_from_llm.entities or [])],
+                occurred_start=_parse_datetime(fact_from_llm.occurred_start) if fact_from_llm.occurred_start else None,
+                occurred_end=_parse_datetime(fact_from_llm.occurred_end) if fact_from_llm.occurred_end else None,
+                causal_relations=_convert_causal_relations(fact_from_llm.causal_relations or [], global_fact_idx),
+                content_index=chunk_meta.content_index,
+                chunk_index=chunk_meta.chunk_index,
+                context=content.context,
+                mentioned_at=content.event_date,
+                metadata=content.metadata,
+                tags=content.tags,
+            )
+
+            extracted_facts.append(extracted_fact)
+            global_fact_idx += 1
+
+    # Step 7: Add temporal offsets
+    _add_temporal_offsets(extracted_facts, contents)
+
+    logger.info(f"Batch API extracted {len(extracted_facts)} facts from {len(all_chunks_info)} chunks")
+
+    return extracted_facts, chunks_metadata, total_usage
+
+
 async def extract_facts_from_contents(
-    contents: list[RetainContent], llm_config, agent_name: str, config
+    contents: list[RetainContent],
+    llm_config,
+    agent_name: str,
+    config,
+    pool=None,
+    operation_id: str | None = None,
+    schema: str | None = None,
 ) -> tuple[list[ExtractedFactType], list[ChunkMetadata], TokenUsage]:
     """
     Extract facts from multiple content items in parallel.
@@ -1257,17 +1726,28 @@ async def extract_facts_from_contents(
     3. Adds time offsets to preserve fact ordering within each content
     4. Returns typed ExtractedFact and ChunkMetadata objects
 
+    Routes to batch API mode if config.retain_use_batch_api=True.
+
     Args:
         contents: List of RetainContent objects to process
         llm_config: LLM configuration for fact extraction
         agent_name: Name of the agent (for agent-related fact detection)
         config: Resolved HindsightConfig for this bank
+        pool: Database connection pool (passed to batch API for state storage)
+        operation_id: Async operation ID (passed to batch API for crash recovery)
+        schema: Database schema (passed to batch API for multi-tenant support)
 
     Returns:
         Tuple of (extracted_facts, chunks_metadata, usage)
     """
     if not contents:
         return [], [], TokenUsage()
+
+    # Route to batch API if enabled
+    if config.retain_use_batch_api:
+        return await extract_facts_from_contents_batch_api(
+            contents, llm_config, agent_name, config, pool, operation_id, schema
+        )
 
     # Step 1: Create parallel fact extraction tasks
     fact_extraction_tasks = []

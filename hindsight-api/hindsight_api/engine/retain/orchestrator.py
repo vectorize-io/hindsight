@@ -82,6 +82,8 @@ async def retain_batch(
     fact_type_override: str | None = None,
     confidence_score: float | None = None,
     document_tags: list[str] | None = None,
+    operation_id: str | None = None,
+    schema: str | None = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a batch of content through the retain pipeline.
@@ -147,7 +149,7 @@ async def retain_batch(
     step_start = time.time()
 
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
-        contents, llm_config, agent_name, config
+        contents, llm_config, agent_name, config, pool, operation_id, schema
     )
     log_buffer.append(
         f"[1] Extract facts: {len(extracted_facts)} facts, {len(chunks)} chunks from {len(contents)} contents in {time.time() - step_start:.3f}s"

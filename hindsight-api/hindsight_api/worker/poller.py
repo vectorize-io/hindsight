@@ -401,6 +401,8 @@ class WorkerPoller:
         On startup, we reset any tasks stuck in 'processing' for this worker_id
         back to 'pending' so they can be picked up again.
 
+        Also recovers batch API operations that were in-flight.
+
         If tenant_extension is configured, recovers across all tenant schemas.
 
         Returns:
@@ -413,11 +415,16 @@ class WorkerPoller:
             try:
                 table = fq_table("async_operations", schema)
 
+                # First, recover batch API operations (before resetting worker tasks)
+                batch_count = await self._recover_batch_operations(schema)
+                total_count += batch_count
+
+                # Then reset normal worker tasks
                 result = await self._pool.execute(
                     f"""
                     UPDATE {table}
                     SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                    WHERE status = 'processing' AND worker_id = $1
+                    WHERE status = 'processing' AND worker_id = $1 AND result_metadata->>'batch_id' IS NULL
                     """,
                     self._worker_id,
                 )
@@ -433,6 +440,80 @@ class WorkerPoller:
         if total_count > 0:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
         return total_count
+
+    async def _recover_batch_operations(self, schema: str | None) -> int:
+        """
+        Recover batch API operations that were in-flight when worker crashed.
+
+        Finds operations with batch_id in metadata and re-submits them as tasks
+        so polling can resume.
+
+        Args:
+            schema: Database schema to recover from
+
+        Returns:
+            Number of batch operations recovered
+        """
+        table = fq_table("async_operations", schema)
+
+        try:
+            # Find operations with batch_id in metadata (batch API operations)
+            rows = await self._pool.fetch(
+                f"""
+                SELECT operation_id, task_payload, result_metadata
+                FROM {table}
+                WHERE status = 'processing'
+                  AND result_metadata ? 'batch_id'
+                  AND task_payload IS NOT NULL
+                """
+            )
+
+            if not rows:
+                return 0
+
+            recovered = 0
+            for row in rows:
+                operation_id = str(row["operation_id"])
+                task_payload = row["task_payload"]
+                result_metadata = row["result_metadata"]
+
+                # Parse metadata
+                if isinstance(result_metadata, str):
+                    result_metadata = json.loads(result_metadata)
+
+                batch_id = result_metadata.get("batch_id")
+                batch_provider = result_metadata.get("batch_provider", "openai")
+
+                logger.info(
+                    f"Recovering batch operation: operation_id={operation_id}, batch_id={batch_id}, provider={batch_provider}"
+                )
+
+                # Parse task_payload
+                if isinstance(task_payload, str):
+                    task_dict = json.loads(task_payload)
+                else:
+                    task_dict = task_payload
+
+                # Mark operation as ready for re-processing
+                # Reset to pending with task_payload intact so worker picks it up again
+                await self._pool.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                    WHERE operation_id = $1
+                    """,
+                    operation_id,
+                )
+
+                recovered += 1
+                logger.info(f"Batch operation {operation_id} reset to pending for re-processing")
+
+            return recovered
+
+        except Exception as e:
+            schema_display = f'"{schema}"' if schema else str(schema)
+            logger.error(f"Failed to recover batch operations for schema {schema_display}: {e}")
+            return 0
 
     async def run(self):
         """

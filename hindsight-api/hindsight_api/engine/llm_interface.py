@@ -128,6 +128,67 @@ class LLMInterface(ABC):
         """
         pass
 
+    async def supports_batch_api(self) -> bool:
+        """
+        Check if this provider supports batch API operations.
+
+        Returns:
+            True if provider supports submit_batch/get_batch_status/retrieve_batch_results
+        """
+        return False
+
+    async def submit_batch(
+        self,
+        requests: list[dict[str, Any]],
+        endpoint: str = "/v1/chat/completions",
+        completion_window: str = "24h",
+    ) -> dict[str, Any]:
+        """
+        Submit a batch of requests to the provider's batch API.
+
+        Args:
+            requests: List of request dicts in JSONL format (custom_id, method, url, body)
+            endpoint: API endpoint for the batch (e.g., "/v1/chat/completions")
+            completion_window: Completion window (e.g., "24h")
+
+        Returns:
+            Dict with batch metadata: {"batch_id": str, "status": str, ...}
+
+        Raises:
+            NotImplementedError: If provider doesn't support batch API
+        """
+        raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+        """
+        Get the status of a batch job.
+
+        Args:
+            batch_id: Batch identifier returned from submit_batch
+
+        Returns:
+            Dict with status info: {"batch_id": str, "status": str, "completed_at": str, ...}
+
+        Raises:
+            NotImplementedError: If provider doesn't support batch API
+        """
+        raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
+        """
+        Retrieve completed batch results.
+
+        Args:
+            batch_id: Batch identifier returned from submit_batch
+
+        Returns:
+            List of result dicts (one per request, matched by custom_id)
+
+        Raises:
+            NotImplementedError: If provider doesn't support batch API
+        """
+        raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
     @abstractmethod
     async def cleanup(self) -> None:
         """Clean up resources (close connections, etc.)."""

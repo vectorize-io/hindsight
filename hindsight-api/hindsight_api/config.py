@@ -251,6 +251,8 @@ ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
 ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
+ENV_RETAIN_USE_BATCH_API = "HINDSIGHT_API_RETAIN_USE_BATCH_API"
+ENV_RETAIN_BATCH_POLL_INTERVAL = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL"
 
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
@@ -373,6 +375,8 @@ DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbo
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom")  # Allowed extraction modes
 DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only used when mode="custom")
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
+DEFAULT_RETAIN_USE_BATCH_API = False  # Use LLM Batch API for fact extraction (only when async=True)
+DEFAULT_RETAIN_BATCH_POLL_INTERVAL = 60  # Batch API polling interval in seconds
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
@@ -593,6 +597,8 @@ class HindsightConfig:
     retain_extraction_mode: str
     retain_custom_instructions: str | None
     retain_batch_tokens: int
+    retain_use_batch_api: bool
+    retain_batch_poll_interval: int
 
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
@@ -943,6 +949,11 @@ class HindsightConfig:
             ),
             retain_custom_instructions=os.getenv(ENV_RETAIN_CUSTOM_INSTRUCTIONS) or DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS,
             retain_batch_tokens=int(os.getenv(ENV_RETAIN_BATCH_TOKENS, str(DEFAULT_RETAIN_BATCH_TOKENS))),
+            retain_use_batch_api=os.getenv(ENV_RETAIN_USE_BATCH_API, str(DEFAULT_RETAIN_USE_BATCH_API)).lower()
+            == "true",
+            retain_batch_poll_interval=int(
+                os.getenv(ENV_RETAIN_BATCH_POLL_INTERVAL, str(DEFAULT_RETAIN_BATCH_POLL_INTERVAL))
+            ),
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
             consolidation_batch_size=int(

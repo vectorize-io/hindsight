@@ -246,6 +246,8 @@ def main():
             retain_extraction_mode=config.retain_extraction_mode,
             retain_custom_instructions=config.retain_custom_instructions,
             retain_batch_tokens=config.retain_batch_tokens,
+            retain_use_batch_api=config.retain_use_batch_api,
+            retain_batch_poll_interval=config.retain_batch_poll_interval,
             enable_observations=config.enable_observations,
             consolidation_batch_size=config.consolidation_batch_size,
             consolidation_max_tokens=config.consolidation_max_tokens,

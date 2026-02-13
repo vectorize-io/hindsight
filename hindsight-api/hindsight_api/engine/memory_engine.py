@@ -548,7 +548,7 @@ class MemoryEngine(MemoryEngineInterface):
         Handler for batch retain tasks.
 
         Args:
-            task_dict: Dict with 'bank_id', 'contents'
+            task_dict: Dict with 'bank_id', 'contents', 'operation_id'
 
         Raises:
             ValueError: If bank_id is missing
@@ -559,9 +559,10 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError("bank_id is required for batch retain task")
         contents = task_dict.get("contents", [])
         document_tags = task_dict.get("document_tags")
+        operation_id = task_dict.get("operation_id")  # For batch API crash recovery
 
         logger.info(
-            f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
+            f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}"
         )
 
         # Restore tenant_id/api_key_id from task payload so extensions
@@ -581,6 +582,7 @@ class MemoryEngine(MemoryEngineInterface):
             contents=contents,
             document_tags=document_tags,
             request_context=context,
+            operation_id=operation_id,
         )
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
@@ -1496,6 +1498,7 @@ class MemoryEngine(MemoryEngineInterface):
         confidence_score: float | None = None,
         document_tags: list[str] | None = None,
         return_usage: bool = False,
+        operation_id: str | None = None,
     ):
         """
         Store multiple content items as memory units in ONE batch operation.
@@ -1643,6 +1646,7 @@ class MemoryEngine(MemoryEngineInterface):
                     fact_type_override=fact_type_override,
                     confidence_score=confidence_score,
                     document_tags=document_tags,
+                    operation_id=operation_id,
                 )
                 all_results.extend(sub_results)
                 total_usage = total_usage + sub_usage
@@ -1663,6 +1667,7 @@ class MemoryEngine(MemoryEngineInterface):
                 fact_type_override=fact_type_override,
                 confidence_score=confidence_score,
                 document_tags=document_tags,
+                operation_id=operation_id,
             )
 
         # Call post-operation hook if validator is configured
@@ -1712,6 +1717,7 @@ class MemoryEngine(MemoryEngineInterface):
         fact_type_override: str | None = None,
         confidence_score: float | None = None,
         document_tags: list[str] | None = None,
+        operation_id: str | None = None,
     ) -> tuple[list[list[str]], "TokenUsage"]:
         """
         Internal method for batch processing without chunking logic.
@@ -1761,6 +1767,8 @@ class MemoryEngine(MemoryEngineInterface):
                     confidence_score=confidence_score,
                     document_tags=document_tags,
                     config=resolved_config,
+                    operation_id=operation_id,
+                    schema=request_context.tenant_id if request_context else None,
                 )
 
     def recall(
