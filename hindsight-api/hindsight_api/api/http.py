@@ -70,7 +70,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
     return Field(default_factory=default_factory, json_schema_extra=json_extra, **kwargs)
 
 
-from hindsight_api.config import get_config
+from hindsight_api.config import SYSTEM_EVENT_ROLES, get_config
 from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.reflect.observations import Observation
@@ -3547,6 +3547,24 @@ def _register_routes(app: FastAPI):
                 if item.tags:
                     content_dict["tags"] = item.tags
                 contents.append(content_dict)
+
+            # Filter out system events if configured
+            config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
+            if config_dict.get("exclude_system_events", False):
+                original_count = len(contents)
+                contents = [
+                    c for c in contents if not (c.get("metadata") and c["metadata"].get("role") in SYSTEM_EVENT_ROLES)
+                ]
+                filtered_count = original_count - len(contents)
+                if filtered_count > 0:
+                    logger.info(
+                        f"Filtered {filtered_count}/{original_count} system event items from retain request "
+                        f"for bank {bank_id}"
+                    )
+                if not contents:
+                    return RetainResponse.model_validate(
+                        {"success": True, "bank_id": bank_id, "items_count": 0, "async": False}
+                    )
 
             if request.async_:
                 # Async processing: queue task and return immediately

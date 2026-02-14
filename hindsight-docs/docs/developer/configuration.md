@@ -558,6 +558,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, or `custom` | `concise` |
 | `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Custom extraction guidelines (only used when mode is `custom`) | - |
 | `HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS` | Extract causal relationships between facts | `true` |
+| `HINDSIGHT_API_EXCLUDE_SYSTEM_EVENTS` | Filter out system/tool messages from retain. Items with `metadata.role` of `system`, `tool`, `tool_result`, or `function` are excluded. | `false` |
 
 #### Extraction Modes
 

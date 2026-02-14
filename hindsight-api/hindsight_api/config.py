@@ -250,6 +250,7 @@ ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
+ENV_EXCLUDE_SYSTEM_EVENTS = "HINDSIGHT_API_EXCLUDE_SYSTEM_EVENTS"
 
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
@@ -371,6 +372,10 @@ DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
 DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom")  # Allowed extraction modes
 DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only used when mode="custom")
+DEFAULT_EXCLUDE_SYSTEM_EVENTS = False  # When true, filter out system/tool messages from retain
+
+# System event roles that are filtered when exclude_system_events is enabled
+SYSTEM_EVENT_ROLES = frozenset({"system", "tool", "tool_result", "function"})
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
@@ -591,6 +596,9 @@ class HindsightConfig:
     retain_extraction_mode: str
     retain_custom_instructions: str | None
 
+    # System event filtering
+    exclude_system_events: bool
+
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
     consolidation_batch_size: int
@@ -659,6 +667,8 @@ class HindsightConfig:
         "retain_custom_instructions",
         # Consolidation settings
         "enable_observations",
+        # System event filtering
+        "exclude_system_events",
     }
 
     @classmethod
@@ -939,6 +949,9 @@ class HindsightConfig:
                 os.getenv(ENV_RETAIN_EXTRACTION_MODE, DEFAULT_RETAIN_EXTRACTION_MODE)
             ),
             retain_custom_instructions=os.getenv(ENV_RETAIN_CUSTOM_INSTRUCTIONS) or DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS,
+            # System event filtering
+            exclude_system_events=os.getenv(ENV_EXCLUDE_SYSTEM_EVENTS, str(DEFAULT_EXCLUDE_SYSTEM_EVENTS)).lower()
+            in ("true", "1"),
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
             consolidation_batch_size=int(
