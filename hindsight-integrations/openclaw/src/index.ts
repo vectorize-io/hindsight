@@ -1,7 +1,7 @@
 import type { MoltbotPluginAPI, PluginConfig } from './types.js';
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient } from './client.js';
-import { join, dirname } from 'path';
+import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 // Module-level state
@@ -22,8 +22,8 @@ if (typeof global !== 'undefined') {
   (global as any).__hindsightClient = {
     getClient: () => client,
     waitForReady: async () => {
-      if (isInitialized) return;
-      if (initPromise) await initPromise;
+      if (isInitialized) {return;}
+      if (initPromise) {await initPromise;}
     },
     /**
      * Get a client configured for a specific agent context.
@@ -31,7 +31,7 @@ if (typeof global !== 'undefined') {
      * Also ensures the bank mission is set on first use.
      */
     getClientForContext: async (ctx: PluginHookAgentContext | undefined) => {
-      if (!client) return null;
+      if (!client) {return null;}
       const config = currentPluginConfig || {};
       const bankId = deriveBankId(ctx, config);
       client.setBankId(bankId);
@@ -235,19 +235,31 @@ function detectExternalApi(pluginConfig?: PluginConfig): {
 
 /**
  * Health check for external Hindsight API.
+ * Retries up to 3 times with 2s delay — container DNS may not be ready on first boot.
  */
 async function checkExternalApiHealth(apiUrl: string): Promise<void> {
   const healthUrl = `${apiUrl.replace(/\/$/, '')}/health`;
-  console.log(`[Hindsight] Checking external API health at ${healthUrl}...`);
-  try {
-    const response = await fetch(healthUrl, { signal: AbortSignal.timeout(10000) });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  const maxRetries = 3;
+  const retryDelay = 2000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[Hindsight] Checking external API health at ${healthUrl}... (attempt ${attempt}/${maxRetries})`);
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json() as { status?: string };
+      console.log(`[Hindsight] External API health: ${JSON.stringify(data)}`);
+      return;
+    } catch (error) {
+      if (attempt < maxRetries) {
+        console.log(`[Hindsight] Health check attempt ${attempt} failed, retrying in ${retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      } else {
+        throw new Error(`Cannot connect to external Hindsight API at ${apiUrl}: ${error}`, { cause: error });
+      }
     }
-    const data = await response.json() as { status?: string };
-    console.log(`[Hindsight] External API health: ${JSON.stringify(data)}`);
-  } catch (error) {
-    throw new Error(`Cannot connect to external Hindsight API at ${apiUrl}: ${error}`);
   }
 }
 
@@ -401,7 +413,8 @@ export default function (api: MoltbotPluginAPI) {
       }
     })();
 
-    // Don't await - let it initialize in background
+    // Suppress unhandled rejection — service.start() will await and handle errors
+    initPromise.catch(() => {});
 
     // Register background service for cleanup
     console.log('[Hindsight] Registering service...');

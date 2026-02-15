@@ -1,8 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
-import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
 
 export class HindsightEmbedManager {
   private process: ChildProcess | null = null;
