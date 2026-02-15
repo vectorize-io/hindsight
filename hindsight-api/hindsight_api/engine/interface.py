@@ -48,6 +48,7 @@ class MemoryEngineInterface(ABC):
         contents: list[dict[str, Any]],
         *,
         request_context: "RequestContext",
+        document_tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Retain a batch of memory items.
@@ -55,8 +56,9 @@ class MemoryEngineInterface(ABC):
         Args:
             bank_id: The memory bank ID.
             contents: List of content dicts with 'content', optional 'event_date',
-                     'context', 'metadata', 'document_id'.
+                     'context', 'metadata', 'document_id', and per-item 'tags'.
             request_context: Request context for authentication.
+            document_tags: Optional tags applied to all items in the batch.
 
         Returns:
             Dict with processing results.
@@ -561,6 +563,7 @@ class MemoryEngineInterface(ABC):
         contents: list[dict[str, Any]],
         *,
         request_context: "RequestContext",
+        document_tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Submit a batch retain operation to run asynchronously.
@@ -569,6 +572,7 @@ class MemoryEngineInterface(ABC):
             bank_id: The memory bank ID.
             contents: List of content dicts to retain.
             request_context: Request context for authentication.
+            document_tags: Optional tags applied to all items in the async batch.
 
         Returns:
             Dict with operation_id and items_count.

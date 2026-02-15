@@ -540,6 +540,7 @@ class MemoryEngine(MemoryEngineInterface):
         if not bank_id:
             raise ValueError("bank_id is required for batch retain task")
         contents = task_dict.get("contents", [])
+        document_tags = task_dict.get("document_tags")
 
         logger.info(
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items"
@@ -557,7 +558,12 @@ class MemoryEngine(MemoryEngineInterface):
             tenant_id=task_dict.get("_tenant_id"),
             api_key_id=task_dict.get("_api_key_id"),
         )
-        await self.retain_batch_async(bank_id=bank_id, contents=contents, request_context=context)
+        await self.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            document_tags=document_tags,
+            request_context=context,
+        )
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
 
