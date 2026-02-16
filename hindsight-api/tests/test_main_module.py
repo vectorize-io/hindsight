@@ -352,6 +352,47 @@ class TestMainModuleExtensionLoading:
             "main.py should use import string when workers > 1"
         assert uvicorn_calls[0]["workers"] == 2
 
+    def test_main_sets_keepalive_timeout(self, monkeypatch):
+        """
+        Verify that uvicorn is configured with timeout_keep_alive > aiohttp's
+        default client keepalive timeout (15s), so the server never closes
+        connections before the client does.
+        """
+        monkeypatch.setenv("HINDSIGHT_API_WORKERS", "1")
+        monkeypatch.delenv("HINDSIGHT_API_TENANT_EXTENSION", raising=False)
+
+        uvicorn_calls = []
+
+        def capture_uvicorn_run(**kwargs):
+            uvicorn_calls.append(kwargs)
+
+        with patch("hindsight_api.main.MemoryEngine") as mock_engine, \
+             patch("hindsight_api.main.create_app") as mock_create_app, \
+             patch("hindsight_api.main._get_raw_config") as mock_get_config, \
+             patch("hindsight_api.main.print_banner"), \
+             patch("uvicorn.run", side_effect=capture_uvicorn_run):
+
+            mock_config = MagicMock()
+            mock_config.host = "0.0.0.0"
+            mock_config.port = 8888
+            mock_config.log_level = "info"
+            mock_config.mcp_enabled = False
+            mock_config.run_migrations_on_startup = False
+            mock_config.database_url = "postgresql://test:test@localhost/test"
+            mock_get_config.return_value = mock_config
+            mock_engine.return_value = MagicMock()
+            mock_create_app.return_value = MagicMock()
+
+            with patch.object(sys, 'argv', ['hindsight-api']):
+                from hindsight_api.main import main
+                main()
+
+        assert len(uvicorn_calls) == 1
+        assert "timeout_keep_alive" in uvicorn_calls[0], \
+            "uvicorn config must set timeout_keep_alive"
+        assert uvicorn_calls[0]["timeout_keep_alive"] > 15, \
+            "timeout_keep_alive must exceed aiohttp's 15s client default"
+
 
 # Mock extensions for testing
 from hindsight_api.extensions import (

@@ -373,6 +373,55 @@ class Hindsight:
 
     # Async methods (native async, no _run_async wrapper)
 
+    async def acreate_bank(
+        self,
+        bank_id: str,
+        name: str | None = None,
+        mission: str | None = None,
+        disposition: dict[str, float] | None = None,
+    ) -> BankProfileResponse:
+        """Create or update a memory bank (async).
+
+        Args:
+            bank_id: Unique identifier for the bank
+            name: Human-readable display name
+            mission: Instructions guiding what Hindsight should learn and remember (for mental models)
+            disposition: Optional disposition traits (skepticism, literalism, empathy)
+        """
+        from hindsight_client_api.models import create_bank_request, disposition_traits
+
+        disposition_obj = None
+        if disposition:
+            disposition_obj = disposition_traits.DispositionTraits(**disposition)
+
+        request_obj = create_bank_request.CreateBankRequest(
+            name=name,
+            mission=mission,
+            disposition=disposition_obj,
+        )
+
+        return await self._banks_api.create_or_update_bank(bank_id, request_obj)
+
+    async def aset_mission(
+        self,
+        bank_id: str,
+        mission: str,
+    ) -> BankProfileResponse:
+        """
+        Set or update the mission for a memory bank (async).
+
+        Args:
+            bank_id: The memory bank ID
+            mission: The mission text describing the agent's purpose
+
+        Returns:
+            BankProfileResponse with updated bank profile
+        """
+        from hindsight_client_api.models import create_bank_request
+
+        request_obj = create_bank_request.CreateBankRequest(mission=mission)
+        return await self._banks_api.create_or_update_bank(bank_id, request_obj)
+
     async def aretain_batch(
         self,
         bank_id: str,
@@ -471,9 +520,15 @@ class Hindsight:
         types: list[str] | None = None,
         max_tokens: int = 4096,
         budget: str = "mid",
+        trace: bool = False,
+        query_timestamp: str | None = None,
+        include_entities: bool = False,
+        max_entity_tokens: int = 500,
+        include_chunks: bool = False,
+        max_chunk_tokens: int = 8192,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
-    ) -> list[RecallResult]:
+    ) -> RecallResponse:
         """
         Recall memories using semantic similarity (async).
 
@@ -483,25 +538,41 @@ class Hindsight:
             types: Optional list of fact types to filter (world, experience, opinion, observation)
             max_tokens: Maximum tokens in results (default: 4096)
             budget: Budget level for recall - "low", "mid", or "high" (default: "mid")
+            trace: Enable trace output (default: False)
+            query_timestamp: Optional ISO format date string (e.g., '2023-05-30T23:40:00')
+            include_entities: Include entity observations in results (default: False)
+            max_entity_tokens: Maximum tokens for entity observations (default: 500)
+            include_chunks: Include raw text chunks in results (default: False)
+            max_chunk_tokens: Maximum tokens for chunks (default: 8192)
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
                 "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
 
         Returns:
-            List of RecallResult objects
+            RecallResponse with results, optional entities, optional chunks, and optional trace
         """
+        from hindsight_client_api.models import chunk_include_options, entity_include_options, include_options
+
+        include_opts = include_options.IncludeOptions(
+            entities=entity_include_options.EntityIncludeOptions(max_tokens=max_entity_tokens)
+            if include_entities
+            else None,
+            chunks=chunk_include_options.ChunkIncludeOptions(max_tokens=max_chunk_tokens) if include_chunks else None,
+        )
+
         request_obj = recall_request.RecallRequest(
             query=query,
             types=types,
             budget=budget,
             max_tokens=max_tokens,
-            trace=False,
+            trace=trace,
+            query_timestamp=query_timestamp,
+            include=include_opts,
             tags=tags,
             tags_match=tags_match,
         )
 
-        response = await self._memory_api.recall_memories(bank_id, request_obj)
-        return response.results if hasattr(response, "results") else []
+        return await self._memory_api.recall_memories(bank_id, request_obj)
 
     async def areflect(
         self,
@@ -509,6 +580,8 @@ class Hindsight:
         query: str,
         budget: str = "low",
         context: str | None = None,
+        max_tokens: int | None = None,
+        response_schema: dict[str, Any] | None = None,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "any_strict", "all_strict"] = "any",
     ) -> ReflectResponse:
@@ -520,17 +593,24 @@ class Hindsight:
             query: The question or prompt
             budget: Budget level for reflection - "low", "mid", or "high" (default: "low")
             context: Optional additional context
+            max_tokens: Maximum tokens for the response (server default: 4096)
+            response_schema: Optional JSON Schema for structured output. When provided,
+                the response will include a 'structured_output' field with the LLM
+                response parsed according to this schema.
             tags: Optional list of tags to filter memories by
             tags_match: How to match tags - "any" (OR, includes untagged), "all" (AND, includes untagged),
                 "any_strict" (OR, excludes untagged), "all_strict" (AND, excludes untagged). Default: "any"
 
         Returns:
-            ReflectResponse with answer text and optionally facts used
+            ReflectResponse with answer text, optionally facts used, and optionally
+            structured_output if response_schema was provided
         """
         request_obj = reflect_request.ReflectRequest(
             query=query,
             budget=budget,
             context=context,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
             tags=tags,
             tags_match=tags_match,
         )
@@ -786,3 +866,12 @@ class Hindsight:
             bank_id: The memory bank ID
         """
         return _run_async(self._banks_api.delete_bank(bank_id))
+
+    async def adelete_bank(self, bank_id: str):
+        """
+        Delete a memory bank (async).
+
+        Args:
+            bank_id: The memory bank ID
+        """
+        return await self._banks_api.delete_bank(bank_id)

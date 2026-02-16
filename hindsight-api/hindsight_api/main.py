@@ -351,6 +351,7 @@ def main():
         "proxy_headers": args.proxy_headers,
         "ws": "wsproto",  # Use wsproto instead of websockets to avoid deprecation warnings
         "loop": loop_impl,  # Explicitly set event loop implementation
+        "timeout_keep_alive": 30,  # Exceed aiohttp's 15s client timeout so the client always closes first
     }
 
     # Add optional parameters if provided

@@ -702,3 +702,173 @@ class TestMission:
         assert response is not None
         assert response.bank_id == bank_id
         assert response.mission == "Be a helpful PM tracking sprint progress and team capacity"
+
+
+class TestAsyncRecall:
+    """Tests for async recall with full feature parity."""
+
+    @pytest.fixture(autouse=True)
+    async def setup_memories(self, client, bank_id):
+        """Setup: Store some test memories before search tests."""
+        await client.aretain_batch(
+            bank_id=bank_id,
+            items=[
+                {"content": "Alice loves programming in Python"},
+                {"content": "Bob enjoys hiking and outdoor adventures"},
+                {"content": "Charlie is interested in quantum physics"},
+            ],
+        )
+
+    @pytest.mark.asyncio
+    async def test_arecall_returns_recall_response(self, client, bank_id):
+        """Test that arecall returns a RecallResponse (not a list)."""
+        from hindsight_client_api.models.recall_response import RecallResponse
+
+        response = await client.arecall(
+            bank_id=bank_id,
+            query="What does Alice like?",
+        )
+
+        assert isinstance(response, RecallResponse)
+        assert response.results is not None
+        assert len(response.results) > 0
+
+    @pytest.mark.asyncio
+    async def test_arecall_with_include_chunks(self, client, bank_id):
+        """Test arecall with include_chunks returns raw text chunks."""
+        response = await client.arecall(
+            bank_id=bank_id,
+            query="programming",
+            include_chunks=True,
+        )
+
+        assert response is not None
+        assert response.results is not None
+        # chunks should be present (may be empty dict if not yet consolidated)
+        assert response.chunks is not None
+
+    @pytest.mark.asyncio
+    async def test_arecall_with_include_entities(self, client, bank_id):
+        """Test arecall with include_entities."""
+        response = await client.arecall(
+            bank_id=bank_id,
+            query="Alice",
+            include_entities=True,
+            max_entity_tokens=500,
+        )
+
+        assert response is not None
+        assert response.results is not None
+
+    @pytest.mark.asyncio
+    async def test_arecall_with_trace(self, client, bank_id):
+        """Test arecall with trace enabled."""
+        response = await client.arecall(
+            bank_id=bank_id,
+            query="outdoor activities",
+            trace=True,
+        )
+
+        assert response is not None
+        assert response.results is not None
+
+    @pytest.mark.asyncio
+    async def test_arecall_full_featured(self, client, bank_id):
+        """Test arecall with all parameters."""
+        response = await client.arecall(
+            bank_id=bank_id,
+            query="What are people's interests?",
+            types=["world"],
+            max_tokens=2048,
+            budget="high",
+            trace=True,
+            include_chunks=True,
+            max_chunk_tokens=4096,
+            include_entities=True,
+            max_entity_tokens=500,
+        )
+
+        assert response is not None
+        assert response.results is not None
+        assert response.chunks is not None
+
+
+class TestAsyncReflect:
+    """Tests for async reflect with full feature parity."""
+
+    @pytest.fixture(autouse=True)
+    async def setup_memories(self, client, bank_id):
+        """Setup: Store some test memories and bank background."""
+        await client.acreate_bank(
+            bank_id=bank_id,
+            mission="I am a helpful AI assistant interested in technology and science.",
+        )
+
+        await client.aretain_batch(
+            bank_id=bank_id,
+            items=[
+                {"content": "The Python programming language is great for data science"},
+                {"content": "Machine learning models can recognize patterns in data"},
+            ],
+        )
+
+    @pytest.mark.asyncio
+    async def test_areflect_with_max_tokens(self, client, bank_id):
+        """Test areflect with max_tokens parameter."""
+        response = await client.areflect(
+            bank_id=bank_id,
+            query="What do you think about Python?",
+            max_tokens=500,
+        )
+
+        assert response is not None
+        assert response.text is not None
+        assert len(response.text) > 0
+
+    @pytest.mark.asyncio
+    async def test_areflect_with_structured_output(self, client, bank_id):
+        """Test areflect with response_schema for structured output."""
+        from pydantic import BaseModel
+
+        class RecommendationResponse(BaseModel):
+            recommendation: str
+            reasons: list[str]
+            confidence: str | None = None
+
+        response = await client.areflect(
+            bank_id=bank_id,
+            query="What programming language should I learn for data science?",
+            response_schema=RecommendationResponse.model_json_schema(),
+            max_tokens=10000,
+        )
+
+        assert response is not None
+        assert response.structured_output is not None
+        result = RecommendationResponse.model_validate(response.structured_output)
+        assert result.recommendation
+        assert isinstance(result.reasons, list)
+
+
+class TestAsyncDeleteBank:
+    """Tests for async bank deletion."""
+
+    @pytest.mark.asyncio
+    async def test_adelete_bank(self, client):
+        """Test deleting a bank using the async method."""
+        bank_id = f"test_bank_adelete_{uuid.uuid4().hex[:12]}"
+
+        # Create bank with some data using async API
+        await client.acreate_bank(
+            bank_id=bank_id,
+            mission="This bank will be deleted via async",
+        )
+        await client.aretain(
+            bank_id=bank_id,
+            content="Some memory to store",
+        )
+
+        # Delete using async method
+        response = await client.adelete_bank(bank_id=bank_id)
+
+        assert response is not None
+        assert response.success is True
