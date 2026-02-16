@@ -1,0 +1,10 @@
+generatorName: go
+outputDir: ./
+inputSpec: ../../hindsight-docs/static/openapi.json
+packageName: hindsight
+gitUserId: vectorize-io
+gitRepoId: hindsight-client-go
+isGoSubmodule: false
+enumClassPrefix: true
+structPrefix: true
+generateInterfaces: true

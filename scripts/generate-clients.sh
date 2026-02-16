@@ -344,11 +344,58 @@ GO_CLIENT_DIR="$CLIENTS_DIR/go"
 if ! command -v go &> /dev/null; then
     echo "⚠ Go not found, skipping Go client generation"
     echo "  Install Go 1.25+ from https://go.dev/dl/"
+elif ! command -v java &> /dev/null; then
+    echo "⚠ Java not found, skipping Go client generation"
+    echo "  Install Java 11+ from https://adoptium.net/"
 else
-    echo "Regenerating Go client (via ogen)..."
+    echo "Regenerating Go client (via OpenAPI Generator)..."
     cd "$GO_CLIENT_DIR"
-    go generate ./...
+
+    # Download OpenAPI Generator if not present
+    OPENAPI_GEN_VERSION="7.10.0"
+    OPENAPI_GEN_JAR="openapi-generator-cli.jar"
+    if [ ! -f "$OPENAPI_GEN_JAR" ]; then
+        echo "Downloading OpenAPI Generator ${OPENAPI_GEN_VERSION}..."
+        curl -L "https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/${OPENAPI_GEN_VERSION}/openapi-generator-cli-${OPENAPI_GEN_VERSION}.jar" -o "$OPENAPI_GEN_JAR"
+    fi
+
+    # Save maintained files to temp
+    TEMP_DIR=$(mktemp -d)
+    echo "Preserving maintained files..."
+    [ -f "README.md" ] && cp README.md "$TEMP_DIR/"
+    [ -f "integration_test.go" ] && cp integration_test.go "$TEMP_DIR/"
+    [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
+    [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
+
+    # Remove old generated files
+    echo "Removing old generated code..."
+    rm -f api_*.go model_*.go client.go configuration.go response.go utils.go
+    rm -rf docs/ .openapi-generator/
+    rm -f go.mod go.sum
+
+    # Generate new client
+    echo "Generating client from OpenAPI spec..."
+    java -jar "$OPENAPI_GEN_JAR" generate \
+        -i "$OPENAPI_SPEC" \
+        -g go \
+        -o . \
+        --package-name hindsight \
+        --git-user-id vectorize-io \
+        --git-repo-id hindsight-client-go
+
+    # Restore maintained files from temp
+    echo "Restoring maintained files..."
+    [ -f "$TEMP_DIR/README.md" ] && mv "$TEMP_DIR/README.md" .
+    [ -f "$TEMP_DIR/integration_test.go" ] && mv "$TEMP_DIR/integration_test.go" .
+    [ -f "$TEMP_DIR/null_test.go" ] && mv "$TEMP_DIR/null_test.go" .
+    [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
+    rm -rf "$TEMP_DIR"
+
+    # Initialize module and build
+    echo "Building Go client..."
+    go mod tidy
     go build ./...
+
     echo "✓ Go client generated at $GO_CLIENT_DIR"
 fi
 echo ""
