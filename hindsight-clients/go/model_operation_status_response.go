@@ -28,6 +28,8 @@ type OperationStatusResponse struct {
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	CompletedAt NullableString `json:"completed_at,omitempty"`
 	ErrorMessage NullableString `json:"error_message,omitempty"`
+	ResultMetadata map[string]interface{} `json:"result_metadata,omitempty"`
+	ChildOperations []ChildOperationStatus `json:"child_operations,omitempty"`
 }
 
 type _OperationStatusResponse OperationStatusResponse
@@ -309,6 +311,72 @@ func (o *OperationStatusResponse) UnsetErrorMessage() {
 	o.ErrorMessage.Unset()
 }
 
+// GetResultMetadata returns the ResultMetadata field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetResultMetadata() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.ResultMetadata
+}
+
+// GetResultMetadataOk returns a tuple with the ResultMetadata field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetResultMetadataOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.ResultMetadata) {
+		return map[string]interface{}{}, false
+	}
+	return o.ResultMetadata, true
+}
+
+// HasResultMetadata returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasResultMetadata() bool {
+	if o != nil && !IsNil(o.ResultMetadata) {
+		return true
+	}
+
+	return false
+}
+
+// SetResultMetadata gets a reference to the given map[string]interface{} and assigns it to the ResultMetadata field.
+func (o *OperationStatusResponse) SetResultMetadata(v map[string]interface{}) {
+	o.ResultMetadata = v
+}
+
+// GetChildOperations returns the ChildOperations field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *OperationStatusResponse) GetChildOperations() []ChildOperationStatus {
+	if o == nil {
+		var ret []ChildOperationStatus
+		return ret
+	}
+	return o.ChildOperations
+}
+
+// GetChildOperationsOk returns a tuple with the ChildOperations field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *OperationStatusResponse) GetChildOperationsOk() ([]ChildOperationStatus, bool) {
+	if o == nil || IsNil(o.ChildOperations) {
+		return nil, false
+	}
+	return o.ChildOperations, true
+}
+
+// HasChildOperations returns a boolean if a field has been set.
+func (o *OperationStatusResponse) HasChildOperations() bool {
+	if o != nil && !IsNil(o.ChildOperations) {
+		return true
+	}
+
+	return false
+}
+
+// SetChildOperations gets a reference to the given []ChildOperationStatus and assigns it to the ChildOperations field.
+func (o *OperationStatusResponse) SetChildOperations(v []ChildOperationStatus) {
+	o.ChildOperations = v
+}
+
 func (o OperationStatusResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -335,6 +403,12 @@ func (o OperationStatusResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.ErrorMessage.IsSet() {
 		toSerialize["error_message"] = o.ErrorMessage.Get()
+	}
+	if o.ResultMetadata != nil {
+		toSerialize["result_metadata"] = o.ResultMetadata
+	}
+	if o.ChildOperations != nil {
+		toSerialize["child_operations"] = o.ChildOperations
 	}
 	return toSerialize, nil
 }

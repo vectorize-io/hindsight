@@ -2423,6 +2423,28 @@ components:
       - operation_id
       - success
       title: CancelOperationResponse
+    ChildOperationStatus:
+      description: Status of a child operation (for batch operations).
+      properties:
+        operation_id:
+          title: Operation Id
+          type: string
+        status:
+          title: Status
+          type: string
+        sub_batch_index:
+          nullable: true
+          type: integer
+        items_count:
+          nullable: true
+          type: integer
+        error_message:
+          nullable: true
+          type: string
+      required:
+      - operation_id
+      - status
+      title: ChildOperationStatus
     ChunkData:
       description: Chunk data for a single chunk.
       properties:
@@ -3442,6 +3464,14 @@ components:
         error_message:
           nullable: true
           type: string
+        result_metadata:
+          additionalProperties: {}
+          nullable: true
+        child_operations:
+          items:
+            $ref: '#/components/schemas/ChildOperationStatus'
+          nullable: true
+          type: array
       required:
       - operation_id
       - status
