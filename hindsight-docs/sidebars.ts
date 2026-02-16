@@ -167,6 +167,14 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'sdks/go',
+          label: 'Go',
+          customProps: {
+            icon: "/img/icons/golang.png"
+          }
+        },
+        {
+          type: 'doc',
           id: 'sdks/cli',
           label: 'CLI',
         },

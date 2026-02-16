@@ -489,8 +489,10 @@ def convert_tags_to_structured(tags: list[str]) -> dict[str, str]:
     - sdk: Package name (detected from tag values)
     - topic: anything else (Learning, Quick Start, etc.)
 
-    If sdk tag starts with '@vectorize-io', it's Node.js.
-    Otherwise assumes Python.
+    Supported languages:
+    - Node.js: packages starting with '@vectorize-io'
+    - Go: packages ending with '-go' or containing 'go-'
+    - Python: everything else
     """
     structured = {}
     topic_tags = {"Learning", "Quick Start", "Recommendation", "Chat"}

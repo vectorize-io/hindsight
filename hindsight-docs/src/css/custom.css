@@ -639,8 +639,8 @@ article p {
   line-height: 1.7;
 }
 
-/* Links with gradient */
-article a:not(.button):not([class*="hash-link"]) {
+/* Links with gradient - exclude RecipeCarousel cards and sidebar links */
+article a:not(.button):not([class*="hash-link"]):not([class*="card"]):not([class*="menu__link"]) {
   background: var(--hindsight-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
