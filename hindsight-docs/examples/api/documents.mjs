@@ -22,12 +22,12 @@ await client.retain('my-bank', 'Alice presented the Q4 roadmap...', {
     document_id: 'meeting-2024-03-15'
 });
 
-// Batch retain
+// Batch retain for a document with different sections
 await client.retainBatch('my-bank', [
-    { content: 'Item 1: Product launch delayed to Q2' },
-    { content: 'Item 2: New hiring targets announced' },
-    { content: 'Item 3: Budget approved for ML team' }
-], { documentId: 'meeting-2024-03-15' });
+    { content: 'Item 1: Product launch delayed to Q2', document_id: 'meeting-2024-03-15-section-1' },
+    { content: 'Item 2: New hiring targets announced', document_id: 'meeting-2024-03-15-section-2' },
+    { content: 'Item 3: Budget approved for ML team', document_id: 'meeting-2024-03-15-section-3' }
+]);
 // [/docs:document-retain]
 
 
