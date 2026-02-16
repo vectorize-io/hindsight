@@ -40,13 +40,13 @@ interface ChildOperationStatus {
 }
 
 interface OperationDetails {
-  operation_id?: string;
-  status?: string;
-  operation_type?: string;
-  created_at?: string | null;
-  updated_at?: string | null;
-  completed_at?: string | null;
-  error_message?: string | null;
+  operation_id: string;
+  status: string;
+  operation_type: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
   result_metadata?: {
     items_count?: number;
     total_tokens?: number;
