@@ -381,7 +381,12 @@ else
         -o . \
         --package-name hindsight \
         --git-user-id vectorize-io \
-        --git-repo-id hindsight-client-go
+        --git-repo-id hindsight-client-go \
+        --global-property apiDocs=false,apiTests=false,modelDocs=false,modelTests=false
+
+    # Remove OpenAPI Generator boilerplate files
+    echo "Removing boilerplate files..."
+    rm -rf docs/ git_push.sh .travis.yml .gitlab-ci.yml .openapi-generator-ignore .openapi-generator/
 
     # Restore maintained files from temp
     echo "Restoring maintained files..."
