@@ -48,10 +48,14 @@ await client.retain('my-bank', 'Project deadline: April 15 (extended)', {
 const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
 
 // Get document to expand context from recall results
-const { data: doc } = await sdk.getDocument({
+const { data: doc, error } = await sdk.getDocument({
     client: apiClient,
     path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15' }
 });
+
+if (error) {
+    throw new Error(`Failed to get document: ${JSON.stringify(error)}`);
+}
 
 console.log(`Document: ${doc.id}`);
 console.log(`Original text: ${doc.original_text}`);

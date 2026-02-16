@@ -72,14 +72,15 @@ client.retain_batch(
     items=[
         {
             "content": "User Alice said she loves the new dashboard",
-            "tags": ["user:alice", "feedback"]
+            "tags": ["user:alice", "feedback"],
+            "document_id": "user_feedback_001"
         },
         {
             "content": "User Bob reported a bug in the search feature",
-            "tags": ["user:bob", "bug-report"]
+            "tags": ["user:bob", "bug-report"],
+            "document_id": "user_feedback_002"
         }
-    ],
-    document_id="user_feedback_001"
+    ]
 )
 # [/docs:retain-with-tags]
 
