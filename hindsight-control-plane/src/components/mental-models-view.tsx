@@ -957,7 +957,8 @@ function MentalModelDetailPanel({
             // Timeout
             setRefreshing(false);
             toast.error("Refresh timeout", {
-              description: "Refresh is taking longer than expected. Check the operations list for status.",
+              description:
+                "Refresh is taking longer than expected. Check the operations list for status.",
             });
             return;
           }
