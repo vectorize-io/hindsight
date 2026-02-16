@@ -90,10 +90,9 @@ client.retain_batch(
 client.retain_batch(
     bank_id="my-bank",
     items=[
-        {"content": "Alice mentioned she prefers dark mode"},
-        {"content": "Bob asked about keyboard shortcuts"}
+        {"content": "Alice mentioned she prefers dark mode", "document_id": "support_session_123_msg_1"},
+        {"content": "Bob asked about keyboard shortcuts", "document_id": "support_session_123_msg_2"}
     ],
-    document_id="support_session_123",
     document_tags=["session:123", "support"]  # Applied to all items
 )
 # [/docs:retain-with-document-tags]

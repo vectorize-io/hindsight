@@ -50,7 +50,7 @@ const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }
 // Get document to expand context from recall results
 const { data: doc, error } = await sdk.getDocument({
     client: apiClient,
-    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15' }
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' }
 });
 
 if (error) {
@@ -68,7 +68,7 @@ console.log(`Created: ${doc.created_at}`);
 // Delete document and all its memories
 const { data: deleteResult } = await sdk.deleteDocument({
     client: apiClient,
-    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15' }
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' }
 });
 
 console.log(`Deleted ${deleteResult.memory_units_deleted} memories`);
