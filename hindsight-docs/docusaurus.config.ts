@@ -201,29 +201,37 @@ const config: Config = {
           className: 'navbar-item-sdks',
         },
         {
-          to: '/api-reference',
+          to: '/faq',
           position: 'left',
-          label: 'API Reference',
-          className: 'navbar-item-api',
-        },
-        {
-          type: 'doc',
-          docId: 'cookbook/index',
-          position: 'left',
-          label: 'Cookbook',
-          className: 'navbar-item-cookbook',
-        },
-        {
-          to: '/blog',
-          position: 'left',
-          label: 'Blog',
-          className: 'navbar-item-blog',
+          label: 'FAQ',
+          className: 'navbar-item-faq',
         },
         {
           to: '/changelog',
           position: 'left',
           label: 'Changelog',
           className: 'navbar-item-changelog',
+        },
+        {
+          type: 'dropdown',
+          label: 'Resources',
+          position: 'left',
+          className: 'navbar-item-resources',
+          items: [
+            {
+              type: 'doc',
+              docId: 'cookbook/index',
+              label: 'Cookbook',
+            },
+            {
+              to: '/blog',
+              label: 'Blog',
+            },
+            {
+              to: '/api-reference',
+              label: 'API Reference',
+            },
+          ],
         },
         {
           href: 'https://ui.hindsight.vectorize.io/signup',
