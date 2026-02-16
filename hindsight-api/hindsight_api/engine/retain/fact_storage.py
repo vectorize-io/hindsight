@@ -8,6 +8,7 @@ import json
 import logging
 
 from ...config import get_config
+from ..embeddings import quantize_embedding
 from ..memory_engine import fq_table
 from .fact_extraction import _sanitize_text
 from .types import ProcessedFact
@@ -73,6 +74,13 @@ async def insert_facts_batch(
     # Note: tags are passed as JSON strings and converted back to varchar[] via jsonb_array_elements_text + array_agg
     # Query varies based on text search backend
     config = get_config()
+
+    # Build embedding column expression with quantization if enabled
+    if config.vector_quantization_enabled:
+        embedding_expr = f"quantize_to_{config.vector_quantization_type}(embedding)"
+    else:
+        embedding_expr = "embedding"
+
     if config.text_search_extension == "vchord":
         # VectorChord: manually tokenize and insert search_vector
         query = f"""
@@ -87,7 +95,7 @@ async def insert_facts_batch(
                                      context, fact_type, confidence_score, metadata, chunk_id, document_id, tags, search_vector)
             SELECT
                 $1,
-                text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                text, {embedding_expr}, event_date, occurred_start, occurred_end, mentioned_at,
                 context, fact_type, confidence_score, metadata, chunk_id, document_id,
                 COALESCE(
                     (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
@@ -112,7 +120,7 @@ async def insert_facts_batch(
                                      context, fact_type, confidence_score, metadata, chunk_id, document_id, tags)
             SELECT
                 $1,
-                text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
+                text, {embedding_expr}, event_date, occurred_start, occurred_end, mentioned_at,
                 context, fact_type, confidence_score, metadata, chunk_id, document_id,
                 COALESCE(
                     (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),

@@ -72,16 +72,29 @@ async def tool_search_mental_models(
         params.append(exclude_ids)
         next_param += 1
 
+    # Build vector reference with optional quantization
+    from ...config import get_config
+    config = get_config()
+    if config.vector_quantization_enabled:
+        if config.vector_quantization_type == "rabitq8":
+            query_vec_ref = "quantize_to_rabitq8($2::vector)"
+        elif config.vector_quantization_type == "rabitq4":
+            query_vec_ref = "quantize_to_rabitq4($2::vector)"
+        else:
+            query_vec_ref = "$2::vector"
+    else:
+        query_vec_ref = "$2::vector"
+
     # Search mental models by embedding similarity
     rows = await conn.fetch(
         f"""
         SELECT
             id, name, content,
             tags, created_at, last_refreshed_at,
-            1 - (embedding <=> $2::vector) as relevance
+            1 - (embedding <=> {query_vec_ref}) as relevance
         FROM {fq_table("mental_models")}
         WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
-        ORDER BY embedding <=> $2::vector
+        ORDER BY embedding <=> {query_vec_ref}
         LIMIT $3
         """,
         *params,

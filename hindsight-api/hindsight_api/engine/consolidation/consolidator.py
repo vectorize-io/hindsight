@@ -609,23 +609,31 @@ async def _execute_update_action(
     # - mentioned_at: GREATEST keeps the most recent mention time
     # - tags: merged from existing + source fact (for visibility)
     t0 = time.time()
+
+    # Build embedding expression with quantization if enabled
+    from ..embeddings import quantize_embedding
+    config = get_config()
+    if embedding_str:
+        embedding_expr = quantize_embedding(eval(embedding_str), config.vector_quantization_type)
+    else:
+        embedding_expr = "NULL"
+
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
         SET text = $1,
-            embedding = $2::vector,
-            history = $3,
-            source_memory_ids = $4,
-            proof_count = $5,
-            tags = $10,
+            embedding = {embedding_expr},
+            history = $2,
+            source_memory_ids = $3,
+            proof_count = $4,
+            tags = $9,
             updated_at = now(),
-            occurred_start = LEAST(occurred_start, COALESCE($7, occurred_start)),
-            occurred_end = GREATEST(occurred_end, COALESCE($8, occurred_end)),
-            mentioned_at = GREATEST(mentioned_at, COALESCE($9, mentioned_at))
-        WHERE id = $6
+            occurred_start = LEAST(occurred_start, COALESCE($6, occurred_start)),
+            occurred_end = GREATEST(occurred_end, COALESCE($7, occurred_end)),
+            mentioned_at = GREATEST(mentioned_at, COALESCE($8, mentioned_at))
+        WHERE id = $5
         """,
         new_text,
-        embedding_str,
         json.dumps(history),
         source_ids,
         len(source_ids),
@@ -1019,6 +1027,14 @@ async def _create_observation_directly(
 
     # Query varies based on text search backend
     config = get_config()
+
+    # Build embedding expression with quantization if enabled
+    from ..embeddings import quantize_embedding
+    if embedding_str:
+        embedding_expr = quantize_embedding(eval(embedding_str), config.vector_quantization_type)
+    else:
+        embedding_expr = "NULL"
+
     if config.text_search_extension == "vchord":
         # VectorChord: manually tokenize and insert search_vector
         query = f"""
@@ -1026,7 +1042,7 @@ async def _create_observation_directly(
                 id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
                 tags, event_date, occurred_start, occurred_end, mentioned_at, search_vector
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10,
+            VALUES ($1, $2, $3, 'observation', {embedding_expr}, 1, $4, '[]'::jsonb, $5, $6, $7, $8, $9,
                     tokenize($3, 'llmlingua2')::bm25_catalog.bm25vector)
             RETURNING id
         """
@@ -1038,7 +1054,7 @@ async def _create_observation_directly(
                 id, bank_id, text, fact_type, embedding, proof_count, source_memory_ids, history,
                 tags, event_date, occurred_start, occurred_end, mentioned_at
             )
-            VALUES ($1, $2, $3, 'observation', $4::vector, 1, $5, '[]'::jsonb, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, 'observation', {embedding_expr}, 1, $4, '[]'::jsonb, $5, $6, $7, $8, $9)
             RETURNING id
         """
 
@@ -1047,7 +1063,6 @@ async def _create_observation_directly(
         observation_id,
         bank_id,
         observation_text,
-        embedding_str,
         [source_memory_id],
         obs_tags,
         obs_event_date,

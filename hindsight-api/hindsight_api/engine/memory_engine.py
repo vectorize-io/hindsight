@@ -4814,49 +4814,90 @@ class MemoryEngine(MemoryEngineInterface):
         # Generate embedding for the content
         embedding_text = f"{name} {content}"
         embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
-        # Convert embedding to string for asyncpg vector type
-        embedding_str = str(embedding[0]) if embedding else None
+        # Convert embedding to string for asyncpg vector type and apply quantization if enabled
+        from .embeddings import quantize_embedding
+        config = get_config()
+        embedding_expr = quantize_embedding(embedding[0], config.vector_quantization_type) if embedding else None
 
         async with acquire_with_retry(pool) as conn:
             if mental_model_id:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (id, bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 2048), COALESCE($9, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger
-                    """,
-                    mental_model_id,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
+                # Use raw SQL expression for quantized embedding
+                if embedding_expr:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (id, bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, $3, $4, $5, {embedding_expr}, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger
+                        """,
+                        mental_model_id,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (id, bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, $3, $4, $5, NULL, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger
+                        """,
+                        mental_model_id,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
             else:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {fq_table("mental_models")}
-                    (bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
-                    VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 2048), COALESCE($8, '{{"refresh_after_consolidation": false}}'::jsonb))
-                    RETURNING id, bank_id, name, source_query, content, tags,
-                              last_refreshed_at, created_at, reflect_response,
-                              max_tokens, trigger
-                    """,
-                    bank_id,
-                    name,
-                    source_query,
-                    content,
-                    embedding_str,
-                    tags or [],
-                    max_tokens,
-                    json.dumps(trigger) if trigger else None,
-                )
+                # Use raw SQL expression for quantized embedding
+                if embedding_expr:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, $3, $4, {embedding_expr}, $5, COALESCE($6, 2048), COALESCE($7, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger
+                        """,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("mental_models")}
+                        (bank_id, name, source_query, content, embedding, tags, max_tokens, trigger)
+                        VALUES ($1, $2, $3, $4, NULL, $5, COALESCE($6, 2048), COALESCE($7, '{{"refresh_after_consolidation": false}}'::jsonb))
+                        RETURNING id, bank_id, name, source_query, content, tags,
+                                  last_refreshed_at, created_at, reflect_response,
+                                  max_tokens, trigger
+                        """,
+                        bank_id,
+                        name,
+                        source_query,
+                        content,
+                        tags or [],
+                        max_tokens,
+                        json.dumps(trigger) if trigger else None,
+                    )
 
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         return self._row_to_mental_model(row)
@@ -5004,13 +5045,15 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(content)
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
-                # Also update embedding (convert to string for asyncpg vector type)
+                # Also update embedding (convert to string for asyncpg vector type and apply quantization if enabled)
+                from .embeddings import quantize_embedding
+                config = get_config()
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])
                 if embedding:
-                    updates.append(f"embedding = ${param_idx}")
-                    params.append(str(embedding[0]))
-                    param_idx += 1
+                    embedding_expr = quantize_embedding(embedding[0], config.vector_quantization_type)
+                    updates.append(f"embedding = {embedding_expr}")
+                    # Note: no parameter added since embedding_expr is a raw SQL expression
 
             if reflect_response is not None:
                 updates.append(f"reflect_response = ${param_idx}")

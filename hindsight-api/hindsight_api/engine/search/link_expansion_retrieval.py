@@ -35,7 +35,20 @@ async def _find_semantic_seeds(
     tags_match: TagsMatch = "any",
 ) -> list[RetrievalResult]:
     """Find semantic seeds via embedding search."""
+    from ...config import get_config
     from .tags import build_tags_where_clause_simple
+
+    # Build vector reference with optional quantization
+    config = get_config()
+    if config.vector_quantization_enabled:
+        if config.vector_quantization_type == "rabitq8":
+            query_vec_ref = "quantize_to_rabitq8($1::vector)"
+        elif config.vector_quantization_type == "rabitq4":
+            query_vec_ref = "quantize_to_rabitq4($1::vector)"
+        else:
+            query_vec_ref = "$1::vector"
+    else:
+        query_vec_ref = "$1::vector"
 
     tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
     params = [query_embedding_str, bank_id, fact_type, threshold, limit]
@@ -46,14 +59,14 @@ async def _find_semantic_seeds(
         f"""
         SELECT id, text, context, event_date, occurred_start, occurred_end,
                mentioned_at, embedding, fact_type, document_id, chunk_id, tags,
-               1 - (embedding <=> $1::vector) AS similarity
+               1 - (embedding <=> {query_vec_ref}) AS similarity
         FROM {fq_table("memory_units")}
         WHERE bank_id = $2
           AND embedding IS NOT NULL
           AND fact_type = $3
-          AND (1 - (embedding <=> $1::vector)) >= $4
+          AND (1 - (embedding <=> {query_vec_ref})) >= $4
           {tags_clause}
-        ORDER BY embedding <=> $1::vector
+        ORDER BY embedding <=> {query_vec_ref}
         LIMIT $5
         """,
         *params,
