@@ -18,8 +18,27 @@ TOTAL_PASSED=0
 TOTAL_FAILED=0
 FAILED_EXAMPLES=()
 
+# Parse language filter from command line
+LANGUAGE_FILTER=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --lang)
+            LANGUAGE_FILTER="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--lang <python|node|cli|go>]"
+            exit 1
+            ;;
+    esac
+done
+
 echo "======================================"
 echo "Running Documentation Examples"
+if [ -n "$LANGUAGE_FILTER" ]; then
+    echo "Language filter: $LANGUAGE_FILTER"
+fi
 echo "======================================"
 echo ""
 
@@ -51,37 +70,56 @@ run_example() {
 }
 
 # Run Python examples
-echo "======================================"
-echo "Python Examples"
-echo "======================================"
-cd "$PROJECT_ROOT/hindsight-clients/python"
-for f in "$EXAMPLES_DIR"/*.py; do
-    [ -e "$f" ] || continue  # Skip if no files match
-    run_example "$f" "uv run python" "$PROJECT_ROOT/hindsight-clients/python"
-done
-echo ""
+if [ -z "$LANGUAGE_FILTER" ] || [ "$LANGUAGE_FILTER" = "python" ]; then
+    echo "======================================"
+    echo "Python Examples"
+    echo "======================================"
+    cd "$PROJECT_ROOT/hindsight-clients/python"
+    for f in "$EXAMPLES_DIR"/*.py; do
+        [ -e "$f" ] || continue  # Skip if no files match
+        run_example "$f" "uv run python" "$PROJECT_ROOT/hindsight-clients/python"
+    done
+    echo ""
+fi
 
 # Run Node.js examples
-echo "======================================"
-echo "Node.js Examples"
-echo "======================================"
-cd "$PROJECT_ROOT"
-for f in "$EXAMPLES_DIR"/*.mjs; do
-    [ -e "$f" ] || continue  # Skip if no files match
-    run_example "$f" "node" "$PROJECT_ROOT"
-done
-echo ""
+if [ -z "$LANGUAGE_FILTER" ] || [ "$LANGUAGE_FILTER" = "node" ]; then
+    echo "======================================"
+    echo "Node.js Examples"
+    echo "======================================"
+    cd "$PROJECT_ROOT"
+    for f in "$EXAMPLES_DIR"/*.mjs; do
+        [ -e "$f" ] || continue  # Skip if no files match
+        run_example "$f" "node" "$PROJECT_ROOT"
+    done
+    echo ""
+fi
 
 # Run CLI examples
-echo "======================================"
-echo "CLI Examples"
-echo "======================================"
-cd "$PROJECT_ROOT"
-for f in "$EXAMPLES_DIR"/*.sh; do
-    [ -e "$f" ] || continue  # Skip if no files match
-    run_example "$f" "bash" "$PROJECT_ROOT"
-done
-echo ""
+if [ -z "$LANGUAGE_FILTER" ] || [ "$LANGUAGE_FILTER" = "cli" ]; then
+    echo "======================================"
+    echo "CLI Examples"
+    echo "======================================"
+    cd "$PROJECT_ROOT"
+    for f in "$EXAMPLES_DIR"/*.sh; do
+        [ -e "$f" ] || continue  # Skip if no files match
+        run_example "$f" "bash" "$PROJECT_ROOT"
+    done
+    echo ""
+fi
+
+# Run Go examples
+if [ -z "$LANGUAGE_FILTER" ] || [ "$LANGUAGE_FILTER" = "go" ]; then
+    echo "======================================"
+    echo "Go Examples"
+    echo "======================================"
+    cd "$PROJECT_ROOT/hindsight-clients/go"
+    for f in "$EXAMPLES_DIR"/*.go; do
+        [ -e "$f" ] || continue  # Skip if no files match
+        run_example "$f" "go run" "$PROJECT_ROOT/hindsight-clients/go"
+    done
+    echo ""
+fi
 
 # Print summary
 echo "======================================"
