@@ -648,6 +648,80 @@ jobs:
         echo "=== API Server Logs ==="
         cat /tmp/api-server.log || echo "No API server log found"
 
+  test-go-client:
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: groq
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
+      HINDSIGHT_API_URL: http://localhost:8888
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
+      UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: ".python-version"
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+        cache-dependency-path: hindsight-clients/go/go.sum
+
+    - name: Build API
+      working-directory: ./hindsight-api
+      run: uv build
+
+    - name: Install API dependencies
+      working-directory: ./hindsight-api
+      run: uv sync --frozen --no-install-project --index-strategy unsafe-best-match
+
+    - name: Create .env file
+      run: |
+        cat > .env << EOF
+        HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
+        HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
+        HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
+        EOF
+
+    - name: Start API server
+      run: |
+        ./scripts/dev/start-api.sh > /tmp/api-server.log 2>&1 &
+        echo "Waiting for API server to be ready..."
+        for i in {1..60}; do
+          if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+            echo "API server is ready after ${i}s"
+            break
+          fi
+          if [ $i -eq 60 ]; then
+            echo "API server failed to start after 60s"
+            cat /tmp/api-server.log
+            exit 1
+          fi
+          sleep 1
+        done
+
+    - name: Run Go client tests
+      working-directory: ./hindsight-clients/go
+      run: go test -v -tags=integration
+
+    - name: Show API server logs
+      if: always()
+      run: |
+        echo "=== API Server Logs ==="
+        cat /tmp/api-server.log || echo "No API server log found"
+
   test-integration:
     runs-on: ubuntu-latest
     env:
