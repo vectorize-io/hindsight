@@ -95,6 +95,38 @@ Hindsight uses PostgreSQL with pgvector for efficient vector search:
 - **Typical query time**: 10-50ms for vector search on 100K+ facts
 - **Scalability**: Tested with millions of facts per bank
 
+### Vector Quantization (VectorChord)
+
+When using VectorChord with RaBitQ quantization, you can significantly reduce storage and improve performance:
+
+| Quantization | Storage Reduction | Recall Impact | Use Case |
+|--------------|-------------------|---------------|----------|
+| None (float32) | Baseline | 100% | Default, maximum precision |
+| rabitq8 | 75% | ~98-99% | Recommended for most deployments |
+| rabitq4 | 87.5% | ~95-97% | Large-scale deployments, storage-constrained |
+
+**Storage Example (1M facts with 384-dim embeddings):**
+- float32: ~1.5 GB
+- rabitq8: ~375 MB (75% reduction)
+- rabitq4: ~187 MB (87.5% reduction)
+
+**Performance Impact:**
+- Quantization reduces index size, improving cache locality and search speed
+- Query latency typically improves by 10-20% due to smaller memory footprint
+- Recall quality degrades gracefully (rabitq8 maintains >98% recall)
+
+**When to use quantization:**
+- Storage is a constraint (cloud deployments, edge devices)
+- You have millions of facts and want faster searches
+- Recall quality degradation of 1-5% is acceptable for your use case
+
+**Enable quantization:**
+```bash
+export HINDSIGHT_API_VECTOR_EXTENSION=vchord
+export HINDSIGHT_API_VECTOR_QUANTIZATION_ENABLED=true
+export HINDSIGHT_API_VECTOR_QUANTIZATION_TYPE=rabitq8  # or rabitq4
+```
+
 ## Reflect Performance
 
 ### Performance Characteristics

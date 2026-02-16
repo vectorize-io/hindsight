@@ -42,6 +42,28 @@ from ..config import (
 logger = logging.getLogger(__name__)
 
 
+def quantize_embedding(embedding: list[float], quantization_type: str | None) -> str:
+    """
+    Quantize embedding vector for storage.
+
+    Args:
+        embedding: Float vector
+        quantization_type: "rabitq8", "rabitq4", or None (no quantization)
+
+    Returns:
+        SQL expression string for INSERT/UPDATE
+    """
+    if not quantization_type:
+        return f"'{embedding}'::vector"
+
+    if quantization_type == "rabitq8":
+        return f"quantize_to_rabitq8('{embedding}'::vector)"
+    elif quantization_type == "rabitq4":
+        return f"quantize_to_rabitq4('{embedding}'::vector)"
+    else:
+        raise ValueError(f"Unknown quantization type: {quantization_type}")
+
+
 class Embeddings(ABC):
     """
     Abstract base class for embedding generation.

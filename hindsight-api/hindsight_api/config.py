@@ -215,6 +215,8 @@ ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
+ENV_VECTOR_QUANTIZATION_ENABLED = "HINDSIGHT_API_VECTOR_QUANTIZATION_ENABLED"
+ENV_VECTOR_QUANTIZATION_TYPE = "HINDSIGHT_API_VECTOR_QUANTIZATION_TYPE"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
 ENV_PORT = "HINDSIGHT_API_PORT"
@@ -339,6 +341,10 @@ DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord"
 
 # Text search extension (native PostgreSQL, vchord BM25, or Timescale pg_textsearch)
 DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch"
+
+# Vector quantization (RaBitQ for VectorChord)
+DEFAULT_VECTOR_QUANTIZATION_ENABLED = False
+DEFAULT_VECTOR_QUANTIZATION_TYPE = "rabitq8"  # Options: "rabitq8", "rabitq4"
 
 # LiteLLM defaults
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
@@ -628,6 +634,10 @@ class HindsightConfig:
     otel_service_name: str
     otel_deployment_environment: str
 
+    # Vector quantization (RaBitQ for VectorChord)
+    vector_quantization_enabled: bool = static(DEFAULT_VECTOR_QUANTIZATION_ENABLED)
+    vector_quantization_type: str = static(DEFAULT_VECTOR_QUANTIZATION_TYPE)
+
     # Class-level sets for configuration categorization
 
     # CREDENTIAL_FIELDS: Never exposed via API, never configurable per-tenant/bank
@@ -730,6 +740,19 @@ class HindsightConfig:
                 f"Invalid text_search_extension: {self.text_search_extension}. Must be one of: {', '.join(valid_text_search)}"
             )
 
+        # Validate quantization settings
+        if self.vector_quantization_enabled:
+            if self.vector_extension != "vchord":
+                raise ValueError(
+                    "Vector quantization (rabitq8/rabitq4) requires HINDSIGHT_API_VECTOR_EXTENSION=vchord. "
+                    f"Current: {self.vector_extension}"
+                )
+            if self.vector_quantization_type not in ("rabitq8", "rabitq4"):
+                raise ValueError(
+                    f"Invalid vector_quantization_type: {self.vector_quantization_type}. "
+                    "Must be 'rabitq8' or 'rabitq4'"
+                )
+
         # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
         # to ensure the LLM has enough output capacity to extract facts from chunks
         if self.retain_max_completion_tokens <= self.retain_chunk_size:
@@ -757,6 +780,12 @@ class HindsightConfig:
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
             vector_extension=os.getenv(ENV_VECTOR_EXTENSION, DEFAULT_VECTOR_EXTENSION).lower(),
             text_search_extension=os.getenv(ENV_TEXT_SEARCH_EXTENSION, DEFAULT_TEXT_SEARCH_EXTENSION).lower(),
+            vector_quantization_enabled=os.getenv(
+                ENV_VECTOR_QUANTIZATION_ENABLED, str(DEFAULT_VECTOR_QUANTIZATION_ENABLED)
+            ).lower() == "true",
+            vector_quantization_type=os.getenv(
+                ENV_VECTOR_QUANTIZATION_TYPE, DEFAULT_VECTOR_QUANTIZATION_TYPE
+            ).lower(),
             # LLM
             llm_provider=llm_provider,
             llm_api_key=os.getenv(ENV_LLM_API_KEY),

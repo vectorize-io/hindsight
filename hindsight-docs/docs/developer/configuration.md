@@ -122,6 +122,38 @@ To switch between backends:
 
 **Note:** VectorChord uses the `llmlingua2` tokenizer for multilingual support, while native and pg_textsearch use PostgreSQL's English tokenizer.
 
+### Vector Quantization (VectorChord only)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_VECTOR_QUANTIZATION_ENABLED` | Enable RaBitQ quantization for vector storage | `false` |
+| `HINDSIGHT_API_VECTOR_QUANTIZATION_TYPE` | Quantization type: `rabitq8` or `rabitq4` | `rabitq8` |
+
+**Storage Savings:**
+In comparison to float32 vectors:
+- `rabitq8`: 75% reduction (8-bit per dimension)
+- `rabitq4`: 87.5% reduction (4-bit per dimension)
+
+**Trade-offs:**
+- Lower precision in similarity calculations
+- Slightly reduced recall quality
+- Faster searches due to smaller index size
+
+**When to use:**
+- `rabitq8`: Balance between storage and precision (recommended)
+- `rabitq4`: Extreme storage constraints, large-scale deployments
+
+**Requirements:**
+- `HINDSIGHT_API_VECTOR_EXTENSION=vchord` (quantization only works with VectorChord)
+- VectorChord 1.1.0+ installed with `CREATE EXTENSION vchord CASCADE`
+
+**Example:**
+```bash
+export HINDSIGHT_API_VECTOR_EXTENSION=vchord
+export HINDSIGHT_API_VECTOR_QUANTIZATION_ENABLED=true
+export HINDSIGHT_API_VECTOR_QUANTIZATION_TYPE=rabitq8
+```
+
 ### LLM Provider
 
 | Variable | Description | Default |

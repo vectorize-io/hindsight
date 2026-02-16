@@ -106,6 +106,9 @@ def upgrade() -> None:
     # Detect which text search extension to use
     text_search_ext = _detect_text_search_extension()
 
+    # Read embedding dimension from environment, defaulting to 384
+    embedding_dimension = int(os.getenv("DEFAULT_EMBEDDING_DIMENSION", "384"))
+
     # 1. Create learnings table
     op.execute(f"""
         CREATE TABLE {schema}learnings (
@@ -116,7 +119,7 @@ def upgrade() -> None:
             history JSONB DEFAULT '[]'::jsonb,
             mission_context VARCHAR(64),
             pre_mission_change BOOLEAN DEFAULT FALSE,
-            embedding vector(384),
+            embedding vector({embedding_dimension}),
             tags VARCHAR[] DEFAULT ARRAY[]::VARCHAR[],
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
@@ -135,6 +138,7 @@ def upgrade() -> None:
 
     # Create vector index based on detected extension
     if vector_ext == "vchord":
+        # VectorChord requires dimension type modifier for quantized indexes
         op.execute(f"""
             CREATE INDEX idx_learnings_embedding ON {schema}learnings
             USING vchordrq (embedding vector_l2_ops)
@@ -183,7 +187,7 @@ def upgrade() -> None:
             name VARCHAR(256) NOT NULL,
             source_query TEXT NOT NULL,
             content TEXT NOT NULL,
-            embedding vector(384),
+            embedding vector({embedding_dimension}),
             tags VARCHAR[] DEFAULT ARRAY[]::VARCHAR[],
             last_refreshed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
             created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
@@ -202,6 +206,7 @@ def upgrade() -> None:
 
     # Create vector index based on detected extension
     if vector_ext == "vchord":
+        # VectorChord requires dimension type modifier for quantized indexes
         op.execute(f"""
             CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
             USING vchordrq (embedding vector_l2_ops)

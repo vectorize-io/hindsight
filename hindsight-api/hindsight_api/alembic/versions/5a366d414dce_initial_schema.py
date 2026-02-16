@@ -191,13 +191,16 @@ def upgrade() -> None:
     op.execute("CREATE UNIQUE INDEX idx_entities_bank_lower_name ON entities (bank_id, LOWER(canonical_name))")
 
     # Create memory_units table
+    # Read embedding dimension from environment, defaulting to 384
+    embedding_dimension = int(os.getenv("DEFAULT_EMBEDDING_DIMENSION", "384"))
+
     op.create_table(
         "memory_units",
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("bank_id", sa.Text(), nullable=False),
         sa.Column("document_id", sa.Text(), nullable=True),
         sa.Column("text", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(384), nullable=True),
+        sa.Column("embedding", Vector(embedding_dimension), nullable=True),
         sa.Column("context", sa.Text(), nullable=True),
         sa.Column("event_date", postgresql.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("occurred_start", postgresql.TIMESTAMP(timezone=True), nullable=True),

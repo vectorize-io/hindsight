@@ -85,6 +85,19 @@ def set_default_graph_retriever(retriever: GraphRetriever) -> None:
     _default_graph_retriever = retriever
 
 
+def _build_quantized_query(query_embedding: str, quantization_type: str | None) -> str:
+    """Wrap query embedding with quantization function if enabled."""
+    if not quantization_type:
+        return query_embedding
+
+    if quantization_type == "rabitq8":
+        return f"quantize_to_rabitq8({query_embedding}::vector)"
+    elif quantization_type == "rabitq4":
+        return f"quantize_to_rabitq4({query_embedding}::vector)"
+    else:
+        raise ValueError(f"Unknown quantization type: {quantization_type}")
+
+
 async def retrieve_semantic_bm25_combined(
     conn,
     query_emb_str: str,
@@ -114,6 +127,19 @@ async def retrieve_semantic_bm25_combined(
     """
     import re
 
+    # Get config for quantization settings
+    config = get_config()
+    # Build vector reference with optional quantization
+    if config.vector_quantization_enabled:
+        if config.vector_quantization_type == "rabitq8":
+            query_vec_ref = "quantize_to_rabitq8($1::vector)"
+        elif config.vector_quantization_type == "rabitq4":
+            query_vec_ref = "quantize_to_rabitq4($1::vector)"
+        else:
+            query_vec_ref = "$1::vector"
+    else:
+        query_vec_ref = "$1::vector"
+
     # Sanitize query text for BM25 (same as retrieve_bm25)
     sanitized_text = re.sub(r"[^\w\s]", " ", query_text.lower())
     tokens = [token for token in sanitized_text.split() if token]
@@ -128,15 +154,15 @@ async def retrieve_semantic_bm25_combined(
             f"""
             WITH semantic_ranked AS (
                 SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, embedding, fact_type, document_id, chunk_id, tags,
-                       1 - (embedding <=> $1::vector) AS similarity,
+                       1 - (embedding <=> {query_vec_ref}) AS similarity,
                        NULL::float AS bm25_score,
                        'semantic' AS source,
-                       ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> $1::vector) AS rn
+                       ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> {query_vec_ref}) AS rn
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $2
                   AND embedding IS NOT NULL
                   AND fact_type = ANY($3)
-                  AND (1 - (embedding <=> $1::vector)) >= 0.3
+                  AND (1 - (embedding <=> {query_vec_ref})) >= 0.3
                   {tags_clause}
             )
             SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, embedding, fact_type, document_id, chunk_id, tags,
@@ -157,9 +183,6 @@ async def retrieve_semantic_bm25_combined(
             if ft in result_dict:
                 result_dict[ft][0].append(RetrievalResult.from_db_row(row))
         return result_dict
-
-    # Build BM25 query based on text search backend
-    config = get_config()
 
     # Build tags clause - param 6 if tags provided
     tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
@@ -195,15 +218,15 @@ async def retrieve_semantic_bm25_combined(
     query = f"""
         WITH semantic_ranked AS (
             SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, embedding, fact_type, document_id, chunk_id, tags,
-                   1 - (embedding <=> $1::vector) AS similarity,
+                   1 - (embedding <=> {query_vec_ref}) AS similarity,
                    NULL::float AS bm25_score,
                    'semantic' AS source,
-                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> $1::vector) AS rn
+                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> {query_vec_ref}) AS rn
             FROM {fq_table("memory_units")}
             WHERE bank_id = $2
               AND embedding IS NOT NULL
               AND fact_type = ANY($3)
-              AND (1 - (embedding <=> $1::vector)) >= 0.3
+              AND (1 - (embedding <=> {query_vec_ref})) >= 0.3
               {tags_clause}
         ),
         bm25_ranked AS (
@@ -285,6 +308,19 @@ async def retrieve_temporal_combined(
     """
     from ..memory_engine import fq_table
 
+    # Get config for quantization settings
+    config = get_config()
+    # Build vector reference with optional quantization
+    if config.vector_quantization_enabled:
+        if config.vector_quantization_type == "rabitq8":
+            query_vec_ref = "quantize_to_rabitq8($1::vector)"
+        elif config.vector_quantization_type == "rabitq4":
+            query_vec_ref = "quantize_to_rabitq4($1::vector)"
+        else:
+            query_vec_ref = "$1::vector"
+    else:
+        query_vec_ref = "$1::vector"
+
     # Ensure dates are timezone-aware
     if start_date.tzinfo is None:
         start_date = start_date.replace(tzinfo=UTC)
@@ -302,8 +338,8 @@ async def retrieve_temporal_combined(
         f"""
         WITH ranked_entries AS (
             SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, embedding, fact_type, document_id, chunk_id, tags,
-                   1 - (embedding <=> $1::vector) AS similarity,
-                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY COALESCE(occurred_start, mentioned_at, occurred_end) DESC, embedding <=> $1::vector) AS rn
+                   1 - (embedding <=> {query_vec_ref}) AS similarity,
+                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY COALESCE(occurred_start, mentioned_at, occurred_end) DESC, embedding <=> {query_vec_ref}) AS rn
             FROM {fq_table("memory_units")}
             WHERE bank_id = $2
               AND fact_type = ANY($3)
@@ -318,7 +354,7 @@ async def retrieve_temporal_combined(
                   OR
                   (occurred_end IS NOT NULL AND occurred_end BETWEEN $4 AND $5)
               )
-              AND (1 - (embedding <=> $1::vector)) >= $6
+              AND (1 - (embedding <=> {query_vec_ref})) >= $6
               {tags_clause}
         )
         SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, embedding, fact_type, document_id, chunk_id, tags, similarity

@@ -124,7 +124,12 @@ class DefaultExtensionContext(ExtensionContext):
                 dimension = getattr(embeddings, "dimension", None)
                 if dimension is not None:
                     ensure_embedding_dimension(
-                        db_url, dimension, schema=schema, vector_extension=config.vector_extension
+                        db_url,
+                        dimension,
+                        schema=schema,
+                        vector_extension=config.vector_extension,
+                        quantization_enabled=config.vector_quantization_enabled,
+                        quantization_type=config.vector_quantization_type,
                     )
 
         # Ensure vector indexes match the configured extension

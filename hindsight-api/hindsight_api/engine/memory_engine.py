@@ -1003,6 +1003,8 @@ class MemoryEngine(MemoryEngineInterface):
                             self.embeddings.dimension,
                             schema=schema,
                             vector_extension=config.vector_extension,
+                            quantization_enabled=config.vector_quantization_enabled,
+                            quantization_type=config.vector_quantization_type,
                         )
 
                 # Ensure vector indexes match the configured extension

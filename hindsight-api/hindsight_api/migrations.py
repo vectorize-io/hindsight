@@ -360,6 +360,8 @@ def ensure_embedding_dimension(
     required_dimension: int,
     schema: str | None = None,
     vector_extension: str = "pgvector",
+    quantization_enabled: bool = False,
+    quantization_type: str = "rabitq8",
 ) -> None:
     """
     Ensure the embedding column dimension matches the model's dimension.
@@ -370,11 +372,15 @@ def ensure_embedding_dimension(
     - If dimensions differ and table is empty: ALTER COLUMN to new dimension
     - If dimensions differ and table has data: raise error with migration guidance
 
+    Handles both standard vector types and VectorChord quantized types (rabitq4/rabitq8).
+
     Args:
         database_url: SQLAlchemy database URL
         required_dimension: The embedding dimension required by the model
         schema: Target PostgreSQL schema name (None for public)
         vector_extension: Configured vector extension ("pgvector" or "vchord")
+        quantization_enabled: Whether VectorChord quantization is enabled
+        quantization_type: Type of quantization ("rabitq8" or "rabitq4")
 
     Raises:
         RuntimeError: If dimension mismatch with existing data
@@ -402,27 +408,43 @@ def ensure_embedding_dimension(
         vector_ext = _detect_vector_extension(conn, vector_extension)
         logger.info(f"Using vector extension: {vector_ext}")
 
-        # Get current column dimension from pg_attribute
-        # pgvector stores dimension in atttypmod
-        current_dim = conn.execute(
+        # Get current column type and dimension
+        # Query both the type name and dimension (atttypmod)
+        type_info = conn.execute(
             text("""
-                SELECT atttypmod
+                SELECT t.typname, a.atttypmod
                 FROM pg_attribute a
                 JOIN pg_class c ON a.attrelid = c.oid
                 JOIN pg_namespace n ON c.relnamespace = n.oid
+                JOIN pg_type t ON a.atttypid = t.oid
                 WHERE n.nspname = :schema
                   AND c.relname = 'memory_units'
                   AND a.attname = 'embedding'
             """),
             {"schema": schema_name},
-        ).scalar()
+        ).fetchone()
+
+        if type_info is None:
+            logger.warning("Could not determine current embedding column type, skipping check")
+            return
+
+        current_type_name = type_info[0]
+        current_dim = type_info[1]
+
+        # Determine if column is using quantized type
+        is_quantized = current_type_name in ("rabitq4", "rabitq8")
 
         if current_dim is None:
             logger.warning("Could not determine current embedding dimension, skipping check")
             return
 
-        # pgvector stores dimension directly in atttypmod (no offset like other types)
+        # pgvector and VectorChord store dimension directly in atttypmod
         current_dimension = current_dim
+
+        logger.info(
+            f"Current embedding column: type={current_type_name}, dimension={current_dimension}, "
+            f"quantized={is_quantized}"
+        )
 
         if current_dimension == required_dimension:
             logger.debug(f"Embedding dimension OK: {current_dimension}")
@@ -468,32 +490,99 @@ def ensure_embedding_dimension(
             """)
         )
 
-        # Alter the column type
-        conn.execute(
-            text(f"ALTER TABLE {schema_name}.memory_units ALTER COLUMN embedding TYPE vector({required_dimension})")
-        )
+        # Determine target column type
+        if quantization_enabled and vector_ext == "vchord":
+            target_type = f"{quantization_type}({required_dimension})"
+            quantize_func = f"quantize_to_{quantization_type}"
+            logger.info(f"Converting to quantized type: {target_type}")
+        else:
+            target_type = f"vector({required_dimension})"
+            logger.info(f"Converting to standard vector type: {target_type}")
+
+        # For dimension changes on quantized types, PostgreSQL doesn't support direct casting
+        # from rabitq4/rabitq8 to vector. Instead, we drop and recreate the column.
+        # This is safe because we've already verified the table is empty above.
+        if is_quantized and current_dimension != required_dimension:
+            logger.info(
+                f"Dropping and recreating quantized column to change dimension "
+                f"(PostgreSQL doesn't support rabitq->vector cast)"
+            )
+
+            # Drop the embedding column
+            conn.execute(text(f"ALTER TABLE {schema_name}.memory_units DROP COLUMN embedding"))
+
+            # Recreate with new dimension and type
+            if quantization_enabled and vector_ext == "vchord":
+                # Create as quantized type directly
+                conn.execute(
+                    text(f"ALTER TABLE {schema_name}.memory_units ADD COLUMN embedding {target_type}")
+                )
+            else:
+                # Create as vector type
+                conn.execute(
+                    text(f"ALTER TABLE {schema_name}.memory_units ADD COLUMN embedding {target_type}")
+                )
+        else:
+            # Standard ALTER COLUMN for non-quantized types or same-dimension conversions
+            if quantization_enabled and vector_ext == "vchord":
+                # Converting from vector to quantized type
+                if not is_quantized:
+                    using_clause = f"{quantize_func}(embedding)"
+                else:
+                    # Same type, just dimension change (shouldn't happen, but handle it)
+                    using_clause = "embedding"
+            else:
+                # Converting to standard vector type
+                if is_quantized:
+                    # Converting from quantized to vector - use explicit cast
+                    # Note: This cast may fail if VectorChord doesn't support it
+                    # In that case, the DROP/CREATE path above will be used
+                    using_clause = "embedding::vector"
+                else:
+                    # Already vector, just change dimension
+                    using_clause = f"embedding::vector({required_dimension})"
+
+            # Alter the column type
+            conn.execute(
+                text(
+                    f"ALTER TABLE {schema_name}.memory_units "
+                    f"ALTER COLUMN embedding TYPE {target_type} "
+                    f"USING {using_clause}"
+                )
+            )
+
         conn.commit()
 
-        # Recreate index with appropriate type based on detected extension
+        # Recreate index with appropriate type based on configuration
         if vector_ext == "vchord":
+            # VectorChord index
+            if quantization_enabled:
+                # Quantized index
+                operator_class = f"{quantization_type}_l2_ops"
+                logger.info(f"Creating vchordrq index with {operator_class} for {required_dimension}D embeddings")
+            else:
+                # Non-quantized VectorChord index
+                operator_class = "vector_l2_ops"
+                logger.info(f"Creating vchordrq index with {operator_class} for {required_dimension}D embeddings")
+
             conn.execute(
                 text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_vchordrq
+                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding
                     ON {schema_name}.memory_units
-                    USING vchordrq (embedding vector_l2_ops)
+                    USING vchordrq (embedding {operator_class})
                 """)
             )
-            logger.info(f"Created vchordrq index for {required_dimension}-dimensional embeddings")
         else:  # pgvector
             conn.execute(
                 text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding_hnsw
+                    CREATE INDEX IF NOT EXISTS idx_memory_units_embedding
                     ON {schema_name}.memory_units
                     USING hnsw (embedding vector_cosine_ops)
                     WITH (m = 16, ef_construction = 64)
                 """)
             )
             logger.info(f"Created HNSW index for {required_dimension}-dimensional embeddings")
+
         conn.commit()
 
         logger.info(f"Successfully changed embedding dimension to {required_dimension}")
@@ -630,6 +719,8 @@ def ensure_vector_extension(
             # Create new index with appropriate type
             if target_ext == "vchord":
                 logger.info(f"Creating vchordrq index on {table_name}")
+                # VectorChord requires dimension type modifier for quantized indexes
+                # The dimension is specified in the column type modifier, not the index
                 conn.execute(
                     text(f"""
                         CREATE INDEX IF NOT EXISTS {index_name}

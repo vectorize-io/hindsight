@@ -79,6 +79,10 @@ services:
       HINDSIGHT_API_VECTOR_EXTENSION: vchord
       HINDSIGHT_API_TEXT_SEARCH_EXTENSION: vchord
 
+      # Vector Quantization (RaBitQ for VectorChord)
+      HINDSIGHT_API_VECTOR_QUANTIZATION_ENABLED: "true"  # Set to "true" to enable, false is default
+      HINDSIGHT_API_VECTOR_QUANTIZATION_TYPE: "rabitq4"   # Options: rabitq8 (default), rabitq4
+
     depends_on:
       - db
     networks:
