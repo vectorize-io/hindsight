@@ -63,7 +63,7 @@ This endpoint handles file upload, conversion, and memory creation in a single o
 
 **Features:**
 - Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)
-- Automatic file-to-markdown conversion using pluggable converters
+- Automatic file-to-markdown conversion using pluggable parsers
 - Files stored in object storage (PostgreSQL by default, S3 for production)
 - Each file becomes a separate document with optional metadata/tags
 - Always processes asynchronously — returns operation IDs immediately
@@ -80,7 +80,7 @@ Use the operations endpoint to monitor progress.
 - `files`: One or more files to upload
 - `request`: JSON string with FileRetainRequest model (files_metadata)
 
-**Note:** File converter is configured server-side via `HINDSIGHT_API_FILE_CONVERTER` (default: markitdown).
+**Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

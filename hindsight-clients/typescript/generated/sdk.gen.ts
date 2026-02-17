@@ -955,7 +955,7 @@ export const retainMemories = <ThrowOnError extends boolean = false>(
  *
  * **Features:**
  * - Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)
- * - Automatic file-to-markdown conversion using pluggable converters
+ * - Automatic file-to-markdown conversion using pluggable parsers
  * - Files stored in object storage (PostgreSQL by default, S3 for production)
  * - Each file becomes a separate document with optional metadata/tags
  * - Always processes asynchronously — returns operation IDs immediately
@@ -972,7 +972,7 @@ export const retainMemories = <ThrowOnError extends boolean = false>(
  * - `files`: One or more files to upload
  * - `request`: JSON string with FileRetainRequest model (files_metadata)
  *
- * **Note:** File converter is configured server-side via `HINDSIGHT_API_FILE_CONVERTER` (default: markitdown).
+ * **Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).
  */
 export const fileRetain = <ThrowOnError extends boolean = false>(
   options: Options<FileRetainData, ThrowOnError>,
