@@ -522,11 +522,11 @@ class TestTags:
         client.retain_batch(
             bank_id=bank_id,
             items=[
-                {"content": "Project X meeting notes from Monday", "tags": ["project_x", "meetings"]},
-                {"content": "Project X design document", "tags": ["project_x", "docs"]},
-                {"content": "Project Y sprint planning", "tags": ["project_y", "meetings"]},
-                {"content": "General company announcement", "tags": ["company"]},
-                {"content": "Untagged memory about random things"},  # no tags
+                {"content": "Alice presented the Q3 roadmap at the Monday standup", "tags": ["project_x", "meetings"]},
+                {"content": "Bob wrote the architecture document for the new auth system", "tags": ["project_x", "docs"]},
+                {"content": "Charlie led the sprint planning session for the mobile app", "tags": ["project_y", "meetings"]},
+                {"content": "Diana announced the company picnic for next Friday", "tags": ["company"]},
+                {"content": "Eve mentioned she likes pineapple on pizza"},  # no tags
             ],
             retain_async=False,
         )
@@ -535,68 +535,73 @@ class TestTags:
         """Test recall with tags using 'any' match (includes untagged)."""
         response = client.recall(
             bank_id=bank_id,
-            query="What are the documents?",
+            query="What has everyone been working on?",
             tags=["project_x"],
             tags_match="any",
+            max_tokens=16000,
         )
 
         assert response is not None
         assert response.results is not None
-        # Should include project_x tagged items and potentially untagged items
-        result_texts = [r.text.lower() for r in response.results]
-        assert any("project x" in text for text in result_texts)
+        assert len(response.results) > 0
+        # 'any' mode: results should include items matching the tag or untagged items
+        result_tags = [set(r.tags) if r.tags else set() for r in response.results]
+        assert any("project_x" in tags for tags in result_tags)
 
     def test_recall_with_tags_any_strict(self, client, bank_id):
         """Test recall with tags using 'any_strict' match (excludes untagged)."""
         response = client.recall(
             bank_id=bank_id,
-            query="meetings",
+            query="What has everyone been working on?",
             tags=["project_x"],
             tags_match="any_strict",
+            max_tokens=16000,
         )
 
         assert response is not None
         assert response.results is not None
-        # All results should have project_x tag - no untagged items
-        result_texts = [r.text.lower() for r in response.results]
-        # Should find project_x items only
-        for text in result_texts:
-            assert "project x" in text or "untagged" not in text
+        assert len(response.results) > 0
+        # any_strict: every result must have the project_x tag
+        for r in response.results:
+            assert r.tags is not None
+            assert "project_x" in r.tags
 
     def test_recall_with_tags_all_strict(self, client, bank_id):
         """Test recall with tags using 'all_strict' match (AND matching)."""
         response = client.recall(
             bank_id=bank_id,
-            query="meeting notes",
+            query="What has everyone been working on?",
             tags=["project_x", "meetings"],
             tags_match="all_strict",
+            max_tokens=16000,
         )
 
         assert response is not None
         assert response.results is not None
-        # Should only return items tagged with BOTH project_x AND meetings
-        if len(response.results) > 0:
-            result_texts = [r.text.lower() for r in response.results]
-            # The "Project X meeting notes" should be found
-            assert any("project x" in text and "meeting" in text for text in result_texts)
+        assert len(response.results) > 0
+        # all_strict: every result must have BOTH tags
+        for r in response.results:
+            assert r.tags is not None
+            assert "project_x" in r.tags
+            assert "meetings" in r.tags
 
     def test_recall_with_multiple_tags_any(self, client, bank_id):
-        """Test recall with multiple tags using 'any' match (OR)."""
+        """Test recall with multiple tags using 'any_strict' match (OR)."""
         response = client.recall(
             bank_id=bank_id,
-            query="What's happening?",
+            query="What has everyone been working on?",
             tags=["project_x", "project_y"],
             tags_match="any_strict",
+            max_tokens=16000,
         )
 
         assert response is not None
         assert response.results is not None
-        # Should include items from both project_x and project_y
-        result_texts = [r.text.lower() for r in response.results]
-        has_project_x = any("project x" in text for text in result_texts)
-        has_project_y = any("project y" in text for text in result_texts)
-        # At least one of them should be present
-        assert has_project_x or has_project_y
+        assert len(response.results) > 0
+        # any_strict with multiple tags: every result must have at least one of the tags
+        for r in response.results:
+            assert r.tags is not None
+            assert "project_x" in r.tags or "project_y" in r.tags
 
     def test_reflect_with_tags(self, client, bank_id):
         """Test reflect with tags filtering."""
@@ -615,7 +620,7 @@ class TestTags:
         """Test storing a memory with tags."""
         response = client.retain(
             bank_id=bank_id,
-            content="New feature implementation for project Z",
+            content="Frank deployed the billing microservice to production on Tuesday",
             tags=["project_z", "features"],
         )
 
@@ -625,13 +630,17 @@ class TestTags:
         # Verify we can recall it with the tag
         recall_response = client.recall(
             bank_id=bank_id,
-            query="project Z features",
+            query="What did Frank deploy?",
             tags=["project_z"],
             tags_match="any_strict",
+            max_tokens=16000,
         )
         assert recall_response is not None
-        result_texts = [r.text.lower() for r in recall_response.results]
-        assert any("project z" in text for text in result_texts)
+        assert len(recall_response.results) > 0
+        # any_strict: every result must have the project_z tag
+        for r in recall_response.results:
+            assert r.tags is not None
+            assert "project_z" in r.tags
 
     def test_retain_batch_with_document_tags(self, client, bank_id):
         """Test batch retain with document-level tags."""
