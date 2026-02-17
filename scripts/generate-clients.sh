@@ -399,7 +399,7 @@ else
     # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
     if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then
         echo "Patching api_files.go: adding missing 'os' import..."
-        sed -i.bak 's/import (/import (\n\t"os"/' api_files.go
+        sed -i.bak 's|"net/url"|"net/url"\n\t"os"|' api_files.go
         rm -f api_files.go.bak
     fi
 
