@@ -1,6 +1,6 @@
 import type { MoltbotPluginAPI, PluginConfig } from './types.js';
 import { HindsightEmbedManager } from './embed-manager.js';
-import { HindsightClient } from './client.js';
+import { HindsightClient, type HindsightClientOptions } from './client.js';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -17,13 +17,90 @@ let currentPluginConfig: PluginConfig | null = null;
 // Track which banks have had their mission set (to avoid re-setting on every request)
 const banksWithMissionSet = new Set<string>();
 
+// In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
+import type { RecallResponse } from './types.js';
+const inflightRecalls = new Map<string, Promise<RecallResponse>>();
+const RECALL_TIMEOUT_MS = 10_000;
+
+// Cooldown + guard to prevent concurrent reinit attempts
+let lastReinitAttempt = 0;
+let isReinitInProgress = false;
+const REINIT_COOLDOWN_MS = 30_000;
+
+/**
+ * Lazy re-initialization after startup failure.
+ * Called by waitForReady when initPromise rejected but API may now be reachable.
+ * Throttled to one attempt per 30s to avoid hammering a down service.
+ */
+async function lazyReinit(): Promise<void> {
+  const now = Date.now();
+  if (now - lastReinitAttempt < REINIT_COOLDOWN_MS || isReinitInProgress) {
+    return;
+  }
+  isReinitInProgress = true;
+  lastReinitAttempt = now;
+
+  const config = currentPluginConfig;
+  if (!config) {
+    isReinitInProgress = false;
+    return;
+  }
+
+  const externalApi = detectExternalApi(config);
+  if (!externalApi.apiUrl) {
+    isReinitInProgress = false;
+    return; // Only external API mode supports lazy reinit
+  }
+
+  console.log('[Hindsight] Attempting lazy re-initialization...');
+  try {
+    await checkExternalApiHealth(externalApi.apiUrl);
+
+    // Health check passed — set up env vars and create client
+    process.env.HINDSIGHT_EMBED_API_URL = externalApi.apiUrl;
+    if (externalApi.apiToken) {
+      process.env.HINDSIGHT_EMBED_API_TOKEN = externalApi.apiToken;
+    }
+
+    const llmConfig = detectLLMConfig(config);
+    client = new HindsightClient(buildClientOptions(llmConfig, config, externalApi));
+    const defaultBankId = deriveBankId(undefined, config);
+    client.setBankId(defaultBankId);
+
+    if (config.bankMission && !config.dynamicBankId) {
+      await client.setBankMission(config.bankMission);
+    }
+
+    usingExternalApi = true;
+    isInitialized = true;
+    // Replace the rejected initPromise with a resolved one
+    initPromise = Promise.resolve();
+    console.log('[Hindsight] ✓ Lazy re-initialization succeeded');
+  } catch (error) {
+    console.warn(`[Hindsight] Lazy re-initialization failed (will retry in ${REINIT_COOLDOWN_MS / 1000}s):`, error instanceof Error ? error.message : error);
+  } finally {
+    isReinitInProgress = false;
+  }
+}
+
 // Global access for hooks (Moltbot loads hooks separately)
 if (typeof global !== 'undefined') {
   (global as any).__hindsightClient = {
     getClient: () => client,
     waitForReady: async () => {
       if (isInitialized) {return;}
-      if (initPromise) {await initPromise;}
+      if (initPromise) {
+        try {
+          await initPromise;
+        } catch {
+          // Init failed (e.g., health check timeout at startup).
+          // Attempt lazy re-initialization so Hindsight recovers
+          // once the API becomes reachable again.
+          if (!isInitialized) {
+            await lazyReinit();
+          }
+        }
+      }
     },
     /**
      * Get a client configured for a specific agent context.
@@ -76,7 +153,7 @@ interface PluginHookAgentContext {
 
 /**
  * Derive a bank ID from the agent context.
- * Creates channel-specific banks: {messageProvider}-{channelId}
+ * Creates per-user banks: {messageProvider}-{senderId}
  * Falls back to default bank when context is unavailable.
  */
 function deriveBankId(
@@ -91,10 +168,10 @@ function deriveBankId(
   }
 
   const channelType = ctx?.messageProvider || 'unknown';
-  const channelId = ctx?.channelId || 'default';
+  const userId = ctx?.senderId || 'default';
 
-  // Build bank ID: {prefix?}-{channelType}-{channelId}
-  const baseBankId = `${channelType}-${channelId}`;
+  // Build bank ID: {prefix?}-{channelType}-{senderId}
+  const baseBankId = `${channelType}-${userId}`;
   return pluginConfig.bankIdPrefix
     ? `${pluginConfig.bankIdPrefix}-${baseBankId}`
     : baseBankId;
@@ -234,6 +311,25 @@ function detectExternalApi(pluginConfig?: PluginConfig): {
 }
 
 /**
+ * Build HindsightClientOptions from LLM config, plugin config, and external API settings.
+ */
+function buildClientOptions(
+  llmConfig: { provider: string; apiKey: string; model?: string },
+  pluginCfg: PluginConfig,
+  externalApi: { apiUrl: string | null; apiToken: string | null },
+): HindsightClientOptions {
+  return {
+    llmProvider: llmConfig.provider,
+    llmApiKey: llmConfig.apiKey,
+    llmModel: llmConfig.model,
+    embedVersion: pluginCfg.embedVersion,
+    embedPackagePath: pluginCfg.embedPackagePath,
+    apiUrl: externalApi.apiUrl ?? undefined,
+    apiToken: externalApi.apiToken ?? undefined,
+  };
+}
+
+/**
  * Health check for external Hindsight API.
  * Retries up to 3 times with 2s delay — container DNS may not be ready on first boot.
  */
@@ -352,9 +448,9 @@ export default function (api: MoltbotPluginAPI) {
           console.log('[Hindsight] External API mode - skipping local daemon...');
           await checkExternalApiHealth(externalApi.apiUrl);
 
-          // Initialize client (CLI commands will use external API via env vars)
-          console.log('[Hindsight] Creating HindsightClient...');
-          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion, pluginConfig.embedPackagePath);
+          // Initialize client with direct HTTP mode
+          console.log('[Hindsight] Creating HindsightClient (HTTP mode)...');
+          client = new HindsightClient(buildClientOptions(llmConfig, pluginConfig, externalApi));
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -388,9 +484,9 @@ export default function (api: MoltbotPluginAPI) {
           console.log('[Hindsight] Starting embedded server...');
           await embedManager.start();
 
-          // Initialize client
-          console.log('[Hindsight] Creating HindsightClient...');
-          client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, pluginConfig.embedVersion, pluginConfig.embedPackagePath);
+          // Initialize client (local daemon mode — no apiUrl)
+          console.log('[Hindsight] Creating HindsightClient (subprocess mode)...');
+          client = new HindsightClient(buildClientOptions(llmConfig, pluginConfig, { apiUrl: null, apiToken: null }));
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -484,7 +580,7 @@ export default function (api: MoltbotPluginAPI) {
 
             await checkExternalApiHealth(externalApi.apiUrl);
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion, reinitPluginConfig.embedPackagePath);
+            client = new HindsightClient(buildClientOptions(llmConfig, reinitPluginConfig, externalApi));
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
@@ -509,7 +605,7 @@ export default function (api: MoltbotPluginAPI) {
 
             await embedManager.start();
 
-            client = new HindsightClient(llmConfig.provider, llmConfig.apiKey, llmConfig.model, reinitPluginConfig.embedVersion, reinitPluginConfig.embedPackagePath);
+            client = new HindsightClient(buildClientOptions(llmConfig, reinitPluginConfig, { apiUrl: null, apiToken: null }));
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
@@ -573,43 +669,51 @@ export default function (api: MoltbotPluginAPI) {
         const bankId = deriveBankId(ctx, pluginConfig);
         console.log(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
 
-        // Get the user's latest message for recall
-        // Prefer rawMessage (clean user text) over prompt (envelope-formatted)
-        let prompt = event.rawMessage ?? event.prompt;
-        if (!prompt || typeof prompt !== 'string' || prompt.length < 5) {
-          return; // Skip very short messages
+        // Get the user's latest message for recall — only the raw user text, not the full prompt
+        // rawMessage is clean user text; prompt includes envelope, system events, media notes, etc.
+        let recallQuery = event.rawMessage;
+        if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.trim().length < 5) {
+          // Fall back to prompt but strip envelope formatting
+          recallQuery = event.prompt;
+          if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.length < 5) {
+            return;
+          }
+
+          // Strip envelope-formatted prompts from any channel
+          let cleaned = recallQuery;
+
+          // Remove leading "System: ..." lines (from prependSystemEvents)
+          cleaned = cleaned.replace(/^(?:System:.*\n)+\n?/, '');
+
+          // Remove session abort hint
+          cleaned = cleaned.replace(
+            /^Note: The previous agent run was aborted[^\n]*\n\n/,
+            '',
+          );
+
+          // Extract message after [ChannelName ...] envelope header
+          const envelopeMatch = cleaned.match(
+            /\[[A-Z][A-Za-z]*(?:\s[^\]]+)?\]\s*([\s\S]+)$/,
+          );
+          if (envelopeMatch) {
+            cleaned = envelopeMatch[1];
+          }
+
+          // Remove trailing [from: SenderName] metadata (group chats)
+          cleaned = cleaned.replace(/\n\[from:[^\]]*\]\s*$/, '');
+
+          recallQuery = cleaned.trim() || recallQuery;
         }
 
-        // Strip envelope-formatted prompts from any channel
-        // The prompt may contain: System: lines, abort hints, [Channel ...] header, [from: ...] suffix
-        let cleaned = prompt;
-
-        // Remove leading "System: ..." lines (from prependSystemEvents)
-        cleaned = cleaned.replace(/^(?:System:.*\n)+\n?/, '');
-
-        // Remove session abort hint
-        cleaned = cleaned.replace(
-          /^Note: The previous agent run was aborted[^\n]*\n\n/,
-          '',
-        );
-
-        // Extract message after [ChannelName ...] envelope header
-        // Handles any channel: Telegram, Slack, Discord, WhatsApp, Signal, etc.
-        // Uses [\s\S]+ instead of .+ to support multiline messages
-        const envelopeMatch = cleaned.match(
-          /\[[A-Z][A-Za-z]*(?:\s[^\]]+)?\]\s*([\s\S]+)$/,
-        );
-        if (envelopeMatch) {
-          cleaned = envelopeMatch[1];
-        }
-
-        // Remove trailing [from: SenderName] metadata (group chats)
-        cleaned = cleaned.replace(/\n\[from:[^\]]*\]\s*$/, '');
-
-        prompt = cleaned.trim() || prompt;
-
+        let prompt = recallQuery.trim();
         if (prompt.length < 5) {
           return; // Skip very short messages after extraction
+        }
+
+        // Truncate — Hindsight API recall has a 500 token limit; 800 chars stays safely under even with non-ASCII
+        const MAX_RECALL_QUERY_CHARS = 800;
+        if (prompt.length > MAX_RECALL_QUERY_CHARS) {
+          prompt = prompt.substring(0, MAX_RECALL_QUERY_CHARS);
         }
 
         // Wait for client to be ready
@@ -630,11 +734,20 @@ export default function (api: MoltbotPluginAPI) {
 
         console.log(`[Hindsight] Auto-recall for bank ${bankId}, prompt: ${prompt.substring(0, 50)}`);
 
-        // Recall relevant memories
-        const response = await client.recall({
-          query: prompt,
-          max_tokens: 2048,
-        });
+        // Recall with deduplication: reuse in-flight request for same bank
+        const recallKey = bankId;
+        const existing = inflightRecalls.get(recallKey);
+        let recallPromise: Promise<RecallResponse>;
+        if (existing) {
+          console.log(`[Hindsight] Reusing in-flight recall for bank ${bankId}`);
+          recallPromise = existing;
+        } else {
+          recallPromise = client.recall({ query: prompt, max_tokens: 2048 }, RECALL_TIMEOUT_MS);
+          inflightRecalls.set(recallKey, recallPromise);
+          void recallPromise.catch(() => {}).finally(() => inflightRecalls.delete(recallKey));
+        }
+
+        const response = await recallPromise;
 
         if (!response.results || response.results.length === 0) {
           console.log('[Hindsight] No memories found for auto-recall');
@@ -656,7 +769,13 @@ User message: ${prompt}
         // Inject context before the user message
         return { prependContext: contextMessage };
       } catch (error) {
-        console.error('[Hindsight] Auto-recall error:', error);
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          console.warn(`[Hindsight] Auto-recall timed out after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);
+        } else if (error instanceof Error && error.name === 'AbortError') {
+          console.warn(`[Hindsight] Auto-recall aborted after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);
+        } else {
+          console.error('[Hindsight] Auto-recall error:', error);
+        }
         return;
       }
     });
@@ -740,7 +859,7 @@ User message: ${prompt}
           document_id: documentId,
           metadata: {
             retained_at: new Date().toISOString(),
-            message_count: event.messages.length,
+            message_count: String(event.messages.length),
             channel_type: effectiveCtx?.messageProvider,
             channel_id: effectiveCtx?.channelId,
             sender_id: effectiveCtx?.senderId,

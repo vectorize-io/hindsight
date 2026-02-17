@@ -57,12 +57,12 @@
       },
       "dynamicBankId": {
         "type": "boolean",
-        "description": "Enable per-channel memory banks. When true, memories are isolated by channel (e.g., slack-C123, telegram-456). When false, all channels share a single 'openclaw' bank.",
+        "description": "Enable per-user memory banks. When true, memories are isolated by user per channel (e.g., slack-U123, telegram-456789). When false, all users share a single 'openclaw' bank.",
         "default": true
       },
       "bankIdPrefix": {
         "type": "string",
-        "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-C123'). Useful for separating environments."
+        "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
       }
     },
     "additionalProperties": false
