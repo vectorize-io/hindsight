@@ -396,6 +396,13 @@ else
     [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
     rm -rf "$TEMP_DIR"
 
+    # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
+    if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then
+        echo "Patching api_files.go: adding missing 'os' import..."
+        sed -i.bak 's|"net/url"|"net/url"\n\t"os"|' api_files.go
+        rm -f api_files.go.bak
+    fi
+
     # Initialize module and build
     echo "Building Go client..."
     go mod tidy

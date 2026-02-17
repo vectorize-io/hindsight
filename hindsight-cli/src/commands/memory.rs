@@ -220,14 +220,23 @@ pub fn get(
     }
 }
 
-// Helper function to check if a file has a text-based extension
-fn is_text_file(path: &std::path::Path) -> bool {
-    const TEXT_EXTENSIONS: &[&str] = &[
-        "txt", "md", "json", "yaml", "yml", "toml", "xml", "csv", "log", "rst", "adoc",
+// Helper function to check if a file is supported by the file converter (markitdown)
+fn is_supported_file(path: &std::path::Path) -> bool {
+    const SUPPORTED_EXTENSIONS: &[&str] = &[
+        // Documents
+        "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls",
+        // Images (OCR)
+        "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff",
+        // Web / markup
+        "html", "htm",
+        // Text / data
+        "txt", "md", "csv", "json", "yaml", "yml", "toml", "xml", "rst", "adoc", "log",
+        // Audio (transcription)
+        "mp3", "wav", "ogg", "flac",
     ];
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
         .unwrap_or(false)
 }
 
@@ -427,10 +436,10 @@ pub fn retain_files(
         anyhow::bail!("Path does not exist: {}", path.display());
     }
 
-    let mut files = Vec::new();
+    let mut file_paths = Vec::new();
 
     if path.is_file() {
-        files.push(path);
+        file_paths.push(path);
     } else if path.is_dir() {
         if recursive {
             for entry in WalkDir::new(&path)
@@ -438,133 +447,110 @@ pub fn retain_files(
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
-                let path = entry.path();
-                if is_text_file(&path) {
-                    files.push(path.to_path_buf());
+                let file_path = entry.path();
+                if is_supported_file(file_path) {
+                    file_paths.push(file_path.to_path_buf());
                 }
             }
         } else {
             for entry in fs::read_dir(&path)? {
                 let entry = entry?;
-                let path = entry.path();
-                if path.is_file() && is_text_file(&path) {
-                    files.push(path);
+                let file_path = entry.path();
+                if file_path.is_file() && is_supported_file(&file_path) {
+                    file_paths.push(file_path);
                 }
             }
         }
     }
 
-    if files.is_empty() {
-        ui::print_warning("No text files found (supported: txt, md, json, yaml, yml, toml, xml, csv, log, rst, adoc)");
+    if file_paths.is_empty() {
+        ui::print_warning("No supported files found. Supported formats: pdf, docx, pptx, xlsx, jpg, png, html, txt, md, csv, mp3, wav, and more.");
         return Ok(());
     }
 
-    ui::print_info(&format!("Found {} files to import", files.len()));
+    ui::print_info(&format!("Found {} file(s) to import", file_paths.len()));
 
-    let pb = ui::create_progress_bar(files.len() as u64, "Processing files");
+    // Batch files (max 10 per request)
+    const BATCH_SIZE: usize = 10;
+    let batches: Vec<&[PathBuf]> = file_paths.chunks(BATCH_SIZE).collect();
+    let mut all_operation_ids: Vec<String> = Vec::new();
 
-    let mut items = Vec::new();
+    let pb = ui::create_progress_bar(file_paths.len() as u64, "Uploading files");
 
-    for file_path in &files {
-        let content = fs::read_to_string(file_path)
-            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+    for batch in &batches {
+        let mut file_data: Vec<(String, Vec<u8>)> = Vec::new();
+        for file_path in *batch {
+            let filename = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "file".to_string());
+            let content = fs::read(file_path)
+                .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+            file_data.push((filename, content));
+            pb.inc(1);
+        }
 
-        let doc_id = file_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(config::generate_doc_id);
-
-        items.push(MemoryItem {
-            content,
-            context: context.clone(),
-            metadata: None,
-            timestamp: None,
-            document_id: Some(doc_id),
-            entities: None,
-            tags: None,
-        });
-
-        pb.inc(1);
+        let result = client.file_retain(agent_id, file_data, context.clone(), verbose)?;
+        all_operation_ids.extend(result.operation_ids);
     }
 
-    pb.finish_with_message("Files processed");
+    pb.finish_with_message("Files uploaded");
 
-    // Always use async mode for the API call
-    let request = RetainRequest {
-        items,
-        async_: true,
-        document_tags: None,
-    };
-
-    let spinner = if output_format == OutputFormat::Pretty {
-        Some(ui::create_spinner("Submitting retain request..."))
+    if r#async {
+        if output_format == OutputFormat::Pretty {
+            ui::print_success("Files queued for processing");
+            println!("  Files: {}", file_paths.len());
+            for op_id in &all_operation_ids {
+                println!("  Operation ID: {}", op_id);
+            }
+        } else {
+            let result = serde_json::json!({ "operation_ids": all_operation_ids });
+            output::print_output(&result, output_format)?;
+        }
     } else {
-        None
-    };
+        // Poll all operations until they complete
+        let poll_spinner = if output_format == OutputFormat::Pretty {
+            Some(ui::create_spinner("Processing files..."))
+        } else {
+            None
+        };
 
-    let response = client.retain(agent_id, &request, true, verbose);
+        let mut failed = Vec::new();
+        for op_id in &all_operation_ids {
+            let (success, error_msg) = client.poll_operation(agent_id, op_id, verbose)?;
+            if !success {
+                failed.push(error_msg.unwrap_or_else(|| "Unknown error".to_string()));
+            }
+        }
 
-    if let Some(mut sp) = spinner {
-        sp.finish();
-    }
+        if let Some(mut sp) = poll_spinner {
+            sp.finish();
+        }
 
-    match response {
-        Ok(result) => {
-            if r#async {
-                // User requested async mode - return immediately
-                if output_format == OutputFormat::Pretty {
-                    ui::print_success("Files queued for processing");
-                    println!("  Items: {}", result.items_count);
-                    if let Some(op_id) = &result.operation_id {
-                        println!("  Operation ID: {}", op_id);
-                    }
-                } else {
-                    output::print_output(&result, output_format)?;
-                }
+        if failed.is_empty() {
+            if output_format == OutputFormat::Pretty {
+                ui::print_success("Files retained successfully");
+                println!("  Files processed: {}", file_paths.len());
             } else {
-                // Poll until completion
-                if let Some(operation_id) = &result.operation_id {
-                    let poll_spinner = if output_format == OutputFormat::Pretty {
-                        Some(ui::create_spinner("Processing memories..."))
-                    } else {
-                        None
-                    };
-
-                    let (success, error_msg) = client.poll_operation(agent_id, operation_id, verbose)?;
-
-                    if let Some(mut sp) = poll_spinner {
-                        sp.finish();
-                    }
-
-                    if success {
-                        if output_format == OutputFormat::Pretty {
-                            ui::print_success("Files retained successfully");
-                            println!("  Items processed: {}", result.items_count);
-                        } else {
-                            output::print_output(&result, output_format)?;
-                        }
-                    } else {
-                        let msg = error_msg.unwrap_or_else(|| "Unknown error".to_string());
-                        if output_format == OutputFormat::Pretty {
-                            ui::print_error(&format!("Retain operation failed: {}", msg));
-                        }
-                        anyhow::bail!("Retain operation failed: {}", msg);
-                    }
-                } else {
-                    // No operation ID returned, shouldn't happen with async=true
-                    if output_format == OutputFormat::Pretty {
-                        ui::print_success("Files retained successfully");
-                        println!("  Items processed: {}", result.items_count);
-                    } else {
-                        output::print_output(&result, output_format)?;
-                    }
+                let result = serde_json::json!({
+                    "success": true,
+                    "files_count": file_paths.len(),
+                    "operation_ids": all_operation_ids,
+                });
+                output::print_output(&result, output_format)?;
+            }
+        } else {
+            for msg in &failed {
+                if output_format == OutputFormat::Pretty {
+                    ui::print_error(&format!("Retain operation failed: {}", msg));
                 }
             }
-            Ok(())
+            anyhow::bail!("{} operation(s) failed", failed.len());
         }
-        Err(e) => Err(e)
     }
+
+    Ok(())
 }
 
 pub fn delete(
@@ -679,55 +665,71 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn test_is_text_file_supported_extensions() {
+    fn test_is_supported_file_text_extensions() {
         let supported = [
             "file.txt", "file.md", "file.json", "file.yaml", "file.yml",
             "file.toml", "file.xml", "file.csv", "file.log", "file.rst", "file.adoc",
         ];
         for filename in supported {
             assert!(
-                is_text_file(Path::new(filename)),
-                "{} should be recognized as a text file",
+                is_supported_file(Path::new(filename)),
+                "{} should be recognized as a supported file",
                 filename
             );
         }
     }
 
     #[test]
-    fn test_is_text_file_case_insensitive() {
-        assert!(is_text_file(Path::new("file.JSON")));
-        assert!(is_text_file(Path::new("file.TXT")));
-        assert!(is_text_file(Path::new("file.Md")));
-        assert!(is_text_file(Path::new("file.YAML")));
+    fn test_is_supported_file_binary_extensions() {
+        let supported = [
+            "file.pdf", "file.docx", "file.pptx", "file.xlsx",
+            "file.png", "file.jpg", "file.jpeg", "file.gif",
+            "file.mp3", "file.wav",
+        ];
+        for filename in supported {
+            assert!(
+                is_supported_file(Path::new(filename)),
+                "{} should be recognized as a supported file",
+                filename
+            );
+        }
     }
 
     #[test]
-    fn test_is_text_file_unsupported_extensions() {
+    fn test_is_supported_file_case_insensitive() {
+        assert!(is_supported_file(Path::new("file.JSON")));
+        assert!(is_supported_file(Path::new("file.TXT")));
+        assert!(is_supported_file(Path::new("file.Md")));
+        assert!(is_supported_file(Path::new("file.YAML")));
+        assert!(is_supported_file(Path::new("file.PDF")));
+    }
+
+    #[test]
+    fn test_is_supported_file_unsupported_extensions() {
         let unsupported = [
-            "file.pdf", "file.doc", "file.docx", "file.png", "file.jpg",
             "file.exe", "file.bin", "file.zip", "file.tar", "file.gz",
         ];
         for filename in unsupported {
             assert!(
-                !is_text_file(Path::new(filename)),
-                "{} should NOT be recognized as a text file",
+                !is_supported_file(Path::new(filename)),
+                "{} should NOT be recognized as a supported file",
                 filename
             );
         }
     }
 
     #[test]
-    fn test_is_text_file_no_extension() {
-        assert!(!is_text_file(Path::new("README")));
-        assert!(!is_text_file(Path::new("Makefile")));
-        assert!(!is_text_file(Path::new(".gitignore")));
+    fn test_is_supported_file_no_extension() {
+        assert!(!is_supported_file(Path::new("README")));
+        assert!(!is_supported_file(Path::new("Makefile")));
+        assert!(!is_supported_file(Path::new(".gitignore")));
     }
 
     #[test]
-    fn test_is_text_file_with_path() {
-        assert!(is_text_file(Path::new("/some/path/to/file.json")));
-        assert!(is_text_file(Path::new("../relative/path/file.md")));
-        assert!(!is_text_file(Path::new("/path/to/image.png")));
+    fn test_is_supported_file_with_path() {
+        assert!(is_supported_file(Path::new("/some/path/to/file.json")));
+        assert!(is_supported_file(Path::new("../relative/path/file.md")));
+        assert!(is_supported_file(Path::new("/path/to/image.png")));
     }
 
     #[test]

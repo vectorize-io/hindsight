@@ -4,6 +4,7 @@ hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
 hindsight_client_api/api/documents_api.py
 hindsight_client_api/api/entities_api.py
+hindsight_client_api/api/files_api.py
 hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
 hindsight_client_api/api/monitoring_api.py
@@ -47,6 +48,7 @@ hindsight_client_api/models/entity_list_response.py
 hindsight_client_api/models/entity_observation_response.py
 hindsight_client_api/models/entity_state_response.py
 hindsight_client_api/models/features_info.py
+hindsight_client_api/models/file_retain_response.py
 hindsight_client_api/models/graph_data_response.py
 hindsight_client_api/models/http_validation_error.py
 hindsight_client_api/models/include_options.py

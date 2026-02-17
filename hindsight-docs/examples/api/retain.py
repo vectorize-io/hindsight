@@ -5,8 +5,10 @@ Run: python examples/api/retain.py
 """
 import os
 import requests
+from pathlib import Path
 
 HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
+EXAMPLES_DIR = Path(__file__).parent
 
 # =============================================================================
 # Setup (not shown in docs)
@@ -96,6 +98,37 @@ client.retain_batch(
     document_tags=["session:123", "support"]  # Applied to all items
 )
 # [/docs:retain-with-document-tags]
+
+
+# [docs:retain-files]
+# Upload files and retain their contents as memories.
+# Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+# Pass file paths — the client reads and uploads them automatically.
+result = client.retain_files(
+    bank_id="my-bank",
+    files=[EXAMPLES_DIR / "sample.pdf"],
+    context="quarterly report",
+)
+print(result.operation_ids)  # Track processing via the operations endpoint
+# [/docs:retain-files]
+
+
+# [docs:retain-files-batch]
+# Upload multiple files with per-file metadata (up to 10 files per batch).
+# Each file gets its own context, document_id, and tags.
+result = client.retain_files(
+    bank_id="my-bank",
+    files=[
+        EXAMPLES_DIR / "sample.pdf",
+        EXAMPLES_DIR / "sample.pdf",  # Replace with a second file path
+    ],
+    files_metadata=[
+        {"context": "quarterly report", "document_id": "q1-report", "tags": ["project:alpha"]},
+        {"context": "meeting notes", "document_id": "q1-notes", "tags": ["project:alpha"]},
+    ],
+)
+print(result.operation_ids)  # One operation ID per file
+# [/docs:retain-files-batch]
 
 
 # [docs:retain-list-tags]

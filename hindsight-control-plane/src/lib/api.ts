@@ -745,8 +745,67 @@ export class ControlPlaneClient {
         mcp: boolean;
         worker: boolean;
         bank_config_api: boolean;
+        file_upload_api: boolean;
       };
     }>("/api/version");
+  }
+
+  /**
+   * Upload files for retain (uses file conversion API)
+   * Requires file_upload_api feature flag to be enabled
+   * Converter is configured server-side via HINDSIGHT_API_FILE_CONVERTER
+   */
+  async uploadFiles(params: {
+    bank_id: string;
+    files: File[];
+    document_tags?: string[];
+    async?: boolean;
+    files_metadata?: Array<{
+      document_id?: string;
+      context?: string;
+      metadata?: Record<string, any>;
+      tags?: string[];
+      timestamp?: string;
+    }>;
+  }) {
+    const formData = new FormData();
+
+    // Add files
+    params.files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    // Add request JSON (including bank_id)
+    const requestData: any = {
+      bank_id: params.bank_id,
+      async: params.async ?? true,
+    };
+    if (params.document_tags) requestData.document_tags = params.document_tags;
+    if (params.files_metadata) requestData.files_metadata = params.files_metadata;
+
+    formData.append("request", JSON.stringify(requestData));
+
+    // Use fetch directly for multipart/form-data
+    const response = await fetch(`/api/files/retain`, {
+      method: "POST",
+      body: formData,
+      // Don't set Content-Type - browser will set it with boundary
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch {
+        // Ignore parse errors
+      }
+      const error = new Error(errorMessage);
+      (error as any).status = response.status;
+      throw error;
+    }
+
+    return response.json();
   }
 
   /**

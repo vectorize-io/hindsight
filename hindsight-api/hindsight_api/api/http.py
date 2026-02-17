@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 
 from hindsight_api.extensions import AuthenticationError
 
@@ -430,6 +430,36 @@ class RetainRequest(BaseModel):
     )
 
 
+class FileRetainMetadata(BaseModel):
+    """Metadata for a single file in file retain request."""
+
+    document_id: str | None = Field(default=None, description="Document ID (auto-generated if not provided)")
+    context: str | None = Field(default=None, description="Context for the file")
+    metadata: dict[str, Any] | None = Field(default=None, description="Additional metadata")
+    tags: list[str] | None = Field(default=None, description="Tags for this file")
+    timestamp: str | None = Field(default=None, description="ISO timestamp")
+
+
+class FileRetainRequest(BaseModel):
+    """Request model for file retain endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "files_metadata": [
+                    {"document_id": "report_2024", "tags": ["quarterly"]},
+                    {"context": "meeting notes"},
+                ],
+            }
+        }
+    )
+
+    files_metadata: list[FileRetainMetadata] | None = Field(
+        default=None,
+        description="Metadata for each file (optional, must match number of files if provided)",
+    )
+
+
 class RetainResponse(BaseModel):
     """Response model for retain endpoint."""
 
@@ -454,11 +484,31 @@ class RetainResponse(BaseModel):
     )
     operation_id: str | None = Field(
         default=None,
-        description="Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations and find this ID. Only present when async=true.",
+        description="Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations. Only present when async=true.",
     )
     usage: TokenUsage | None = Field(
         default=None,
         description="Token usage metrics for LLM calls during fact extraction (only present for synchronous operations)",
+    )
+
+
+class FileRetainResponse(BaseModel):
+    """Response model for file upload endpoint."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation_ids": [
+                    "550e8400-e29b-41d4-a716-446655440000",
+                    "550e8400-e29b-41d4-a716-446655440001",
+                    "550e8400-e29b-41d4-a716-446655440002",
+                ],
+            }
+        },
+    )
+
+    operation_ids: list[str] = Field(
+        description="Operation IDs for tracking file conversion operations. Use GET /v1/default/banks/{bank_id}/operations to list operations."
     )
 
 
@@ -1423,6 +1473,7 @@ class FeaturesInfo(BaseModel):
     mcp: bool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
     worker: bool = Field(description="Whether the background worker is enabled")
     bank_config_api: bool = Field(description="Whether per-bank configuration API is enabled")
+    file_upload_api: bool = Field(description="Whether file upload/conversion API is enabled")
 
 
 class VersionResponse(BaseModel):
@@ -1437,6 +1488,7 @@ class VersionResponse(BaseModel):
                     "mcp": True,
                     "worker": True,
                     "bank_config_api": False,
+                    "file_upload_api": True,
                 },
             }
         }
@@ -1731,6 +1783,7 @@ def _register_routes(app: FastAPI):
                 mcp=config.mcp_enabled,
                 worker=config.worker_enabled,
                 bank_config_api=config.enable_bank_config_api,
+                file_upload_api=config.enable_file_upload_api,
             ),
         )
 
@@ -3630,6 +3683,147 @@ def _register_routes(app: FastAPI):
                 f"Traceback:\n{traceback.format_exc()}"
             )
             logger.error(f"Error in /v1/default/banks/{bank_id}/memories (retain): {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/files/retain",
+        response_model=FileRetainResponse,
+        summary="Convert files to memories",
+        description="Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories.\n\n"
+        "This endpoint handles file upload, conversion, and memory creation in a single operation.\n\n"
+        "**Features:**\n"
+        "- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)\n"
+        "- Automatic file-to-markdown conversion using pluggable parsers\n"
+        "- Files stored in object storage (PostgreSQL by default, S3 for production)\n"
+        "- Each file becomes a separate document with optional metadata/tags\n"
+        "- Always processes asynchronously — returns operation IDs immediately\n\n"
+        "**The system automatically:**\n"
+        "1. Stores uploaded files in object storage\n"
+        "2. Converts files to markdown\n"
+        "3. Creates document records with file metadata\n"
+        "4. Extracts facts and creates memory units (same as regular retain)\n\n"
+        "Use the operations endpoint to monitor progress.\n\n"
+        "**Request format:** multipart/form-data with:\n"
+        "- `files`: One or more files to upload\n"
+        "- `request`: JSON string with FileRetainRequest model (files_metadata)\n\n"
+        "**Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).",
+        operation_id="file_retain",
+        tags=["Files"],
+    )
+    async def api_file_retain(
+        bank_id: str,
+        files: list[UploadFile] = File(..., description="Files to upload and convert"),
+        request: str = Form(..., description="JSON string with FileRetainRequest model"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Upload and convert files to memories."""
+        from hindsight_api.config import get_config
+
+        config = get_config()
+
+        # Check if file upload API is enabled
+        if not config.enable_file_upload_api:
+            raise HTTPException(
+                status_code=404,
+                detail="File upload API is disabled. Set HINDSIGHT_API_ENABLE_FILE_UPLOAD_API=true to enable.",
+            )
+
+        try:
+            # Parse request JSON
+            try:
+                request_data = FileRetainRequest.model_validate_json(request)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid request JSON: {str(e)}",
+                )
+
+            # Validate file count
+            if len(files) > config.file_conversion_max_batch_size:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Too many files. Maximum {config.file_conversion_max_batch_size} files per request.",
+                )
+
+            # Validate files_metadata count matches files count if provided
+            if request_data.files_metadata and len(request_data.files_metadata) != len(files):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"files_metadata count ({len(request_data.files_metadata)}) must match files count ({len(files)})",
+                )
+
+            # Prepare file items and calculate total batch size
+            file_items = []
+            total_batch_size = 0
+
+            for i, file in enumerate(files):
+                # Read file content to check size
+                file_content = await file.read()
+                size = len(file_content)
+                total_batch_size += size
+
+                # Create a temporary file-like object from the bytes
+                import io
+
+                file_obj = io.BytesIO(file_content)
+
+                # Create a mock UploadFile with the necessary attributes
+                class FileWrapper:
+                    def __init__(self, content, filename, content_type):
+                        self._content = content
+                        self.filename = filename
+                        self.content_type = content_type
+                        self._buffer = io.BytesIO(content)
+
+                    async def read(self):
+                        return self._content
+
+                wrapped_file = FileWrapper(file_content, file.filename, file.content_type)
+
+                # Get per-file metadata
+                file_meta = request_data.files_metadata[i] if request_data.files_metadata else FileRetainMetadata()
+                doc_id = file_meta.document_id or f"file_{uuid.uuid4()}"
+
+                item = {
+                    "file": wrapped_file,
+                    "document_id": doc_id,
+                    "context": file_meta.context,
+                    "metadata": file_meta.metadata or {},
+                    "tags": file_meta.tags or [],
+                    "timestamp": file_meta.timestamp,
+                }
+                file_items.append(item)
+
+            # Check total batch size after processing all files
+            if total_batch_size > config.file_conversion_max_batch_size_bytes:
+                total_mb = total_batch_size / (1024 * 1024)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Total batch size ({total_mb:.1f}MB) exceeds maximum of {config.file_conversion_max_batch_size_mb}MB",
+                )
+
+            result = await app.state.memory.submit_async_file_retain(
+                bank_id=bank_id,
+                file_items=file_items,
+                parser=config.file_parser,
+                document_tags=None,
+                request_context=request_context,
+            )
+            return FileRetainResponse.model_validate(
+                {
+                    "operation_ids": result["operation_ids"],
+                }
+            )
+
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/banks/{bank_id}/files/retain: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(

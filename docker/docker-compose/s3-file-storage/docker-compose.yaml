@@ -1,0 +1,83 @@
+# Docker Compose file for Hindsight with S3 file storage (SeaweedFS)
+#
+# SeaweedFS (Apache 2.0) provides an S3-compatible object storage backend
+# for storing uploaded files instead of PostgreSQL BYTEA storage.
+#
+# Make sure to set the required environment variables before running:
+# - HINDSIGHT_DB_PASSWORD: Password for the PostgreSQL user
+# - Configure LLM provider variables as needed (see below in the hindsight service)
+#
+# Usage:
+# docker compose up -d
+#
+# Optional environment variables with defaults:
+# - HINDSIGHT_VERSION: Hindsight application version (default: latest)
+# - HINDSIGHT_DB_USER: PostgreSQL user (default: hindsight_user)
+# - HINDSIGHT_DB_NAME: PostgreSQL database name (default: hindsight_db)
+# - HINDSIGHT_DB_VERSION: PostgreSQL version (default: 18)
+# - SEAWEEDFS_S3_ACCESS_KEY: S3 access key (default: hindsight_s3_key)
+# - SEAWEEDFS_S3_SECRET_KEY: S3 secret key (default: hindsight_s3_secret)
+
+services:
+  db:
+    image: pgvector/pgvector:pg${HINDSIGHT_DB_VERSION:-18}
+    container_name: hindsight-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${HINDSIGHT_DB_USER:-hindsight_user}
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:?Please set the HINDSIGHT_DB_PASSWORD env variable}
+      POSTGRES_DB: ${HINDSIGHT_DB_NAME:-hindsight_db}
+    volumes:
+      - pg_data:/var/lib/postgresql/${HINDSIGHT_DB_VERSION:-18}/docker
+    networks:
+      - hindsight-net
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: hindsight-seaweedfs
+    restart: always
+    # Single-node mode: master + volume + filer + S3 gateway all in one process
+    command: >
+      server
+      -s3
+      -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+      -ip.bind=0.0.0.0
+    volumes:
+      - seaweedfs_data:/data
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+    # Expose S3 API port (uncomment to access from host)
+    # ports:
+    #   - "8333:8333"
+    networks:
+      - hindsight-net
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest}
+    container_name: hindsight-app
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      - HINDSIGHT_API_LLM_API_KEY=${OPENAI_API_KEY?Please set the OPENAI_API_KEY env variable}
+      - HINDSIGHT_API_DATABASE_URL=postgresql://${HINDSIGHT_DB_USER:-hindsight_user}:${HINDSIGHT_DB_PASSWORD:?Please set the HINDSIGHT_DB_PASSWORD env variable}@db:5432/${HINDSIGHT_DB_NAME:-hindsight_db}
+      # S3 file storage configuration (SeaweedFS)
+      - HINDSIGHT_API_FILE_STORAGE_TYPE=s3
+      - HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=hindsight
+      - HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT=http://seaweedfs:8333
+      - HINDSIGHT_API_FILE_STORAGE_S3_REGION=us-east-1
+      - HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=${SEAWEEDFS_S3_ACCESS_KEY:-hindsight_s3_key}
+      - HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=${SEAWEEDFS_S3_SECRET_KEY:-hindsight_s3_secret}
+    depends_on:
+      - db
+      - seaweedfs
+    networks:
+      - hindsight-net
+
+networks:
+  hindsight-net:
+    driver: bridge
+
+volumes:
+  pg_data:
+  seaweedfs_data:

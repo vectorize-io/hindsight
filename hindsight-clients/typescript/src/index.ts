@@ -36,6 +36,7 @@ import type {
     RecallResult,
     ReflectRequest,
     ReflectResponse,
+    FileRetainResponse,
     ListMemoryUnitsResponse,
     BankProfileResponse,
     CreateBankRequest,
@@ -209,6 +210,40 @@ export class HindsightClient {
         });
 
         return this.validateResponse(response, 'retainBatch');
+    }
+
+    /**
+     * Upload files and retain their contents as memories.
+     *
+     * Files are automatically converted to text (PDF, DOCX, images via OCR, audio via
+     * transcription, and more) and ingested as memories. Processing is always asynchronous —
+     * use the returned operation IDs to track progress via the operations endpoint.
+     *
+     * @param bankId - The memory bank ID
+     * @param files - Array of File or Blob objects to upload
+     * @param options - Optional settings: context, documentTags, filesMetadata
+     */
+    async retainFiles(
+        bankId: string,
+        files: Array<File | Blob>,
+        options?: {
+            context?: string;
+            filesMetadata?: Array<{ context?: string; document_id?: string; tags?: string[]; metadata?: Record<string, string> }>;
+        }
+    ): Promise<FileRetainResponse> {
+        const meta = options?.filesMetadata ?? files.map(() => options?.context ? { context: options.context } : {});
+
+        const requestBody = JSON.stringify({
+            files_metadata: meta,
+        });
+
+        const response = await sdk.fileRetain({
+            client: this.client,
+            path: { bank_id: bankId },
+            body: { files, request: requestBody },
+        });
+
+        return this.validateResponse(response, 'retainFiles');
     }
 
     /**
@@ -580,6 +615,7 @@ export type {
     RecallResult,
     ReflectRequest,
     ReflectResponse,
+    FileRetainResponse,
     ListMemoryUnitsResponse,
     BankProfileResponse,
     CreateBankRequest,

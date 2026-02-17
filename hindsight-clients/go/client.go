@@ -57,6 +57,8 @@ type APIClient struct {
 
 	EntitiesAPI *EntitiesAPIService
 
+	FilesAPI *FilesAPIService
+
 	MemoryAPI *MemoryAPIService
 
 	MentalModelsAPI *MentalModelsAPIService
@@ -86,6 +88,7 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	c.DirectivesAPI = (*DirectivesAPIService)(&c.common)
 	c.DocumentsAPI = (*DocumentsAPIService)(&c.common)
 	c.EntitiesAPI = (*EntitiesAPIService)(&c.common)
+	c.FilesAPI = (*FilesAPIService)(&c.common)
 	c.MemoryAPI = (*MemoryAPIService)(&c.common)
 	c.MentalModelsAPI = (*MentalModelsAPIService)(&c.common)
 	c.MonitoringAPI = (*MonitoringAPIService)(&c.common)

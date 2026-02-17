@@ -43,6 +43,8 @@ dependencies = [
     "cohere>=5.0.0",
     "flashrank>=0.2.0",
     "litellm>=1.0.0",
+    "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4",  # File to markdown conversion
+    "obstore>=0.4.0",  # S3/GCS/Azure object storage client (Rust-backed)
     # Local ML models for embeddings/reranking - can be excluded in Docker with INCLUDE_LOCAL_MODELS=false
     "sentence-transformers>=3.3.0",
     "transformers>=4.53.0", # Security fixes for ReDoS vulnerabilities
@@ -65,6 +67,7 @@ test = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.0.0",
     "filelock>=3.20.1",  # TOCTOU race condition fix
+    "testcontainers>=4.0.0",
 ]
 
 [project.scripts]
@@ -114,6 +117,7 @@ dev = [
     "filelock>=3.20.1",  # TOCTOU race condition fix
     "ruff>=0.8.0",
     "ty>=0.0.1",
+    "testcontainers>=4.0.0",
 ]
 
 [tool.ruff]

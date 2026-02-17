@@ -34,6 +34,7 @@ import {
   Tag,
   Upload,
   X,
+  Lock,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import Image from "next/image";
@@ -41,22 +42,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-
-// Supported text file extensions (matching CLI)
-const TEXT_EXTENSIONS = [
-  "txt",
-  "md",
-  "json",
-  "yaml",
-  "yml",
-  "toml",
-  "xml",
-  "csv",
-  "log",
-  "rst",
-  "adoc",
-];
-const ACCEPT_FILES = TEXT_EXTENSIONS.map((ext) => `.${ext}`).join(",");
 
 function BankSelectorInner() {
   const router = useRouter();
@@ -85,6 +70,21 @@ function BankSelectorInner() {
   const [uploadProgress, setUploadProgress] = React.useState<string>("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Feature flags
+  const [fileUploadEnabled, setFileUploadEnabled] = React.useState<boolean | null>(null);
+
+  // Load feature flags
+  React.useEffect(() => {
+    client
+      .getVersion()
+      .then((version) => {
+        setFileUploadEnabled(version.features.file_upload_api);
+      })
+      .catch(() => {
+        setFileUploadEnabled(false);
+      });
+  }, []);
+
   const sortedBanks = React.useMemo(() => {
     return [...banks].sort((a, b) => a.localeCompare(b));
   }, [banks]);
@@ -112,12 +112,7 @@ function BankSelectorInner() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    // Filter to only supported extensions
-    const validFiles = files.filter((file) => {
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      return ext && TEXT_EXTENSIONS.includes(ext);
-    });
-    setSelectedFiles((prev) => [...prev, ...validFiles]);
+    setSelectedFiles((prev) => [...prev, ...files]);
     // Reset input to allow selecting same file again
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -126,15 +121,6 @@ function BankSelectorInner() {
 
   const removeFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const readFileContent = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target?.result as string);
-      reader.onerror = (e) => reject(e);
-      reader.readAsText(file);
-    });
   };
 
   const handleUploadFiles = async () => {
@@ -149,33 +135,15 @@ function BankSelectorInner() {
         .map((t) => t.trim())
         .filter((t) => t.length > 0);
 
-      // Read all files and create items
-      const items: any[] = [];
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        setUploadProgress(`Reading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
-        const content = await readFileContent(file);
-        const item: any = {
-          content,
-          context: `File: ${file.name}`,
-        };
-        if (parsedTags.length > 0) item.tags = parsedTags;
-        items.push(item);
-      }
+      setUploadProgress(`Uploading ${selectedFiles.length} file(s)...`);
 
-      setUploadProgress(`Uploading ${items.length} file(s)...`);
-
-      const params: any = {
+      // Use the new file upload API (always async, converter configured server-side)
+      await client.uploadFiles({
         bank_id: currentBank,
-        items,
-      };
-      if (parsedTags.length > 0) params.document_tags = parsedTags;
-
-      if (docAsync) {
-        await client.retain({ ...params, async: true });
-      } else {
-        await client.retain(params);
-      }
+        files: selectedFiles,
+        document_tags: parsedTags.length > 0 ? parsedTags : undefined,
+        async: true,
+      });
 
       // Reset form and close dialog
       setDocDialogOpen(false);
@@ -422,8 +390,16 @@ function BankSelectorInner() {
                   <FileText className="h-4 w-4" />
                   Text
                 </TabsTrigger>
-                <TabsTrigger value="upload" className="flex items-center gap-2">
-                  <Upload className="h-4 w-4" />
+                <TabsTrigger
+                  value="upload"
+                  className="flex items-center gap-2"
+                  disabled={fileUploadEnabled === false}
+                >
+                  {fileUploadEnabled === false ? (
+                    <Lock className="h-4 w-4" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
                   Upload Files
                 </TabsTrigger>
               </TabsList>
@@ -505,91 +481,96 @@ function BankSelectorInner() {
               </TabsContent>
 
               <TabsContent value="upload" className="space-y-4 mt-4">
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept={ACCEPT_FILES}
-                    onChange={handleFileSelect}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label
-                    htmlFor="file-upload"
-                    className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 hover:bg-accent/50 transition-colors"
-                  >
-                    <Upload className="h-8 w-8 text-muted-foreground mb-2" />
-                    <span className="text-sm text-muted-foreground">
-                      Click to select files or drag and drop
-                    </span>
-                    <span className="text-xs text-muted-foreground mt-1">
-                      Supported: {TEXT_EXTENSIONS.join(", ")}
-                    </span>
-                  </label>
-                </div>
-
-                {selectedFiles.length > 0 && (
-                  <div className="space-y-2">
-                    <label className="font-bold block text-sm text-foreground">
-                      Selected Files ({selectedFiles.length})
-                    </label>
-                    <div className="max-h-[150px] overflow-y-auto space-y-1">
-                      {selectedFiles.map((file, index) => (
-                        <div
-                          key={`${file.name}-${index}`}
-                          className="flex items-center justify-between p-2 bg-muted rounded-md"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                            <span className="text-sm truncate">{file.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              ({(file.size / 1024).toFixed(1)} KB)
-                            </span>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            onClick={() => removeFile(index)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
+                {fileUploadEnabled === false ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
+                    <Lock className="h-12 w-12 text-muted-foreground/50" />
+                    <div>
+                      <p className="font-semibold text-foreground">File Upload API Disabled</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        File upload is not enabled on this server.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        To enable, set{" "}
+                        <code className="bg-muted px-1 py-0.5 rounded">
+                          HINDSIGHT_API_ENABLE_FILE_UPLOAD_API=true
+                        </code>
+                      </p>
                     </div>
                   </div>
-                )}
+                ) : (
+                  <>
+                    <div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        id="file-upload"
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 hover:bg-accent/50 transition-colors"
+                      >
+                        <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                        <span className="text-sm text-muted-foreground">
+                          Click to select files or drag and drop
+                        </span>
+                      </label>
+                    </div>
 
-                <div>
-                  <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
-                    <Tag className="h-4 w-4" />
-                    Tags (applied to all files)
-                  </label>
-                  <Input
-                    type="text"
-                    value={docTags}
-                    onChange={(e) => setDocTags(e.target.value)}
-                    placeholder="user_alice, session_123, project_x"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Comma-separated tags for filtering during recall/reflect
-                  </p>
-                </div>
+                    {selectedFiles.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="font-bold block text-sm text-foreground">
+                          Selected Files ({selectedFiles.length})
+                        </label>
+                        <div className="max-h-[150px] overflow-y-auto space-y-1">
+                          {selectedFiles.map((file, index) => (
+                            <div
+                              key={`${file.name}-${index}`}
+                              className="flex items-center justify-between p-2 bg-muted rounded-md"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                <span className="text-sm truncate">{file.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  ({(file.size / 1024).toFixed(1)} KB)
+                                </span>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                                onClick={() => removeFile(index)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="async-upload"
-                    checked={docAsync}
-                    onCheckedChange={(checked) => setDocAsync(checked as boolean)}
-                  />
-                  <label htmlFor="async-upload" className="text-sm cursor-pointer text-foreground">
-                    Process in background (async)
-                  </label>
-                </div>
+                    <div>
+                      <label className="font-bold block mb-1 text-sm text-foreground flex items-center gap-2">
+                        <Tag className="h-4 w-4" />
+                        Tags (applied to all files)
+                      </label>
+                      <Input
+                        type="text"
+                        value={docTags}
+                        onChange={(e) => setDocTags(e.target.value)}
+                        placeholder="user_alice, session_123, project_x"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Comma-separated tags for filtering during recall/reflect
+                      </p>
+                    </div>
 
-                {uploadProgress && (
-                  <p className="text-sm text-muted-foreground">{uploadProgress}</p>
+                    {uploadProgress && (
+                      <p className="text-sm text-muted-foreground">{uploadProgress}</p>
+                    )}
+                  </>
                 )}
               </TabsContent>
             </Tabs>

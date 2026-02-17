@@ -6,11 +6,13 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 """
 
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 import hindsight_client_api
-from hindsight_client_api.api import banks_api, directives_api, memory_api, mental_models_api
+from hindsight_client_api.api import banks_api, directives_api, files_api, memory_api, mental_models_api
 from hindsight_client_api.models import (
     memory_item,
     recall_request,
@@ -18,6 +20,7 @@ from hindsight_client_api.models import (
     retain_request,
 )
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
+from hindsight_client_api.models.file_retain_response import FileRetainResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult
@@ -80,6 +83,7 @@ class Hindsight:
         self._banks_api = banks_api.BanksApi(self._api_client)
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
+        self._files_api = files_api.FilesApi(self._api_client)
 
     def __enter__(self):
         """Context manager entry."""
@@ -198,6 +202,41 @@ class Hindsight:
         )
 
         return _run_async(self._memory_api.retain_memories(bank_id, request_obj))
+
+    def retain_files(
+        self,
+        bank_id: str,
+        files: list[str | Path],
+        context: str | None = None,
+        files_metadata: list[dict[str, Any]] | None = None,
+    ) -> FileRetainResponse:
+        """
+        Upload files and retain their contents as memories.
+
+        Files are automatically converted to text (PDF, DOCX, images via OCR, audio via
+        transcription, and more) and ingested as memories. Processing is always asynchronous
+        — use the returned operation IDs to track progress.
+
+        Args:
+            bank_id: The memory bank ID
+            files: List of file paths to upload
+            context: Optional context description applied to all files
+            files_metadata: Optional per-file metadata list. If provided, must match the
+                length of `files`. Each entry can have: context, document_id, tags, metadata.
+
+        Returns:
+            FileRetainResponse with operation_ids for tracking progress
+        """
+        file_data = []
+        for file_path in files:
+            path = Path(file_path)
+            file_data.append((path.name, path.read_bytes()))
+
+        meta = files_metadata or [{"context": context} if context else {} for _ in files]
+
+        request_body = json.dumps({"files_metadata": meta})
+
+        return _run_async(self._files_api.file_retain(bank_id=bank_id, files=file_data, request=request_body))
 
     def recall(
         self,

@@ -102,19 +102,46 @@ The `document_id` groups related memories for later management.
 
 ## Store from Files
 
+Upload files directly — Hindsight automatically converts them to text and extracts memories. File processing always runs asynchronously and returns operation IDs for tracking.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
+
 <Tabs>
 <TabItem value="cli" label="CLI">
-
-```bash
-# Single file
-hindsight memory retain-files my-bank document.txt
-
-# Directory (recursive by default)
-hindsight memory retain-files my-bank ./documents/
-```
-
+<CodeSnippet code={retainSh} section="retain-files" language="bash" />
+</TabItem>
+<TabItem value="curl" label="HTTP">
+<CodeSnippet code={retainSh} section="retain-files-curl" language="bash" />
+</TabItem>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-files" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-files" language="javascript" />
 </TabItem>
 </Tabs>
+
+### File Retain Response
+
+The file retain endpoint always returns asynchronously:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `operation_ids` | string[] | One operation ID per uploaded file. Use `GET /v1/default/banks/{bank_id}/operations` to track progress. |
+
+### Batch File Uploads
+
+Upload up to 10 files per request (max 100 MB total). Each file becomes a separate document with optional per-file metadata:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-files-batch" language="python" />
+</TabItem>
+</Tabs>
+
+:::info File Storage
+Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration#file-processing) for details.
+:::
 
 
 ## Async Ingestion

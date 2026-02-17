@@ -13,6 +13,36 @@ fn convert_31_to_30(spec: &mut serde_json::Value) {
     convert_anyof_to_nullable(spec);
 }
 
+/// Remove paths with multipart/form-data content type (not supported by progenitor)
+fn filter_multipart_endpoints(spec: &mut serde_json::Value) {
+    if let Some(paths) = spec.get_mut("paths").and_then(|v| v.as_object_mut()) {
+        let mut paths_to_remove = Vec::new();
+
+        for (path_name, path_item) in paths.iter() {
+            if let Some(operations) = path_item.as_object() {
+                for (_method, operation) in operations.iter() {
+                    if let Some(request_body) = operation.get("requestBody") {
+                        if let Some(content) = request_body.get("content") {
+                            if let Some(content_obj) = content.as_object() {
+                                if content_obj.contains_key("multipart/form-data") {
+                                    eprintln!("Filtering out endpoint with multipart/form-data: {}", path_name);
+                                    paths_to_remove.push(path_name.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove the paths
+        for path in paths_to_remove {
+            paths.remove(&path);
+        }
+    }
+}
+
 fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(obj) => {
@@ -102,6 +132,9 @@ fn main() {
             convert_31_to_30(&mut spec_json);
         }
     }
+
+    // Filter out multipart/form-data endpoints (progenitor doesn't support them)
+    filter_multipart_endpoints(&mut spec_json);
 
     // Now parse as OpenAPI struct
     let spec: openapiv3::OpenAPI = serde_json::from_value(spec_json)

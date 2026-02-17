@@ -2124,6 +2124,73 @@ paths:
       summary: Retain memories
       tags:
       - Memory
+  /v1/default/banks/{bank_id}/files/retain:
+    post:
+      description: |-
+        Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories.
+
+        This endpoint handles file upload, conversion, and memory creation in a single operation.
+
+        **Features:**
+        - Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)
+        - Automatic file-to-markdown conversion using pluggable parsers
+        - Files stored in object storage (PostgreSQL by default, S3 for production)
+        - Each file becomes a separate document with optional metadata/tags
+        - Always processes asynchronously — returns operation IDs immediately
+
+        **The system automatically:**
+        1. Stores uploaded files in object storage
+        2. Converts files to markdown
+        3. Creates document records with file metadata
+        4. Extracts facts and creates memory units (same as regular retain)
+
+        Use the operations endpoint to monitor progress.
+
+        **Request format:** multipart/form-data with:
+        - `files`: One or more files to upload
+        - `request`: JSON string with FileRetainRequest model (files_metadata)
+
+        **Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).
+      operationId: file_retain
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_file_retain'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileRetainResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Convert files to memories
+      tags:
+      - Files
 components:
   schemas:
     AddBackgroundRequest:
@@ -2394,6 +2461,22 @@ components:
       - total_links
       - total_nodes
       title: BankStatsResponse
+    Body_file_retain:
+      properties:
+        files:
+          description: Files to upload and convert
+          items:
+            format: binary
+            type: string
+          type: array
+        request:
+          description: JSON string with FileRetainRequest model
+          title: Request
+          type: string
+      required:
+      - files
+      - request
+      title: Body_file_retain
     Budget:
       description: Budget levels for recall/reflect operations.
       enum:
@@ -3040,12 +3123,34 @@ components:
           description: Whether per-bank configuration API is enabled
           title: Bank Config Api
           type: boolean
+        file_upload_api:
+          description: Whether file upload/conversion API is enabled
+          title: File Upload Api
+          type: boolean
       required:
       - bank_config_api
+      - file_upload_api
       - mcp
       - observations
       - worker
       title: FeaturesInfo
+    FileRetainResponse:
+      description: Response model for file upload endpoint.
+      example:
+        operation_ids:
+        - 550e8400-e29b-41d4-a716-446655440000
+        - 550e8400-e29b-41d4-a716-446655440001
+        - 550e8400-e29b-41d4-a716-446655440002
+      properties:
+        operation_ids:
+          description: "Operation IDs for tracking file conversion operations. Use\
+            \ GET /v1/default/banks/{bank_id}/operations to list operations."
+          items:
+            type: string
+          type: array
+      required:
+      - operation_ids
+      title: FileRetainResponse
     GraphDataResponse:
       description: Response model for graph data endpoint.
       example:
@@ -4197,6 +4302,7 @@ components:
         api_version: 0.4.0
         features:
           bank_config_api: false
+          file_upload_api: true
           mcp: true
           observations: false
           worker: true

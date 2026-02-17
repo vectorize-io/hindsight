@@ -206,8 +206,12 @@ class TestWorkerPoller:
         assert len(claimed) == 3
 
     @pytest.mark.asyncio
-    async def test_execute_task_marks_completed(self, pool, clean_operations):
-        """Test that successful task execution marks task as completed."""
+    async def test_execute_task_executor_marks_completed(self, pool, clean_operations):
+        """Test that executor's status marking is preserved by the poller.
+
+        The executor (MemoryEngine.execute_task) handles marking operations as completed/failed.
+        The poller should NOT override those status updates.
+        """
         from hindsight_api.worker import WorkerPoller
         from hindsight_api.worker.poller import ClaimedTask
 
@@ -228,7 +232,16 @@ class TestWorkerPoller:
         executed = []
 
         async def mock_executor(task_dict):
+            """Executor that marks its own status as completed (like MemoryEngine.execute_task)."""
             executed.append(task_dict)
+            await pool.execute(
+                """
+                UPDATE async_operations
+                SET status = 'completed', completed_at = now(), updated_at = now()
+                WHERE operation_id = $1
+                """,
+                op_id,
+            )
 
         poller = WorkerPoller(
             pool=pool,
@@ -246,7 +259,7 @@ class TestWorkerPoller:
         assert completed, "Task did not complete within timeout"
         assert len(executed) == 1
 
-        # Verify task is marked as completed
+        # Verify task is marked as completed (by executor, not overridden by poller)
         row = await pool.fetchrow(
             "SELECT status, completed_at FROM async_operations WHERE operation_id = $1",
             op_id,
@@ -255,19 +268,24 @@ class TestWorkerPoller:
         assert row["completed_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_execute_task_retries_on_failure(self, pool, clean_operations):
-        """Test that failed task execution triggers retry mechanism."""
+    async def test_executor_exception_does_not_crash_poller(self, pool, clean_operations):
+        """Test that unexpected exceptions from executor are caught and don't crash the poller.
+
+        If the executor raises an unexpected exception (which MemoryEngine.execute_task should NOT do,
+        but could happen from schema setup or other infrastructure issues), the poller should catch it
+        gracefully. Status remains 'processing' since neither executor nor poller handled it.
+        """
         from hindsight_api.worker import WorkerPoller
         from hindsight_api.worker.poller import ClaimedTask
 
-        # Create a pending task with retry_count=0
+        # Create a pending task
         bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
         op_id = uuid.uuid4()
         payload = json.dumps({"type": "test_task", "operation_id": str(op_id), "bank_id": bank_id})
         await pool.execute(
             """
-            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, retry_count)
-            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'test-worker-1', 0)
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'test-worker-1')
             """,
             op_id,
             bank_id,
@@ -275,16 +293,15 @@ class TestWorkerPoller:
         )
 
         async def failing_executor(task_dict):
-            raise ValueError("Simulated failure")
+            raise ValueError("Unexpected infrastructure failure")
 
         poller = WorkerPoller(
             pool=pool,
             worker_id="test-worker-1",
             executor=failing_executor,
-            max_retries=3,
         )
 
-        # Execute (should fail and retry) - fire-and-forget
+        # Execute - should catch exception without crashing
         task_dict = json.loads(payload)
         claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
         await poller.execute_task(claimed_task)
@@ -293,61 +310,84 @@ class TestWorkerPoller:
         completed = await poller.wait_for_active_tasks(timeout=5.0)
         assert completed, "Task did not complete within timeout"
 
-        # Verify task is back to pending with incremented retry_count
+        # Status stays 'processing' since the poller no longer manages status
         row = await pool.fetchrow(
-            "SELECT status, retry_count, worker_id FROM async_operations WHERE operation_id = $1",
+            "SELECT status FROM async_operations WHERE operation_id = $1",
             op_id,
         )
-        assert row["status"] == "pending"
-        assert row["retry_count"] == 1
-        assert row["worker_id"] is None  # Worker ID cleared for retry
+        assert row["status"] == "processing"
 
     @pytest.mark.asyncio
-    async def test_execute_task_fails_after_max_retries(self, pool, clean_operations):
-        """Test that task is marked failed after exceeding max retries."""
+    async def test_executor_failed_status_not_overridden(self, pool, clean_operations):
+        """REGRESSION TEST: Verify poller does NOT overwrite executor's 'failed' status to 'completed'.
+
+        This test catches the bug where the poller always called _mark_completed() after executor
+        returned, overwriting the 'failed' status that the executor had already set.
+
+        Scenario:
+        1. Executor catches an internal error and marks the operation as 'failed' in the DB
+        2. Executor returns normally (does NOT re-raise) - this is how MemoryEngine.execute_task works
+        3. The poller must NOT overwrite the 'failed' status to 'completed'
+
+        With the old buggy code, this test would FAIL (status would be 'completed').
+        """
         from hindsight_api.worker import WorkerPoller
         from hindsight_api.worker.poller import ClaimedTask
 
-        # Create a task that has already used all retries
         bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
         op_id = uuid.uuid4()
         payload = json.dumps({"type": "test_task", "operation_id": str(op_id), "bank_id": bank_id})
         await pool.execute(
             """
-            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, retry_count)
-            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'test-worker-1', 3)
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id)
+            VALUES ($1, $2, 'test', 'processing', $3::jsonb, 'test-worker-1')
             """,
             op_id,
             bank_id,
             payload,
         )
 
-        async def failing_executor(task_dict):
-            raise ValueError("Simulated failure")
+        async def executor_that_marks_failed(task_dict):
+            """Simulates MemoryEngine.execute_task behavior on internal error.
+
+            The executor catches the error, marks the operation as 'failed',
+            and returns normally (does NOT re-raise the exception).
+            """
+            # Simulate internal failure handling (like MemoryEngine._mark_operation_failed)
+            await pool.execute(
+                """
+                UPDATE async_operations
+                SET status = 'failed', error_message = $2, completed_at = now(), updated_at = now()
+                WHERE operation_id = $1
+                """,
+                op_id,
+                "Simulated conversion error: file format not supported",
+            )
+            # Returns normally - this is the key: executor does NOT re-raise
 
         poller = WorkerPoller(
             pool=pool,
             worker_id="test-worker-1",
-            executor=failing_executor,
-            max_retries=3,
+            executor=executor_that_marks_failed,
         )
 
-        # Execute (should fail permanently) - fire-and-forget
         task_dict = json.loads(payload)
         claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
         await poller.execute_task(claimed_task)
 
-        # Wait for background task to complete
         completed = await poller.wait_for_active_tasks(timeout=5.0)
         assert completed, "Task did not complete within timeout"
 
-        # Verify task is marked as failed
+        # THE KEY ASSERTION: Status must be 'failed', NOT 'completed'
         row = await pool.fetchrow(
             "SELECT status, error_message FROM async_operations WHERE operation_id = $1",
             op_id,
         )
-        assert row["status"] == "failed"
-        assert "Max retries" in row["error_message"]
+        assert row["status"] == "failed", (
+            f"REGRESSION: Poller overwrote executor's 'failed' status to '{row['status']}'. "
+            "The poller must not override status set by the executor."
+        )
+        assert "Simulated conversion error" in row["error_message"]
 
     @pytest.mark.asyncio
     async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, clean_operations):

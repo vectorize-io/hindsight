@@ -629,6 +629,114 @@ CONSOLIDATE related technical discussions into ONE fact when possible.
 Ask yourself: 'Would this technical context be useful in 6 months?' If no, skip it."
 ```
 
+### File Processing
+
+Configuration for the file upload and conversion pipeline (used by `POST /v1/default/banks/{bank_id}/files/retain`).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
+| `HINDSIGHT_API_FILE_PARSER` | File parser to use (`markitdown`) | `markitdown` |
+| `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |
+| `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB` | Max total upload size per request (MB) | `100` |
+| `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN` | Delete stored files after memory extraction completes | `true` |
+
+**Supported formats (via markitdown):** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF — OCR), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV, and more.
+
+```bash
+# Increase batch limits for large file imports
+export HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE=20
+export HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB=500
+
+# Keep files after processing (useful for debugging or re-processing)
+export HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN=false
+```
+
+### File Storage
+
+Files uploaded via the file retain API are stored in an object storage backend before conversion. Choose the backend that fits your infrastructure.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_STORAGE_TYPE` | Storage backend: `native`, `s3`, `gcs`, or `azure` | `native` |
+
+#### Native (PostgreSQL)
+
+Files are stored as `BYTEA` in the `file_storage` table. No additional infrastructure required. Suitable for development and small deployments.
+
+```bash
+# Native storage is the default — no additional configuration needed
+export HINDSIGHT_API_FILE_STORAGE_TYPE=native
+```
+
+#### S3 / S3-Compatible
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_STORAGE_S3_BUCKET` | S3 bucket name | - |
+| `HINDSIGHT_API_FILE_STORAGE_S3_REGION` | AWS region | - |
+| `HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT` | Custom endpoint URL (for S3-compatible stores like MinIO, Cloudflare R2) | AWS default |
+| `HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID` | AWS access key ID | - |
+| `HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY` | AWS secret access key | - |
+
+```bash
+# AWS S3
+export HINDSIGHT_API_FILE_STORAGE_TYPE=s3
+export HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=my-hindsight-files
+export HINDSIGHT_API_FILE_STORAGE_S3_REGION=us-east-1
+export HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+export HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+# S3-compatible (MinIO, Cloudflare R2, etc.)
+export HINDSIGHT_API_FILE_STORAGE_TYPE=s3
+export HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=my-bucket
+export HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT=https://your-minio.example.com
+export HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=minioadmin
+export HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=minioadmin
+```
+
+#### Google Cloud Storage
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_STORAGE_GCS_BUCKET` | GCS bucket name | - |
+| `HINDSIGHT_API_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY` | Path to service account JSON key file | ADC if not set |
+
+```bash
+export HINDSIGHT_API_FILE_STORAGE_TYPE=gcs
+export HINDSIGHT_API_FILE_STORAGE_GCS_BUCKET=my-hindsight-files
+# Optional: use service account key file (otherwise falls back to ADC)
+export HINDSIGHT_API_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY=/path/to/key.json
+```
+
+#### Azure Blob Storage
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_STORAGE_AZURE_CONTAINER` | Azure container name | - |
+| `HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_NAME` | Azure storage account name | - |
+| `HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY` | Azure storage account key | - |
+
+```bash
+export HINDSIGHT_API_FILE_STORAGE_TYPE=azure
+export HINDSIGHT_API_FILE_STORAGE_AZURE_CONTAINER=hindsight-files
+export HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_NAME=mystorageaccount
+export HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY=base64encodedkey==
+```
+
+#### Storage Backend Comparison
+
+| Backend | Best For | Notes |
+|---------|----------|-------|
+| `native` | Development, small deployments | No extra infrastructure, stored in PostgreSQL |
+| `s3` | Production, AWS deployments | Works with any S3-compatible store |
+| `gcs` | Production, GCP deployments | Supports ADC for keyless auth |
+| `azure` | Production, Azure deployments | Uses account key auth |
+
+:::tip Production Recommendation
+For production deployments, use `s3`, `gcs`, or `azure` to avoid storing large binary files in your PostgreSQL database. Set `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN=true` (the default) to delete files after memory extraction, which minimizes storage costs.
+:::
+
 ### Observations (Experimental)
 
 Observations are consolidated knowledge synthesized from facts.
@@ -988,6 +1096,13 @@ HINDSIGHT_API_LLM_API_KEY=gsk_xxxxxxxxxxxx
 # Authentication (optional, recommended for production)
 # HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
 # HINDSIGHT_API_TENANT_API_KEY=your-secret-api-key
+
+# File storage (optional, defaults to PostgreSQL native storage)
+# HINDSIGHT_API_FILE_STORAGE_TYPE=s3
+# HINDSIGHT_API_FILE_STORAGE_S3_BUCKET=my-hindsight-files
+# HINDSIGHT_API_FILE_STORAGE_S3_REGION=us-east-1
+# HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+# HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
 # Control Plane
 HINDSIGHT_CP_DATAPLANE_API_URL=http://localhost:8888
