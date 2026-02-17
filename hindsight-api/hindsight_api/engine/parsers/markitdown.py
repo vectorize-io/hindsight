@@ -1,18 +1,18 @@
-"""Markitdown converter implementation."""
+"""Markitdown parser implementation."""
 
 import asyncio
 import logging
 import tempfile
 from pathlib import Path
 
-from .base import FileConverter
+from .base import FileParser
 
 logger = logging.getLogger(__name__)
 
 
-class MarkitdownConverter(FileConverter):
+class MarkitdownParser(FileParser):
     """
-    Markitdown file converter.
+    Markitdown file parser.
 
     Uses Microsoft's markitdown library to convert various file formats
     to markdown including PDF, Office docs, images (via OCR), audio, HTML.
@@ -29,7 +29,7 @@ class MarkitdownConverter(FileConverter):
     """
 
     def __init__(self):
-        """Initialize markitdown converter."""
+        """Initialize markitdown parser."""
         # Lazy import to avoid requiring markitdown for all users
         try:
             from markitdown import MarkItDown
@@ -37,24 +37,24 @@ class MarkitdownConverter(FileConverter):
             self._markitdown = MarkItDown()
         except ImportError as e:
             raise ImportError(
-                "markitdown package is required for file conversion. Install with: pip install markitdown"
+                "markitdown package is required for file parsing. Install with: pip install markitdown"
             ) from e
 
     async def convert(self, file_data: bytes, filename: str) -> str:
-        """Convert file to markdown using markitdown."""
+        """Parse file to markdown using markitdown."""
         # markitdown is synchronous, so we run it in executor to avoid blocking
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._convert_sync, file_data, filename)
 
     def _convert_sync(self, file_data: bytes, filename: str) -> str:
-        """Synchronous conversion (runs in thread pool)."""
+        """Synchronous parsing (runs in thread pool)."""
         # Write to temp file (markitdown requires file path)
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
 
         try:
-            # Convert using markitdown
+            # Parse using markitdown
             result = self._markitdown.convert(tmp_path)
 
             if not result or not result.text_content:
@@ -63,8 +63,8 @@ class MarkitdownConverter(FileConverter):
             return result.text_content
 
         except Exception as e:
-            logger.error(f"Markitdown conversion failed for {filename}: {e}")
-            raise RuntimeError(f"Failed to convert '{filename}': {e}") from e
+            logger.error(f"Markitdown parsing failed for {filename}: {e}")
+            raise RuntimeError(f"Failed to parse '{filename}': {e}") from e
 
         finally:
             # Clean up temp file
@@ -105,5 +105,5 @@ class MarkitdownConverter(FileConverter):
         return ext in supported_extensions
 
     def name(self) -> str:
-        """Get converter name."""
+        """Get parser name."""
         return "markitdown"

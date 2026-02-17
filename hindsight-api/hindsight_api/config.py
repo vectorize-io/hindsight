@@ -271,7 +271,7 @@ ENV_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_GCS_SERVI
 ENV_FILE_STORAGE_AZURE_CONTAINER = "HINDSIGHT_API_FILE_STORAGE_AZURE_CONTAINER"
 ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_NAME"
 ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
-ENV_FILE_CONVERTER = "HINDSIGHT_API_FILE_CONVERTER"
+ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
@@ -403,7 +403,7 @@ DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in
 
 # File storage defaults
 DEFAULT_FILE_STORAGE_TYPE = "native"  # PostgreSQL BYTEA storage
-DEFAULT_FILE_CONVERTER = "markitdown"  # File converter to use (markitdown is the only supported converter)
+DEFAULT_FILE_PARSER = "markitdown"  # File parser to use (markitdown is the only supported parser)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
@@ -645,7 +645,7 @@ class HindsightConfig:
     file_storage_azure_container: str | None  # Azure container name (required for azure storage)
     file_storage_azure_account_name: str | None  # Azure storage account name
     file_storage_azure_account_key: str | None  # Azure storage account key
-    file_converter: str  # File converter to use (e.g., "markitdown")
+    file_parser: str  # File parser to use (e.g., "markitdown")
     file_conversion_max_batch_size_mb: int  # Max total batch size in MB (all files combined)
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
@@ -1029,7 +1029,7 @@ class HindsightConfig:
             file_storage_azure_container=os.getenv(ENV_FILE_STORAGE_AZURE_CONTAINER) or None,
             file_storage_azure_account_name=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME) or None,
             file_storage_azure_account_key=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY) or None,
-            file_converter=os.getenv(ENV_FILE_CONVERTER, DEFAULT_FILE_CONVERTER),
+            file_parser=os.getenv(ENV_FILE_PARSER, DEFAULT_FILE_PARSER),
             file_conversion_max_batch_size_mb=int(
                 os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB))
             ),

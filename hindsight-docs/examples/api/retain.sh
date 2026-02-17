@@ -45,7 +45,7 @@ hindsight memory retain-files my-bank ./documents/ --async
 # Via HTTP API (multipart/form-data)
 curl -X POST "${HINDSIGHT_URL}/v1/default/banks/my-bank/files/retain" \
     -F "files=@report.pdf;type=application/octet-stream" \
-    -F "request={\"async\": true, \"files_metadata\": [{\"context\": \"quarterly report\"}]}"
+    -F "request={\"files_metadata\": [{\"context\": \"quarterly report\"}]}"
 # [/docs:retain-files-curl]
 
 

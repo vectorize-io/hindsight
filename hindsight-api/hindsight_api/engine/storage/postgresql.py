@@ -58,28 +58,19 @@ class PostgreSQLFileStorage(FileStorage):
         metadata: dict[str, str] | None = None,
     ) -> str:
         """Store file in PostgreSQL."""
-        import json
-
         pool = self._pool_getter()
 
         async with pool.acquire() as conn:
             await conn.execute(
                 f"""
                 INSERT INTO {fq_table("file_storage", self._schema)}
-                (storage_key, data, content_type, size_bytes, metadata)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
+                (storage_key, data)
+                VALUES ($1, $2)
                 ON CONFLICT (storage_key) DO UPDATE SET
-                    data = EXCLUDED.data,
-                    content_type = EXCLUDED.content_type,
-                    size_bytes = EXCLUDED.size_bytes,
-                    metadata = EXCLUDED.metadata,
-                    accessed_at = NOW()
+                    data = EXCLUDED.data
                 """,
                 key,
                 file_data,
-                metadata.get("content_type") if metadata else None,
-                len(file_data),
-                json.dumps(metadata or {}),
             )
 
         logger.debug(f"Stored file {key} ({len(file_data)} bytes) in PostgreSQL")
@@ -90,14 +81,10 @@ class PostgreSQLFileStorage(FileStorage):
         pool = self._pool_getter()
 
         async with pool.acquire() as conn:
-            # Update access tracking
             row = await conn.fetchrow(
                 f"""
-                UPDATE {fq_table("file_storage", self._schema)}
-                SET accessed_at = NOW(),
-                    access_count = access_count + 1
+                SELECT data FROM {fq_table("file_storage", self._schema)}
                 WHERE storage_key = $1
-                RETURNING data
                 """,
                 key,
             )
@@ -150,29 +137,3 @@ class PostgreSQLFileStorage(FileStorage):
         # Return API path for download endpoint
         # (expires_in ignored for database storage - auth handled at API level)
         return f"/v1/default/files/download/{key}"
-
-    async def get_metadata(self, key: str) -> dict:
-        """Get file metadata without retrieving the file data."""
-        pool = self._pool_getter()
-
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                f"""
-                SELECT content_type, size_bytes, metadata, created_at, accessed_at, access_count
-                FROM {fq_table("file_storage", self._schema)}
-                WHERE storage_key = $1
-                """,
-                key,
-            )
-
-            if not row:
-                raise FileNotFoundError(f"File not found: {key}")
-
-            return {
-                "content_type": row["content_type"],
-                "size_bytes": row["size_bytes"],
-                "metadata": row["metadata"],
-                "created_at": row["created_at"].isoformat(),
-                "accessed_at": row["accessed_at"].isoformat(),
-                "access_count": row["access_count"],
-            }

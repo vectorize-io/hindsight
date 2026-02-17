@@ -599,7 +599,6 @@ class MemoryEngine(MemoryEngineInterface):
                         SET file_storage_key = $3,
                             file_original_name = $4,
                             file_content_type = $5,
-                            file_size_bytes = $6,
                             updated_at = NOW()
                         WHERE id = $1 AND bank_id = $2
                         """,
@@ -608,7 +607,6 @@ class MemoryEngine(MemoryEngineInterface):
                         file_metadata["file_storage_key"],
                         file_metadata["file_original_name"],
                         file_metadata["file_content_type"],
-                        file_metadata["file_size_bytes"],
                     )
 
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
@@ -622,7 +620,7 @@ class MemoryEngine(MemoryEngineInterface):
         This avoids holding a worker slot during the expensive retain pipeline.
 
         Args:
-            task_dict: Dict with 'bank_id', 'storage_key', 'converter', etc.
+            task_dict: Dict with 'bank_id', 'storage_key', 'parser', etc.
 
         Raises:
             ValueError: If required fields are missing
@@ -644,15 +642,15 @@ class MemoryEngine(MemoryEngineInterface):
             file_data = await self._file_storage.retrieve(storage_key)
 
             # Convert to markdown
-            converter = self._converter_registry.get_converter(
-                name=task_dict.get("converter"),
+            parser = self._parser_registry.get_parser(
+                name=task_dict.get("parser"),
                 filename=filename,
                 content_type=task_dict.get("content_type"),
             )
-            markdown_content = await converter.convert(file_data, filename)
+            markdown_content = await parser.convert(file_data, filename)
         except Exception as e:
             # Re-raise with filename context for better error reporting
-            error_msg = f"Failed to convert file '{filename}': {str(e)}"
+            error_msg = f"Failed to parse file '{filename}': {str(e)}"
             logger.error(f"[FILE_CONVERT_RETAIN] {error_msg}")
             raise RuntimeError(error_msg) from e
 
@@ -689,7 +687,6 @@ class MemoryEngine(MemoryEngineInterface):
             "file_storage_key": storage_key,
             "file_original_name": task_dict["original_filename"],
             "file_content_type": task_dict["content_type"],
-            "file_size_bytes": task_dict["file_size_bytes"],
         }
 
         # In one transaction: create the retain async operation AND mark this conversion as completed
@@ -1376,15 +1373,15 @@ class MemoryEngine(MemoryEngineInterface):
         )
         logger.debug(f"File storage initialized ({config.file_storage_type})")
 
-        # Initialize converter registry
-        from .converters import ConverterRegistry, MarkitdownConverter
+        # Initialize parser registry
+        from .parsers import FileParserRegistry, MarkitdownParser
 
-        self._converter_registry = ConverterRegistry()
+        self._parser_registry = FileParserRegistry()
         try:
-            self._converter_registry.register(MarkitdownConverter())
-            logger.debug("Registered markitdown converter")
+            self._parser_registry.register(MarkitdownParser())
+            logger.debug("Registered markitdown parser")
         except ImportError:
-            logger.warning("markitdown not available - file conversion disabled")
+            logger.warning("markitdown not available - file parsing disabled")
 
         # Set executor for task backend and initialize
         self._task_backend.set_executor(self.execute_task)
@@ -6287,7 +6284,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         file_items: list[dict[str, Any]],
-        converter: str,
+        parser: str,
         document_tags: list[str] | None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
@@ -6306,7 +6303,7 @@ class MemoryEngine(MemoryEngineInterface):
                 - metadata: Optional metadata dict
                 - tags: Optional tags list
                 - timestamp: Optional timestamp
-            converter: Converter name (e.g., "markitdown")
+            parser: Parser name (e.g., "markitdown")
             document_tags: Tags applied to all documents
             request_context: Request context for authentication
 
@@ -6362,8 +6359,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "storage_key": storage_key,
                 "original_filename": file.filename,
                 "content_type": file.content_type or "application/octet-stream",
-                "file_size_bytes": len(file_data),
-                "converter": converter,
+                "parser": parser,
                 "context": item.get("context"),
                 "metadata": item.get("metadata", {}),
                 "tags": item.get("tags", []),
@@ -6384,7 +6380,6 @@ class MemoryEngine(MemoryEngineInterface):
                 task_payload=task_payload,
                 result_metadata={
                     "original_filename": file.filename,
-                    "file_size_bytes": len(file_data),
                 },
                 dedupe_by_bank=False,
             )

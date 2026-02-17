@@ -182,7 +182,6 @@ impl ApiClient {
         bank_id: &str,
         files: Vec<(String, Vec<u8>)>,
         context: Option<String>,
-        document_tags: Option<serde_json::Value>,
         verbose: bool,
     ) -> Result<FileRetainResult> {
         self.runtime.block_on(async {
@@ -206,13 +205,9 @@ impl ApiClient {
                 })
                 .collect();
 
-            let mut request_json = serde_json::json!({
-                "async": true,
+            let request_json = serde_json::json!({
                 "files_metadata": files_metadata,
             });
-            if let Some(tags) = document_tags {
-                request_json["document_tags"] = tags;
-            }
 
             let mut form = reqwest::multipart::Form::new()
                 .text("request", request_json.to_string());

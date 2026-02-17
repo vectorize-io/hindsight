@@ -604,7 +604,7 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
-| `HINDSIGHT_API_FILE_CONVERTER` | File converter to use (`markitdown`) | `markitdown` |
+| `HINDSIGHT_API_FILE_PARSER` | File parser to use (`markitdown`) | `markitdown` |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB` | Max total upload size per request (MB) | `100` |
 | `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN` | Delete stored files after memory extraction completes | `true` |

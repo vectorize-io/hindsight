@@ -208,7 +208,6 @@ class Hindsight:
         bank_id: str,
         files: list[str | Path],
         context: str | None = None,
-        document_tags: list[str] | None = None,
         files_metadata: list[dict[str, Any]] | None = None,
     ) -> FileRetainResponse:
         """
@@ -222,7 +221,6 @@ class Hindsight:
             bank_id: The memory bank ID
             files: List of file paths to upload
             context: Optional context description applied to all files
-            document_tags: Optional tags applied to all files
             files_metadata: Optional per-file metadata list. If provided, must match the
                 length of `files`. Each entry can have: context, document_id, tags, metadata.
 
@@ -236,13 +234,7 @@ class Hindsight:
 
         meta = files_metadata or [{"context": context} if context else {} for _ in files]
 
-        request_body = json.dumps(
-            {
-                "async": True,
-                "document_tags": document_tags,
-                "files_metadata": meta,
-            }
-        )
+        request_body = json.dumps({"files_metadata": meta})
 
         return _run_async(self._files_api.file_retain(bank_id=bank_id, files=file_data, request=request_body))
 

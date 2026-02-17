@@ -446,8 +446,6 @@ class FileRetainRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "document_tags": ["work", "reports"],
-                "async": True,
                 "files_metadata": [
                     {"document_id": "report_2024", "tags": ["quarterly"]},
                     {"context": "meeting notes"},
@@ -456,12 +454,6 @@ class FileRetainRequest(BaseModel):
         }
     )
 
-    document_tags: list[str] | None = Field(default=None, description="Tags applied to all files in this request")
-    async_: bool = Field(
-        default=True,
-        alias="async",
-        description="Process asynchronously (recommended for files, default: true)",
-    )
     files_metadata: list[FileRetainMetadata] | None = Field(
         default=None,
         description="Metadata for each file (optional, must match number of files if provided)",
@@ -3701,21 +3693,20 @@ def _register_routes(app: FastAPI):
         "This endpoint handles file upload, conversion, and memory creation in a single operation.\n\n"
         "**Features:**\n"
         "- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)\n"
-        "- Automatic file-to-markdown conversion using pluggable converters\n"
+        "- Automatic file-to-markdown conversion using pluggable parsers\n"
         "- Files stored in object storage (PostgreSQL by default, S3 for production)\n"
         "- Each file becomes a separate document with optional metadata/tags\n"
-        "- Async processing (recommended for files)\n\n"
+        "- Always processes asynchronously — returns operation IDs immediately\n\n"
         "**The system automatically:**\n"
         "1. Stores uploaded files in object storage\n"
         "2. Converts files to markdown\n"
         "3. Creates document records with file metadata\n"
         "4. Extracts facts and creates memory units (same as regular retain)\n\n"
-        "**When `async=true` (recommended):** Returns immediately after queuing. Use the operations endpoint to monitor progress.\n\n"
-        "**When `async=false`:** Waits for conversion and processing to complete (may timeout for large files).\n\n"
+        "Use the operations endpoint to monitor progress.\n\n"
         "**Request format:** multipart/form-data with:\n"
         "- `files`: One or more files to upload\n"
-        "- `request`: JSON string with FileRetainRequest model (document_tags, async, files_metadata)\n\n"
-        "**Note:** File converter is configured server-side via `HINDSIGHT_API_FILE_CONVERTER` (default: markitdown).",
+        "- `request`: JSON string with FileRetainRequest model (files_metadata)\n\n"
+        "**Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).",
         operation_id="file_retain",
         tags=["Files"],
     )
@@ -3811,26 +3802,18 @@ def _register_routes(app: FastAPI):
                     detail=f"Total batch size ({total_mb:.1f}MB) exceeds maximum of {config.file_conversion_max_batch_size_mb}MB",
                 )
 
-            if request_data.async_:
-                # Async processing: queue tasks and return immediately
-                result = await app.state.memory.submit_async_file_retain(
-                    bank_id=bank_id,
-                    file_items=file_items,
-                    converter=config.file_converter,
-                    document_tags=request_data.document_tags,
-                    request_context=request_context,
-                )
-                return FileRetainResponse.model_validate(
-                    {
-                        "operation_ids": result["operation_ids"],
-                    }
-                )
-            else:
-                # Synchronous processing not recommended for files
-                raise HTTPException(
-                    status_code=400,
-                    detail="Synchronous file conversion is not supported. Please use async=true for file operations.",
-                )
+            result = await app.state.memory.submit_async_file_retain(
+                bank_id=bank_id,
+                file_items=file_items,
+                parser=config.file_parser,
+                document_tags=None,
+                request_context=request_context,
+            )
+            return FileRetainResponse.model_validate(
+                {
+                    "operation_ids": result["operation_ids"],
+                }
+            )
 
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

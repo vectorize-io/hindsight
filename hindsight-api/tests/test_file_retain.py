@@ -260,7 +260,7 @@ async def test_file_retain_no_files(memory_no_llm_verify):
 
 @pytest.mark.asyncio
 async def test_file_retain_sync_not_supported(memory_no_llm_verify, sample_txt_content):
-    """Test that synchronous file conversion is not supported."""
+    """Test that file retain is always async (sync is not supported)."""
     from hindsight_api.api.http import create_app
 
     app = create_app(memory_no_llm_verify, initialize_memory=False)
@@ -270,12 +270,9 @@ async def test_file_retain_sync_not_supported(memory_no_llm_verify, sample_txt_c
         bank_response = await client.put("/v1/default/banks/test-sync-bank", json={"name": "Test Sync Bank"})
         assert bank_response.status_code in (200, 201)
 
-        request_data = {
-            "async": False,  # Try sync
-        }
-
+        # File retain is always async - just verify it succeeds and returns operation_ids
         files = {"files": ("test.txt", sample_txt_content, "text/plain")}
-        data = {"request": json.dumps(request_data)}
+        data = {"request": json.dumps({})}
 
         response = await client.post(
             "/v1/default/banks/test-sync-bank/files/retain",
@@ -283,8 +280,9 @@ async def test_file_retain_sync_not_supported(memory_no_llm_verify, sample_txt_c
             data=data,
         )
 
-        assert response.status_code == 400
-        assert "Synchronous file conversion is not supported" in response.json()["detail"]
+        assert response.status_code == 200
+        result = response.json()
+        assert "operation_ids" in result
 
 
 @pytest.mark.asyncio
@@ -321,14 +319,14 @@ async def test_file_storage_postgresql(memory_no_llm_verify, sample_txt_content)
 
 @pytest.mark.asyncio
 async def test_markitdown_converter():
-    """Test markitdown converter."""
-    from hindsight_api.engine.converters import MarkitdownConverter
+    """Test markitdown parser."""
+    from hindsight_api.engine.parsers import MarkitdownParser
 
-    converter = MarkitdownConverter()
+    parser = MarkitdownParser()
 
     # Test simple text file
     text_content = b"This is a test document.\nWith multiple lines."
-    result = await converter.convert(text_content, "test.txt")
+    result = await parser.convert(text_content, "test.txt")
 
     assert isinstance(result, str)
     assert len(result) > 0
@@ -337,24 +335,24 @@ async def test_markitdown_converter():
 
 @pytest.mark.asyncio
 async def test_converter_registry():
-    """Test converter registry."""
-    from hindsight_api.engine.converters import ConverterRegistry, MarkitdownConverter
+    """Test file parser registry."""
+    from hindsight_api.engine.parsers import FileParserRegistry, MarkitdownParser
 
-    registry = ConverterRegistry()
-    converter = MarkitdownConverter()
-    registry.register(converter)
+    registry = FileParserRegistry()
+    parser = MarkitdownParser()
+    registry.register(parser)
 
     # Test get by name
-    retrieved = registry.get_converter("markitdown", "test.txt")
-    assert retrieved is converter
+    retrieved = registry.get_parser("markitdown", "test.txt")
+    assert retrieved is parser
 
     # Test auto-detection
-    auto = registry.get_converter(None, "test.pdf")
-    assert auto is converter
+    auto = registry.get_parser(None, "test.pdf")
+    assert auto is parser
 
     # Test unsupported format
-    with pytest.raises(ValueError, match="No converter found"):
-        registry.get_converter(None, "test.xyz")
+    with pytest.raises(ValueError, match="No parser found"):
+        registry.get_parser(None, "test.xyz")
 
 
 @pytest.mark.asyncio
@@ -401,7 +399,7 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
     result = await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        converter="markitdown",
+        parser="markitdown",
         document_tags=["two_phase_test"],
         request_context=context,
     )
@@ -466,14 +464,14 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
 @pytest.mark.asyncio
 async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verify, sample_txt_content):
     """Test that when file conversion fails, the operation status is set to 'failed' not 'completed'."""
-    from hindsight_api.engine.converters.base import FileConverter
+    from hindsight_api.engine.parsers.base import FileParser
     from hindsight_api.models import RequestContext
 
     bank_id = "test_file_failure_bank"
 
-    # Create a mock converter that always fails
-    class FailingConverter(FileConverter):
-        """Mock converter that raises an error."""
+    # Create a mock parser that always fails
+    class FailingParser(FileParser):
+        """Mock parser that raises an error."""
 
         async def convert(self, file_data: bytes, filename: str) -> str:
             # Simulate conversion failure
@@ -485,9 +483,9 @@ async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verif
         def name(self) -> str:
             return "failing_converter"
 
-    # Register the failing converter
-    failing_converter = FailingConverter()
-    memory_no_llm_verify._converter_registry.register(failing_converter)
+    # Register the failing parser
+    failing_converter = FailingParser()
+    memory_no_llm_verify._parser_registry.register(failing_converter)
 
     # Create bank
     context = RequestContext(internal=True)
@@ -516,11 +514,11 @@ async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verif
         }
     ]
 
-    # Submit async file retain with failing converter
+    # Submit async file retain with failing parser
     result = await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        converter="failing_converter",
+        parser="failing_converter",
         document_tags=None,
         request_context=context,
     )

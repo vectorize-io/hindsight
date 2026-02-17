@@ -228,15 +228,12 @@ export class HindsightClient {
         files: Array<File | Blob>,
         options?: {
             context?: string;
-            documentTags?: string[];
             filesMetadata?: Array<{ context?: string; document_id?: string; tags?: string[]; metadata?: Record<string, string> }>;
         }
     ): Promise<FileRetainResponse> {
         const meta = options?.filesMetadata ?? files.map(() => options?.context ? { context: options.context } : {});
 
         const requestBody = JSON.stringify({
-            async: true,
-            document_tags: options?.documentTags,
             files_metadata: meta,
         });
 

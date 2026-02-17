@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -65,7 +66,7 @@ This endpoint handles file upload, conversion, and memory creation in a single o
 - Automatic file-to-markdown conversion using pluggable converters
 - Files stored in object storage (PostgreSQL by default, S3 for production)
 - Each file becomes a separate document with optional metadata/tags
-- Async processing (recommended for files)
+- Always processes asynchronously — returns operation IDs immediately
 
 **The system automatically:**
 1. Stores uploaded files in object storage
@@ -73,13 +74,11 @@ This endpoint handles file upload, conversion, and memory creation in a single o
 3. Creates document records with file metadata
 4. Extracts facts and creates memory units (same as regular retain)
 
-**When `async=true` (recommended):** Returns immediately after queuing. Use the operations endpoint to monitor progress.
-
-**When `async=false`:** Waits for conversion and processing to complete (may timeout for large files).
+Use the operations endpoint to monitor progress.
 
 **Request format:** multipart/form-data with:
 - `files`: One or more files to upload
-- `request`: JSON string with FileRetainRequest model (document_tags, async, files_metadata)
+- `request`: JSON string with FileRetainRequest model (files_metadata)
 
 **Note:** File converter is configured server-side via `HINDSIGHT_API_FILE_CONVERTER` (default: markitdown).
 
