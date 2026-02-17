@@ -665,55 +665,71 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn test_is_text_file_supported_extensions() {
+    fn test_is_supported_file_text_extensions() {
         let supported = [
             "file.txt", "file.md", "file.json", "file.yaml", "file.yml",
             "file.toml", "file.xml", "file.csv", "file.log", "file.rst", "file.adoc",
         ];
         for filename in supported {
             assert!(
-                is_text_file(Path::new(filename)),
-                "{} should be recognized as a text file",
+                is_supported_file(Path::new(filename)),
+                "{} should be recognized as a supported file",
                 filename
             );
         }
     }
 
     #[test]
-    fn test_is_text_file_case_insensitive() {
-        assert!(is_text_file(Path::new("file.JSON")));
-        assert!(is_text_file(Path::new("file.TXT")));
-        assert!(is_text_file(Path::new("file.Md")));
-        assert!(is_text_file(Path::new("file.YAML")));
+    fn test_is_supported_file_binary_extensions() {
+        let supported = [
+            "file.pdf", "file.docx", "file.pptx", "file.xlsx",
+            "file.png", "file.jpg", "file.jpeg", "file.gif",
+            "file.mp3", "file.wav",
+        ];
+        for filename in supported {
+            assert!(
+                is_supported_file(Path::new(filename)),
+                "{} should be recognized as a supported file",
+                filename
+            );
+        }
     }
 
     #[test]
-    fn test_is_text_file_unsupported_extensions() {
+    fn test_is_supported_file_case_insensitive() {
+        assert!(is_supported_file(Path::new("file.JSON")));
+        assert!(is_supported_file(Path::new("file.TXT")));
+        assert!(is_supported_file(Path::new("file.Md")));
+        assert!(is_supported_file(Path::new("file.YAML")));
+        assert!(is_supported_file(Path::new("file.PDF")));
+    }
+
+    #[test]
+    fn test_is_supported_file_unsupported_extensions() {
         let unsupported = [
-            "file.pdf", "file.doc", "file.docx", "file.png", "file.jpg",
             "file.exe", "file.bin", "file.zip", "file.tar", "file.gz",
         ];
         for filename in unsupported {
             assert!(
-                !is_text_file(Path::new(filename)),
-                "{} should NOT be recognized as a text file",
+                !is_supported_file(Path::new(filename)),
+                "{} should NOT be recognized as a supported file",
                 filename
             );
         }
     }
 
     #[test]
-    fn test_is_text_file_no_extension() {
-        assert!(!is_text_file(Path::new("README")));
-        assert!(!is_text_file(Path::new("Makefile")));
-        assert!(!is_text_file(Path::new(".gitignore")));
+    fn test_is_supported_file_no_extension() {
+        assert!(!is_supported_file(Path::new("README")));
+        assert!(!is_supported_file(Path::new("Makefile")));
+        assert!(!is_supported_file(Path::new(".gitignore")));
     }
 
     #[test]
-    fn test_is_text_file_with_path() {
-        assert!(is_text_file(Path::new("/some/path/to/file.json")));
-        assert!(is_text_file(Path::new("../relative/path/file.md")));
-        assert!(!is_text_file(Path::new("/path/to/image.png")));
+    fn test_is_supported_file_with_path() {
+        assert!(is_supported_file(Path::new("/some/path/to/file.json")));
+        assert!(is_supported_file(Path::new("../relative/path/file.md")));
+        assert!(is_supported_file(Path::new("/path/to/image.png")));
     }
 
     #[test]
