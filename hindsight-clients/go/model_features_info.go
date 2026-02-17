@@ -29,6 +29,8 @@ type FeaturesInfo struct {
 	Worker bool `json:"worker"`
 	// Whether per-bank configuration API is enabled
 	BankConfigApi bool `json:"bank_config_api"`
+	// Whether file upload/conversion API is enabled
+	FileUploadApi bool `json:"file_upload_api"`
 }
 
 type _FeaturesInfo FeaturesInfo
@@ -37,12 +39,13 @@ type _FeaturesInfo FeaturesInfo
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool) *FeaturesInfo {
+func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi bool, fileUploadApi bool) *FeaturesInfo {
 	this := FeaturesInfo{}
 	this.Observations = observations
 	this.Mcp = mcp
 	this.Worker = worker
 	this.BankConfigApi = bankConfigApi
+	this.FileUploadApi = fileUploadApi
 	return &this
 }
 
@@ -150,6 +153,30 @@ func (o *FeaturesInfo) SetBankConfigApi(v bool) {
 	o.BankConfigApi = v
 }
 
+// GetFileUploadApi returns the FileUploadApi field value
+func (o *FeaturesInfo) GetFileUploadApi() bool {
+	if o == nil {
+		var ret bool
+		return ret
+	}
+
+	return o.FileUploadApi
+}
+
+// GetFileUploadApiOk returns a tuple with the FileUploadApi field value
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetFileUploadApiOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return &o.FileUploadApi, true
+}
+
+// SetFileUploadApi sets field value
+func (o *FeaturesInfo) SetFileUploadApi(v bool) {
+	o.FileUploadApi = v
+}
+
 func (o FeaturesInfo) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -164,6 +191,7 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["mcp"] = o.Mcp
 	toSerialize["worker"] = o.Worker
 	toSerialize["bank_config_api"] = o.BankConfigApi
+	toSerialize["file_upload_api"] = o.FileUploadApi
 	return toSerialize, nil
 }
 
@@ -176,6 +204,7 @@ func (o *FeaturesInfo) UnmarshalJSON(data []byte) (err error) {
 		"mcp",
 		"worker",
 		"bank_config_api",
+		"file_upload_api",
 	}
 
 	allProperties := make(map[string]interface{})

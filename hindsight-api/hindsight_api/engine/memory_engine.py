@@ -79,6 +79,7 @@ _PROTECTED_TABLES = frozenset(
         "documents",
         "chunks",
         "async_operations",
+        "file_storage",
     ]
 )
 
@@ -585,7 +586,167 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=operation_id,
         )
 
+        # If this retain was triggered by file conversion, update document with file metadata
+        file_metadata = task_dict.get("_file_metadata")
+        if file_metadata and len(contents) == 1:
+            doc_id = contents[0].get("document_id")
+            if doc_id:
+                pool = await self._get_pool()
+                async with acquire_with_retry(pool) as conn:
+                    await conn.execute(
+                        f"""
+                        UPDATE {fq_table("documents")}
+                        SET file_storage_key = $3,
+                            file_original_name = $4,
+                            file_content_type = $5,
+                            file_size_bytes = $6,
+                            updated_at = NOW()
+                        WHERE id = $1 AND bank_id = $2
+                        """,
+                        doc_id,
+                        bank_id,
+                        file_metadata["file_storage_key"],
+                        file_metadata["file_original_name"],
+                        file_metadata["file_content_type"],
+                        file_metadata["file_size_bytes"],
+                    )
+
         logger.info(f"[BATCH_RETAIN_TASK] Completed background batch retain for bank_id={bank_id}")
+
+    async def _handle_file_convert_retain(self, task_dict: dict[str, Any]):
+        """
+        Handler for file conversion tasks.
+
+        Converts a file to markdown, then submits a separate async retain operation
+        and marks this conversion as completed — all in a single transaction.
+        This avoids holding a worker slot during the expensive retain pipeline.
+
+        Args:
+            task_dict: Dict with 'bank_id', 'storage_key', 'converter', etc.
+
+        Raises:
+            ValueError: If required fields are missing
+            Exception: Any exception from conversion (includes filename in error)
+        """
+        bank_id = task_dict.get("bank_id")
+        storage_key = task_dict.get("storage_key")
+        document_id = task_dict.get("document_id")
+        operation_id = task_dict.get("operation_id")
+        filename = task_dict.get("original_filename", "unknown")
+
+        if not all([bank_id, storage_key, document_id]):
+            raise ValueError("bank_id, storage_key, and document_id are required for file_convert_retain task")
+
+        logger.info(f"[FILE_CONVERT_RETAIN] Starting for bank_id={bank_id}, document_id={document_id}, file={filename}")
+
+        try:
+            # Retrieve file from storage
+            file_data = await self._file_storage.retrieve(storage_key)
+
+            # Convert to markdown
+            converter = self._converter_registry.get_converter(
+                name=task_dict.get("converter"),
+                filename=filename,
+                content_type=task_dict.get("content_type"),
+            )
+            markdown_content = await converter.convert(file_data, filename)
+        except Exception as e:
+            # Re-raise with filename context for better error reporting
+            error_msg = f"Failed to convert file '{filename}': {str(e)}"
+            logger.error(f"[FILE_CONVERT_RETAIN] {error_msg}")
+            raise RuntimeError(error_msg) from e
+
+        logger.info(
+            f"[FILE_CONVERT_RETAIN] Converted file for bank_id={bank_id}, "
+            f"document_id={document_id}, {len(markdown_content)} chars. Submitting retain task."
+        )
+
+        # Build retain task payload
+        retain_contents = [
+            {
+                "content": markdown_content,
+                "document_id": document_id,
+                "context": task_dict.get("context"),
+                "metadata": task_dict.get("metadata", {}),
+                "tags": task_dict.get("tags", []),
+                "timestamp": task_dict.get("timestamp"),
+            }
+        ]
+        document_tags = task_dict.get("document_tags")
+
+        retain_task_payload: dict[str, Any] = {"contents": retain_contents}
+        if document_tags:
+            retain_task_payload["document_tags"] = document_tags
+
+        # Pass tenant/api_key context through to retain task
+        if task_dict.get("_tenant_id"):
+            retain_task_payload["_tenant_id"] = task_dict["_tenant_id"]
+        if task_dict.get("_api_key_id"):
+            retain_task_payload["_api_key_id"] = task_dict["_api_key_id"]
+
+        # File metadata to attach after retain creates the document
+        retain_task_payload["_file_metadata"] = {
+            "file_storage_key": storage_key,
+            "file_original_name": task_dict["original_filename"],
+            "file_content_type": task_dict["content_type"],
+            "file_size_bytes": task_dict["file_size_bytes"],
+        }
+
+        # In one transaction: create the retain async operation AND mark this conversion as completed
+        retain_operation_id = uuid.uuid4()
+        pool = await self._get_pool()
+        async with acquire_with_retry(pool) as conn:
+            async with conn.transaction():
+                # Create the retain operation record
+                await conn.execute(
+                    f"""
+                    INSERT INTO {fq_table("async_operations")}
+                    (operation_id, bank_id, operation_type, result_metadata, status)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    retain_operation_id,
+                    bank_id,
+                    "retain",
+                    json.dumps({}),
+                    "pending",
+                )
+
+                # Mark this file_convert_retain operation as completed
+                if operation_id:
+                    await conn.execute(
+                        f"""
+                        UPDATE {fq_table("async_operations")}
+                        SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+                        WHERE operation_id = $1
+                        """,
+                        uuid.UUID(operation_id),
+                    )
+
+        # Submit the retain task to the task backend (outside the transaction)
+        full_retain_payload = {
+            "type": "batch_retain",
+            "operation_id": str(retain_operation_id),
+            "bank_id": bank_id,
+            **retain_task_payload,
+        }
+        await self._task_backend.submit_task(full_retain_payload)
+
+        logger.info(
+            f"[FILE_CONVERT_RETAIN] Completed conversion for bank_id={bank_id}, "
+            f"document_id={document_id}. Retain task submitted as operation {retain_operation_id}"
+        )
+
+        # Delete file bytes from storage if configured (saves storage costs)
+        from ..config import get_config
+
+        config = get_config()
+        if config.file_delete_after_retain:
+            try:
+                await self._file_storage.delete(storage_key)
+                logger.info(f"[FILE_CONVERT_RETAIN] Deleted file bytes for {storage_key} (conversion completed)")
+            except Exception as e:
+                # Non-fatal - log and continue
+                logger.warning(f"[FILE_CONVERT_RETAIN] Failed to delete file {storage_key}: {e}")
 
     async def _handle_consolidation(self, task_dict: dict[str, Any]):
         """
@@ -798,6 +959,8 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             if task_type == "batch_retain":
                 await self._handle_batch_retain(task_dict)
+            elif task_type == "file_convert_retain":
+                await self._handle_file_convert_retain(task_dict)
             elif task_type == "consolidation":
                 await self._handle_consolidation(task_dict)
             elif task_type == "refresh_mental_model":
@@ -810,7 +973,8 @@ class MemoryEngine(MemoryEngineInterface):
                 return
 
             # Task succeeded - mark operation as completed
-            if operation_id:
+            # file_convert_retain marks itself as completed in a transaction, skip double-marking
+            if operation_id and task_type != "file_convert_retain":
                 await self._mark_operation_completed(operation_id)
 
         except Exception as e:
@@ -823,14 +987,19 @@ class MemoryEngine(MemoryEngineInterface):
             error_traceback = traceback.format_exc()
             traceback.print_exc()
 
-            if retry_count < max_retries:
+            # Don't retry file conversion - if conversion fails, it won't succeed on retry
+            # (missing OCR, corrupted file, unsupported format, etc.)
+            should_retry = retry_count < max_retries and task_type != "file_convert_retain"
+
+            if should_retry:
                 # Reschedule with incremented retry count
                 task_dict["retry_count"] = retry_count + 1
                 logger.info(f"Rescheduling task {task_type} (retry {retry_count + 1}/{max_retries})")
                 await self._task_backend.submit_task(task_dict)
             else:
-                # Max retries exceeded - mark operation as failed
-                logger.error(f"Max retries exceeded for task {task_type}, marking as failed")
+                # Max retries exceeded or non-retryable task - mark operation as failed
+                reason = "non-retryable task type" if task_type == "file_convert_retain" else "max retries exceeded"
+                logger.error(f"Not retrying task {task_type} ({reason}), marking as failed")
                 if operation_id:
                     await self._mark_operation_failed(operation_id, str(e), error_traceback)
 
@@ -1195,6 +1364,27 @@ class MemoryEngine(MemoryEngineInterface):
 
         self._config_resolver = ConfigResolver(pool=self._pool, tenant_extension=self._tenant_extension)
         logger.debug("Config resolver initialized for hierarchical configuration")
+
+        # Initialize file storage
+        from .storage import create_file_storage
+
+        config = get_config()
+        self._file_storage = create_file_storage(
+            storage_type=config.file_storage_type,
+            pool_getter=lambda: self._pool,
+            schema=get_current_schema() if get_current_schema() != config.database_schema else None,
+        )
+        logger.debug(f"File storage initialized ({config.file_storage_type})")
+
+        # Initialize converter registry
+        from .converters import ConverterRegistry, MarkitdownConverter
+
+        self._converter_registry = ConverterRegistry()
+        try:
+            self._converter_registry.register(MarkitdownConverter())
+            logger.debug("Registered markitdown converter")
+        except ImportError:
+            logger.warning("markitdown not available - file conversion disabled")
 
         # Set executor for task backend and initialize
         self._task_backend.set_executor(self.execute_task)
@@ -5938,13 +6128,14 @@ class MemoryEngine(MemoryEngineInterface):
         async with acquire_with_retry(pool) as conn:
             await conn.execute(
                 f"""
-                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO {fq_table("async_operations")} (operation_id, bank_id, operation_type, result_metadata, status)
+                VALUES ($1, $2, $3, $4, $5)
                 """,
                 operation_id,
                 bank_id,
                 operation_type,
                 json.dumps(result_metadata or {}),
+                "pending",
             )
 
         # Build and submit task payload
@@ -6090,6 +6281,118 @@ class MemoryEngine(MemoryEngineInterface):
         return {
             "operation_id": str(parent_operation_id),
             "items_count": len(contents),
+        }
+
+    async def submit_async_file_retain(
+        self,
+        bank_id: str,
+        file_items: list[dict[str, Any]],
+        converter: str,
+        document_tags: list[str] | None,
+        request_context: "RequestContext",
+    ) -> dict[str, Any]:
+        """
+        Submit batch file conversion + retain operation.
+
+        Each file is converted to markdown and then retained as a memory.
+        Files are stored in object storage and conversion happens asynchronously.
+
+        Args:
+            bank_id: Bank ID
+            file_items: List of file items, each containing:
+                - file: UploadFile object (FastAPI)
+                - document_id: Document ID
+                - context: Optional context
+                - metadata: Optional metadata dict
+                - tags: Optional tags list
+                - timestamp: Optional timestamp
+            converter: Converter name (e.g., "markitdown")
+            document_tags: Tags applied to all documents
+            request_context: Request context for authentication
+
+        Returns:
+            dict with operation_id and files_count
+        """
+        await self._authenticate_tenant(request_context)
+
+        config = get_config()
+
+        # Validate file count
+        if len(file_items) > config.file_conversion_max_batch_size:
+            raise ValueError(f"Too many files. Maximum {config.file_conversion_max_batch_size} files per request.")
+
+        # Read all files and validate total batch size
+        files_data = []
+        total_batch_size = 0
+
+        for item in file_items:
+            file = item["file"]
+            file_data = await file.read()
+            total_batch_size += len(file_data)
+            files_data.append((item, file, file_data))
+
+        # Validate total batch size
+        if total_batch_size > config.file_conversion_max_batch_size_bytes:
+            total_mb = total_batch_size / (1024 * 1024)
+            raise ValueError(
+                f"Total batch size ({total_mb:.1f}MB) exceeds maximum of {config.file_conversion_max_batch_size_mb}MB"
+            )
+
+        # Submit individual operation for each file
+        operation_ids = []
+        for item, file, file_data in files_data:
+            # Generate storage key
+            storage_key = f"banks/{bank_id}/files/{item['document_id']}/{file.filename}"
+
+            # Store file in object storage
+            await self._file_storage.store(
+                file_data=file_data,
+                key=storage_key,
+                metadata={
+                    "content_type": file.content_type or "application/octet-stream",
+                    "original_filename": file.filename,
+                    "bank_id": bank_id,
+                    "document_id": item["document_id"],
+                },
+            )
+
+            # Create individual operation and submit task
+            task_payload: dict[str, Any] = {
+                "document_id": item["document_id"],
+                "storage_key": storage_key,
+                "original_filename": file.filename,
+                "content_type": file.content_type or "application/octet-stream",
+                "file_size_bytes": len(file_data),
+                "converter": converter,
+                "context": item.get("context"),
+                "metadata": item.get("metadata", {}),
+                "tags": item.get("tags", []),
+                "document_tags": document_tags or [],
+                "timestamp": item.get("timestamp"),
+            }
+
+            # Pass tenant_id and api_key_id through task payload
+            if request_context.tenant_id:
+                task_payload["_tenant_id"] = request_context.tenant_id
+            if request_context.api_key_id:
+                task_payload["_api_key_id"] = request_context.api_key_id
+
+            result = await self._submit_async_operation(
+                bank_id=bank_id,
+                operation_type="file_convert_retain",
+                task_type="file_convert_retain",
+                task_payload=task_payload,
+                result_metadata={
+                    "original_filename": file.filename,
+                    "file_size_bytes": len(file_data),
+                },
+                dedupe_by_bank=False,
+            )
+            operation_ids.append(result["operation_id"])
+
+        return {
+            "operation_ids": operation_ids,
+            "files_count": len(file_items),
         }
 
     async def submit_async_consolidation(

@@ -58,9 +58,16 @@ pub struct MemoryPutResult {
     pub operation_id: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileRetainResult {
+    pub operation_ids: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     client: AsyncClient,
+    http_client: reqwest::Client,
+    base_url: String,
     runtime: std::sync::Arc<tokio::runtime::Runtime>,
 }
 
@@ -84,8 +91,8 @@ impl ApiClient {
 
         let http_client = client_builder.build()?;
 
-        let client = AsyncClient::new_with_client(&base_url, http_client);
-        Ok(ApiClient { client, runtime })
+        let client = AsyncClient::new_with_client(&base_url, http_client.clone());
+        Ok(ApiClient { client, http_client, base_url, runtime })
     }
 
     pub fn list_agents(&self, _verbose: bool) -> Result<Vec<types::BankListItem>> {
@@ -165,6 +172,72 @@ impl ApiClient {
                 is_async: result.async_,
                 operation_id: result.operation_id,
             })
+        })
+    }
+
+    /// Upload files to the file retain endpoint (multipart/form-data).
+    /// Returns a list of operation IDs for tracking. Always async server-side.
+    pub fn file_retain(
+        &self,
+        bank_id: &str,
+        files: Vec<(String, Vec<u8>)>,
+        context: Option<String>,
+        document_tags: Option<serde_json::Value>,
+        verbose: bool,
+    ) -> Result<FileRetainResult> {
+        self.runtime.block_on(async {
+            let url = format!("{}/v1/default/banks/{}/files/retain", self.base_url, bank_id);
+
+            let files_metadata: Vec<serde_json::Value> = files
+                .iter()
+                .map(|(name, _)| {
+                    let mut meta = serde_json::json!({});
+                    if let Some(ctx) = &context {
+                        meta["context"] = serde_json::Value::String(ctx.clone());
+                    }
+                    // Use filename stem as document_id for deduplication
+                    if let Some(stem) = std::path::Path::new(name)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                    {
+                        meta["document_id"] = serde_json::Value::String(stem.to_string());
+                    }
+                    meta
+                })
+                .collect();
+
+            let mut request_json = serde_json::json!({
+                "async": true,
+                "files_metadata": files_metadata,
+            });
+            if let Some(tags) = document_tags {
+                request_json["document_tags"] = tags;
+            }
+
+            let mut form = reqwest::multipart::Form::new()
+                .text("request", request_json.to_string());
+
+            for (filename, content) in files {
+                let part = reqwest::multipart::Part::bytes(content)
+                    .file_name(filename)
+                    .mime_str("application/octet-stream")?;
+                form = form.part("files", part);
+            }
+
+            if verbose {
+                eprintln!("POST {}", url);
+            }
+
+            let response = self.http_client.post(&url).multipart(form).send().await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("File retain failed ({}): {}", status, text);
+            }
+
+            let result: FileRetainResult = response.json().await?;
+            Ok(result)
         })
     }
 

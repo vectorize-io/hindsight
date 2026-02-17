@@ -252,6 +252,24 @@ export type BankStatsResponse = {
 };
 
 /**
+ * Body_file_retain
+ */
+export type BodyFileRetain = {
+  /**
+   * Files
+   *
+   * Files to upload and convert
+   */
+  files: Array<Blob | File>;
+  /**
+   * Request
+   *
+   * JSON string with FileRetainRequest model
+   */
+  request: string;
+};
+
+/**
  * Budget
  *
  * Budget levels for recall/reflect operations.
@@ -896,6 +914,26 @@ export type FeaturesInfo = {
    * Whether per-bank configuration API is enabled
    */
   bank_config_api: boolean;
+  /**
+   * File Upload Api
+   *
+   * Whether file upload/conversion API is enabled
+   */
+  file_upload_api: boolean;
+};
+
+/**
+ * FileRetainResponse
+ *
+ * Response model for file upload endpoint.
+ */
+export type FileRetainResponse = {
+  /**
+   * Operation Ids
+   *
+   * Operation IDs for tracking file conversion operations. Use GET /v1/default/banks/{bank_id}/operations to list operations.
+   */
+  operation_ids: Array<string>;
 };
 
 /**
@@ -1760,7 +1798,7 @@ export type RetainResponse = {
   /**
    * Operation Id
    *
-   * Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations and find this ID. Only present when async=true.
+   * Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations. Only present when async=true.
    */
   operation_id?: string | null;
   /**
@@ -3753,3 +3791,40 @@ export type RetainMemoriesResponses = {
 
 export type RetainMemoriesResponse =
   RetainMemoriesResponses[keyof RetainMemoriesResponses];
+
+export type FileRetainData = {
+  body: BodyFileRetain;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/files/retain";
+};
+
+export type FileRetainErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type FileRetainError = FileRetainErrors[keyof FileRetainErrors];
+
+export type FileRetainResponses = {
+  /**
+   * Successful Response
+   */
+  200: FileRetainResponse;
+};
+
+export type FileRetainResponse2 =
+  FileRetainResponses[keyof FileRetainResponses];

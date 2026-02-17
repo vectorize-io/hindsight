@@ -26,6 +26,29 @@ hindsight memory retain my-bank "Meeting notes" --async
 # [/docs:retain-async]
 
 
+# [docs:retain-files]
+# Upload a single file (PDF, DOCX, PPTX, XLSX, images, audio, and more)
+hindsight memory retain-files my-bank report.pdf
+
+# Upload a directory of files
+hindsight memory retain-files my-bank ./documents/
+
+# Upload and wait for processing to complete (polls until done)
+hindsight memory retain-files my-bank report.pdf
+
+# Queue files for background processing (returns immediately)
+hindsight memory retain-files my-bank ./documents/ --async
+# [/docs:retain-files]
+
+
+# [docs:retain-files-curl]
+# Via HTTP API (multipart/form-data)
+curl -X POST "${HINDSIGHT_URL}/v1/default/banks/my-bank/files/retain" \
+    -F "files=@report.pdf;type=application/octet-stream" \
+    -F "request={\"async\": true, \"files_metadata\": [{\"context\": \"quarterly report\"}]}"
+# [/docs:retain-files-curl]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

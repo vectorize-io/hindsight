@@ -17,21 +17,17 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class FeaturesInfo(BaseModel):
+class FileRetainResponse(BaseModel):
     """
-    Feature flags indicating which capabilities are enabled.
+    Response model for file upload endpoint.
     """ # noqa: E501
-    observations: StrictBool = Field(description="Whether observations (auto-consolidation) are enabled")
-    mcp: StrictBool = Field(description="Whether MCP (Model Context Protocol) server is enabled")
-    worker: StrictBool = Field(description="Whether the background worker is enabled")
-    bank_config_api: StrictBool = Field(description="Whether per-bank configuration API is enabled")
-    file_upload_api: StrictBool = Field(description="Whether file upload/conversion API is enabled")
-    __properties: ClassVar[List[str]] = ["observations", "mcp", "worker", "bank_config_api", "file_upload_api"]
+    operation_ids: List[StrictStr] = Field(description="Operation IDs for tracking file conversion operations. Use GET /v1/default/banks/{bank_id}/operations to list operations.")
+    __properties: ClassVar[List[str]] = ["operation_ids"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -51,7 +47,7 @@ class FeaturesInfo(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of FeaturesInfo from a JSON string"""
+        """Create an instance of FileRetainResponse from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -76,7 +72,7 @@ class FeaturesInfo(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of FeaturesInfo from a dict"""
+        """Create an instance of FileRetainResponse from a dict"""
         if obj is None:
             return None
 
@@ -84,11 +80,7 @@ class FeaturesInfo(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "observations": obj.get("observations"),
-            "mcp": obj.get("mcp"),
-            "worker": obj.get("worker"),
-            "bank_config_api": obj.get("bank_config_api"),
-            "file_upload_api": obj.get("file_upload_api")
+            "operation_ids": obj.get("operation_ids")
         })
         return _obj
 

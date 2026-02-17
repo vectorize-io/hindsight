@@ -49,6 +49,19 @@ await client.retainBatch('my-bank', [
 // [/docs:retain-async]
 
 
+// [docs:retain-files]
+// Upload files and retain their contents as memories.
+// Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+import { readFileSync } from 'node:fs';
+
+const pdfBytes = readFileSync('report.pdf');
+const result = await client.retainFiles('my-bank', [
+    new File([pdfBytes], 'report.pdf'),
+], { context: 'quarterly report' });
+console.log(result.operation_ids);  // Track processing via the operations endpoint
+// [/docs:retain-files]
+
+
 // =============================================================================
 // Cleanup (not shown in docs)
 // =============================================================================

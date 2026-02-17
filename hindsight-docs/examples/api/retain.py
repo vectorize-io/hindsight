@@ -99,6 +99,33 @@ client.retain_batch(
 # [/docs:retain-with-document-tags]
 
 
+# [docs:retain-files]
+# Upload files and retain their contents as memories.
+# Supports: PDF, DOCX, PPTX, XLSX, images (OCR), audio (transcription), and text formats.
+result = client.retain_files(
+    bank_id="my-bank",
+    files=["report.pdf"],
+    context="quarterly report",
+)
+print(result.operation_ids)  # Track processing via the operations endpoint
+# [/docs:retain-files]
+
+
+# [docs:retain-files-batch]
+# Upload multiple files with per-file metadata (up to 10 files per batch)
+result = client.retain_files(
+    bank_id="my-bank",
+    files=["report.pdf", "notes.docx"],
+    document_tags=["project:alpha"],
+    files_metadata=[
+        {"context": "quarterly report", "document_id": "q1-report"},
+        {"context": "meeting notes", "document_id": "q1-notes"},
+    ],
+)
+print(result.operation_ids)  # One operation ID per file
+# [/docs:retain-files-batch]
+
+
 # [docs:retain-list-tags]
 # List all tags in a bank
 response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/my-bank/tags")

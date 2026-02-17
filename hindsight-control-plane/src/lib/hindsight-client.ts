@@ -14,6 +14,14 @@ import {
 export const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
 const DATAPLANE_API_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
 
+// Log dataplane configuration at startup
+console.log(`[Control Plane] Connecting to dataplane at: ${DATAPLANE_URL}`);
+if (DATAPLANE_API_KEY) {
+  console.log("[Control Plane] Using API key authentication");
+} else {
+  console.log("[Control Plane] No API key configured (public access)");
+}
+
 /**
  * Auth headers for direct fetch calls to the dataplane API.
  */

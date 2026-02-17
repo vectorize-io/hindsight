@@ -376,7 +376,12 @@ class WorkerPoller:
                         del self._in_flight_by_type[operation_type]
 
     async def _execute_task_inner(self, task: ClaimedTask):
-        """Inner task execution with error handling."""
+        """Inner task execution with error handling.
+
+        Note: The executor (MemoryEngine.execute_task) handles status marking internally
+        (marking operations as completed/failed and handling retries). This method should
+        NOT override those status updates.
+        """
         task_type = task.task_dict.get("type", "unknown")
         bank_id = task.task_dict.get("bank_id", "unknown")
 
@@ -386,12 +391,12 @@ class WorkerPoller:
             if task.schema:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
-            await self._mark_completed(task.operation_id, task.schema)
-            logger.debug(f"Task {task.operation_id} completed successfully")
+            logger.debug(f"Task {task.operation_id} execution finished")
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
-            logger.error(f"Task {task.operation_id} failed: {e}")
-            await self._retry_or_fail(task.operation_id, error_msg, task.schema)
+            # The executor should handle its own errors, but if an unexpected exception
+            # propagates (e.g., from schema setup), log it as a warning
+            logger.error(f"Task {task.operation_id} raised unexpected exception: {e}")
+            traceback.print_exc()
 
     async def recover_own_tasks(self) -> int:
         """

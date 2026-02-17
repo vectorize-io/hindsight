@@ -3134,6 +3134,75 @@
           }
         }
       }
+    },
+    "/v1/default/banks/{bank_id}/files/retain": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Convert files to memories",
+        "description": "Upload files (PDF, DOCX, etc.), convert them to markdown, and retain as memories.\n\nThis endpoint handles file upload, conversion, and memory creation in a single operation.\n\n**Features:**\n- Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcription)\n- Automatic file-to-markdown conversion using pluggable converters\n- Files stored in object storage (PostgreSQL by default, S3 for production)\n- Each file becomes a separate document with optional metadata/tags\n- Async processing (recommended for files)\n\n**The system automatically:**\n1. Stores uploaded files in object storage\n2. Converts files to markdown\n3. Creates document records with file metadata\n4. Extracts facts and creates memory units (same as regular retain)\n\n**When `async=true` (recommended):** Returns immediately after queuing. Use the operations endpoint to monitor progress.\n\n**When `async=false`:** Waits for conversion and processing to complete (may timeout for large files).\n\n**Request format:** multipart/form-data with:\n- `files`: One or more files to upload\n- `request`: JSON string with FileRetainRequest model (document_tags, async, files_metadata)\n\n**Note:** File converter is configured server-side via `HINDSIGHT_API_FILE_CONVERTER` (default: markitdown).",
+        "operationId": "file_retain",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_file_retain"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileRetainResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3565,6 +3634,30 @@
           "total_nodes": 150,
           "total_observations": 45
         }
+      },
+      "Body_file_retain": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Files to upload and convert"
+          },
+          "request": {
+            "type": "string",
+            "title": "Request",
+            "description": "JSON string with FileRetainRequest model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files",
+          "request"
+        ],
+        "title": "Body_file_retain"
       },
       "Budget": {
         "type": "string",
@@ -4547,6 +4640,11 @@
             "type": "boolean",
             "title": "Bank Config Api",
             "description": "Whether per-bank configuration API is enabled"
+          },
+          "file_upload_api": {
+            "type": "boolean",
+            "title": "File Upload Api",
+            "description": "Whether file upload/conversion API is enabled"
           }
         },
         "type": "object",
@@ -4554,10 +4652,36 @@
           "observations",
           "mcp",
           "worker",
-          "bank_config_api"
+          "bank_config_api",
+          "file_upload_api"
         ],
         "title": "FeaturesInfo",
         "description": "Feature flags indicating which capabilities are enabled."
+      },
+      "FileRetainResponse": {
+        "properties": {
+          "operation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Operation Ids",
+            "description": "Operation IDs for tracking file conversion operations. Use GET /v1/default/banks/{bank_id}/operations to list operations."
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_ids"
+        ],
+        "title": "FileRetainResponse",
+        "description": "Response model for file upload endpoint.",
+        "example": {
+          "operation_ids": [
+            "550e8400-e29b-41d4-a716-446655440000",
+            "550e8400-e29b-41d4-a716-446655440001",
+            "550e8400-e29b-41d4-a716-446655440002"
+          ]
+        }
       },
       "GraphDataResponse": {
         "properties": {
@@ -6272,7 +6396,7 @@
               }
             ],
             "title": "Operation Id",
-            "description": "Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations and find this ID. Only present when async=true."
+            "description": "Operation ID for tracking async operations. Use GET /v1/default/banks/{bank_id}/operations to list operations. Only present when async=true."
           },
           "usage": {
             "anyOf": [
@@ -6593,6 +6717,7 @@
           "api_version": "0.4.0",
           "features": {
             "bank_config_api": false,
+            "file_upload_api": true,
             "mcp": true,
             "observations": false,
             "worker": true

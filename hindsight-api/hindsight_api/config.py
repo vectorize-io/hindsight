@@ -259,6 +259,24 @@ ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
 ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS"
 
+# File storage configuration
+ENV_FILE_STORAGE_TYPE = "HINDSIGHT_API_FILE_STORAGE_TYPE"
+ENV_FILE_STORAGE_S3_BUCKET = "HINDSIGHT_API_FILE_STORAGE_S3_BUCKET"
+ENV_FILE_STORAGE_S3_REGION = "HINDSIGHT_API_FILE_STORAGE_S3_REGION"
+ENV_FILE_STORAGE_S3_ENDPOINT = "HINDSIGHT_API_FILE_STORAGE_S3_ENDPOINT"
+ENV_FILE_STORAGE_S3_ACCESS_KEY_ID = "HINDSIGHT_API_FILE_STORAGE_S3_ACCESS_KEY_ID"
+ENV_FILE_STORAGE_S3_SECRET_ACCESS_KEY = "HINDSIGHT_API_FILE_STORAGE_S3_SECRET_ACCESS_KEY"
+ENV_FILE_STORAGE_GCS_BUCKET = "HINDSIGHT_API_FILE_STORAGE_GCS_BUCKET"
+ENV_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY"
+ENV_FILE_STORAGE_AZURE_CONTAINER = "HINDSIGHT_API_FILE_STORAGE_AZURE_CONTAINER"
+ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_NAME"
+ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
+ENV_FILE_CONVERTER = "HINDSIGHT_API_FILE_CONVERTER"
+ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB"
+ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
+ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
+ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
+
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
@@ -382,6 +400,14 @@ DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only 
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
 DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS = 60  # Batch API polling interval in seconds
+
+# File storage defaults
+DEFAULT_FILE_STORAGE_TYPE = "native"  # PostgreSQL BYTEA storage
+DEFAULT_FILE_CONVERTER = "markitdown"  # File converter to use (markitdown is the only supported converter)
+DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
+DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
+DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
+DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
@@ -607,6 +633,24 @@ class HindsightConfig:
     retain_batch_enabled: bool
     retain_batch_poll_interval_seconds: int
 
+    # File storage (static - server-level only)
+    file_storage_type: str  # "native" (PostgreSQL) or "s3" (S3-compatible)
+    file_storage_s3_bucket: str | None  # S3 bucket name (required for s3 storage)
+    file_storage_s3_region: str | None  # S3 region (optional, uses SDK default)
+    file_storage_s3_endpoint: str | None  # S3 endpoint URL (for MinIO, R2, etc.)
+    file_storage_s3_access_key_id: str | None  # S3 access key (optional, uses env/IAM)
+    file_storage_s3_secret_access_key: str | None  # S3 secret key (optional, uses env/IAM)
+    file_storage_gcs_bucket: str | None  # GCS bucket name (required for gcs storage)
+    file_storage_gcs_service_account_key: str | None  # GCS service account key JSON (optional, uses ADC)
+    file_storage_azure_container: str | None  # Azure container name (required for azure storage)
+    file_storage_azure_account_name: str | None  # Azure storage account name
+    file_storage_azure_account_key: str | None  # Azure storage account key
+    file_converter: str  # File converter to use (e.g., "markitdown")
+    file_conversion_max_batch_size_mb: int  # Max total batch size in MB (all files combined)
+    file_conversion_max_batch_size: int  # Max files per request
+    enable_file_upload_api: bool
+    file_delete_after_retain: bool
+
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
     consolidation_batch_size: int
@@ -663,6 +707,11 @@ class HindsightConfig:
         "reranker_cohere_base_url",
         # Service Account Keys
         "llm_vertexai_service_account_key",
+        # File storage credentials
+        "file_storage_s3_access_key_id",
+        "file_storage_s3_secret_access_key",
+        "file_storage_gcs_service_account_key",
+        "file_storage_azure_account_key",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -676,6 +725,11 @@ class HindsightConfig:
         # Consolidation settings
         "enable_observations",
     }
+
+    @property
+    def file_conversion_max_batch_size_bytes(self) -> int:
+        """Get maximum total batch size in bytes."""
+        return self.file_conversion_max_batch_size_mb * 1024 * 1024
 
     @classmethod
     def get_configurable_fields(cls) -> set[str]:
@@ -963,6 +1017,31 @@ class HindsightConfig:
             retain_batch_poll_interval_seconds=int(
                 os.getenv(ENV_RETAIN_BATCH_POLL_INTERVAL_SECONDS, str(DEFAULT_RETAIN_BATCH_POLL_INTERVAL_SECONDS))
             ),
+            # File storage
+            file_storage_type=os.getenv(ENV_FILE_STORAGE_TYPE, DEFAULT_FILE_STORAGE_TYPE),
+            file_storage_s3_bucket=os.getenv(ENV_FILE_STORAGE_S3_BUCKET) or None,
+            file_storage_s3_region=os.getenv(ENV_FILE_STORAGE_S3_REGION) or None,
+            file_storage_s3_endpoint=os.getenv(ENV_FILE_STORAGE_S3_ENDPOINT) or None,
+            file_storage_s3_access_key_id=os.getenv(ENV_FILE_STORAGE_S3_ACCESS_KEY_ID) or None,
+            file_storage_s3_secret_access_key=os.getenv(ENV_FILE_STORAGE_S3_SECRET_ACCESS_KEY) or None,
+            file_storage_gcs_bucket=os.getenv(ENV_FILE_STORAGE_GCS_BUCKET) or None,
+            file_storage_gcs_service_account_key=os.getenv(ENV_FILE_STORAGE_GCS_SERVICE_ACCOUNT_KEY) or None,
+            file_storage_azure_container=os.getenv(ENV_FILE_STORAGE_AZURE_CONTAINER) or None,
+            file_storage_azure_account_name=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME) or None,
+            file_storage_azure_account_key=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY) or None,
+            file_converter=os.getenv(ENV_FILE_CONVERTER, DEFAULT_FILE_CONVERTER),
+            file_conversion_max_batch_size_mb=int(
+                os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB))
+            ),
+            file_conversion_max_batch_size=int(
+                os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE))
+            ),
+            enable_file_upload_api=os.getenv(ENV_ENABLE_FILE_UPLOAD_API, str(DEFAULT_ENABLE_FILE_UPLOAD_API)).lower()
+            == "true",
+            file_delete_after_retain=os.getenv(
+                ENV_FILE_DELETE_AFTER_RETAIN, str(DEFAULT_FILE_DELETE_AFTER_RETAIN)
+            ).lower()
+            == "true",
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",
             consolidation_batch_size=int(
