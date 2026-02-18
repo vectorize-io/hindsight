@@ -77,6 +77,7 @@ class Hindsight:
         """
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
+        self._timeout = timeout
         if api_key:
             self._api_client.set_default_header("Authorization", f"Bearer {api_key}")
         self._memory_api = memory_api.MemoryApi(self._api_client)
@@ -201,7 +202,7 @@ class Hindsight:
             document_tags=document_tags,
         )
 
-        return _run_async(self._memory_api.retain_memories(bank_id, request_obj))
+        return _run_async(self._memory_api.retain_memories(bank_id, request_obj, _request_timeout=self._timeout))
 
     def retain_files(
         self,
@@ -236,7 +237,7 @@ class Hindsight:
 
         request_body = json.dumps({"files_metadata": meta})
 
-        return _run_async(self._files_api.file_retain(bank_id=bank_id, files=file_data, request=request_body))
+        return _run_async(self._files_api.file_retain(bank_id=bank_id, files=file_data, request=request_body, _request_timeout=self._timeout))
 
     def recall(
         self,
@@ -297,7 +298,7 @@ class Hindsight:
             tags_match=tags_match,
         )
 
-        return _run_async(self._memory_api.recall_memories(bank_id, request_obj))
+        return _run_async(self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout))
 
     def reflect(
         self,
@@ -340,7 +341,7 @@ class Hindsight:
             tags_match=tags_match,
         )
 
-        return _run_async(self._memory_api.reflect(bank_id, request_obj))
+        return _run_async(self._memory_api.reflect(bank_id, request_obj, _request_timeout=self._timeout))
 
     def list_memories(
         self,
@@ -358,6 +359,7 @@ class Hindsight:
                 q=search_query,
                 limit=limit,
                 offset=offset,
+                _request_timeout=self._timeout,
             )
         )
 
@@ -388,7 +390,7 @@ class Hindsight:
             disposition=disposition_obj,
         )
 
-        return _run_async(self._banks_api.create_or_update_bank(bank_id, request_obj))
+        return _run_async(self._banks_api.create_or_update_bank(bank_id, request_obj, _request_timeout=self._timeout))
 
     def set_mission(
         self,
@@ -408,7 +410,7 @@ class Hindsight:
         from hindsight_client_api.models import create_bank_request
 
         request_obj = create_bank_request.CreateBankRequest(mission=mission)
-        return _run_async(self._banks_api.create_or_update_bank(bank_id, request_obj))
+        return _run_async(self._banks_api.create_or_update_bank(bank_id, request_obj, _request_timeout=self._timeout))
 
     # Async methods (native async, no _run_async wrapper)
 
@@ -439,7 +441,7 @@ class Hindsight:
             disposition=disposition_obj,
         )
 
-        return await self._banks_api.create_or_update_bank(bank_id, request_obj)
+        return await self._banks_api.create_or_update_bank(bank_id, request_obj, _request_timeout=self._timeout)
 
     async def aset_mission(
         self,
@@ -459,7 +461,7 @@ class Hindsight:
         from hindsight_client_api.models import create_bank_request
 
         request_obj = create_bank_request.CreateBankRequest(mission=mission)
-        return await self._banks_api.create_or_update_bank(bank_id, request_obj)
+        return await self._banks_api.create_or_update_bank(bank_id, request_obj, _request_timeout=self._timeout)
 
     async def aretain_batch(
         self,
@@ -508,7 +510,7 @@ class Hindsight:
             document_tags=document_tags,
         )
 
-        return await self._memory_api.retain_memories(bank_id, request_obj)
+        return await self._memory_api.retain_memories(bank_id, request_obj, _request_timeout=self._timeout)
 
     async def aretain(
         self,
@@ -611,7 +613,7 @@ class Hindsight:
             tags_match=tags_match,
         )
 
-        return await self._memory_api.recall_memories(bank_id, request_obj)
+        return await self._memory_api.recall_memories(bank_id, request_obj, _request_timeout=self._timeout)
 
     async def areflect(
         self,
@@ -654,7 +656,7 @@ class Hindsight:
             tags_match=tags_match,
         )
 
-        return await self._memory_api.reflect(bank_id, request_obj)
+        return await self._memory_api.reflect(bank_id, request_obj, _request_timeout=self._timeout)
 
     # Mental Models methods
 
@@ -695,7 +697,7 @@ class Hindsight:
             trigger=trigger_obj,
         )
 
-        return _run_async(self._mental_models_api.create_mental_model(bank_id, request_obj))
+        return _run_async(self._mental_models_api.create_mental_model(bank_id, request_obj, _request_timeout=self._timeout))
 
     def list_mental_models(self, bank_id: str, tags: list[str] | None = None):
         """
@@ -708,7 +710,7 @@ class Hindsight:
         Returns:
             ListMentalModelsResponse with items
         """
-        return _run_async(self._mental_models_api.list_mental_models(bank_id, tags=tags))
+        return _run_async(self._mental_models_api.list_mental_models(bank_id, tags=tags, _request_timeout=self._timeout))
 
     def get_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -721,7 +723,7 @@ class Hindsight:
         Returns:
             MentalModelResponse
         """
-        return _run_async(self._mental_models_api.get_mental_model(bank_id, mental_model_id))
+        return _run_async(self._mental_models_api.get_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
 
     def refresh_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -734,7 +736,7 @@ class Hindsight:
         Returns:
             RefreshMentalModelResponse with operation_id
         """
-        return _run_async(self._mental_models_api.refresh_mental_model(bank_id, mental_model_id))
+        return _run_async(self._mental_models_api.refresh_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
 
     def update_mental_model(
         self,
@@ -775,7 +777,7 @@ class Hindsight:
             trigger=trigger_obj,
         )
 
-        return _run_async(self._mental_models_api.update_mental_model(bank_id, mental_model_id, request_obj))
+        return _run_async(self._mental_models_api.update_mental_model(bank_id, mental_model_id, request_obj, _request_timeout=self._timeout))
 
     def delete_mental_model(self, bank_id: str, mental_model_id: str):
         """
@@ -785,7 +787,7 @@ class Hindsight:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
         """
-        return _run_async(self._mental_models_api.delete_mental_model(bank_id, mental_model_id))
+        return _run_async(self._mental_models_api.delete_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
 
     # Directives methods
 
@@ -822,7 +824,7 @@ class Hindsight:
             tags=tags,
         )
 
-        return _run_async(self._directives_api.create_directive(bank_id, request_obj))
+        return _run_async(self._directives_api.create_directive(bank_id, request_obj, _request_timeout=self._timeout))
 
     def list_directives(self, bank_id: str, tags: list[str] | None = None):
         """
@@ -835,7 +837,7 @@ class Hindsight:
         Returns:
             ListDirectivesResponse with items
         """
-        return _run_async(self._directives_api.list_directives(bank_id, tags=tags))
+        return _run_async(self._directives_api.list_directives(bank_id, tags=tags, _request_timeout=self._timeout))
 
     def get_directive(self, bank_id: str, directive_id: str):
         """
@@ -848,7 +850,7 @@ class Hindsight:
         Returns:
             DirectiveResponse
         """
-        return _run_async(self._directives_api.get_directive(bank_id, directive_id))
+        return _run_async(self._directives_api.get_directive(bank_id, directive_id, _request_timeout=self._timeout))
 
     def update_directive(
         self,
@@ -885,7 +887,7 @@ class Hindsight:
             tags=tags,
         )
 
-        return _run_async(self._directives_api.update_directive(bank_id, directive_id, request_obj))
+        return _run_async(self._directives_api.update_directive(bank_id, directive_id, request_obj, _request_timeout=self._timeout))
 
     def delete_directive(self, bank_id: str, directive_id: str):
         """
@@ -895,7 +897,7 @@ class Hindsight:
             bank_id: The memory bank ID
             directive_id: The directive ID
         """
-        return _run_async(self._directives_api.delete_directive(bank_id, directive_id))
+        return _run_async(self._directives_api.delete_directive(bank_id, directive_id, _request_timeout=self._timeout))
 
     def delete_bank(self, bank_id: str):
         """
@@ -904,7 +906,7 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
         """
-        return _run_async(self._banks_api.delete_bank(bank_id))
+        return _run_async(self._banks_api.delete_bank(bank_id, _request_timeout=self._timeout))
 
     async def adelete_bank(self, bank_id: str):
         """
@@ -913,4 +915,4 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
         """
-        return await self._banks_api.delete_bank(bank_id)
+        return await self._banks_api.delete_bank(bank_id, _request_timeout=self._timeout)
