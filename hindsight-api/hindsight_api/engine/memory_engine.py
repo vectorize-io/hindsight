@@ -2871,15 +2871,44 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 top_results_dicts.append(result_dict)
 
+            # Get entities for each fact if include_entities is requested
+            fact_entity_map = {}  # unit_id -> list of (entity_id, entity_name)
+            if include_entities and top_scored:
+                unit_ids = [uuid.UUID(sr.id) for sr in top_scored]
+                if unit_ids:
+                    async with acquire_with_retry(pool) as entity_conn:
+                        entity_rows = await entity_conn.fetch(
+                            f"""
+                            SELECT ue.unit_id, e.id as entity_id, e.canonical_name
+                            FROM {fq_table("unit_entities")} ue
+                            JOIN {fq_table("entities")} e ON ue.entity_id = e.id
+                            WHERE ue.unit_id = ANY($1::uuid[])
+                            """,
+                            unit_ids,
+                        )
+                        for row in entity_rows:
+                            unit_id = str(row["unit_id"])
+                            if unit_id not in fact_entity_map:
+                                fact_entity_map[unit_id] = []
+                            fact_entity_map[unit_id].append(
+                                {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
+                            )
+
             # Convert results to MemoryFact objects
             memory_facts = []
             for result_dict in top_results_dicts:
+                result_id = str(result_dict.get("id"))
+                # Get entity names for this fact
+                entity_names = None
+                if include_entities and result_id in fact_entity_map:
+                    entity_names = [e["canonical_name"] for e in fact_entity_map[result_id]]
+
                 memory_facts.append(
                     MemoryFact(
-                        id=str(result_dict.get("id")),
+                        id=result_id,
                         text=result_dict.get("text"),
                         fact_type=result_dict.get("fact_type", "world"),
-                        entities=None,  # Entity observations removed
+                        entities=entity_names,
                         context=result_dict.get("context"),
                         occurred_start=result_dict.get("occurred_start"),
                         occurred_end=result_dict.get("occurred_end"),
@@ -2890,8 +2919,32 @@ class MemoryEngine(MemoryEngineInterface):
                     )
                 )
 
-            # Entity observations removed - always set to None
+            # Fetch entity observations if requested
             entities_dict = None
+            total_entity_tokens = 0
+            if include_entities and fact_entity_map:
+                # Collect unique entities in order of fact relevance (preserving order from top_scored)
+                entities_ordered = []  # list of (entity_id, entity_name) tuples
+                seen_entity_ids = set()
+
+                for sr in top_scored:
+                    unit_id = sr.id
+                    if unit_id in fact_entity_map:
+                        for entity in fact_entity_map[unit_id]:
+                            entity_id = entity["entity_id"]
+                            entity_name = entity["canonical_name"]
+                            if entity_id not in seen_entity_ids:
+                                entities_ordered.append((entity_id, entity_name))
+                                seen_entity_ids.add(entity_id)
+
+                # Return entities with empty observations (summaries now live in mental models)
+                entities_dict = {}
+                for entity_id, entity_name in entities_ordered:
+                    entities_dict[entity_name] = EntityState(
+                        entity_id=entity_id,
+                        canonical_name=entity_name,
+                        observations=[],  # Mental models provide this now
+                    )
 
             # Finalize trace if enabled
             trace_dict = None
@@ -2902,6 +2955,7 @@ class MemoryEngine(MemoryEngineInterface):
             # Log final recall stats
             total_time = time.time() - recall_start
             num_chunks = len(chunks_dict) if chunks_dict else 0
+            num_entities = len(entities_dict) if entities_dict else 0
             # Include wait times in log if significant
             wait_parts = []
             if semaphore_wait > 0.01:
@@ -2910,7 +2964,7 @@ class MemoryEngine(MemoryEngineInterface):
                 wait_parts.append(f"conn={max_conn_wait:.3f}s")
             wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
             log_buffer.append(
-                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
+                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )
             if not quiet:
                 logger.info("\n" + "\n".join(log_buffer))
