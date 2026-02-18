@@ -68,7 +68,7 @@ Hindsight supports three PostgreSQL vector extensions:
 #### **pgvector** (HNSW - default)
 - In-memory index using Hierarchical Navigable Small World algorithm
 - Works well for most embeddings and dataset sizes
-- Fast for small-medium datasets (<10M vectors)
+- Fast for small-medium datasets (&lt;10M vectors)
 - Higher memory usage for large datasets
 - Most widely deployed and supported
 
@@ -97,7 +97,7 @@ Hindsight supports three PostgreSQL vector extensions:
 - When disk I/O is not a bottleneck
 
 **When to use pgvector (HNSW):**
-- Small-medium datasets (<10M vectors)
+- Small-medium datasets (&lt;10M vectors)
 - Maximum query speed when all data fits in memory
 - Simple nearest-neighbor queries without filters
 - Standard PostgreSQL deployment preference

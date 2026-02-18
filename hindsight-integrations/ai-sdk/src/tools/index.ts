@@ -8,6 +8,12 @@ export const BudgetSchema = z.enum(['low', 'mid', 'high']);
 export type Budget = z.infer<typeof BudgetSchema>;
 
 /**
+ * Fact types for filtering recall results.
+ */
+export const FactTypeSchema = z.enum(['world', 'experience', 'observation']);
+export type FactType = z.infer<typeof FactTypeSchema>;
+
+/**
  * Recall result item from Hindsight
  */
 export interface RecallResult {
@@ -106,15 +112,6 @@ export interface MentalModelResponse {
 }
 
 /**
- * Create mental model response from Hindsight
- */
-export interface CreateMentalModelResponse {
-  mental_model_id: string;
-  bank_id: string;
-  created_at: string;
-}
-
-/**
  * Document response from Hindsight
  */
 export interface DocumentResponse {
@@ -126,36 +123,6 @@ export interface DocumentResponse {
   updated_at: string;
   memory_unit_count: number;
   tags?: string[];
-}
-
-/**
- * Directive response from Hindsight
- */
-export interface DirectiveResponse {
-  id: string;
-  bank_id: string;
-  name: string;
-  content: string;
-  priority: number;
-  is_active: boolean;
-  tags: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * Create directive response from Hindsight
- */
-export interface CreateDirectiveResponse {
-  id: string;
-  bank_id: string;
-  name: string;
-  content: string;
-  priority: number;
-  is_active: boolean;
-  tags: string[];
-  created_at: string;
-  updated_at: string;
 }
 
 /**
@@ -179,7 +146,7 @@ export interface HindsightClient {
     bankId: string,
     query: string,
     options?: {
-      types?: string[];
+      types?: FactType[];
       maxTokens?: number;
       budget?: Budget;
       trace?: boolean;
@@ -197,20 +164,9 @@ export interface HindsightClient {
     options?: {
       context?: string;
       budget?: Budget;
+      maxTokens?: number;
     }
   ): Promise<ReflectResponse>;
-
-  createMentalModel(
-    bankId: string,
-    options?: {
-      id?: string;
-      name?: string;
-      sourceQuery?: string;
-      tags?: string[];
-      maxTokens?: number;
-      trigger?: MentalModelTrigger;
-    }
-  ): Promise<CreateMentalModelResponse>;
 
   getMentalModel(
     bankId: string,
@@ -221,147 +177,124 @@ export interface HindsightClient {
     bankId: string,
     documentId: string
   ): Promise<DocumentResponse | null>;
-
-  createDirective(
-    bankId: string,
-    options: {
-      name: string;
-      content: string;
-      priority?: number;
-      isActive?: boolean;
-      tags?: string[];
-    }
-  ): Promise<CreateDirectiveResponse>;
-
-  listDirectives(
-    bankId: string,
-    options?: {
-      tags?: string[];
-      tagsMatch?: 'any' | 'all' | 'exact';
-      activeOnly?: boolean;
-      limit?: number;
-      offset?: number;
-    }
-  ): Promise<{ directives: DirectiveResponse[]; total: number }>;
 }
 
 export interface HindsightToolsOptions {
   /** Hindsight client instance */
   client: HindsightClient;
-  /**
-   * Custom description for the retain tool.
-   */
-  retainDescription?: string;
-  /**
-   * Custom description for the recall tool.
-   */
-  recallDescription?: string;
-  /**
-   * Custom description for the reflect tool.
-   */
-  reflectDescription?: string;
-  /**
-   * Custom description for the createMentalModel tool.
-   */
-  createMentalModelDescription?: string;
-  /**
-   * Custom description for the queryMentalModel tool.
-   */
-  queryMentalModelDescription?: string;
-  /**
-   * Custom description for the getDocument tool.
-   */
-  getDocumentDescription?: string;
+  /** Memory bank ID to use for all tool calls (e.g. the user ID) */
+  bankId: string;
+
+  /** Options for the retain tool */
+  retain?: {
+    /** Fire-and-forget retain without waiting for completion (default: false) */
+    async?: boolean;
+    /** Tags always attached to every retained memory (default: undefined) */
+    tags?: string[];
+    /** Metadata always attached to every retained memory (default: undefined) */
+    metadata?: Record<string, string>;
+    /** Custom tool description */
+    description?: string;
+  };
+
+  /** Options for the recall tool */
+  recall?: {
+    /** Restrict results to these fact types: 'world', 'experience', 'observation' (default: undefined = all types) */
+    types?: FactType[];
+    /** Maximum tokens to return (default: undefined = API default) */
+    maxTokens?: number;
+    /** Processing budget controlling latency vs. depth (default: 'mid') */
+    budget?: Budget;
+    /** Include entity observations in results (default: false) */
+    includeEntities?: boolean;
+    /** Include raw source chunks in results (default: false) */
+    includeChunks?: boolean;
+    /** Custom tool description */
+    description?: string;
+  };
+
+  /** Options for the reflect tool */
+  reflect?: {
+    /** Processing budget controlling latency vs. depth (default: 'mid') */
+    budget?: Budget;
+    /** Maximum tokens for the response (default: undefined = API default) */
+    maxTokens?: number;
+    /** Custom tool description */
+    description?: string;
+  };
+
+  /** Options for the getMentalModel tool */
+  getMentalModel?: {
+    /** Custom tool description */
+    description?: string;
+  };
+
+  /** Options for the getDocument tool */
+  getDocument?: {
+    /** Custom tool description */
+    description?: string;
+  };
 }
 
 /**
  * Creates AI SDK tools for Hindsight memory operations.
  *
- * Features:
- * - Dynamic bank ID per call (supports multi-user/multi-bank scenarios)
- * - Full API parameter support for retain, recall, and reflect
- * - Ready to use with streamText, generateText, or ToolLoopAgent
+ * The bank ID and all infrastructure concerns (budget, tags, async mode, etc.)
+ * are fixed at creation time. The agent only controls semantic inputs:
+ * content, queries, names, and timestamps.
  *
  * @example
  * ```ts
  * const tools = createHindsightTools({
  *   client: hindsightClient,
+ *   bankId: userId,
+ *   recall: { budget: 'high', includeEntities: true },
+ *   retain: { async: true, tags: ['env:prod'] },
  * });
  *
- * // Use with AI SDK
  * const result = await generateText({
- *   model: openai('gpt-4'),
+ *   model: openai('gpt-4o'),
  *   tools,
- *   prompt: 'Remember that Alice loves hiking',
+ *   messages,
  * });
  * ```
  */
 export function createHindsightTools({
   client,
-  retainDescription,
-  recallDescription,
-  reflectDescription,
-  createMentalModelDescription,
-  queryMentalModelDescription,
-  getDocumentDescription,
+  bankId,
+  retain: retainOpts = {},
+  recall: recallOpts = {},
+  reflect: reflectOpts = {},
+  getMentalModel: getMentalModelOpts = {},
+  getDocument: getDocumentOpts = {},
 }: HindsightToolsOptions) {
+  // Agent-controlled params only: content, timestamp, documentId, context
   const retainParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
     content: z.string().describe('Content to store in memory'),
     documentId: z.string().optional().describe('Optional document ID for grouping/upserting content'),
     timestamp: z.string().optional().describe('Optional ISO timestamp for when the memory occurred'),
     context: z.string().optional().describe('Optional context about the memory'),
-    tags: z.array(z.string()).optional().describe('Optional tags for visibility scoping'),
-    metadata: z.record(z.string(), z.string()).optional().describe('Optional user-defined metadata'),
   });
 
+  // Agent-controlled params only: query, queryTimestamp
   const recallParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
     query: z.string().describe('What to search for in memory'),
-    types: z.array(z.string()).optional().describe('Filter by fact types'),
-    maxTokens: z.number().optional().describe('Maximum tokens to return'),
-    budget: BudgetSchema.optional().describe('Processing budget: low, mid, or high'),
     queryTimestamp: z.string().optional().describe('Query from a specific point in time (ISO format)'),
-    includeEntities: z.boolean().optional().describe('Include entity observations in results'),
-    includeChunks: z.boolean().optional().describe('Include raw chunks in results'),
   });
 
+  // Agent-controlled params only: query, context
   const reflectParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
     query: z.string().describe('Question to reflect on based on memories'),
     context: z.string().optional().describe('Additional context for the reflection'),
-    budget: BudgetSchema.optional().describe('Processing budget: low, mid, or high'),
   });
 
-  const createMentalModelParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
-    mentalModelId: z.string().optional().describe('Optional custom ID for the mental model (auto-generated if not provided)'),
-    name: z.string().optional().describe('Optional name for the mental model'),
-    sourceQuery: z.string().optional().describe('Query to define what memories to consolidate'),
-    tags: z.array(z.string()).optional().describe('Optional tags for organizing mental models'),
-    maxTokens: z.number().optional().describe('Maximum tokens for the mental model content'),
-    autoRefresh: z.boolean().optional().describe('Auto-refresh mental model after new consolidations (default: false)'),
-  });
-
-  const queryMentalModelParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
-    mentalModelId: z.string().describe('ID of the mental model to query'),
+  const getMentalModelParams = z.object({
+    mentalModelId: z.string().describe('ID of the mental model to retrieve'),
   });
 
   const getDocumentParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
     documentId: z.string().describe('ID of the document to retrieve'),
   });
-
-  const createDirectiveParams = z.object({
-    bankId: z.string().describe('Memory bank ID (usually the user ID)'),
-    name: z.string().describe('Human-readable name for the directive'),
-    content: z.string().describe('The directive text to inject into prompts'),
-    priority: z.number().optional().describe('Higher priority directives are injected first (default 0)'),
-    isActive: z.boolean().optional().describe('Whether this directive is active (default true)'),
-    tags: z.array(z.string()).optional().describe('Tags for filtering'),
-  });
-
 
   type RetainInput = z.infer<typeof retainParams>;
   type RetainOutput = { success: boolean; itemsCount: number };
@@ -372,37 +305,31 @@ export function createHindsightTools({
   type ReflectInput = z.infer<typeof reflectParams>;
   type ReflectOutput = { text: string; basedOn?: ReflectFact[] };
 
-  type CreateMentalModelInput = z.infer<typeof createMentalModelParams>;
-  type CreateMentalModelOutput = { mentalModelId: string; createdAt: string };
-
-  type QueryMentalModelInput = z.infer<typeof queryMentalModelParams>;
-  type QueryMentalModelOutput = { content: string; name?: string; updatedAt: string };
+  type GetMentalModelInput = z.infer<typeof getMentalModelParams>;
+  type GetMentalModelOutput = { content: string; name?: string; updatedAt: string };
 
   type GetDocumentInput = z.infer<typeof getDocumentParams>;
   type GetDocumentOutput = { originalText: string; id: string; createdAt: string; updatedAt: string } | null;
 
-  type CreateDirectiveInput = z.infer<typeof createDirectiveParams>;
-  type CreateDirectiveOutput = { id: string; name: string; content: string; tags: string[]; createdAt: string };
-
   return {
     retain: tool<RetainInput, RetainOutput>({
       description:
-        retainDescription ??
+        retainOpts.description ??
         `Store information in long-term memory. Use this when information should be remembered for future interactions, such as user preferences, facts, experiences, or important context.`,
       inputSchema: retainParams,
       execute: async (input) => {
         console.log('[AI SDK Tool] Retain input:', {
-          bankId: input.bankId,
+          bankId,
           documentId: input.documentId,
-          tags: input.tags,
           hasContent: !!input.content,
         });
-        const result = await client.retain(input.bankId, input.content, {
+        const result = await client.retain(bankId, input.content, {
           documentId: input.documentId,
           timestamp: input.timestamp,
           context: input.context,
-          tags: input.tags,
-          metadata: input.metadata as Record<string, string> | undefined,
+          tags: retainOpts.tags,
+          metadata: retainOpts.metadata,
+          async: retainOpts.async ?? false,
         });
         return { success: result.success, itemsCount: result.items_count };
       },
@@ -410,17 +337,17 @@ export function createHindsightTools({
 
     recall: tool<RecallInput, RecallOutput>({
       description:
-        recallDescription ??
+        recallOpts.description ??
         `Search memory for relevant information. Use this to find previously stored information that can help personalize responses or provide context.`,
       inputSchema: recallParams,
       execute: async (input) => {
-        const result = await client.recall(input.bankId, input.query, {
-          types: input.types,
-          maxTokens: input.maxTokens,
-          budget: input.budget,
+        const result = await client.recall(bankId, input.query, {
+          types: recallOpts.types,
+          maxTokens: recallOpts.maxTokens,
+          budget: recallOpts.budget ?? 'mid',
           queryTimestamp: input.queryTimestamp,
-          includeEntities: input.includeEntities,
-          includeChunks: input.includeChunks,
+          includeEntities: recallOpts.includeEntities ?? false,
+          includeChunks: recallOpts.includeChunks ?? false,
         });
         return {
           results: result.results ?? [],
@@ -431,13 +358,14 @@ export function createHindsightTools({
 
     reflect: tool<ReflectInput, ReflectOutput>({
       description:
-        reflectDescription ??
+        reflectOpts.description ??
         `Analyze memories to form insights and generate contextual answers. Use this to understand patterns, synthesize information, or answer questions that require reasoning over stored memories.`,
       inputSchema: reflectParams,
       execute: async (input) => {
-        const result = await client.reflect(input.bankId, input.query, {
+        const result = await client.reflect(bankId, input.query, {
           context: input.context,
-          budget: input.budget,
+          budget: reflectOpts.budget ?? 'mid',
+          maxTokens: reflectOpts.maxTokens,
         });
         return {
           text: result.text ?? 'No insights available yet.',
@@ -446,34 +374,13 @@ export function createHindsightTools({
       },
     }),
 
-    createMentalModel: tool<CreateMentalModelInput, CreateMentalModelOutput>({
+    getMentalModel: tool<GetMentalModelInput, GetMentalModelOutput>({
       description:
-        createMentalModelDescription ??
-        `Create a mental model that automatically consolidates memories into structured knowledge. Mental models are continuously updated as new memories are added, making them ideal for maintaining up-to-date user preferences, behavioral patterns, and accumulated wisdom.`,
-      inputSchema: createMentalModelParams,
+        getMentalModelOpts.description ??
+        `Retrieve a mental model to get consolidated knowledge synthesized from memories. Mental models provide synthesized insights that are faster and more efficient to retrieve than searching through raw memories.`,
+      inputSchema: getMentalModelParams,
       execute: async (input) => {
-        const result = await client.createMentalModel(input.bankId, {
-          id: input.mentalModelId,
-          name: input.name,
-          sourceQuery: input.sourceQuery,
-          tags: input.tags,
-          maxTokens: input.maxTokens,
-          trigger: input.autoRefresh !== undefined ? { refresh_after_consolidation: input.autoRefresh } : undefined,
-        });
-        return {
-          mentalModelId: result.mental_model_id,
-          createdAt: result.created_at,
-        };
-      },
-    }),
-
-    queryMentalModel: tool<QueryMentalModelInput, QueryMentalModelOutput>({
-      description:
-        queryMentalModelDescription ??
-        `Query an existing mental model to retrieve consolidated knowledge. Mental models provide synthesized insights from memories, making them faster and more efficient than searching through raw memories.`,
-      inputSchema: queryMentalModelParams,
-      execute: async (input) => {
-        const result = await client.getMentalModel(input.bankId, input.mentalModelId);
+        const result = await client.getMentalModel(bankId, input.mentalModelId);
         return {
           content: result.content ?? 'No content available yet.',
           name: result.name,
@@ -484,11 +391,11 @@ export function createHindsightTools({
 
     getDocument: tool<GetDocumentInput, GetDocumentOutput>({
       description:
-        getDocumentDescription ??
+        getDocumentOpts.description ??
         `Retrieve a stored document by its ID. Documents are used to store structured data like application state, user profiles, or any data that needs exact retrieval.`,
       inputSchema: getDocumentParams,
       execute: async (input) => {
-        const result = await client.getDocument(input.bankId, input.documentId);
+        const result = await client.getDocument(bankId, input.documentId);
         if (!result) {
           return null;
         }
@@ -501,27 +408,6 @@ export function createHindsightTools({
       },
     }),
 
-    createDirective: tool<CreateDirectiveInput, CreateDirectiveOutput>({
-      description:
-        `Create a directive - a hard rule that is injected into prompts during reflect operations. Directives are explicit instructions that guide agent behavior. Use tags to control when directives are applied (e.g., user-specific directives with 'user:username' tags).`,
-      inputSchema: createDirectiveParams,
-      execute: async (input) => {
-        const result = await client.createDirective(input.bankId, {
-          name: input.name,
-          content: input.content,
-          priority: input.priority,
-          isActive: input.isActive,
-          tags: input.tags,
-        });
-        return {
-          id: result.id,
-          name: result.name,
-          content: result.content,
-          tags: result.tags,
-          createdAt: result.created_at,
-        };
-      },
-    }),
   };
 }
 

@@ -1,0 +1,97 @@
+---
+sidebar_position: 4
+---
+
+# Vercel AI SDK
+
+The `@vectorize-io/hindsight-ai-sdk` package integrates [Hindsight](https://hindsight.vectorize.io) memory with the [Vercel AI SDK](https://ai-sdk.dev). It provides five ready-to-use tools for retaining, recalling, and reflecting on long-term memories.
+
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+import aiSdkTs from '!!raw-loader!@site/examples/integrations/ai-sdk.ts';
+
+## Installation
+
+```bash
+npm install @vectorize-io/hindsight-ai-sdk @vectorize-io/hindsight-client ai
+```
+
+## Setup
+
+Create a Hindsight client and pass it to `createHindsightTools` along with a `bankId`. The `bankId` identifies the memory store for this session—typically a user ID.
+
+<CodeSnippet code={aiSdkTs} section="setup" language="typescript" />
+
+:::tip Per-request bank IDs
+In multi-user applications, create `tools` inside your request handler so each request closes over the correct `bankId`. See the [Next.js example](#in-a-nextjs-route-handler) below.
+:::
+
+## Usage
+
+### With `generateText`
+
+<CodeSnippet code={aiSdkTs} section="generate-text" language="typescript" />
+
+### With `streamText`
+
+<CodeSnippet code={aiSdkTs} section="stream-text" language="typescript" />
+
+### With `ToolLoopAgent`
+
+<CodeSnippet code={aiSdkTs} section="tool-loop-agent" language="typescript" />
+
+### In a Next.js Route Handler
+
+<CodeSnippet code={aiSdkTs} section="next-api-route" language="typescript" />
+
+---
+
+## Tools Reference
+
+Five tools are registered. The `bankId` is fixed at creation time—the agent cannot change it.
+
+| Tool | What the agent provides | What the constructor controls |
+|------|------------------------|-------------------------------|
+| `retain` | `content`, `documentId`, `timestamp`, `context` | `async`, `tags`, `metadata` |
+| `recall` | `query`, `queryTimestamp` | `budget`, `types`, `maxTokens`, `includeEntities`, `includeChunks` |
+| `reflect` | `query`, `context` | `budget` |
+| `getMentalModel` | `mentalModelId` | — |
+| `getDocument` | `documentId` | — |
+
+**Why this split?** Semantic inputs (what to remember, what to search for) belong to the agent. Infrastructure concerns (cost budget, tagging strategy, async mode) belong to the application.
+
+---
+
+## Constructor Options
+
+All options except `client` and `bankId` are optional. Each tool's options are grouped under the tool name.
+
+<CodeSnippet code={aiSdkTs} section="constructor-options" language="typescript" />
+
+### `retain`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `async` | `boolean` | `false` | Fire-and-forget — do not wait for ingestion to complete |
+| `tags` | `string[]` | — | Tags attached to every retained memory |
+| `metadata` | `Record<string, string>` | — | Metadata attached to every retained memory |
+| `description` | `string` | built-in | Override the tool description shown to the model |
+
+### `recall`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `budget` | `'low' \| 'mid' \| 'high'` | `'mid'` | Controls retrieval depth and latency |
+| `types` | `('world' \| 'experience' \| 'observation')[]` | all | Restrict results to these fact types |
+| `maxTokens` | `number` | API default | Cap the total tokens returned |
+| `includeEntities` | `boolean` | `false` | Include entity observations in results |
+| `includeChunks` | `boolean` | `false` | Include raw source chunks in results |
+| `description` | `string` | built-in | Override the tool description shown to the model |
+
+### `reflect`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `budget` | `'low' \| 'mid' \| 'high'` | `'mid'` | Controls synthesis depth and latency |
+| `maxTokens` | `number` | API default | Maximum tokens for the response |
+| `description` | `string` | built-in | Override the tool description shown to the model |
