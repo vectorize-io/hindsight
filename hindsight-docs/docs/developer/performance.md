@@ -142,6 +142,7 @@ Hindsight uses PostgreSQL with pgvector for efficient vector search:
 
 ### Cost Optimization
 - **Use efficient models**: `gpt-oss-20b` via Groq for retain — Hindsight doesn't need frontier models
+- **Enable provider Batch API**: Set `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true` with async retain to cut LLM fact-extraction costs by 50% (supported on OpenAI and Groq; results delivered within 24 hours)
 - **Control token budgets**: Limit `max_tokens` for recall, use lower budgets when possible
 - **Optimize chunks**: Larger chunks (1000-2000 tokens) are more efficient than many small ones
 

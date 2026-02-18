@@ -8,6 +8,30 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [0.4.12](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.12)
+
+**Features**
+
+- Accept and ingest PDFs, images, and common Office documents as inputs. ([`224b7b74`](https://github.com/vectorize-io/hindsight/commit/224b7b74))
+- Add the Iris file parser for improved document parsing support. ([`7eafba66`](https://github.com/vectorize-io/hindsight/commit/7eafba66))
+- Add async Retain support via provider Batch APIs (e.g., OpenAI and Groq) for higher-throughput ingestion. ([`40d42c58`](https://github.com/vectorize-io/hindsight/commit/40d42c58))
+- Allow Recall to return chunks only (no memories) by setting max_tokens=0. ([`7dad9da0`](https://github.com/vectorize-io/hindsight/commit/7dad9da0))
+- Add a Go client SDK for the Hindsight API. ([`2a47389f`](https://github.com/vectorize-io/hindsight/commit/2a47389f))
+- Add support for the pgvectorscale (DiskANN) vector index backend. ([`95c42204`](https://github.com/vectorize-io/hindsight/commit/95c42204))
+- Add support for Azure pg_diskann vector indexing. ([`476726c2`](https://github.com/vectorize-io/hindsight/commit/476726c2))
+
+**Improvements**
+
+- Improve reliability of async batch Retain when ingesting large payloads. ([`aefb3fcf`](https://github.com/vectorize-io/hindsight/commit/aefb3fcf))
+- Improve AI SDK tooling to make it easier to work with Hindsight programmatically. ([`d06a0259`](https://github.com/vectorize-io/hindsight/commit/d06a0259))
+
+**Bug Fixes**
+
+- Ensure document tags are preserved when using the async Retain flow. ([`b4b5c44a`](https://github.com/vectorize-io/hindsight/commit/b4b5c44a))
+- Fix OpenClaw ingestion failures for very large content (E2BIG). ([`6bad6673`](https://github.com/vectorize-io/hindsight/commit/6bad6673))
+- Harden OpenClaw behavior (safer shell usage, better HTTP mode handling, and more reliable initialization), including per-user banks support. ([`c4610130`](https://github.com/vectorize-io/hindsight/commit/c4610130))
+- Improve Python client async API consistency and reduce connection drop issues via keepalive timeout fixes. ([`8114ef44`](https://github.com/vectorize-io/hindsight/commit/8114ef44))
+
 ## [0.4.11](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.11)
 
 **Features**

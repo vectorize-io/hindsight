@@ -157,6 +157,20 @@ For large batches, use async ingestion to avoid blocking:
 </TabItem>
 </Tabs>
 
+### Cut Costs 50% with Provider Batch APIs
+
+When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI and Groq both offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
+
+```bash
+export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
+```
+
+Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
+
+:::note
+Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI or Groq).
+:::
+
 ## Tagging Memories
 
 Tags enable **visibility scoping**—useful when one memory bank serves multiple users but each should only see relevant memories. For example, an agent that chats with multiple users can tag memories by user ID and filter during recall.
