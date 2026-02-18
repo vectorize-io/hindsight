@@ -9,7 +9,7 @@ Official Go client for the Hindsight API, built on [ogen](https://github.com/oge
 ## Installation
 
 ```bash
-go get github.com/vectorize-io/hindsight-client-go
+go get github.com/vectorize-io/hindsight/hindsight-clients/go
 ```
 
 Requires Go 1.25+.
@@ -24,7 +24,7 @@ import (
     "fmt"
     "log"
 
-    hindsight "github.com/vectorize-io/hindsight-client-go"
+    hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 )
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 ## Client Initialization
 
 ```go
-import hindsight "github.com/vectorize-io/hindsight-client-go"
+import hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 
 // Default client
 client, err := hindsight.New("http://localhost:8888")
@@ -231,7 +231,7 @@ resp, _ := client.Reflect(ctx, "my-bank", "Summarize project X",
 For operations not covered by the high-level wrapper (documents, entities, mental models, directives, operations), access the generated ogen client directly:
 
 ```go
-import "github.com/vectorize-io/hindsight-client-go/internal/ogenapi"
+import "github.com/vectorize-io/hindsight/hindsight-clients/go/internal/ogenapi"
 
 ogen := client.OgenClient()
 

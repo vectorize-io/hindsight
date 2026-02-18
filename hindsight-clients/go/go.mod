@@ -1,4 +1,4 @@
-module github.com/vectorize-io/hindsight-client-go
+module github.com/vectorize-io/hindsight/hindsight-clients/go
 
 go 1.18
 

@@ -381,7 +381,7 @@ else
         -o . \
         --package-name hindsight \
         --git-user-id vectorize-io \
-        --git-repo-id hindsight-client-go \
+        --git-repo-id hindsight/hindsight-clients/go \
         --global-property apiDocs=false,apiTests=false,modelDocs=false,modelTests=false
 
     # Remove OpenAPI Generator boilerplate files

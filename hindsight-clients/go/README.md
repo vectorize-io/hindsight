@@ -22,7 +22,7 @@ go get golang.org/x/net/context
 Put the package under your project folder and add the following in import:
 
 ```go
-import hindsight "github.com/vectorize-io/hindsight-client-go"
+import hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 ```
 
 To use a proxy, set the environment variable `HTTP_PROXY`:

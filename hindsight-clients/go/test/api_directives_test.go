@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
-	openapiclient "github.com/vectorize-io/hindsight-client-go"
+	openapiclient "github.com/vectorize-io/hindsight/hindsight-clients/go"
 )
 
 func Test_hindsight_DirectivesAPIService(t *testing.T) {
