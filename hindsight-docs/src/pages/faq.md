@@ -123,6 +123,36 @@ See [Operations](/developer/api/operations) for API details.
 
 ---
 
+### When should I use recall vs reflect?
+
+**Use recall when:**
+- You want raw facts to feed into your own reasoning or prompt
+- You need maximum control over how memories are interpreted
+- You're doing simple fact lookup (e.g., "What did Alice say about X?")
+- Latency is critical — recall is significantly faster (50-500ms vs 1-10s)
+- You want to build your own answer synthesis layer on top of retrieved memories
+
+**Use reflect when:**
+- You want a ready-to-use answer generated from memories (no extra LLM call needed)
+- You need disposition-aware responses shaped by the bank's personality traits (skepticism, literalism, empathy)
+- The query requires multi-step reasoning across facts, observations, and mental models
+- You need structured output (via `response_schema`) from memory-grounded reasoning
+- You want citations — reflect returns which memories, mental models, and directives informed the answer
+
+**Key difference**: Recall returns data; reflect returns an answer. Recall gives you raw materials, reflect does the reasoning for you using the bank's disposition and an autonomous search loop.
+
+```
+recall("What food does Alice like?")
+→ ["Alice loves sushi", "Alice prefers vegetarian options"]   # raw facts
+
+reflect("What should I order for Alice?")
+→ "I'd recommend a vegetarian sushi platter — Alice loves sushi and prefers vegetarian options."  # grounded answer
+```
+
+See [Recall](/developer/api/recall) and [Reflect](/developer/reflect) for full API details.
+
+---
+
 ### When should I use mental models?
 
 **Mental models** are consolidated knowledge patterns synthesized from individual facts over time. Use them when you need:
