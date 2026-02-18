@@ -233,7 +233,13 @@ async def retain_batch(
                                 if first_item.get("metadata"):
                                     retain_params["metadata"] = first_item["metadata"]
                             await fact_storage.handle_document_tracking(
-                                conn, bank_id, actual_doc_id, combined_content, is_first_batch, retain_params, merged_tags
+                                conn,
+                                bank_id,
+                                actual_doc_id,
+                                combined_content,
+                                is_first_batch,
+                                retain_params,
+                                merged_tags,
                             )
                             docs_tracked += 1
 
