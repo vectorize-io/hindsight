@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	hindsight "github.com/vectorize-io/hindsight-client-go"
+	hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 )
 
 func main() {

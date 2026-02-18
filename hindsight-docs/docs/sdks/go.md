@@ -12,7 +12,7 @@ import quickstartGo from '!!raw-loader!@site/examples/api/quickstart.go';
 ## Installation
 
 ```bash
-go get github.com/vectorize-io/hindsight-client-go
+go get github.com/vectorize-io/hindsight/hindsight-clients/go
 ```
 
 Requires Go 1.23+.
