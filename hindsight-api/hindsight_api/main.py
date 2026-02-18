@@ -262,6 +262,8 @@ def main():
             file_storage_azure_account_name=config.file_storage_azure_account_name,
             file_storage_azure_account_key=config.file_storage_azure_account_key,
             file_parser=config.file_parser,
+            file_parser_iris_token=config.file_parser_iris_token,
+            file_parser_iris_org_id=config.file_parser_iris_org_id,
             file_conversion_max_batch_size_mb=config.file_conversion_max_batch_size_mb,
             file_conversion_max_batch_size=config.file_conversion_max_batch_size,
             enable_file_upload_api=config.enable_file_upload_api,

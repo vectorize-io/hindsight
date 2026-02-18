@@ -1374,7 +1374,7 @@ class MemoryEngine(MemoryEngineInterface):
         logger.debug(f"File storage initialized ({config.file_storage_type})")
 
         # Initialize parser registry
-        from .parsers import FileParserRegistry, MarkitdownParser
+        from .parsers import FileParserRegistry, IrisParser, MarkitdownParser
 
         self._parser_registry = FileParserRegistry()
         try:
@@ -1382,6 +1382,13 @@ class MemoryEngine(MemoryEngineInterface):
             logger.debug("Registered markitdown parser")
         except ImportError:
             logger.warning("markitdown not available - file parsing disabled")
+        iris_token = config.file_parser_iris_token
+        iris_org_id = config.file_parser_iris_org_id
+        if iris_token and iris_org_id:
+            self._parser_registry.register(IrisParser(token=iris_token, org_id=iris_org_id))
+            logger.debug("Registered iris parser")
+        else:
+            logger.debug("Iris parser not registered (VECTORIZE_TOKEN or VECTORIZE_ORG_ID not set)")
 
         # Set executor for task backend and initialize
         self._task_backend.set_executor(self.execute_task)

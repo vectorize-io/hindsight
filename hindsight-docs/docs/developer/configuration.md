@@ -636,12 +636,34 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
-| `HINDSIGHT_API_FILE_PARSER` | File parser to use (`markitdown`) | `markitdown` |
+| `HINDSIGHT_API_FILE_PARSER` | File parser to use (`markitdown`, `iris`) | `markitdown` |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB` | Max total upload size per request (MB) | `100` |
 | `HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN` | Delete stored files after memory extraction completes | `true` |
 
-**Supported formats (via markitdown):** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF — OCR), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV, and more.
+#### Parser: markitdown (default)
+
+Local file-to-markdown conversion using [Microsoft's markitdown](https://github.com/microsoft/markitdown). No external service required.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG — OCR), audio (MP3, WAV — transcription), HTML, TXT, MD, CSV.
+
+#### Parser: iris
+
+Cloud-based extraction via [Vectorize Iris](https://docs.vectorize.io/build-deploy/extract-information/understanding-iris/). Higher quality extraction for complex documents, powered by a remote AI service.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN` | Vectorize API token | — |
+| `HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID` | Vectorize organization ID | — |
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, JPEG, PNG, GIF, BMP, TIFF, WEBP), HTML, TXT, MD, CSV.
+
+```bash
+# Use iris parser (requires Vectorize account)
+export HINDSIGHT_API_FILE_PARSER=iris
+export HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN=your-vectorize-token
+export HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID=your-org-id
+```
 
 ```bash
 # Increase batch limits for large file imports

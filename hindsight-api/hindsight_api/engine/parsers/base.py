@@ -3,6 +3,12 @@
 from abc import ABC, abstractmethod
 
 
+class UnsupportedFileTypeError(Exception):
+    """Raised by a parser when it does not support the given file type."""
+
+    pass
+
+
 class FileParser(ABC):
     """Abstract base for file to markdown parsers."""
 
@@ -19,24 +25,27 @@ class FileParser(ABC):
             Markdown content as string
 
         Raises:
-            ValueError: If file format is not supported
-            RuntimeError: If parsing fails
+            UnsupportedFileTypeError: If the file type is not supported by this parser
+            RuntimeError: If parsing fails for another reason
         """
         pass
 
-    @abstractmethod
     def supports(self, filename: str, content_type: str | None = None) -> bool:
         """
         Check if parser supports this file type.
+
+        Override this for local/static extension-based filtering.
+        Parsers that delegate to a remote service should leave this as True
+        and raise UnsupportedFileTypeError from convert() instead.
 
         Args:
             filename: File name (used for extension check)
             content_type: MIME type (optional)
 
         Returns:
-            True if this parser can handle the file
+            True if this parser can handle the file (default: True)
         """
-        pass
+        return True
 
     @abstractmethod
     def name(self) -> str:

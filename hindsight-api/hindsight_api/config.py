@@ -272,6 +272,8 @@ ENV_FILE_STORAGE_AZURE_CONTAINER = "HINDSIGHT_API_FILE_STORAGE_AZURE_CONTAINER"
 ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_NAME"
 ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY = "HINDSIGHT_API_FILE_STORAGE_AZURE_ACCOUNT_KEY"
 ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
+ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
+ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
@@ -645,7 +647,9 @@ class HindsightConfig:
     file_storage_azure_container: str | None  # Azure container name (required for azure storage)
     file_storage_azure_account_name: str | None  # Azure storage account name
     file_storage_azure_account_key: str | None  # Azure storage account key
-    file_parser: str  # File parser to use (e.g., "markitdown")
+    file_parser: str  # File parser to use (e.g., "markitdown", "iris")
+    file_parser_iris_token: str | None  # Vectorize API token for iris parser (VECTORIZE_TOKEN)
+    file_parser_iris_org_id: str | None  # Vectorize org ID for iris parser (VECTORIZE_ORG_ID)
     file_conversion_max_batch_size_mb: int  # Max total batch size in MB (all files combined)
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
@@ -712,6 +716,8 @@ class HindsightConfig:
         "file_storage_s3_secret_access_key",
         "file_storage_gcs_service_account_key",
         "file_storage_azure_account_key",
+        # File parser credentials
+        "file_parser_iris_token",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -1030,6 +1036,8 @@ class HindsightConfig:
             file_storage_azure_account_name=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_NAME) or None,
             file_storage_azure_account_key=os.getenv(ENV_FILE_STORAGE_AZURE_ACCOUNT_KEY) or None,
             file_parser=os.getenv(ENV_FILE_PARSER, DEFAULT_FILE_PARSER),
+            file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
+            file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
             file_conversion_max_batch_size_mb=int(
                 os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB))
             ),

@@ -1,9 +1,10 @@
 """File parser implementations."""
 
-from .base import FileParser
+from .base import FileParser, UnsupportedFileTypeError
+from .iris import IrisParser
 from .markitdown import MarkitdownParser
 
-__all__ = ["FileParser", "MarkitdownParser", "FileParserRegistry"]
+__all__ = ["FileParser", "UnsupportedFileTypeError", "IrisParser", "MarkitdownParser", "FileParserRegistry"]
 
 
 class FileParserRegistry:
@@ -43,7 +44,8 @@ class FileParserRegistry:
             ValueError: If no suitable parser found
         """
         if name:
-            # Explicit parser requested
+            # Explicit parser requested — return it directly, let the parser
+            # raise UnsupportedFileTypeError from convert() if needed
             if name not in self._parsers:
                 raise ValueError(f"Parser '{name}' not found. Available: {list(self._parsers.keys())}")
             return self._parsers[name]
