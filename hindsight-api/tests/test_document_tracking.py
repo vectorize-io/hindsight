@@ -2,9 +2,13 @@
 Tests for document tracking and upsert functionality.
 """
 import logging
-import pytest
 from datetime import datetime, timezone
+from unittest.mock import patch
+
+import pytest
+
 from hindsight_api import RequestContext
+from hindsight_api.engine.response_models import TokenUsage
 
 
 @pytest.mark.asyncio
@@ -311,3 +315,52 @@ async def test_document_persisted_with_zero_facts_async_submit(memory, request_c
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_stored_without_chunks_when_zero_facts(memory_no_llm_verify, request_context):
+    """
+    Regression test: when 0 facts are extracted from chunked content, the document row
+    must be stored but no chunk rows should be written.
+    """
+    bank_id = f"test_zero_facts_no_chunks_{datetime.now(timezone.utc).timestamp()}"
+    document_id = "doc-zero-facts-chunked"
+
+    # Content large enough to exceed default retain_chunk_size (3000 chars) so chunking is triggered
+    content = "Alice works at Google. " * 200  # ~4600 chars
+
+    async def mock_llm_zero_facts(*args, **kwargs):
+        response = {"facts": []}
+        if kwargs.get("return_usage", False):
+            return response, TokenUsage(input_tokens=10, output_tokens=2)
+        return response
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_zero_facts):
+            units = await memory_no_llm_verify.retain_async(
+                bank_id=bank_id,
+                content=content,
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        assert units == [], "Should return no memory units when LLM extracts zero facts"
+
+        # Document row must exist
+        doc = await memory_no_llm_verify.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None, "Document row must be stored even when zero facts are extracted"
+        assert doc["id"] == document_id
+        assert doc["memory_unit_count"] == 0
+
+        # No chunk rows should be stored
+        pool = await memory_no_llm_verify._get_pool()
+        async with pool.acquire() as conn:
+            chunk_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM chunks WHERE document_id = $1 AND bank_id = $2",
+                document_id,
+                bank_id,
+            )
+        assert chunk_count == 0, "No chunk rows should be stored when zero facts are extracted"
+
+    finally:
+        await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)

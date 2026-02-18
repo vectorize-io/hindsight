@@ -156,13 +156,22 @@ async def retain_batch(
     )
 
     if not extracted_facts:
-        # Still need to create document if document_id was provided
+        # Still need to create document if document_id was provided or chunks exist
+        from collections import defaultdict
+
+        docs_tracked = 0
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
                 await fact_storage.ensure_bank_exists(conn, bank_id)
 
-                # Handle document tracking even with no facts
+                # Group contents by document_id (consistent with normal path)
+                contents_by_doc_early = defaultdict(list)
+                for idx, content_dict in enumerate(contents_dicts):
+                    doc_id = content_dict.get("document_id")
+                    contents_by_doc_early[doc_id].append((idx, content_dict))
+
                 if document_id:
+                    # Legacy: single document_id parameter
                     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
                     # Collect tags from all content items and merge with document_tags
                     all_tags = set(document_tags or [])
@@ -187,45 +196,51 @@ async def retain_batch(
                     await fact_storage.handle_document_tracking(
                         conn, bank_id, document_id, combined_content, is_first_batch, retain_params, merged_tags
                     )
+                    docs_tracked += 1
                 else:
-                    # Check for per-item document_ids
-                    from collections import defaultdict
+                    # Handle per-item document_ids and/or chunks (mirrors normal path logic)
+                    has_any_doc_ids = any(item.get("document_id") for item in contents_dicts)
 
-                    contents_by_doc = defaultdict(list)
-                    for idx, content_dict in enumerate(contents_dicts):
-                        doc_id = content_dict.get("document_id")
-                        if doc_id:
-                            contents_by_doc[doc_id].append((idx, content_dict))
+                    if has_any_doc_ids or chunks:
+                        for original_doc_id, doc_contents in contents_by_doc_early.items():
+                            should_create_doc = (original_doc_id is not None) or chunks
+                            if not should_create_doc:
+                                continue
 
-                    for doc_id, doc_contents in contents_by_doc.items():
-                        combined_content = "\n".join([c.get("content", "") for _, c in doc_contents])
-                        # Collect tags from all content items for this document and merge with document_tags
-                        all_tags = set(document_tags or [])
-                        for _, item in doc_contents:
-                            item_tags = item.get("tags", []) or []
-                            all_tags.update(item_tags)
-                        merged_tags = list(all_tags)
+                            actual_doc_id = original_doc_id
+                            if actual_doc_id is None:
+                                # No document_id but have chunks - generate one
+                                actual_doc_id = str(uuid.uuid4())
 
-                        retain_params = {}
-                        if doc_contents:
-                            first_item = doc_contents[0][1]
-                            if first_item.get("context"):
-                                retain_params["context"] = first_item["context"]
-                            if first_item.get("event_date"):
-                                retain_params["event_date"] = (
-                                    first_item["event_date"].isoformat()
-                                    if hasattr(first_item["event_date"], "isoformat")
-                                    else str(first_item["event_date"])
-                                )
-                            if first_item.get("metadata"):
-                                retain_params["metadata"] = first_item["metadata"]
-                        await fact_storage.handle_document_tracking(
-                            conn, bank_id, doc_id, combined_content, is_first_batch, retain_params, merged_tags
-                        )
+                            combined_content = "\n".join([c.get("content", "") for _, c in doc_contents])
+                            all_tags = set(document_tags or [])
+                            for _, item in doc_contents:
+                                item_tags = item.get("tags", []) or []
+                                all_tags.update(item_tags)
+                            merged_tags = list(all_tags)
+
+                            retain_params = {}
+                            if doc_contents:
+                                first_item = doc_contents[0][1]
+                                if first_item.get("context"):
+                                    retain_params["context"] = first_item["context"]
+                                if first_item.get("event_date"):
+                                    retain_params["event_date"] = (
+                                        first_item["event_date"].isoformat()
+                                        if hasattr(first_item["event_date"], "isoformat")
+                                        else str(first_item["event_date"])
+                                    )
+                                if first_item.get("metadata"):
+                                    retain_params["metadata"] = first_item["metadata"]
+                            await fact_storage.handle_document_tracking(
+                                conn, bank_id, actual_doc_id, combined_content, is_first_batch, retain_params, merged_tags
+                            )
+                            docs_tracked += 1
 
         total_time = time.time() - start_time
+        doc_status = f"{docs_tracked} document(s) tracked" if docs_tracked > 0 else "no document tracked"
         logger.info(
-            f"RETAIN_BATCH COMPLETE: 0 facts extracted from {len(contents)} contents in {total_time:.3f}s (document tracked, no facts)"
+            f"RETAIN_BATCH COMPLETE: 0 facts extracted from {len(contents)} contents in {total_time:.3f}s ({doc_status}, no facts)"
         )
         return [[] for _ in contents], usage
 
