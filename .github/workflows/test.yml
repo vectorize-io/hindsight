@@ -712,6 +712,10 @@ jobs:
           sleep 1
         done
 
+    - name: Build Go client
+      working-directory: ./hindsight-clients/go
+      run: go build ./...
+
     - name: Run Go client tests
       working-directory: ./hindsight-clients/go
       run: go test -v -tags=integration

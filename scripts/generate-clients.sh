@@ -366,6 +366,7 @@ else
     [ -f "integration_test.go" ] && cp integration_test.go "$TEMP_DIR/"
     [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
     [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
+    [ -f "hindsight_client.go" ] && cp hindsight_client.go "$TEMP_DIR/"
 
     # Remove old generated files
     echo "Removing old generated code..."
@@ -394,6 +395,7 @@ else
     [ -f "$TEMP_DIR/integration_test.go" ] && mv "$TEMP_DIR/integration_test.go" .
     [ -f "$TEMP_DIR/null_test.go" ] && mv "$TEMP_DIR/null_test.go" .
     [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
+    [ -f "$TEMP_DIR/hindsight_client.go" ] && mv "$TEMP_DIR/hindsight_client.go" .
     rm -rf "$TEMP_DIR"
 
     # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
