@@ -72,16 +72,24 @@ export interface RecallRequest {
 
 export interface RecallResponse {
   results: MemoryResult[];
+  entities: Record<string, unknown> | null;
+  trace: unknown | null;
+  chunks: unknown | null;
 }
 
 export interface MemoryResult {
-  content: string;
-  score: number;
-  metadata?: {
-    document_id?: string;
-    created_at?: string;
-    source?: string;
-  };
+  id: string;
+  text: string;
+  type: string;
+  entities: string[];
+  context: string;
+  occurred_start: string | null;
+  occurred_end: string | null;
+  mentioned_at: string | null;
+  document_id: string | null;
+  metadata: Record<string, unknown> | null;
+  chunk_id: string | null;
+  tags: string[];
 }
 
 export interface CreateBankRequest {

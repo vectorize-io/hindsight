@@ -139,6 +139,67 @@ const __dirname = dirname(__filename);
 const DEFAULT_BANK_NAME = 'openclaw';
 
 /**
+ * Strip plugin-injected memory tags from content to prevent retain feedback loop.
+ * Removes <hindsight_memories> and <relevant_memories> blocks that were injected
+ * during before_agent_start so they don't get re-stored into the memory bank.
+ */
+export function stripMemoryTags(content: string): string {
+  content = content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/g, '');
+  content = content.replace(/<relevant_memories>[\s\S]*?<\/relevant_memories>/g, '');
+  return content;
+}
+
+/**
+ * Extract a recall query from a hook event's rawMessage or prompt.
+ *
+ * Prefers rawMessage (clean user text). Falls back to prompt, stripping
+ * envelope formatting (System: lines, [Channel ...] headers, [from: X] footers).
+ *
+ * Returns null when no usable query (< 5 chars) can be extracted.
+ */
+export function extractRecallQuery(
+  rawMessage: string | undefined,
+  prompt: string | undefined,
+): string | null {
+  let recallQuery = rawMessage;
+  if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.trim().length < 5) {
+    recallQuery = prompt;
+    if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.length < 5) {
+      return null;
+    }
+
+    // Strip envelope-formatted prompts from any channel
+    let cleaned = recallQuery;
+
+    // Remove leading "System: ..." lines (from prependSystemEvents)
+    cleaned = cleaned.replace(/^(?:System:.*\n)+\n?/, '');
+
+    // Remove session abort hint
+    cleaned = cleaned.replace(
+      /^Note: The previous agent run was aborted[^\n]*\n\n/,
+      '',
+    );
+
+    // Extract message after [ChannelName ...] envelope header
+    const envelopeMatch = cleaned.match(
+      /\[[A-Z][A-Za-z]*(?:\s[^\]]+)?\]\s*([\s\S]+)$/,
+    );
+    if (envelopeMatch) {
+      cleaned = envelopeMatch[1];
+    }
+
+    // Remove trailing [from: SenderName] metadata (group chats)
+    cleaned = cleaned.replace(/\n\[from:[^\]]*\]\s*$/, '');
+
+    recallQuery = cleaned.trim() || recallQuery;
+  }
+
+  const trimmed = recallQuery.trim();
+  if (trimmed.length < 5) return null;
+  return trimmed;
+}
+
+/**
  * Agent context passed to plugin hooks.
  * These fields are populated by OpenClaw when invoking hooks.
  */
@@ -671,44 +732,11 @@ export default function (api: MoltbotPluginAPI) {
 
         // Get the user's latest message for recall — only the raw user text, not the full prompt
         // rawMessage is clean user text; prompt includes envelope, system events, media notes, etc.
-        let recallQuery = event.rawMessage;
-        if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.trim().length < 5) {
-          // Fall back to prompt but strip envelope formatting
-          recallQuery = event.prompt;
-          if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.length < 5) {
-            return;
-          }
-
-          // Strip envelope-formatted prompts from any channel
-          let cleaned = recallQuery;
-
-          // Remove leading "System: ..." lines (from prependSystemEvents)
-          cleaned = cleaned.replace(/^(?:System:.*\n)+\n?/, '');
-
-          // Remove session abort hint
-          cleaned = cleaned.replace(
-            /^Note: The previous agent run was aborted[^\n]*\n\n/,
-            '',
-          );
-
-          // Extract message after [ChannelName ...] envelope header
-          const envelopeMatch = cleaned.match(
-            /\[[A-Z][A-Za-z]*(?:\s[^\]]+)?\]\s*([\s\S]+)$/,
-          );
-          if (envelopeMatch) {
-            cleaned = envelopeMatch[1];
-          }
-
-          // Remove trailing [from: SenderName] metadata (group chats)
-          cleaned = cleaned.replace(/\n\[from:[^\]]*\]\s*$/, '');
-
-          recallQuery = cleaned.trim() || recallQuery;
+        const extracted = extractRecallQuery(event.rawMessage, event.prompt);
+        if (!extracted) {
+          return;
         }
-
-        let prompt = recallQuery.trim();
-        if (prompt.length < 5) {
-          return; // Skip very short messages after extraction
-        }
+        let prompt = extracted;
 
         // Truncate — Hindsight API recall has a 500 token limit; 800 chars stays safely under even with non-ASCII
         const MAX_RECALL_QUERY_CHARS = 800;
@@ -758,7 +786,7 @@ export default function (api: MoltbotPluginAPI) {
         const memoriesJson = JSON.stringify(response.results, null, 2);
 
         const contextMessage = `<hindsight_memories>
-Relevant memories from past conversations (score 1=highest, prioritize recent when conflicting):
+Relevant memories from past conversations (prioritize recent when conflicting):
 ${memoriesJson}
 
 User message: ${prompt}
@@ -835,10 +863,7 @@ User message: ${prompt}
             }
 
             // Strip plugin-injected memory tags to prevent feedback loop
-            // Remove <hindsight_memories> blocks injected during before_agent_start
-            content = content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/g, '');
-            // Remove any <relevant_memories> blocks (legacy/alternative format)
-            content = content.replace(/<relevant_memories>[\s\S]*?<\/relevant_memories>/g, '');
+            content = stripMemoryTags(content);
 
             return `[role: ${role}]\n${content}\n[${role}:end]`;
           })

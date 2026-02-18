@@ -34,8 +34,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {

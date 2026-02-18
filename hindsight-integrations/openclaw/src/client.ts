@@ -237,20 +237,7 @@ export class HindsightClient {
       throw new Error(`Failed to recall memories (HTTP ${res.status}): ${text}`);
     }
 
-    const response = await res.json() as { results?: any[] };
-    const results = response.results || [];
-
-    return {
-      results: results.map((r: any) => ({
-        content: r.text || r.content || '',
-        score: r.score ?? 1.0,
-        metadata: {
-          document_id: r.document_id,
-          chunk_id: r.chunk_id,
-          ...r.metadata,
-        },
-      })),
-    };
+    return res.json() as Promise<RecallResponse>;
   }
 
   private async recallSubprocess(request: RecallRequest, timeoutMs?: number): Promise<RecallResponse> {
@@ -265,21 +252,7 @@ export class HindsightClient {
         timeout: timeoutMs ?? 30_000, // subprocess gets a longer default
       });
 
-      // Parse JSON output - returns { entities: {...}, results: [...] }
-      const response = JSON.parse(stdout);
-      const results = response.results || [];
-
-      return {
-        results: results.map((r: any) => ({
-          content: r.text || r.content || '',
-          score: 1.0, // CLI doesn't return scores
-          metadata: {
-            document_id: r.document_id,
-            chunk_id: r.chunk_id,
-            ...r.metadata,
-          },
-        })),
-      };
+      return JSON.parse(stdout) as RecallResponse;
     } catch (error) {
       throw new Error(`Failed to recall memories: ${error}`, { cause: error });
     }
