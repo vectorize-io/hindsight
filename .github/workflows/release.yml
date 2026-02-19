@@ -268,11 +268,14 @@ jobs:
     - name: Build
       run: npm run build --workspace=hindsight-control-plane
 
+    - name: Verify standalone build
+      run: test -f hindsight-control-plane/standalone/server.js || (echo 'standalone/server.js missing - build failed' && exit 1)
+
     - name: Publish to npm
       working-directory: ./hindsight-control-plane
       run: |
         set +e
-        OUTPUT=$(npm publish --access public 2>&1)
+        OUTPUT=$(npm publish --access public --ignore-scripts 2>&1)
         EXIT_CODE=$?
         echo "$OUTPUT"
         if [ $EXIT_CODE -ne 0 ]; then
