@@ -48,6 +48,8 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 | `trace` | bool | false | Enable trace output for debugging |
 | `include_chunks` | bool | false | Include raw text chunks that generated the memories |
 | `max_chunk_tokens` | int | 500 | Token budget for chunks (independent of `max_tokens`) |
+| `include_source_facts` | bool | false | Include source facts for observation-type results (see [Source Facts](#source-facts)) |
+| `max_source_facts_tokens` | int | 4096 | Token budget for source facts |
 | `tags` | list | None | Filter memories by tags (see [Tag Filtering](#filter-by-tags)) |
 | `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
 
@@ -77,6 +79,25 @@ Recall specific memory types:
 
 :::tip About Observations
 Observations are consolidated knowledge synthesized from multiple facts. They capture patterns, preferences, and learnings that the memory bank has built up over time. Observations are automatically created in the background after retain operations.
+:::
+
+## Source Facts
+
+When recalling `observation`-type memories, you can fetch the underlying facts they were derived from. This is useful when you need to understand or verify the evidence behind a synthesized observation.
+
+Source facts are returned as a top-level `source_facts` dict keyed by fact ID. Each observation result includes a `source_fact_ids` list for cross-referencing. Facts are deduplicated — if two observations share a source fact, it only appears once.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-source-facts" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-source-facts" language="javascript" />
+</TabItem>
+</Tabs>
+
+:::note Source Facts Token Budget
+Source facts are fetched independently of the main `max_tokens` budget, up to `max_source_facts_tokens`. Facts are included in order of first appearance across all observations — once the budget is reached, remaining source facts are omitted.
 :::
 
 ## Token Budget Management

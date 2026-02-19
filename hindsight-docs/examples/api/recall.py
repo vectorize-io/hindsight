@@ -94,6 +94,27 @@ observations = client.recall(
 # [/docs:recall-with-observations]
 
 
+# [docs:recall-source-facts]
+# Recall observations and include their source facts
+response = client.recall(
+    bank_id="my-bank",
+    query="What patterns have I learned about Alice?",
+    types=["observation"],
+    include_source_facts=True,
+    max_source_facts_tokens=4096,
+)
+
+for obs in response.results:
+    print(f"Observation: {obs.text}")
+    if obs.source_fact_ids and response.source_facts:
+        print("  Derived from:")
+        for fact_id in obs.source_fact_ids:
+            fact = response.source_facts.get(fact_id)
+            if fact:
+                print(f"    - [{fact.type}] {fact.text}")
+# [/docs:recall-source-facts]
+
+
 # [docs:recall-token-budget]
 # Fill up to 4K tokens of context with relevant memories
 results = client.recall(bank_id="my-bank", query="What do I know about Alice?", max_tokens=4096)

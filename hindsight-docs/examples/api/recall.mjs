@@ -44,6 +44,27 @@ for (const r of detailedResponse.results) {
 // [/docs:recall-with-options]
 
 
+// [docs:recall-source-facts]
+// Recall observations and include their source facts
+const obsResponse = await client.recall('my-bank', 'What patterns have I learned about Alice?', {
+    types: ['observation'],
+    includeSourceFacts: true,
+    maxSourceFactsTokens: 4096,
+});
+
+for (const obs of obsResponse.results) {
+    console.log(`Observation: ${obs.text}`);
+    if (obs.source_fact_ids && obsResponse.source_facts) {
+        console.log('  Derived from:');
+        for (const factId of obs.source_fact_ids) {
+            const fact = obsResponse.source_facts[factId];
+            if (fact) console.log(`    - [${fact.type}] ${fact.text}`);
+        }
+    }
+}
+// [/docs:recall-source-facts]
+
+
 // [docs:recall-budget-levels]
 // Quick lookup
 const quickResults = await client.recall('my-bank', "Alice's email", { budget: 'low' });
