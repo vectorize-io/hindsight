@@ -43,6 +43,7 @@ export interface PluginConfig {
   dynamicBankId?: boolean; // Enable per-channel memory banks (default: true)
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
+  autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
 }
 
 export interface ServiceConfig {
