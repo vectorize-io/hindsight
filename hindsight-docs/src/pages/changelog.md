@@ -8,6 +8,24 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## [0.4.13](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.13)
+
+**Features**
+
+- Switched the default OpenAI LLM to gpt-4o-mini. ([`325b5cc1`](https://github.com/vectorize-io/hindsight/commit/325b5cc1))
+- Observation recall now includes the source facts behind recalled observations. ([`5569d4ad`](https://github.com/vectorize-io/hindsight/commit/5569d4ad))
+- Added CrewAI integration to enable persistent memory. ([`41db2960`](https://github.com/vectorize-io/hindsight/commit/41db2960))
+
+**Bug Fixes**
+
+- Fixed npx hindsight-control-plane failing to run. ([`0758827d`](https://github.com/vectorize-io/hindsight/commit/0758827d))
+- Improved MCP compatibility by aligning the local MCP implementation with the server and removing the deprecated stateless parameter. ([`ea8163c5`](https://github.com/vectorize-io/hindsight/commit/ea8163c5))
+- Fixed Docker startup failures when using named Docker volumes. ([`ac739487`](https://github.com/vectorize-io/hindsight/commit/ac739487))
+- Prevented reranker crashes when an upstream provider returns an error. ([`58c4d657`](https://github.com/vectorize-io/hindsight/commit/58c4d657))
+- Improved accuracy of fact temporal ordering by reducing per-fact time offsets. ([`c3ef1555`](https://github.com/vectorize-io/hindsight/commit/c3ef1555))
+- Client timeout settings are now properly respected. ([`dcaa9f14`](https://github.com/vectorize-io/hindsight/commit/dcaa9f14))
+- Fixed documents not being tracked when fact extraction returns zero facts. ([`f78278ea`](https://github.com/vectorize-io/hindsight/commit/f78278ea))
+
 ## [0.4.12](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.12)
 
 **Features**

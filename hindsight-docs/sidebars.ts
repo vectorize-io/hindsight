@@ -214,6 +214,9 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'sdks/integrations/crewai',
           label: 'CrewAI',
+          customProps: {
+            icon: "/img/icons/crewai.png"
+          }
         },
         {
           type: 'doc',
