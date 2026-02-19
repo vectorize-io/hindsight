@@ -314,7 +314,7 @@ DEFAULT_LLM_PROVIDER = "openai"
 
 # Provider-specific default models
 PROVIDER_DEFAULT_MODELS = {
-    "openai": "o3-mini",
+    "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5-20251001",
     "gemini": "gemini-2.5-flash",
     "groq": "openai/gpt-oss-120b",
@@ -325,7 +325,7 @@ PROVIDER_DEFAULT_MODELS = {
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
 }
-DEFAULT_LLM_MODEL = "o3-mini"  # Fallback if provider not in table
+DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 DEFAULT_LLM_MAX_CONCURRENT = 32
 DEFAULT_LLM_MAX_RETRIES = 10  # Max retry attempts for LLM API calls
 DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry exponential backoff

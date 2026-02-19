@@ -30,7 +30,7 @@ export GROQ_API_KEY="your-key"
 # Option E: Claude Code (uses claude-sonnet-4-20250514, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=claude-code
 
-# Option F: OpenAI Codex (uses o3-mini, no API key needed)
+# Option F: OpenAI Codex (uses gpt-4o-mini, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
 ```
 
@@ -103,7 +103,7 @@ The plugin auto-detects your LLM provider from these environment variables:
 | Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` | |
 | Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` | |
 | Claude Code | `HINDSIGHT_API_LLM_PROVIDER=claude-code` | `claude-sonnet-4-20250514` | No API key needed |
-| OpenAI Codex | `HINDSIGHT_API_LLM_PROVIDER=openai-codex` | `o3-mini` | No API key needed |
+| OpenAI Codex | `HINDSIGHT_API_LLM_PROVIDER=openai-codex` | `gpt-4o-mini` | No API key needed |
 
 **Override with explicit config:**
 

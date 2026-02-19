@@ -13,9 +13,9 @@
 #   target  - Optional: 'cp-only' for control plane, otherwise assumes API image (default: api)
 #
 # Environment variables:
-#   GROQ_API_KEY                                - Required for API/standalone images (LLM verification)
-#   HINDSIGHT_API_LLM_PROVIDER                  - LLM provider (default: groq)
-#   HINDSIGHT_API_LLM_MODEL                     - LLM model (default: llama-3.3-70b-versatile)
+#   HINDSIGHT_API_LLM_API_KEY                   - Required for API/standalone images (LLM verification)
+#   HINDSIGHT_API_LLM_PROVIDER                  - LLM provider (default: openai)
+#   HINDSIGHT_API_LLM_MODEL                     - LLM model (default: gpt-4o-mini)
 #   HINDSIGHT_API_EMBEDDINGS_PROVIDER           - Embeddings provider (optional, for slim images: openai, cohere, tei)
 #   HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY     - OpenAI API key for embeddings (optional)
 #   HINDSIGHT_API_RERANKER_PROVIDER             - Reranker provider (optional, for slim images: cohere, tei)
@@ -34,7 +34,7 @@
 #   ./docker/test-image.sh hindsight-control-plane:test cp-only
 #
 #   # Test slim image with external providers
-#   export GROQ_API_KEY=gsk_xxx
+#   export HINDSIGHT_API_LLM_API_KEY=sk_xxx
 #   export HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai
 #   export HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY=sk-xxx
 #   export HINDSIGHT_API_RERANKER_PROVIDER=cohere
@@ -60,8 +60,8 @@ IMAGE="${1:-}"
 TARGET="${2:-api}"
 TIMEOUT="${SMOKE_TEST_TIMEOUT:-120}"
 CONTAINER_NAME="${SMOKE_TEST_CONTAINER_NAME:-hindsight-smoke-test}"
-LLM_PROVIDER="${HINDSIGHT_API_LLM_PROVIDER:-groq}"
-LLM_MODEL="${HINDSIGHT_API_LLM_MODEL:-llama-3.3-70b-versatile}"
+LLM_PROVIDER="${HINDSIGHT_API_LLM_PROVIDER:-openai}"
+LLM_MODEL="${HINDSIGHT_API_LLM_MODEL:-gpt-4o-mini}"
 
 # Validate arguments
 if [ -z "$IMAGE" ]; then
@@ -88,9 +88,9 @@ else
 fi
 
 # Check for required environment variables
-if [ "$NEEDS_LLM" = true ] && [ -z "${GROQ_API_KEY:-}" ]; then
-    echo -e "${RED}Error: GROQ_API_KEY environment variable is required for API/standalone images${NC}"
-    echo "Set it with: export GROQ_API_KEY=your-api-key"
+if [ "$NEEDS_LLM" = true ] && [ -z "${HINDSIGHT_API_LLM_API_KEY:-}" ]; then
+    echo -e "${RED}Error: HINDSIGHT_API_LLM_API_KEY environment variable is required for API/standalone images${NC}"
+    echo "Set it with: export HINDSIGHT_API_LLM_API_KEY=your-api-key"
     exit 2
 fi
 
@@ -123,7 +123,7 @@ else
     # Build docker run command with required and optional env vars
     DOCKER_CMD="docker run -d --name $CONTAINER_NAME"
     DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_PROVIDER=$LLM_PROVIDER"
-    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_API_KEY=${GROQ_API_KEY}"
+    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_API_LLM_API_KEY}"
     DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_MODEL=$LLM_MODEL"
 
     # Add optional embeddings provider config

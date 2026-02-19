@@ -53,7 +53,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 
 | Provider | Default Model |
 |----------|--------------|
-| `openai` | `o3-mini` |
+| `openai` | `gpt-4o-mini` |
 | `anthropic` | `claude-haiku-4-5-20251001` |
 | `gemini` | `gemini-2.5-flash` |
 | `groq` | `openai/gpt-oss-120b` |
@@ -80,7 +80,7 @@ export HINDSIGHT_API_LLM_MODEL=claude-sonnet-4-5-20250929
 
 This also applies to per-operation overrides:
 ```bash
-# Global: OpenAI o3-mini (default)
+# Global: OpenAI gpt-4o-mini (default)
 export HINDSIGHT_API_LLM_PROVIDER=openai
 
 # Retain: Anthropic claude-haiku-4-5-20251001 (default)

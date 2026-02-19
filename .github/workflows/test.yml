@@ -171,10 +171,9 @@ jobs:
   test-rust-cli:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
@@ -234,7 +233,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -345,7 +343,9 @@ jobs:
     - name: Smoke test - verify container starts
       if: matrix.variant == 'slim'
       env:
-        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        HINDSIGHT_API_LLM_PROVIDER: openai
+        HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
         HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
         HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         HINDSIGHT_API_RERANKER_PROVIDER: cohere
@@ -355,15 +355,13 @@ jobs:
   test-api:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
       HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
@@ -417,10 +415,9 @@ jobs:
   test-python-client:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -462,7 +459,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -495,10 +491,9 @@ jobs:
   test-typescript-client:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -545,7 +540,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -578,10 +572,9 @@ jobs:
   test-rust-client:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -627,7 +620,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -660,10 +652,9 @@ jobs:
   test-go-client:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Prefer CPU-only PyTorch in CI (but keep PyPI for everything else)
@@ -703,7 +694,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -740,10 +730,9 @@ jobs:
   test-openclaw-integration:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       HINDSIGHT_EMBED_PACKAGE_PATH: ${{ github.workspace }}/hindsight-embed
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -810,7 +799,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -843,10 +831,9 @@ jobs:
   test-integration:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
@@ -903,7 +890,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -994,10 +980,9 @@ jobs:
   test-embed:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       # Prefer CPU-only PyTorch in CI
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
 
@@ -1039,14 +1024,13 @@ jobs:
   test-hindsight-all:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       # For test_server_integration.py compatibility
-      HINDSIGHT_LLM_PROVIDER: groq
-      HINDSIGHT_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_LLM_MODEL: openai/gpt-oss-20b
+      HINDSIGHT_LLM_PROVIDER: openai
+      HINDSIGHT_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_LLM_MODEL: gpt-4o-mini
       # Prefer CPU-only PyTorch in CI
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
 
@@ -1089,10 +1073,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: test-rust-cli
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       HINDSIGHT_API_URL: http://localhost:8888
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
@@ -1148,7 +1131,6 @@ jobs:
         HINDSIGHT_API_LLM_PROVIDER=${{ env.HINDSIGHT_API_LLM_PROVIDER }}
         HINDSIGHT_API_LLM_API_KEY=${{ env.HINDSIGHT_API_LLM_API_KEY }}
         HINDSIGHT_API_LLM_MODEL=${{ env.HINDSIGHT_API_LLM_MODEL }}
-        HINDSIGHT_API_LLM_GROQ_SERVICE_TIER=${{ env.HINDSIGHT_API_LLM_GROQ_SERVICE_TIER }}
         EOF
 
     - name: Start API server
@@ -1183,10 +1165,9 @@ jobs:
   test-upgrade:
     runs-on: ubuntu-latest
     env:
-      HINDSIGHT_API_LLM_PROVIDER: groq
-      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      HINDSIGHT_API_LLM_MODEL: openai/gpt-oss-20b
-      HINDSIGHT_API_LLM_GROQ_SERVICE_TIER: flex
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_LLM_MODEL: gpt-4o-mini
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UV_INDEX: pytorch=https://download.pytorch.org/whl/cpu
 

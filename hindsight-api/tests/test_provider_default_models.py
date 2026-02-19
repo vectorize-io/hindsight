@@ -93,7 +93,7 @@ def test_per_operation_provider_default_model():
         config = HindsightConfig.from_env()
 
         # Global LLM should use OpenAI default
-        assert config.llm_model == "o3-mini", f"Expected o3-mini, got {config.llm_model}"
+        assert config.llm_model == "gpt-4o-mini", f"Expected gpt-4o-mini, got {config.llm_model}"
 
         # Retain should use Anthropic default
         assert (
