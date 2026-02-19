@@ -46,6 +46,10 @@ jobs:
       working-directory: ./hindsight-embed
       run: uv build --out-dir dist
 
+    - name: Build hindsight-crewai
+      working-directory: ./hindsight-integrations/crewai
+      run: uv build --out-dir dist
+
     # Publish in order (client and api first, then hindsight-all which depends on them)
     - name: Publish hindsight-client to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
@@ -77,6 +81,12 @@ jobs:
         packages-dir: ./hindsight-embed/dist
         skip-existing: true
 
+    - name: Publish hindsight-crewai to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-integrations/crewai/dist
+        skip-existing: true
+
     # Upload artifacts for GitHub release
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -88,6 +98,7 @@ jobs:
           hindsight/dist/*
           hindsight-integrations/litellm/dist/*
           hindsight-embed/dist/*
+          hindsight-integrations/crewai/dist/*
         retention-days: 1
 
   release-typescript-client:

@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-crewai"
-version = "0.1.0"
+version = "0.4.13"
 description = "CrewAI memory integration via Hindsight - persistent memory for AI agent crews"
 readme = "README.md"
 requires-python = ">=3.10"

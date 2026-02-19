@@ -65,7 +65,7 @@ fi
 print_info "Updating version in all components..."
 
 # Update Python packages
-PYTHON_PACKAGES=("hindsight-api" "hindsight-dev" "hindsight" "hindsight-integrations/litellm" "hindsight-embed")
+PYTHON_PACKAGES=("hindsight-api" "hindsight-dev" "hindsight" "hindsight-integrations/litellm" "hindsight-integrations/crewai" "hindsight-embed")
 for package in "${PYTHON_PACKAGES[@]}"; do
     PYPROJECT_FILE="$package/pyproject.toml"
     if [ -f "$PYPROJECT_FILE" ]; then
@@ -206,7 +206,7 @@ COMMIT_MSG="Release v$VERSION
 
 - Update version to $VERSION in all components
 - Regenerate OpenAPI spec and client SDKs
-- Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-embed
+- Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-litellm, hindsight-crewai, hindsight-embed
 - Python client: hindsight-clients/python
 - TypeScript client: hindsight-clients/typescript
 - Rust CLI: hindsight-cli
