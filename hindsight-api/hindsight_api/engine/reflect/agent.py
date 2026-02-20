@@ -443,14 +443,17 @@ async def run_reflect_agent(
         # Call LLM with tools
         llm_start = time.time()
 
-        # Determine tool_choice for this iteration:
-        # - On the first iteration when mental models exist, force search_mental_models
-        # - Otherwise on the first iteration, require any tool (to prevent immediate done() calls)
-        # - On subsequent iterations, use auto
+        # Determine tool_choice for this iteration.
+        # With mental models:
+        #   0 → search_mental_models, 1+ → auto
+        # Without mental models, enforce a minimum retrieval path:
+        #   0 → search_observations, 1 → recall, 2+ → auto
         if iteration == 0 and has_mental_models:
             iter_tool_choice: str | dict = {"type": "function", "function": {"name": "search_mental_models"}}
         elif iteration == 0:
-            iter_tool_choice = "required"
+            iter_tool_choice = {"type": "function", "function": {"name": "search_observations"}}
+        elif iteration == 1 and not has_mental_models:
+            iter_tool_choice = {"type": "function", "function": {"name": "recall"}}
         else:
             iter_tool_choice = "auto"
 
