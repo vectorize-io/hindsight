@@ -440,12 +440,7 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
 # Uses {extraction_guidelines} placeholder for mode-specific instructions
 _BASE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
 
-⚠️ CRITICAL LANGUAGE REQUIREMENT ⚠️
-Detect the language of the input text. ALL extracted facts, entity names, descriptions, and other output MUST be written in the EXACT SAME language as the input text.
-- If the input is Chinese (中文): ALL output MUST be in Chinese, including entity names (e.g., 张伟, not "Zhang Wei")
-- If the input is Japanese (日本語): ALL output MUST be in Japanese, including entity names (e.g., 田中, not "Tanaka")
-- If the input is any other non-English language: ALL output MUST be in that language
-NEVER translate to English or any other language. NEVER change the language of the output.
+LANGUAGE: Detect the input language. All output MUST be in the same language as the input. Never translate.
 
 {fact_types_instruction}
 
@@ -572,12 +567,7 @@ CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
 # Verbose extraction prompt - detailed, comprehensive facts (legacy mode)
 VERBOSE_FACT_EXTRACTION_PROMPT = """Extract facts from text into structured format with FIVE required dimensions - BE EXTREMELY DETAILED.
 
-⚠️ CRITICAL LANGUAGE REQUIREMENT ⚠️
-Detect the language of the input text. ALL extracted facts, entity names, descriptions, and other output MUST be written in the EXACT SAME language as the input text.
-- If the input is Chinese (中文): ALL output MUST be in Chinese, including entity names (e.g., 张伟, not "Zhang Wei")
-- If the input is Japanese (日本語): ALL output MUST be in Japanese, including entity names (e.g., 田中, not "Tanaka")
-- If the input is any other non-English language: ALL output MUST be in that language
-NEVER translate to English or any other language. NEVER change the language of the output.
+LANGUAGE: Detect the input language. All output MUST be in the same language as the input. Never translate.
 
 {fact_types_instruction}
 
