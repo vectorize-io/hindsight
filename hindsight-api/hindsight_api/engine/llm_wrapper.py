@@ -552,8 +552,9 @@ class LLMProvider:
         provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq")
         api_key = os.getenv("HINDSIGHT_API_LLM_API_KEY", "")
 
-        # API key not needed for openai-codex (uses OAuth) or claude-code (uses Keychain OAuth)
-        if not api_key and provider not in ("openai-codex", "claude-code"):
+        # API key not needed for openai-codex (uses OAuth), claude-code (uses Keychain OAuth),
+        # ollama (local), or vertexai (uses GCP service account credentials)
+        if not api_key and provider not in ("openai-codex", "claude-code", "ollama", "vertexai"):
             raise ValueError(
                 "HINDSIGHT_API_LLM_API_KEY environment variable is required (unless using openai-codex or claude-code)"
             )
@@ -569,8 +570,9 @@ class LLMProvider:
         provider = os.getenv("HINDSIGHT_API_ANSWER_LLM_PROVIDER", os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"))
         api_key = os.getenv("HINDSIGHT_API_ANSWER_LLM_API_KEY", os.getenv("HINDSIGHT_API_LLM_API_KEY", ""))
 
-        # API key not needed for openai-codex (uses OAuth) or claude-code (uses Keychain OAuth)
-        if not api_key and provider not in ("openai-codex", "claude-code"):
+        # API key not needed for openai-codex (uses OAuth), claude-code (uses Keychain OAuth),
+        # ollama (local), or vertexai (uses GCP service account credentials)
+        if not api_key and provider not in ("openai-codex", "claude-code", "ollama", "vertexai"):
             raise ValueError(
                 "HINDSIGHT_API_LLM_API_KEY or HINDSIGHT_API_ANSWER_LLM_API_KEY environment variable is required "
                 "(unless using openai-codex or claude-code)"
@@ -587,8 +589,9 @@ class LLMProvider:
         provider = os.getenv("HINDSIGHT_API_JUDGE_LLM_PROVIDER", os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"))
         api_key = os.getenv("HINDSIGHT_API_JUDGE_LLM_API_KEY", os.getenv("HINDSIGHT_API_LLM_API_KEY", ""))
 
-        # API key not needed for openai-codex (uses OAuth) or claude-code (uses Keychain OAuth)
-        if not api_key and provider not in ("openai-codex", "claude-code"):
+        # API key not needed for openai-codex (uses OAuth), claude-code (uses Keychain OAuth),
+        # ollama (local), or vertexai (uses GCP service account credentials)
+        if not api_key and provider not in ("openai-codex", "claude-code", "ollama", "vertexai"):
             raise ValueError(
                 "HINDSIGHT_API_LLM_API_KEY or HINDSIGHT_API_JUDGE_LLM_API_KEY environment variable is required "
                 "(unless using openai-codex or claude-code)"

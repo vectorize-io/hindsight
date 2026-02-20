@@ -73,7 +73,10 @@ def test_llm_wrapper_vertexai_adc_auth():
 
     with patch.dict(
         os.environ,
-        {"HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project"},
+        {
+            "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID": "test-project",
+            "HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY": "",  # Clear SA key to test ADC path
+        },
         clear=False,
     ):
         from hindsight_api.config import clear_config_cache
