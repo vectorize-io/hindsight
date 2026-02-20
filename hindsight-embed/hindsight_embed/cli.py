@@ -1247,8 +1247,10 @@ def main():
         # Forward all other commands to hindsight-cli
         config = get_config()
 
-        # Check for LLM API key
-        if not config["llm_api_key"]:
+        # Check for LLM API key (not required for vertexai which uses GCP credentials)
+        llm_provider = config.get("llm_provider", "openai")
+        providers_without_api_key = ("ollama", "vertexai")
+        if not config["llm_api_key"] and llm_provider not in providers_without_api_key:
             print("Error: LLM API key is required.", file=sys.stderr)
             print("Run 'hindsight-embed configure' to set up.", file=sys.stderr)
             sys.exit(1)
