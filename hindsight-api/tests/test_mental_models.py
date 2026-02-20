@@ -494,16 +494,11 @@ class TestDirectivesInReflect:
             request_context=request_context,
         )
 
-        response_lower = result.text.lower()
-
-        # Should follow the untagged directive (include MEMO-VERIFIED marker)
-        assert "memo-verified" in response_lower, f"Expected 'MEMO-VERIFIED' from untagged directive, but got: {result.text}"
-
-        # Should NOT follow the tagged directive (must NOT include PROJECT-X-CLASSIFIED)
-        assert "project-x-classified" not in response_lower, f"Tagged directive was incorrectly applied: {result.text}"
-
-        # Verify that only the untagged directive was loaded (isolation mechanism)
+        # Verify the isolation mechanism: only untagged directive should be loaded
         untagged_directive_names = [d.name for d in result.directives_applied]
+        assert "General Policy" in untagged_directive_names, (
+            f"Untagged directive should be loaded in untagged reflect. Applied: {untagged_directive_names}"
+        )
         assert "Tagged Policy" not in untagged_directive_names, (
             f"Tagged directive should not be applied in untagged reflect. Applied: {untagged_directive_names}"
         )

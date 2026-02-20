@@ -500,6 +500,7 @@ class TestConsolidationIntegration:
             content="Alex loves pizza.",
             request_context=request_context,
         )
+        await memory.wait_for_background_tasks()
 
         # Check we have one observation
         async with memory._pool.acquire() as conn:
@@ -518,6 +519,7 @@ class TestConsolidationIntegration:
             content="Alex hates pizza.",
             request_context=request_context,
         )
+        await memory.wait_for_background_tasks()
 
         # Check observations after consolidation
         async with memory._pool.acquire() as conn:
@@ -903,6 +905,7 @@ class TestConsolidationTagRouting:
             "Alice recommends the Thai restaurant on Main Street.",
             ["alice"], request_context
         )
+        await memory.wait_for_background_tasks()
 
         # Check Alice's observation exists with correct tags
         async with memory._pool.acquire() as conn:
@@ -921,6 +924,7 @@ class TestConsolidationTagRouting:
             "Bob visited the Thai restaurant on Main Street and loved it.",
             ["bob"], request_context
         )
+        await memory.wait_for_background_tasks()
 
         # Check observations
         async with memory._pool.acquire() as conn:
