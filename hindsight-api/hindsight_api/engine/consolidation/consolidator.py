@@ -957,7 +957,15 @@ Focus on DURABLE knowledge that serves this mission, not ephemeral state.
                 if clean.endswith("```"):
                     clean = clean[:-3]
                 clean = clean.strip()
-            result = json.loads(clean)
+            try:
+                result = json.loads(clean)
+            except json.JSONDecodeError:
+                # Gemini sometimes embeds control characters in JSON output.
+                # Strip them and retry the parse.
+                import re as _re
+
+                cleaned_control = _re.sub(r"[\x00-\x1f\x7f]", " ", clean)
+                result = json.loads(cleaned_control)
         # Ensure result is a list
         if isinstance(result, list):
             return result

@@ -211,6 +211,7 @@ def build_system_prompt_for_tools(
                 "### 3. RAW FACTS (recall) - Ground Truth",
                 "- Individual memories (world facts and experiences)",
                 "- Use when: no mental models/observations exist, they're stale, or you need specific details",
+                "- MANDATORY: If search_mental_models and search_observations both return 0 results, you MUST call recall() before giving up",
                 "- This is the source of truth that other levels are built from",
                 "",
             ]
@@ -228,6 +229,7 @@ def build_system_prompt_for_tools(
                 "### 2. RAW FACTS (recall) - Ground Truth",
                 "- Individual memories (world facts and experiences)",
                 "- Use when: no observations exist, they're stale, or you need specific details",
+                "- MANDATORY: If search_observations returns 0 results or count=0, you MUST call recall() before giving up",
                 "- This is the source of truth that observations are built from",
                 "",
             ]
@@ -305,7 +307,7 @@ def build_system_prompt_for_tools(
         parts.extend(
             [
                 "1. First, try search_observations() - check for consolidated knowledge",
-                "2. If observations are stale OR you need specific details, use recall() for raw facts",
+                "2. If search_observations returns 0 results OR observations are stale, you MUST call recall() for raw facts",
                 "3. Use expand() if you need more context on specific memories",
                 "4. When ready, call done() with your answer and supporting IDs",
             ]
