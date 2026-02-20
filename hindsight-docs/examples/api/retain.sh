@@ -9,11 +9,10 @@ HINDSIGHT_URL="${HINDSIGHT_API_URL:-http://localhost:8888}"
 # =============================================================================
 # Setup (not shown in docs)
 # =============================================================================
-# Create a temporary file to use in file upload examples
-echo "%PDF-1.4 sample document" > /tmp/report.pdf
-cp /tmp/report.pdf /tmp/documents_dir_report.pdf
-mkdir -p /tmp/documents
-cp /tmp/report.pdf /tmp/documents/report.pdf
+# Create placeholder files for file upload examples
+echo "%PDF-1.4 sample document" > report.pdf
+mkdir -p documents
+cp report.pdf documents/report.pdf
 
 # =============================================================================
 # Doc Examples
@@ -53,10 +52,6 @@ curl -X POST "${HINDSIGHT_URL}/v1/default/banks/my-bank/files/retain" \
     -F "files=@report.pdf;type=application/octet-stream" \
     -F "request={\"files_metadata\": [{\"context\": \"quarterly report\"}]}"
 # [/docs:retain-files-curl]
-
-# Run the actual file upload using temp files created in setup
-hindsight memory retain-files my-bank /tmp/report.pdf
-hindsight memory retain-files my-bank /tmp/documents/ --async
 
 
 # =============================================================================
