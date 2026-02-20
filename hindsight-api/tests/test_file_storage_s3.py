@@ -26,11 +26,8 @@ try:
 except ImportError:
     _has_testcontainers = False
 
-_in_ci = bool(os.getenv("CI"))
-
 pytestmark = [
     pytest.mark.skipif(not _has_testcontainers, reason="testcontainers not installed"),
-    pytest.mark.skipif(_in_ci, reason="SeaweedFS Docker tests skipped in CI (container startup too slow)"),
 ]
 
 SEAWEEDFS_S3_PORT = 8333
