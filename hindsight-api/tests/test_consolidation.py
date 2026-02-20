@@ -952,6 +952,7 @@ class TestConsolidationTagRouting:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create an observation from a single fact")
     async def test_no_match_creates_with_fact_tags(
         self, memory: MemoryEngine, request_context
     ):

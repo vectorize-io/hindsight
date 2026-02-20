@@ -5,6 +5,8 @@
 set -e
 
 HINDSIGHT_URL="${HINDSIGHT_API_URL:-http://localhost:8888}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SAMPLE_FILE="$SCRIPT_DIR/sample.pdf"
 
 # =============================================================================
 # Setup (not shown in docs)
@@ -36,20 +38,20 @@ hindsight memory retain my-bank "Meeting notes" --async
 
 # [docs:retain-files]
 # Upload a single file (PDF, DOCX, PPTX, XLSX, images, audio, and more)
-hindsight memory retain-files my-bank report.pdf
+hindsight memory retain-files my-bank "$SAMPLE_FILE"
 
 # Upload a directory of files
-hindsight memory retain-files my-bank ./documents/
+hindsight memory retain-files my-bank "$SCRIPT_DIR/"
 
 # Queue files for background processing (returns immediately)
-hindsight memory retain-files my-bank ./documents/ --async
+hindsight memory retain-files my-bank "$SCRIPT_DIR/" --async
 # [/docs:retain-files]
 
 
 # [docs:retain-files-curl]
 # Via HTTP API (multipart/form-data)
 curl -X POST "${HINDSIGHT_URL}/v1/default/banks/my-bank/files/retain" \
-    -F "files=@report.pdf;type=application/octet-stream" \
+    -F "files=@${SAMPLE_FILE};type=application/octet-stream" \
     -F "request={\"files_metadata\": [{\"context\": \"quarterly report\"}]}"
 # [/docs:retain-files-curl]
 
