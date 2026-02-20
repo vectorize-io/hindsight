@@ -266,9 +266,10 @@ def test_llm_span_recorder_provider_mapping(mock_time):
 # ==================== Parent Span Tests ====================
 
 
+@patch("hindsight_api.tracing._tracing_enabled", False)
 def test_create_operation_span_disabled():
     """Test that create_operation_span returns no-op when tracing is disabled."""
-    # Tracing should be disabled by default
+    # Tracing should be disabled by default (explicitly patched for test isolation)
     assert not is_tracing_enabled()
 
     # Should return a no-op context manager
