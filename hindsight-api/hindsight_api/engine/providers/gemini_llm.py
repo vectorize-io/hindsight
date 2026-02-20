@@ -406,27 +406,34 @@ class GeminiLLM(LLMInterface):
         # Convert messages
         system_instruction = None
         gemini_contents = []
-        for msg in messages:
+        msg_list = list(messages)
+        i = 0
+        while i < len(msg_list):
+            msg = msg_list[i]
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
             if role == "system":
                 system_instruction = (system_instruction + "\n\n" + content) if system_instruction else content
+                i += 1
             elif role == "tool":
-                # Gemini uses function_response
-                gemini_contents.append(
-                    genai_types.Content(
-                        role="user",
-                        parts=[
-                            genai_types.Part(
-                                function_response=genai_types.FunctionResponse(
-                                    name=msg.get("name", ""),
-                                    response={"result": content},
-                                )
+                # Gemini requires ALL tool responses for a given model turn to be grouped
+                # into a single Content with multiple FunctionResponse parts.
+                # Consecutive role="tool" messages correspond to one model turn's tool calls.
+                parts = []
+                while i < len(msg_list) and msg_list[i].get("role") == "tool":
+                    tool_msg = msg_list[i]
+                    tool_content = tool_msg.get("content", "")
+                    parts.append(
+                        genai_types.Part(
+                            function_response=genai_types.FunctionResponse(
+                                name=tool_msg.get("name", ""),
+                                response={"result": tool_content},
                             )
-                        ],
+                        )
                     )
-                )
+                    i += 1
+                gemini_contents.append(genai_types.Content(role="user", parts=parts))
             elif role == "assistant":
                 tool_calls_in_msg = msg.get("tool_calls", [])
                 if tool_calls_in_msg:
@@ -446,8 +453,10 @@ class GeminiLLM(LLMInterface):
                     gemini_contents.append(genai_types.Content(role="model", parts=parts))
                 else:
                     gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
+                i += 1
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
+                i += 1
 
         config_kwargs: dict[str, Any] = {"tools": gemini_tools}
         if system_instruction:
