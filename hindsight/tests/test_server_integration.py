@@ -26,7 +26,10 @@ def llm_config():
     api_key = os.getenv("HINDSIGHT_LLM_API_KEY", "")
     model = os.getenv("HINDSIGHT_LLM_MODEL", "openai/gpt-oss-120b")
 
-    if not api_key:
+    # vertexai uses GCP service account credentials (HINDSIGHT_API_LLM_VERTEXAI_*),
+    # not a traditional API key
+    providers_without_api_key = ("vertexai", "ollama")
+    if not api_key and provider not in providers_without_api_key:
         raise Exception("LLM API key not configured. Set HINDSIGHT_LLM_API_KEY environment variable.")
 
     return {

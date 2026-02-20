@@ -133,6 +133,7 @@ PROVIDER_DEFAULTS = {
     "groq": ("groq", "openai/gpt-oss-20b", "GROQ_API_KEY"),
     "google": ("google", "gemini-2.0-flash", "GOOGLE_API_KEY"),
     "ollama": ("ollama", "llama3.2", None),
+    "vertexai": ("vertexai", "google/gemini-2.5-flash-lite", None),
 }
 
 
@@ -191,8 +192,9 @@ def _do_configure_from_env():
 
     _, default_model, env_key = PROVIDER_DEFAULTS[provider]
 
-    # Check for API key (required for non-ollama providers)
-    if not api_key and provider != "ollama":
+    # Check for API key (required for non-ollama and non-vertexai providers)
+    # vertexai uses GCP service account credentials instead of an API key
+    if not api_key and provider not in ("ollama", "vertexai"):
         print("Error: Cannot run interactive configuration without a terminal.", file=sys.stderr)
         print("", file=sys.stderr)
         print("For non-interactive (CI) mode, set environment variables:", file=sys.stderr)
