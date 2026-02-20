@@ -116,24 +116,41 @@ def load_config_file():
                         os.environ[key] = value
 
 
+# Default models per provider — keep in sync with hindsight_api/config.py PROVIDER_DEFAULT_MODELS
+PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-haiku-4-5-20251001",
+    "gemini": "gemini-2.5-flash",
+    "groq": "openai/gpt-oss-120b",
+    "ollama": "gemma3:12b",
+    "lmstudio": "local-model",
+    "vertexai": "google/gemini-2.5-flash-lite",
+    "openai-codex": "gpt-5.2-codex",
+    "claude-code": "claude-sonnet-4-5-20250929",
+    "mock": "mock-model",
+}
+
+
 def get_config():
     """Get configuration from environment variables."""
     load_config_file()
+    provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
+    default_model = PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o-mini")
     return {
         "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
-        "llm_provider": os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai"),
-        "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini"),
+        "llm_provider": provider,
+        "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL", default_model),
         "bank_id": os.environ.get("HINDSIGHT_EMBED_BANK_ID", "default"),
     }
 
 
-# Provider defaults: (provider_id, default_model, env_key_name)
+# Provider choices for interactive configure: (provider_id, default_model, env_key_name)
 PROVIDER_DEFAULTS = {
-    "openai": ("openai", "o3-mini", "OPENAI_API_KEY"),
-    "groq": ("groq", "openai/gpt-oss-20b", "GROQ_API_KEY"),
-    "google": ("google", "gemini-2.0-flash", "GOOGLE_API_KEY"),
-    "ollama": ("ollama", "llama3.2", None),
-    "vertexai": ("vertexai", "google/gemini-2.5-flash-lite", None),
+    "openai": ("openai", PROVIDER_DEFAULT_MODELS["openai"], "OPENAI_API_KEY"),
+    "groq": ("groq", PROVIDER_DEFAULT_MODELS["groq"], "GROQ_API_KEY"),
+    "gemini": ("gemini", PROVIDER_DEFAULT_MODELS["gemini"], "GEMINI_API_KEY"),
+    "ollama": ("ollama", PROVIDER_DEFAULT_MODELS["ollama"], None),
+    "vertexai": ("vertexai", PROVIDER_DEFAULT_MODELS["vertexai"], None),
 }
 
 
@@ -358,7 +375,7 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
     providers = [
         ("OpenAI (recommended)", "openai"),
         ("Groq (fast & free tier)", "groq"),
-        ("Google Gemini", "google"),
+        ("Google Gemini", "gemini"),
         ("Ollama (local, no API key)", "ollama"),
     ]
 
