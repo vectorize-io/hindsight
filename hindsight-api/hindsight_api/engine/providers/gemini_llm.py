@@ -439,10 +439,7 @@ class GeminiLLM(LLMInterface):
                         fn = tc.get("function", {})
                         fn_name = fn.get("name", "")
                         fn_args_str = fn.get("arguments", "{}")
-                        try:
-                            fn_args = json.loads(fn_args_str)
-                        except (json.JSONDecodeError, ValueError):
-                            fn_args = {}
+                        fn_args = parse_llm_json(fn_args_str)
                         parts.append(
                             genai_types.Part(function_call=genai_types.FunctionCall(name=fn_name, args=fn_args))
                         )
