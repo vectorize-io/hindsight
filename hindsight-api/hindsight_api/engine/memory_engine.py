@@ -2934,7 +2934,10 @@ class MemoryEngine(MemoryEngineInterface):
                                     continue
                                 r = source_row_by_id[sid]
                                 fact_tokens = len(encoding.encode(r["text"]))
-                                if max_source_facts_tokens >= 0 and total_source_tokens + fact_tokens > max_source_facts_tokens:
+                                if (
+                                    max_source_facts_tokens >= 0
+                                    and total_source_tokens + fact_tokens > max_source_facts_tokens
+                                ):
                                     break
                                 source_facts_dict[sid] = MemoryFact(
                                     id=sid,
@@ -5674,18 +5677,20 @@ class MemoryEngine(MemoryEngineInterface):
             if active_only:
                 filters.append("is_active = TRUE")
 
-            # Apply tags filter:
-            # - If tags provided: use standard filtering (with strict modes support)
-            # - If tags=None and isolation_mode=True: only include directives with NO tags
-            #   (prevents tag-scoped directives from leaking into untagged reflect/refresh)
-            # - If tags=None and isolation_mode=False: no filtering (normal API behavior)
+            # Apply tags filter for directives:
+            # Directives have special scoping rules:
+            #   - Untagged directives (tags=[] or null) always apply regardless of reflect tags
+            #   - Tagged directives only apply when the reflect operation includes matching tags
+            #   - If tags=None and isolation_mode=True: only untagged directives (no leakage)
+            #   - If tags=None and isolation_mode=False: all directives (normal API behavior)
             if tags:
                 tags_clause, tags_params, param_idx = build_tags_where_clause(
                     tags=tags, param_offset=param_idx, table_alias="", match=tags_match
                 )
                 if tags_clause:
-                    # Remove leading "AND " from clause since we're building filters list
-                    filters.append(tags_clause.replace("AND ", "", 1))
+                    # Always include untagged directives; tagged ones must match the reflect tags
+                    scoped_clause = tags_clause.replace("AND ", "", 1)
+                    filters.append(f"((tags IS NULL OR tags = '{{}}') OR ({scoped_clause}))")
                     params.extend(tags_params)
             elif isolation_mode:
                 # Isolation mode: only include directives with empty/null tags

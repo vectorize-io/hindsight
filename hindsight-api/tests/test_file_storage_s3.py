@@ -28,6 +28,7 @@ except ImportError:
 
 pytestmark = [
     pytest.mark.skipif(not _has_testcontainers, reason="testcontainers not installed"),
+    pytest.mark.timeout(300),
 ]
 
 SEAWEEDFS_S3_PORT = 8333

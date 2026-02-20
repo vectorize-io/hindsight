@@ -796,6 +796,36 @@ async def _find_related_observations(
     return recall_result
 
 
+def _build_observations_for_llm(
+    observations: "list[MemoryFact]",
+    source_facts: "dict[str, MemoryFact]",
+) -> list[dict[str, Any]]:
+    """Serialize MemoryFact observations into dicts for the consolidation LLM prompt."""
+    obs_list = []
+    for obs in observations:
+        obs_data: dict[str, Any] = {
+            "id": obs.id,
+            "text": obs.text,
+            "proof_count": len(obs.source_fact_ids or []) or 1,
+            "tags": obs.tags or [],
+        }
+        if obs.occurred_start:
+            obs_data["occurred_start"] = obs.occurred_start
+        if obs.occurred_end:
+            obs_data["occurred_end"] = obs.occurred_end
+        if obs.mentioned_at:
+            obs_data["mentioned_at"] = obs.mentioned_at
+        source_memories = [
+            {"text": sf.text, "occurred_start": sf.occurred_start}
+            for sid in (obs.source_fact_ids or [])[:3]
+            if (sf := source_facts.get(sid)) is not None
+        ]
+        if source_memories:
+            obs_data["source_memories"] = source_memories
+        obs_list.append(obs_data)
+    return obs_list
+
+
 async def _consolidate_with_llm(
     memory_engine: "MemoryEngine",
     fact_text: str,
@@ -824,17 +854,7 @@ async def _consolidate_with_llm(
     source_facts = recall_result.source_facts or {}
 
     if observations:
-        obs_list = []
-        for obs in observations:
-            obs_data: dict[str, Any] = {**obs}
-            source_memories = [
-                {**sf.dict(), "id": str(sf.id)}
-                for sid in (obs.source_fact_ids or [])[:3]
-                if (sf := source_facts.get(sid)) is not None
-            ]
-            if source_memories:
-                obs_data["source_memories"] = source_memories
-            obs_list.append(obs_data)
+        obs_list = _build_observations_for_llm(observations, source_facts)
         observations_text = json.dumps(obs_list, indent=2)
     else:
         observations_text = "[]"
