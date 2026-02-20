@@ -4094,9 +4094,6 @@ components:
       description: Request model for retain endpoint.
       example:
         async: false
-        document_tags:
-        - user_a
-        - user_b
         items:
         - content: Alice works at Google
           context: work

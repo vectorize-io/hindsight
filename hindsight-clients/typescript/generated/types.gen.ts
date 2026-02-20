@@ -1782,7 +1782,9 @@ export type RetainRequest = {
   /**
    * Document Tags
    *
-   * Tags applied to all items in this request. These are merged with any item-level tags.
+   * Deprecated. Use item-level tags instead.
+   *
+   * @deprecated
    */
   document_tags?: Array<string> | null;
 };
