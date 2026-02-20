@@ -320,7 +320,7 @@ PROVIDER_DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
     "ollama": "gemma3:12b",
     "lmstudio": "local-model",
-    "vertexai": "gemini-2.0-flash-001",
+    "vertexai": "google/gemini-2.5-flash-lite",
     "openai-codex": "gpt-5.2-codex",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",

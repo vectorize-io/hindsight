@@ -88,7 +88,7 @@ else
 fi
 
 # Check for required environment variables
-if [ "$NEEDS_LLM" = true ] && [ -z "${HINDSIGHT_API_LLM_API_KEY:-}" ]; then
+if [ "$NEEDS_LLM" = true ] && [ "$LLM_PROVIDER" != "vertexai" ] && [ -z "${HINDSIGHT_API_LLM_API_KEY:-}" ]; then
     echo -e "${RED}Error: HINDSIGHT_API_LLM_API_KEY environment variable is required for API/standalone images${NC}"
     echo "Set it with: export HINDSIGHT_API_LLM_API_KEY=your-api-key"
     exit 2
@@ -123,8 +123,24 @@ else
     # Build docker run command with required and optional env vars
     DOCKER_CMD="docker run -d --name $CONTAINER_NAME"
     DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_PROVIDER=$LLM_PROVIDER"
-    DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_API_LLM_API_KEY}"
+    if [ -n "${HINDSIGHT_API_LLM_API_KEY:-}" ]; then
+        DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_API_LLM_API_KEY}"
+    fi
     DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_MODEL=$LLM_MODEL"
+
+    # Add Vertex AI config if provider is vertexai
+    if [ "$LLM_PROVIDER" = "vertexai" ]; then
+        if [ -n "${HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY:-}" ]; then
+            DOCKER_CMD="$DOCKER_CMD -v ${HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY}:/tmp/gcp-credentials.json:ro"
+            DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY=/tmp/gcp-credentials.json"
+        fi
+        if [ -n "${HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID:-}" ]; then
+            DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=${HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID}"
+        fi
+        if [ -n "${HINDSIGHT_API_LLM_VERTEXAI_REGION:-}" ]; then
+            DOCKER_CMD="$DOCKER_CMD -e HINDSIGHT_API_LLM_VERTEXAI_REGION=${HINDSIGHT_API_LLM_VERTEXAI_REGION}"
+        fi
+    fi
 
     # Add optional embeddings provider config
     if [ -n "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:-}" ]; then
