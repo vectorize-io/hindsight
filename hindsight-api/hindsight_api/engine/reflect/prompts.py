@@ -169,6 +169,11 @@ def build_system_prompt_for_tools(
 
     parts.extend(
         [
+            "## LANGUAGE RULE",
+            "- Detect the language of the user's question and respond in that SAME language.",
+            "- If the question is in Chinese, respond in Chinese. If in Japanese, respond in Japanese.",
+            "- If a directive overrides the language, follow the directive.",
+            "",
             "## CRITICAL RULES",
             "- ONLY use information from tool results - no external knowledge or guessing",
             "- You SHOULD synthesize, infer, and reason from the retrieved memories",
