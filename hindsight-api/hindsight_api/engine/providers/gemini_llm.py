@@ -247,7 +247,15 @@ class GeminiLLM(LLMInterface):
 
                 # Parse structured output if requested
                 if response_format is not None:
-                    json_data = json.loads(content)
+                    try:
+                        json_data = json.loads(content)
+                    except json.JSONDecodeError:
+                        # Gemini sometimes returns control characters inside JSON strings.
+                        # Clean them and retry the parse before triggering the retry loop.
+                        import re as _re
+
+                        cleaned = _re.sub(r"[\x00-\x1f\x7f]", " ", content)
+                        json_data = json.loads(cleaned)
                     if skip_validation:
                         result = json_data
                     else:
