@@ -133,7 +133,7 @@ async def test_reflect_chinese_content(memory, request_context):
                 result = await memory.reflect_async(
                     bank_id=bank_id,
                     query=query,
-                    budget=Budget.LOW,
+                    budget=Budget.MID,
                     request_context=request_context,
                 )
 

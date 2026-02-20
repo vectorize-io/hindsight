@@ -443,10 +443,18 @@ async def run_reflect_agent(
         # Call LLM with tools
         llm_start = time.time()
 
+        # On the first iteration when mental models exist, restrict tools to search_mental_models only.
+        # This guarantees the model checks mental models first (since Gemini doesn't support
+        # tool_choice with a specific function name).
+        if iteration == 0 and has_mental_models:
+            tools_for_call = [t for t in tools if t["function"]["name"] == "search_mental_models"]
+        else:
+            tools_for_call = tools
+
         try:
             result = await llm_config.call_with_tools(
                 messages=messages,
-                tools=tools,
+                tools=tools_for_call,
                 scope="reflect_tool_call",
                 tool_choice="required" if iteration == 0 else "auto",  # Force tool use on first iteration
             )
