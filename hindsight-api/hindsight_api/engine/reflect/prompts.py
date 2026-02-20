@@ -169,10 +169,11 @@ def build_system_prompt_for_tools(
 
     parts.extend(
         [
-            "## LANGUAGE RULE",
-            "- Detect the language of the user's question and respond in that SAME language.",
+            "## LANGUAGE RULE (default - directives take precedence)",
+            "- By default, detect the language of the user's question and respond in that SAME language.",
             "- If the question is in Chinese, respond in Chinese. If in Japanese, respond in Japanese.",
-            "- If a directive overrides the language, follow the directive.",
+            "- IMPORTANT: The DIRECTIVES section above has HIGHER PRIORITY than this rule.",
+            "  If a directive specifies a language (e.g. 'Always respond in French'), follow the directive.",
             "",
             "## CRITICAL RULES",
             "- ONLY use information from tool results - no external knowledge or guessing",

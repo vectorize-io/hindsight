@@ -427,7 +427,27 @@ class GeminiLLM(LLMInterface):
                     )
                 )
             elif role == "assistant":
-                gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
+                tool_calls_in_msg = msg.get("tool_calls", [])
+                if tool_calls_in_msg:
+                    # Convert OpenAI-style tool_calls to Gemini function_call parts
+                    # This is required for proper multi-turn conversation history
+                    parts = []
+                    if content:
+                        parts.append(genai_types.Part(text=content))
+                    for tc in tool_calls_in_msg:
+                        fn = tc.get("function", {})
+                        fn_name = fn.get("name", "")
+                        fn_args_str = fn.get("arguments", "{}")
+                        try:
+                            fn_args = json.loads(fn_args_str)
+                        except (json.JSONDecodeError, ValueError):
+                            fn_args = {}
+                        parts.append(
+                            genai_types.Part(function_call=genai_types.FunctionCall(name=fn_name, args=fn_args))
+                        )
+                    gemini_contents.append(genai_types.Content(role="model", parts=parts))
+                else:
+                    gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
             else:
                 gemini_contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=content)]))
 

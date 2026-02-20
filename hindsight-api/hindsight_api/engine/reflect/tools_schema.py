@@ -140,7 +140,7 @@ TOOL_DONE_ANSWER = {
             "properties": {
                 "answer": {
                     "type": "string",
-                    "description": "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks for clarity. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array. CRITICAL: Write this answer in the SAME language as the user's question. If the question was in Chinese, answer in Chinese. If in Japanese, answer in Japanese.",
+                    "description": "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks for clarity. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array. LANGUAGE: By default, write in the SAME language as the user's question. However, if a language directive in the system prompt specifies a different language, follow that directive instead.",
                 },
                 "memory_ids": {
                     "type": "array",
