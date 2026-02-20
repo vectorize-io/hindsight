@@ -17,9 +17,12 @@ if [ -f ~/.hindsight/config.env ]; then
     source ~/.hindsight/config.env
 fi
 
+# vertexai uses GCP service account credentials instead of an API key
 if [ -z "$HINDSIGHT_API_LLM_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
-    echo "Error: HINDSIGHT_API_LLM_API_KEY or OPENAI_API_KEY is required"
-    exit 1
+    if [ "${HINDSIGHT_API_LLM_PROVIDER}" != "vertexai" ]; then
+        echo "Error: HINDSIGHT_API_LLM_API_KEY or OPENAI_API_KEY is required"
+        exit 1
+    fi
 fi
 
 # Use a unique bank ID for this test run
