@@ -16,6 +16,7 @@ from typing import Any
 import asyncpg
 
 from hindsight_api.config import HindsightConfig, _get_raw_config, normalize_config_dict
+from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
 from hindsight_api.models import RequestContext
 
@@ -149,8 +150,8 @@ class ConfigResolver:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    """
-                    SELECT config FROM banks WHERE bank_id = $1
+                    f"""
+                    SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
                     """,
                     bank_id,
                 )
@@ -241,8 +242,8 @@ class ConfigResolver:
         # Merge with existing config (JSONB || operator)
         async with self.pool.acquire() as conn:
             await conn.execute(
-                """
-                UPDATE banks
+                f"""
+                UPDATE {fq_table("banks")}
                 SET config = config || $1::jsonb,
                     updated_at = now()
                 WHERE bank_id = $2
@@ -262,9 +263,9 @@ class ConfigResolver:
         """
         async with self.pool.acquire() as conn:
             await conn.execute(
-                """
-                UPDATE banks
-                SET config = '{}'::jsonb,
+                f"""
+                UPDATE {fq_table("banks")}
+                SET config = '{{}}'::jsonb,
                     updated_at = now()
                 WHERE bank_id = $1
                 """,

@@ -3485,6 +3485,9 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:
+            # Authenticate and set schema context for multi-tenant DB queries
+            await app.state.memory.authenticate_and_resolve_schema(request_context)
+
             # Get resolved config from config resolver
             config_dict = await app.state.memory._config_resolver.get_bank_config(bank_id, request_context)
 
@@ -3520,6 +3523,9 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:
+            # Authenticate and set schema context for multi-tenant DB queries
+            await app.state.memory.authenticate_and_resolve_schema(request_context)
+
             # Update config via config resolver (validates configurable fields and permissions)
             await app.state.memory._config_resolver.update_bank_config(bank_id, request.updates, request_context)
 
@@ -3557,6 +3563,9 @@ def _register_routes(app: FastAPI):
                 detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
             )
         try:
+            # Authenticate and set schema context for multi-tenant DB queries
+            await app.state.memory.authenticate_and_resolve_schema(request_context)
+
             # Reset config via config resolver
             await app.state.memory._config_resolver.reset_bank_config(bank_id)
 
