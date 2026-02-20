@@ -2934,7 +2934,7 @@ class MemoryEngine(MemoryEngineInterface):
                                     continue
                                 r = source_row_by_id[sid]
                                 fact_tokens = len(encoding.encode(r["text"]))
-                                if total_source_tokens + fact_tokens > max_source_facts_tokens:
+                                if max_source_facts_tokens >= 0 and total_source_tokens + fact_tokens > max_source_facts_tokens:
                                     break
                                 source_facts_dict[sid] = MemoryFact(
                                     id=sid,
@@ -4297,6 +4297,7 @@ class MemoryEngine(MemoryEngineInterface):
                     tags=tags,
                     tags_match=tags_match,
                     exclude_ids=exclude_mental_model_ids,
+                    pending_consolidation=pending_consolidation,
                 )
 
         async def search_observations_fn(q: str, max_tokens: int = 5000) -> dict[str, Any]:
@@ -4333,16 +4334,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context=request_context,
             isolation_mode=True,
         )
-        # Convert directive format to the expected format for reflect agent
-        # The agent expects: name, description (optional), observations (list of {title, content})
-        directives = [
-            {
-                "name": d["name"],
-                "description": d["content"],  # Use content as description
-                "observations": [],  # Directives use content directly, not observations
-            }
-            for d in directives_raw
-        ]
+        directives = directives_raw
         if directives:
             logger.info(f"[REFLECT {reflect_id}] Loaded {len(directives)} directives")
 

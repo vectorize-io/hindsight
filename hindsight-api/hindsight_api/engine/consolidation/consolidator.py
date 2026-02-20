@@ -18,8 +18,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from ...config import get_config
-from ..llm_wrapper import parse_llm_json
 from ..memory_engine import fq_table
 from ..retain import embedding_utils
 from .prompts import (
@@ -32,8 +33,20 @@ if TYPE_CHECKING:
 
     from ...api.http import RequestContext
     from ..memory_engine import MemoryEngine
+    from ..response_models import MemoryFact, RecallResult
 
 logger = logging.getLogger(__name__)
+
+
+class _ConsolidationAction(BaseModel):
+    action: str  # "update" | "create"
+    text: str
+    reason: str = ""
+    learning_id: str | None = None  # required for "update" actions
+
+
+class _ConsolidationResponse(BaseModel):
+    actions: list[_ConsolidationAction]
 
 
 class ConsolidationPerfLog:
@@ -446,8 +459,7 @@ async def _process_memory(
         # Find related observations using the full recall system
         # SECURITY: Pass tags to ensure observations don't leak across security boundaries
         t0 = time.time()
-        related_observations = await _find_related_observations(
-            conn=conn,
+        recall_result = await _find_related_observations(
             memory_engine=memory_engine,
             bank_id=bank_id,
             query=fact_text,
@@ -463,7 +475,7 @@ async def _process_memory(
         actions = await _consolidate_with_llm(
             memory_engine=memory_engine,
             fact_text=fact_text,
-            observations=related_observations,  # Can be empty list
+            recall_result=recall_result,
             mission=mission,
         )
         if perf:
@@ -484,7 +496,7 @@ async def _process_memory(
                     bank_id=bank_id,
                     memory_id=memory_id,
                     action=action,
-                    observations=related_observations,
+                    observations=recall_result.results,
                     source_fact_tags=fact_tags,  # Pass source fact's tags for security
                     source_occurred_start=memory.get("occurred_start"),
                     source_occurred_end=memory.get("occurred_end"),
@@ -538,7 +550,7 @@ async def _execute_update_action(
     bank_id: str,
     memory_id: uuid.UUID,
     action: dict[str, Any],
-    observations: list[dict[str, Any]],
+    observations: list["MemoryFact"],
     source_fact_tags: list[str] | None = None,
     source_occurred_start: datetime | None = None,
     source_occurred_end: datetime | None = None,
@@ -567,28 +579,27 @@ async def _execute_update_action(
         return {"action": "skipped", "reason": "missing_learning_id_or_text"}
 
     # Find the observation
-    model = next((m for m in observations if str(m["id"]) == learning_id), None)
+    model = next((m for m in observations if m.id == learning_id), None)
     if not model:
         return {"action": "skipped", "reason": "learning_not_found"}
 
-    # Build history entry
-    history = list(model.get("history", []))
-    history.append(
+    # Build history entry (history is fetched fresh from DB on update to avoid stale state)
+    history = [
         {
-            "previous_text": model["text"],
+            "previous_text": model.text,
             "changed_at": datetime.now(timezone.utc).isoformat(),
             "reason": reason,
             "source_memory_id": str(memory_id),
         }
-    )
+    ]
 
     # Update source_memory_ids
-    source_ids = list(model.get("source_memory_ids", []))
+    source_ids = list(model.source_fact_ids or [])
     source_ids.append(memory_id)
 
     # SECURITY: Merge source fact's tags into existing observation tags
     # This ensures all contributors can see the observation they contributed to
-    existing_tags = set(model.get("tags", []) or [])
+    existing_tags = set(model.tags or [])
     source_tags = set(source_fact_tags or [])
     merged_tags = list(existing_tags | source_tags)  # Union of both tag sets
     if source_tags and source_tags != existing_tags:
@@ -724,13 +735,12 @@ async def _create_memory_links(
 
 
 async def _find_related_observations(
-    conn: "Connection",
     memory_engine: "MemoryEngine",
     bank_id: str,
     query: str,
     request_context: "RequestContext",
     tags: list[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> "RecallResult":
     """
     Find observations related to the given query using optimized recall.
 
@@ -775,96 +785,21 @@ async def _find_related_observations(
             request_context=request_context,
             tags=tags,  # Filter by source memory's tags
             tags_match=tags_match,  # Use strict matching for security
+            include_source_facts=True,  # Embed source facts so we avoid a separate DB fetch
+            max_source_facts_tokens=-1,  # No token limit — we need all source facts for consolidation
             _quiet=True,  # Suppress logging
         )
     finally:
         if recall_span:
             recall_span.end()
 
-    # If no observations returned, return empty list
-    if not recall_result.results:
-        return []
-
-    # Batch fetch all observations in a single query (no artificial limit)
-    observation_ids = [uuid.UUID(obs.id) for obs in recall_result.results]
-
-    rows = await conn.fetch(
-        f"""
-        SELECT id, text, proof_count, history, tags, source_memory_ids, created_at, updated_at,
-               occurred_start, occurred_end, mentioned_at
-        FROM {fq_table("memory_units")}
-        WHERE id = ANY($1) AND bank_id = $2 AND fact_type = 'observation'
-        """,
-        observation_ids,
-        bank_id,
-    )
-
-    # Build results list preserving recall order
-    id_to_row = {row["id"]: row for row in rows}
-    results = []
-
-    for obs in recall_result.results:
-        obs_id = uuid.UUID(obs.id)
-        if obs_id not in id_to_row:
-            continue
-
-        row = id_to_row[obs_id]
-        history = row["history"]
-        if isinstance(history, str):
-            history = json.loads(history)
-        elif history is None:
-            history = []
-
-        # Fetch source memories to include their text and dates
-        source_memory_ids = row["source_memory_ids"] or []
-        source_memories = []
-
-        if source_memory_ids:
-            source_rows = await conn.fetch(
-                f"""
-                SELECT text, occurred_start, occurred_end, mentioned_at, event_date
-                FROM {fq_table("memory_units")}
-                WHERE id = ANY($1) AND bank_id = $2
-                ORDER BY created_at ASC
-                LIMIT 5
-                """,
-                source_memory_ids[:5],  # Limit to first 5 source memories for token efficiency
-                bank_id,
-            )
-
-            for src_row in source_rows:
-                source_memories.append(
-                    {
-                        "text": src_row["text"],
-                        "occurred_start": src_row["occurred_start"],
-                        "occurred_end": src_row["occurred_end"],
-                        "mentioned_at": src_row["mentioned_at"],
-                        "event_date": src_row["event_date"],
-                    }
-                )
-
-        results.append(
-            {
-                "id": row["id"],
-                "text": row["text"],
-                "proof_count": row["proof_count"] or 1,
-                "tags": row["tags"] or [],
-                "source_memories": source_memories,
-                "occurred_start": row["occurred_start"],
-                "occurred_end": row["occurred_end"],
-                "mentioned_at": row["mentioned_at"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }
-        )
-
-    return results
+    return recall_result
 
 
 async def _consolidate_with_llm(
     memory_engine: "MemoryEngine",
     fact_text: str,
-    observations: list[dict[str, Any]],
+    recall_result: "RecallResult",
     mission: str,
 ) -> list[dict[str, Any]]:
     """
@@ -885,40 +820,21 @@ async def _consolidate_with_llm(
         - {"action": "create", "text": "...", "reason": "..."}
         - [] if fact is purely ephemeral (no durable knowledge)
     """
-    # Format observations as JSON with source memories and dates
+    observations = recall_result.results
+    source_facts = recall_result.source_facts or {}
+
     if observations:
         obs_list = []
         for obs in observations:
-            obs_data = {
-                "id": str(obs["id"]),
-                "text": obs["text"],
-                "proof_count": obs["proof_count"],
-                "tags": obs["tags"],
-                "created_at": obs["created_at"].isoformat() if obs.get("created_at") else None,
-                "updated_at": obs["updated_at"].isoformat() if obs.get("updated_at") else None,
-            }
-
-            # Include temporal info if available
-            if obs.get("occurred_start"):
-                obs_data["occurred_start"] = obs["occurred_start"].isoformat()
-            if obs.get("occurred_end"):
-                obs_data["occurred_end"] = obs["occurred_end"].isoformat()
-            if obs.get("mentioned_at"):
-                obs_data["mentioned_at"] = obs["mentioned_at"].isoformat()
-
-            # Include source memories (up to 3 for brevity)
-            if obs.get("source_memories"):
-                obs_data["source_memories"] = [
-                    {
-                        "text": sm["text"],
-                        "event_date": sm["event_date"].isoformat() if sm.get("event_date") else None,
-                        "occurred_start": sm["occurred_start"].isoformat() if sm.get("occurred_start") else None,
-                    }
-                    for sm in obs["source_memories"][:3]  # Limit to 3 for token efficiency
-                ]
-
+            obs_data: dict[str, Any] = {**obs}
+            source_memories = [
+                {**sf.dict(), "id": str(sf.id)}
+                for sid in (obs.source_fact_ids or [])[:3]
+                if (sf := source_facts.get(sid)) is not None
+            ]
+            if source_memories:
+                obs_data["source_memories"] = source_memories
             obs_list.append(obs_data)
-
         observations_text = json.dumps(obs_list, indent=2)
     else:
         observations_text = "[]"
@@ -943,35 +859,12 @@ Focus on DURABLE knowledge that serves this mission, not ephemeral state.
         {"role": "user", "content": user_prompt},
     ]
 
-    try:
-        result = await memory_engine._consolidation_llm_config.call(
-            messages=messages,
-            skip_validation=True,  # Raw JSON response
-            scope="consolidation",
-        )
-        # Parse JSON response - should be an array
-        if isinstance(result, str):
-            result = parse_llm_json(result)
-        # Ensure result is a list
-        if isinstance(result, list):
-            return result
-        # Handle legacy single-action format for backward compatibility
-        if isinstance(result, dict):
-            if result.get("related_ids") and result.get("consolidated_text"):
-                # Convert old format to new format
-                return [
-                    {
-                        "action": "update",
-                        "learning_id": result["related_ids"][0],
-                        "text": result["consolidated_text"],
-                        "reason": result.get("reason", ""),
-                    }
-                ]
-            return []
-        return []
-    except Exception as e:
-        logger.warning(f"Error in consolidation LLM call: {e}")
-        return []
+    response: _ConsolidationResponse = await memory_engine._consolidation_llm_config.call(
+        messages=messages,
+        response_format=_ConsolidationResponse,
+        scope="consolidation",
+    )
+    return [a.model_dump() for a in response.actions]
 
 
 async def _create_observation_directly(

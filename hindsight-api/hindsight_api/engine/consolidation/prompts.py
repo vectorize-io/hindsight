@@ -2,7 +2,7 @@
 
 CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
 
-You must output ONLY valid JSON with no markdown code blocks or additional text. However, the "text" field within each observation should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
+You must output a JSON object with an "actions" array. The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
 
 ## EXTRACT DURABLE KNOWLEDGE, NOT EPHEMERAL STATE
 Facts often describe events or actions. Extract the DURABLE KNOWLEDGE implied by the fact, not the transient state.
@@ -58,7 +58,6 @@ Each observation includes:
 - text: the observation content
 - proof_count: number of supporting memories
 - tags: visibility scope (handled automatically)
-- created_at/updated_at: when observation was created/modified
 - occurred_start/occurred_end: temporal range of source facts
 - source_memories: array of supporting facts with their text and dates
 
@@ -69,15 +68,15 @@ Instructions:
 4. Compare with observations:
    - Same topic → UPDATE with learning_id
    - New topic → CREATE new observation
-   - Purely ephemeral → return []
+   - Purely ephemeral → return empty actions list
 
-Output JSON array of actions (the "text" field should use markdown formatting for structure):
-[
+Output a JSON object with an "actions" array (the "text" field should use markdown formatting for structure):
+{{"actions": [
   {{"action": "update", "learning_id": "uuid-from-observations", "text": "## Updated Knowledge\n\n**Key point**: details here\n\n- Supporting detail 1\n- Supporting detail 2", "reason": "..."}},
   {{"action": "create", "text": "## New Durable Knowledge\n\nDescription with **emphasis** and proper structure", "reason": "..."}}
-]
+]}}
 
-Return [] if fact contains no durable knowledge.
+Return {{"actions": []}} if fact contains no durable knowledge.
 
 IMPORTANT: Format the "text" field with markdown for better readability:
 - Use headers, lists, bold/italic, tables where appropriate

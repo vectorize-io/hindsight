@@ -55,7 +55,6 @@ def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
     return None
 
 
-
 def _sanitize_text(text: str | None) -> str | None:
     """
     Sanitize text by removing characters that break downstream systems.

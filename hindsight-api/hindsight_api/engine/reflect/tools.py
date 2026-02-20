@@ -9,7 +9,7 @@ Implements hierarchical retrieval:
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -19,9 +19,6 @@ if TYPE_CHECKING:
     from ..memory_engine import MemoryEngine
 
 logger = logging.getLogger(__name__)
-
-# Observation is considered stale if not updated in this many days
-STALE_THRESHOLD_DAYS = 7
 
 
 async def tool_search_mental_models(
@@ -33,6 +30,7 @@ async def tool_search_mental_models(
     tags: list[str] | None = None,
     tags_match: str = "any",
     exclude_ids: list[str] | None = None,
+    pending_consolidation: int = 0,
 ) -> dict[str, Any]:
     """
     Search user-curated mental models by semantic similarity.
@@ -87,7 +85,6 @@ async def tool_search_mental_models(
         *params,
     )
 
-    now = datetime.now(timezone.utc)
     mental_models = []
 
     for row in rows:
@@ -95,11 +92,10 @@ async def tool_search_mental_models(
         if last_refreshed_at and last_refreshed_at.tzinfo is None:
             last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
 
-        # Calculate freshness
-        is_stale = False
-        if last_refreshed_at:
-            age = now - last_refreshed_at
-            is_stale = age > timedelta(days=STALE_THRESHOLD_DAYS)
+        # A mental model is stale when there are memories that haven't been consolidated yet —
+        # the same signal used for observations staleness.
+        is_stale = pending_consolidation > 0
+        staleness_reason = f"{pending_consolidation} memories pending consolidation" if is_stale else None
 
         mental_models.append(
             {
@@ -110,6 +106,7 @@ async def tool_search_mental_models(
                 "relevance": round(row["relevance"], 4),
                 "updated_at": last_refreshed_at.isoformat() if last_refreshed_at else None,
                 "is_stale": is_stale,
+                "staleness_reason": staleness_reason,
             }
         )
 

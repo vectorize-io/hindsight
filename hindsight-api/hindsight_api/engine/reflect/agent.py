@@ -20,26 +20,18 @@ from .tools_schema import get_reflect_tools
 
 
 def _build_directives_applied(directives: list[dict[str, Any]] | None) -> list[DirectiveInfo]:
-    """Build list of DirectiveInfo from directive mental models.
-
-    Handles multiple directive formats:
-    1. New format: directives have direct 'content' field
-    2. Fallback: directives have 'description' field
-    """
+    """Build list of DirectiveInfo from directives."""
     if not directives:
         return []
 
-    result = []
-    for directive in directives:
-        directive_id = directive.get("id", "")
-        directive_name = directive.get("name", "")
-
-        # Get content from 'content' field or fallback to 'description'
-        content = directive.get("content", "") or directive.get("description", "")
-
-        result.append(DirectiveInfo(id=directive_id, name=directive_name, content=content))
-
-    return result
+    return [
+        DirectiveInfo(
+            id=directive.get("id", ""),
+            name=directive.get("name", ""),
+            content=directive.get("content", ""),
+        )
+        for directive in directives
+    ]
 
 
 if TYPE_CHECKING:
