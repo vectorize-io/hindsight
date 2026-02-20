@@ -336,7 +336,6 @@ class TestConsolidationIntegration:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create observations from short single facts")
     async def test_consolidation_merges_only_redundant_facts(
         self, memory: MemoryEngine, request_context
     ):
@@ -415,7 +414,6 @@ class TestConsolidationIntegration:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may not create observations from short single facts")
     async def test_consolidation_keeps_different_people_separate(
         self, memory: MemoryEngine, request_context
     ):
@@ -880,7 +878,6 @@ class TestConsolidationTagRouting:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may not create observations from short single facts")
     async def test_cross_scope_creates_untagged(
         self, memory: MemoryEngine, request_context
     ):
@@ -955,7 +952,6 @@ class TestConsolidationTagRouting:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create an observation from a single fact")
     async def test_no_match_creates_with_fact_tags(
         self, memory: MemoryEngine, request_context
     ):
@@ -1003,7 +999,6 @@ class TestConsolidationTagRouting:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create observations from short single facts")
     async def test_untagged_fact_can_update_scoped_observation(
         self, memory: MemoryEngine, request_context
     ):
@@ -1543,7 +1538,6 @@ class TestHierarchicalRetrieval:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may not always create an observation from a single fact")
     async def test_mental_model_takes_priority_over_observation(
         self, memory: MemoryEngine, request_context
     ):
@@ -1906,7 +1900,6 @@ class TestMentalModelRefreshAfterConsolidation:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs may not create observations or entity links needed for graph edges")
     async def test_graph_endpoint_observations_inherit_links_and_entities(
         self, memory: MemoryEngine, request_context
     ):

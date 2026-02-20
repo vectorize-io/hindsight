@@ -164,7 +164,7 @@ from enum import Enum
 from ..metrics import get_metrics_collector
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
-from .llm_wrapper import LLMConfig
+from .llm_wrapper import LLMConfig, requires_api_key
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
@@ -324,17 +324,7 @@ class MemoryEngine(MemoryEngineInterface):
         db_url = db_url or config.database_url
         memory_llm_provider = memory_llm_provider or config.llm_provider
         memory_llm_api_key = memory_llm_api_key or config.llm_api_key
-        # Ollama, openai-codex, claude-code, mock, and vertexai don't require an API key
-        # openai-codex uses OAuth tokens from ~/.codex/auth.json
-        # claude-code uses OAuth tokens from macOS Keychain
-        # vertexai uses GCP service account credentials
-        if not memory_llm_api_key and memory_llm_provider not in (
-            "ollama",
-            "openai-codex",
-            "claude-code",
-            "mock",
-            "vertexai",
-        ):
+        if not memory_llm_api_key and requires_api_key(memory_llm_provider):
             raise ValueError("LLM API key is required. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
         memory_llm_model = memory_llm_model or config.llm_model
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None

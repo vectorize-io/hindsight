@@ -60,6 +60,23 @@ class OutputTooLongError(Exception):
     pass
 
 
+_PROVIDERS_WITHOUT_API_KEY = frozenset(
+    {
+        "ollama",
+        "lmstudio",
+        "openai-codex",
+        "claude-code",
+        "mock",
+        "vertexai",
+    }
+)
+
+
+def requires_api_key(provider: str) -> bool:
+    """Return True if the given provider requires an API key to operate."""
+    return provider.lower() not in _PROVIDERS_WITHOUT_API_KEY
+
+
 def create_llm_provider(
     provider: str,
     api_key: str,

@@ -402,7 +402,6 @@ class TestReflectUsesMentalModels:
     """Test that reflect searches and uses mental models when available."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may not call search_mental_models even when mental models exist")
     async def test_reflect_searches_mental_models_when_available(self, memory: MemoryEngine, request_context):
         """Test that reflect uses search_mental_models when the bank has mental models.
 

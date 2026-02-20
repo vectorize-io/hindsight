@@ -377,7 +377,6 @@ class TestReflect:
 class TestDirectivesInReflect:
     """Test that directives are followed during reflect operations."""
 
-    @pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may not reliably follow language directives")
     async def test_reflect_follows_language_directive(self, memory: MemoryEngine, request_context):
         """Test that reflect follows a directive to respond in a specific language."""
         bank_id = f"test-directive-reflect-{uuid.uuid4().hex[:8]}"

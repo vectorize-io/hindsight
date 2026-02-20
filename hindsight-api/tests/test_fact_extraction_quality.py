@@ -488,7 +488,6 @@ with a concert surrounded by music, joy and the warm summer breeze.
             raise last_error
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=False, reason="Some LLMs may not include the absolute date in fact text")
     async def test_date_field_calculation_yesterday(self):
         """Test that the date field is calculated correctly for "yesterday" events."""
         text = """

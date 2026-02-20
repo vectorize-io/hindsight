@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may translate non-English content to English despite instructions")
 async def test_retain_chinese_content(memory, request_context):
     """
     Test that retain correctly extracts facts from Chinese content
@@ -92,7 +91,6 @@ async def test_retain_chinese_content(memory, request_context):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may respond in English despite instructions")
 async def test_reflect_chinese_content(memory, request_context):
     """
     Test that reflect correctly generates responses in Chinese
@@ -194,7 +192,6 @@ async def test_reflect_chinese_content(memory, request_context):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=False, reason="Some LLMs (e.g. gemini-flash-lite) may translate non-English content to English despite instructions")
 async def test_retain_japanese_content(memory, request_context):
     """
     Test that retain correctly handles Japanese content.
