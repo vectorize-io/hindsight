@@ -1,14 +1,9 @@
 
 # Reflect
 
-Generate disposition-aware responses using an agentic reasoning loop.
+Generate a grounded, disposition-aware response using an agentic reasoning loop.
 
-When you call **reflect**, Hindsight runs an **agentic loop** that:
-1. **Autonomously searches** for relevant information using multiple tools
-2. **Applies** the bank's disposition traits to shape the reasoning style
-3. **Generates** a grounded answer with citations to the sources used
-
-The agent has access to hierarchical retrieval tools (mental models → observations → raw facts) and decides what information it needs to answer your query.
+When you call **reflect**, Hindsight runs an agentic loop that autonomously searches the memory bank using multiple retrieval tools, applies the bank's disposition traits to shape the reasoning style, and produces a final answer grounded in what it found. Unlike recall — which returns raw facts — reflect returns a synthesized response written by the LLM.
 
 {/* Import raw source files */}
 
@@ -37,42 +32,25 @@ await client.reflect('my-bank', 'What should I know about Alice?');
 hindsight memory reflect my-bank "What do you know about Alice?"
 ```
 
+---
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | string | required | Question or prompt |
-| `budget` | string | "low" | Budget level: `low`, `mid`, `high` (see below) |
-| `max_tokens` | int | 4096 | Maximum tokens for the final response |
-| `response_schema` | object | None | JSON Schema for [structured output](#structured-output) |
-| `tags` | list | None | Filter memories by tags during reflection |
-| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
-| `trace` | bool | false | Include detailed agent trace in response |
+### query
 
-### Budget
+The question or prompt to reflect on. This is the only required field. If you have situational context that should influence the answer, include it directly in the query rather than as a separate field.
 
-The `budget` parameter controls the research depth — how thoroughly the agent explores before answering:
+### budget
 
-| Budget | Research Depth | Use Case |
-|--------|----------------|----------|
-| `low` | Shallow | Quick answers, simple lookups. Prioritizes speed over completeness. |
-| `mid` | Moderate | Balanced exploration. Checks multiple sources when warranted. |
-| `high` | Deep | Comprehensive analysis. Explores all knowledge levels, uses multiple query variations. |
-
-Use `high` for complex questions that require synthesizing information from multiple sources or verifying facts across different retrieval levels.
-
-### Max Tokens
-
-The `max_tokens` parameter limits the length of the final generated response. This does not affect how much the agent can retrieve during the agentic loop — only the final answer length.
+Controls how thoroughly the agent explores the memory bank before answering. Accepted values are `low` (default), `mid`, and `high`. At `low`, the agent does a shallow search optimized for speed. At `mid`, it checks multiple sources when the question warrants it. At `high`, it performs deep exploration across all knowledge levels and may use multiple query variations to find indirect connections. Use `high` for complex questions that require synthesizing information from many sources.
 
 ### Python
 
 ```python
 response = client.reflect(
     bank_id="my-bank",
-    query="What do you think about remote work?",
+    query="We're considering a hybrid work policy. What do you think about remote work?",
     budget="mid",
-    context="We're considering a hybrid work policy"
 )
 ```
 
@@ -85,77 +63,13 @@ const response = await client.reflect('my-bank', 'What do you think about remote
 });
 ```
 
-## Disposition Influence
+### max_tokens
 
-The bank's disposition affects reflect responses:
+Limits the length of the final generated response. Defaults to `4096`. This does not affect how much the agent can retrieve during the agentic loop — only the final answer length.
 
-| Trait | Low (1) | High (5) |
-|-------|---------|----------|
-| **Skepticism** | Trusting, accepts claims | Questions and doubts claims |
-| **Literalism** | Flexible interpretation | Exact, literal interpretation |
-| **Empathy** | Detached, fact-focused | Considers emotional context |
+### response_schema
 
-### Python
-
-```python
-# Create a bank with specific disposition
-client.create_bank(
-    bank_id="cautious-advisor",
-    name="Cautious Advisor",
-    mission="I am a risk-aware financial advisor",
-    disposition={
-        "skepticism": 5,   # Very skeptical of claims
-        "literalism": 4,   # Focuses on exact requirements
-        "empathy": 2       # Prioritizes facts over feelings
-    }
-)
-
-# Reflect responses will reflect this disposition
-response = client.reflect(
-    bank_id="cautious-advisor",
-    query="Should I invest in crypto?"
-)
-# Response will likely emphasize risks and caution
-```
-
-### Node.js
-
-```javascript
-// Create a bank with specific disposition
-await client.createBank('cautious-advisor', {
-    name: 'Cautious Advisor',
-    background: 'I am a risk-aware financial advisor',
-    disposition: {
-        skepticism: 5,
-        literalism: 4,
-        empathy: 2
-    }
-});
-
-// Reflect responses will reflect this disposition
-const advisorResponse = await client.reflect('cautious-advisor', 'Should I invest in crypto?');
-```
-
-## Citations
-
-The response includes a `based_on` field that shows which sources were used:
-
-- `based_on.memories` — Memory facts (world, experience) that were retrieved and cited
-- `based_on.mental_models` — User-curated mental models that were used
-- `based_on.directives` — Directives that were enforced
-
-**Important:** Only IDs that were actually retrieved during the agent loop can be cited. The agent validates citations to prevent hallucinated references.
-
-This enables:
-- **Transparency** — users see exactly which sources informed the answer
-- **Verification** — check if the response is grounded in actual memories
-- **Debugging** — use `trace=True` for detailed tool call logs
-
-## Structured Output
-
-For applications that need to process responses programmatically, you can request structured output by providing a JSON Schema via `response_schema`. When provided, the response includes a `structured_output` field with the LLM response parsed according to the schema. The `text` field will be empty since only a single LLM call is made for efficiency.
-
-The easiest way to define a schema is using **Pydantic models**:
+An optional JSON Schema object. When provided, the LLM generates a response that conforms to the schema and the response includes a `structured_output` field with the result parsed accordingly. The `text` field will be empty since only a single structured LLM call is made. Use this when you need to process the response programmatically rather than display it as prose.
 
 ### Python
 
@@ -233,22 +147,9 @@ hindsight memory reflect hiring-team \
 rm -f schema.json
 ```
 
-| Use Case | Why Structured Output Helps |
-|----------|----------------------------|
-| **Decision pipelines** | Parse recommendations into workflow systems |
-| **Dashboards** | Extract confidence scores, risk factors for visualization |
-| **Multi-agent systems** | Pass structured data between agents |
-| **Auditing** | Log structured decisions with clear reasoning |
+### tags
 
-**Tips:**
-- Use Pydantic's `model_json_schema()` for type-safe schema generation
-- Use `model_validate()` to parse the response back into your Pydantic model
-- Keep schemas focused — extract only what you need
-- Use `Optional` fields for data that may not always be available
-
-## Filter by Tags
-
-Like [recall](./recall#filter-by-tags), reflect supports tag filtering to scope which memories are considered during reasoning. This is essential for multi-user scenarios where reflection should only consider memories relevant to a specific user.
+Filters which memories the agent can access during reflection. Works identically to [recall tags](./recall#tags) — only memories matching the specified tags are considered. The `tags_match` parameter controls the matching logic (`any`, `all`, `any_strict`, `all_strict`) with the same semantics as recall.
 
 ### Python
 
@@ -262,13 +163,61 @@ response = client.reflect(
 )
 ```
 
-The `tags_match` parameter works the same as in recall:
+### include
 
-| Mode | Behavior |
-|------|----------|
-| `any` | OR matching, includes untagged memories |
-| `all` | AND matching, includes untagged memories |
-| `any_strict` | OR matching, excludes untagged memories |
-| `all_strict` | AND matching, excludes untagged memories |
+Controls optional supplementary data returned alongside the main response.
 
-See [Retain API](./retain#tagging-memories) for how to tag memories and [Recall API](./recall#filter-by-tags) for more details on tag matching modes.
+#### include.facts
+
+When enabled, the response includes a `based_on` object listing the memories, mental models, and directives the agent actually used to construct the answer. Only sources retrieved during the agent loop can appear here — citations are validated to prevent hallucinated references. Useful for transparency and verification.
+
+### Python
+
+```python
+# include_facts=True enables the based_on field in the response
+response = client.reflect(
+    bank_id="my-bank",
+    query="Tell me about Alice",
+    include_facts=True,
+)
+
+print("Response:", response.text)
+print("\nBased on:")
+for fact in (response.based_on.memories if response.based_on else []):
+    print(f"  - [{fact.type}] {fact.text}")
+```
+
+#### include.tool_calls
+
+When enabled, the response includes a `trace` object with the full execution log of every tool call and LLM call made during the agentic loop, including inputs, outputs, and durations. Set `output: false` to include only tool inputs for a smaller payload. Useful for debugging why the agent reached a particular conclusion.
+
+---
+
+## Response
+
+### text
+
+The synthesized answer as a well-formatted markdown string. This is the primary output of reflect. Empty when `response_schema` is provided (use `structured_output` instead in that case).
+
+### structured_output
+
+The LLM's response parsed according to the `response_schema` provided in the request. Only present when `response_schema` was set. `null` otherwise.
+
+### based_on
+
+The sources the agent used to construct the answer. Only present when `include.facts` was enabled. Contains three fields:
+
+- `memories` — a list of memory facts (world, experience, observation) that were retrieved and cited. Each item has `id`, `text`, `type`, `context`, `occurred_start`, and `occurred_end`.
+- `mental_models` — a list of mental models that were used. Each item has `id`, `text`, and `context`.
+- `directives` — a list of directives that were enforced during reasoning. Each item has `id`, `name`, and `content`.
+
+### usage
+
+Token usage for all LLM calls made during the agentic loop: `input_tokens`, `output_tokens`, and `total_tokens`. Useful for cost tracking.
+
+### trace
+
+The full execution log of the agentic loop. Only present when `include.tool_calls` was enabled. Contains:
+
+- `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, and `iteration` number.
+- `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`) and `duration_ms`.

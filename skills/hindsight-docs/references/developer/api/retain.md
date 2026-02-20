@@ -12,7 +12,9 @@ Learn about fact extraction, entity resolution, and graph construction in the [R
 > **💡 Prerequisites**
 > 
 Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
-## Store a Single Memory
+## Store a Document
+
+A single retain call accepts one or more **items**. Each item is a piece of raw content — a conversation, a document, a note — that Hindsight will analyze and decompose into one or many memories. The content itself is never stored verbatim; what gets stored are the structured facts the LLM extracts from it.
 
 ### Python
 
@@ -35,18 +37,75 @@ await client.retain('my-bank', 'Alice works at Google as a software engineer');
 hindsight memory retain my-bank "Alice works at Google as a software engineer"
 ```
 
-## The Importance of Context
+### Retaining a Conversation
 
-The `context` parameter is crucial for guiding how Hindsight extracts memories from your content. Think of it as providing a lens through which the system interprets the information.
+A full conversation should be retained as a single item. The LLM can parse any format — plain text, JSON, Markdown, or any structured representation — as long as it clearly conveys who said what and when. The example below uses a simple `Name (timestamp): text` format.
 
-**Why context matters:**
-- **Steers memory extraction**: Context tells the memory bank what type of information to focus on and how to interpret ambiguous content
-- **Improves relevance**: Memories extracted with proper context are more accurately categorized and easier to retrieve
-- **Disambiguates meaning**: The same sentence can have different implications depending on context (e.g., "the project was terminated" means different things in a career vs. product context)
+### Python
 
-## Store with Context and Date
+```python
+# Retain an entire conversation as a single document.
+# Format each message as "Name (timestamp): text" so the LLM can attribute
+# facts to the right person and resolve temporal references across the thread.
+conversation = "\n".join([
+    "Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?",
+    "Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.",
+    "Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?",
+    "Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.",
+    "Alice (2024-03-15T09:04:00Z): Good to know. We'll avoid peanuts at the team lunch.",
+])
 
-Always provide context and event dates for optimal memory extraction:
+client.retain(
+    bank_id="my-bank",
+    content=conversation,
+    context="team chat",
+    timestamp="2024-03-15T09:04:00Z",
+    document_id="chat-2024-03-15-alice-bob",
+)
+```
+
+### Node.js
+
+```javascript
+// Retain an entire conversation as a single document.
+// Format each message as "Name (timestamp): text" so the LLM can attribute
+// facts to the right person and resolve temporal references across the thread.
+const conversation = [
+    'Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?',
+    'Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.',
+    'Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?',
+    'Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.',
+    'Alice (2024-03-15T09:04:00Z): Good to know. We\'ll avoid peanuts at the team lunch.',
+].join('\n');
+
+await client.retain('my-bank', conversation, {
+    context: 'team chat',
+    timestamp: '2024-03-15T09:04:00Z',
+    documentId: 'chat-2024-03-15-alice-bob',
+});
+```
+
+When the conversation grows — a new message arrives — just retain again with the full updated content and the same `document_id`. Hindsight will delete the previous version and reprocess from scratch, so memories always reflect the latest state of the conversation.
+
+---
+
+## Parameters
+
+### content
+
+The raw text to store. This is the only required field. Hindsight chunks the content, sends each chunk to the LLM for fact extraction, and stores the resulting structured facts — not the original text. A single `content` value can produce many memories depending on how much information it contains.
+
+### timestamp
+
+When the event described in the content actually occurred. Accepts any ISO 8601 string (e.g., `"2024-01-15T10:30:00Z"`). If omitted, defaults to the current time at ingestion.
+
+The timestamp is injected verbatim into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. It also enables temporal recall queries like "What happened last spring?" to work correctly.
+
+### context
+
+A short label describing the source or situation — for example `"team meeting"`, `"slack"`, or `"support ticket"`. It is injected directly into the LLM prompt, so it actively shapes how facts are extracted. The same sentence can mean something very different depending on context: "the project was terminated" in a `"performance review"` context versus a `"product roadmap"` context produces different memories.
+
+Providing context consistently is one of the highest-leverage things you can do to improve memory quality.
 
 ### Python
 
@@ -75,30 +134,47 @@ hindsight memory retain my-bank "Alice got promoted" \
     --context "career update"
 ```
 
-The `timestamp` defaults to the current time if not specified. Providing explicit timestamps enables temporal queries like "What happened last spring?"
+### metadata
 
-### Response Fields
+Arbitrary key-value string pairs attached to every fact extracted from this item. For example: `{"source": "slack", "channel": "engineering", "thread_id": "T123"}`. The LLM never sees this field — it is passed through as-is and stored on each memory unit. During recall, every returned memory includes its metadata, which lets you do client-side filtering or static enrichment without extra lookups — for example, linking a memory back to its source URL, thread ID, or any application-specific identifier.
 
-The retain response includes:
+### document_id
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | bool | Whether the operation succeeded |
-| `bank_id` | string | The memory bank ID |
-| `items_count` | int | Number of items processed |
-| `async` | bool | Whether processed asynchronously |
-| `usage` | TokenUsage | Token usage metrics for LLM calls (synchronous only) |
+A caller-supplied string that groups one or more items under a logical document. This field is the key to making retain **idempotent**.
 
-The `usage` field contains token metrics for cost tracking:
-- `input_tokens`: Tokens consumed by prompts
-- `output_tokens`: Tokens generated by the LLM
-- `total_tokens`: Sum of input and output tokens
+When you provide a `document_id`, Hindsight upserts the document: if a document with that ID already exists in the bank, it and all its associated memories are deleted before the new content is processed and inserted. This means you can safely re-run retain on updated content — for example, a chat thread that grew since last time — without accumulating duplicate memories.
 
-Note: `usage` is only present for synchronous operations. Async operations (`async: true`) do not return usage metrics.
+If you omit `document_id`, Hindsight assigns a random UUID per request, so re-ingesting the same content will create duplicate memories.
+
+### entities
+
+A list of entities you want to guarantee are recognized, merged with any entities the LLM extracts automatically. Each entry has a `text` field (the entity name) and an optional `type` (e.g., `"PERSON"`, `"ORG"`, `"CONCEPT"` — defaults to `"CONCEPT"` if omitted).
+
+Use this when you know certain entities are important but the LLM might miss them or refer to them inconsistently across different parts of the content. Providing entities explicitly ensures they are always linked in the knowledge graph.
+
+### tags and document_tags
+
+Tags control **visibility scoping** — which memories are visible during recall. A memory is only returned if its tags intersect with the tags filter provided in the recall request. This makes tags useful when a single memory bank serves multiple users or sessions and each should only see their own memories.
+
+Use consistent naming patterns to keep tag filtering predictable. Common conventions: `user:<id>` for per-user scoping, `session:<id>` for session isolation, `room:<id>` for chat rooms, `topic:<name>` for category filtering. The bank also exposes a list-tags endpoint that returns all tags with their memory counts, useful for UI autocomplete or wildcard expansion.
+
+See [Recall API](./recall#filter-by-tags) for filtering by tags during retrieval.
+
+### Response
+
+The synchronous retain response includes:
+
+- `success` — whether the operation completed without errors
+- `bank_id` — the memory bank that received the content
+- `items_count` — number of items processed
+- `async` — whether processing ran asynchronously
+- `usage` — token usage for the LLM calls (`input_tokens`, `output_tokens`, `total_tokens`), only present for synchronous operations
+
+---
 
 ## Batch Ingestion
 
-Store multiple items in a single request. **Batch ingestion is the recommended approach** as it significantly improves performance by reducing network overhead and allowing Hindsight to optimize the memory extraction process across related content.
+Multiple items can be submitted in a single request. Batch ingestion is the recommended approach — it reduces network overhead and lets Hindsight optimize extraction across related content.
 
 ### Python
 
@@ -123,11 +199,11 @@ await client.retainBatch('my-bank', [
 ]);
 ```
 
-The `document_id` groups related memories for later management.
+---
 
-## Store from Files
+## Files
 
-Upload files directly — Hindsight automatically converts them to text and extracts memories. File processing always runs asynchronously and returns operation IDs for tracking.
+Upload files directly — Hindsight converts them to text and extracts memories automatically. File processing always runs asynchronously and returns operation IDs for tracking.
 
 **Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
 
@@ -187,15 +263,7 @@ const result = await client.retainFiles('my-bank', [
 console.log(result.operation_ids);  // Track processing via the operations endpoint
 ```
 
-### File Retain Response
-
-The file retain endpoint always returns asynchronously:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `operation_ids` | string[] | One operation ID per uploaded file. Use `GET /v1/default/banks/{bank_id}/operations` to track progress. |
-
-### Batch File Uploads
+The file retain endpoint always returns asynchronously. The response contains `operation_ids` — one per uploaded file — which you can poll via `GET /v1/default/banks/{bank_id}/operations` to track progress.
 
 Upload up to 10 files per request (max 100 MB total). Each file becomes a separate document with optional per-file metadata:
 
@@ -220,9 +288,11 @@ print(result.operation_ids)  # One operation ID per file
 
 :::info File Storage
 Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration#file-processing) for details.
+---
+
 ## Async Ingestion
 
-For large batches, use async ingestion to avoid blocking:
+For large batches, use async ingestion to avoid blocking your application:
 
 ### Python
 
@@ -253,6 +323,8 @@ await client.retainBatch('my-bank', [
 });
 ```
 
+When `async: true`, the call returns immediately with an `operation_id`. Processing runs in the background via the worker service. No `usage` metrics are returned for async operations.
+
 ### Cut Costs 50% with Provider Batch APIs
 
 When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI and Groq both offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
@@ -265,82 +337,3 @@ Hindsight submits fact extraction calls as a batch job to the provider, polls fo
 
 :::note
 Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI or Groq).
-## Tagging Memories
-
-Tags enable **visibility scoping**—useful when one memory bank serves multiple users but each should only see relevant memories. For example, an agent that chats with multiple users can tag memories by user ID and filter during recall.
-
-### Tag Individual Items
-
-### Python
-
-```python
-# Tag individual items for visibility scoping
-client.retain_batch(
-    bank_id="my-bank",
-    items=[
-        {
-            "content": "User Alice said she loves the new dashboard",
-            "tags": ["user:alice", "feedback"],
-            "document_id": "user_feedback_001"
-        },
-        {
-            "content": "User Bob reported a bug in the search feature",
-            "tags": ["user:bob", "bug-report"],
-            "document_id": "user_feedback_002"
-        }
-    ]
-)
-```
-
-### Apply Tags to All Items in a Batch
-
-Use `document_tags` to apply the same tags to all items in a request:
-
-### Python
-
-```python
-# Apply tags to all items in a batch
-client.retain_batch(
-    bank_id="my-bank",
-    items=[
-        {"content": "Alice mentioned she prefers dark mode", "document_id": "support_session_123_msg_1"},
-        {"content": "Bob asked about keyboard shortcuts", "document_id": "support_session_123_msg_2"}
-    ],
-    document_tags=["session:123", "support"]  # Applied to all items
-)
-```
-
-When both `document_tags` and item-level `tags` are provided, they are merged together.
-
-### Tag Naming Conventions
-
-Use consistent naming patterns for tags:
-
-| Pattern | Example | Use Case |
-|---------|---------|----------|
-| `user:<id>` | `user:alice` | Multi-user agent filtering |
-| `session:<id>` | `session:123` | Session-based scoping |
-| `room:<id>` | `room:general` | Chat room isolation |
-| `topic:<name>` | `topic:feedback` | Topic categorization |
-
-### Listing Tags
-
-Use the list tags API to discover existing tags, useful for UI autocomplete or wildcard expansion:
-
-### Python
-
-```python
-# List all tags in a bank
-response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/my-bank/tags")
-tags = response.json()
-for tag in tags["items"]:
-    print(f"{tag['tag']}: {tag['count']} memories")
-
-# Search with wildcards (* matches any characters)
-response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/my-bank/tags", params={"q": "user:*"})
-user_tags = response.json()
-response = requests.get(f"{HINDSIGHT_URL}/v1/default/banks/my-bank/tags", params={"q": "*-admin"})
-admin_tags = response.json()
-```
-
-See [Recall API](./recall#filter-by-tags) for filtering memories by tags during retrieval.

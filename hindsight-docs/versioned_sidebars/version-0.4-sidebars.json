@@ -211,7 +211,10 @@
         {
           "type": "doc",
           "id": "sdks/integrations/crewai",
-          "label": "CrewAI"
+          "label": "CrewAI",
+          "customProps": {
+            "icon": "/img/icons/crewai.png"
+          }
         },
         {
           "type": "doc",

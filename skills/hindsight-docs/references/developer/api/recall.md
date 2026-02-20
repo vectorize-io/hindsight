@@ -1,7 +1,9 @@
 
 # Recall Memories
 
-Retrieve memories using multi-strategy recall.
+Retrieve memories from a bank using multi-strategy recall.
+
+When you **recall**, Hindsight runs four retrieval strategies in parallel — semantic similarity, keyword (BM25), graph traversal, and temporal — then fuses and reranks the results into a single ranked list. The response contains structured facts, not raw documents.
 
 {/* Import raw source files */}
 
@@ -16,17 +18,52 @@ Make sure you've completed the [Quick Start](./quickstart) to install the client
 
 ```python
 response = client.recall(bank_id="my-bank", query="What does Alice do?")
-for r in response.results:
-    print(f"- {r.text}")
+
+# response.results is a list of RecallResult objects, each with:
+# - id:             fact ID
+# - text:           the extracted fact
+# - type:           "world", "experience", or "observation"
+# - context:        context label set during retain
+# - metadata:       dict[str, str] set during retain
+# - tags:           list of tags
+# - entities:       list of entity name strings linked to this fact
+# - occurred_start: ISO datetime of when the event started
+# - occurred_end:   ISO datetime of when the event ended
+# - mentioned_at:   ISO datetime of when the fact was retained
+# - document_id:    document this fact belongs to
+# - chunk_id:       chunk this fact was extracted from
+
+# Example response.results:
+# [
+#   RecallResult(id="a1b2...", text="Alice works at Google as a software engineer", type="world", context="career", ...),
+#   RecallResult(id="c3d4...", text="Alice got promoted to senior engineer", type="experience", occurred_start="2024-03-15T00:00:00Z", ...),
+# ]
 ```
 
 ### Node.js
 
 ```javascript
 const response = await client.recall('my-bank', 'What does Alice do?');
-for (const r of response.results) {
-    console.log(`${r.text} (score: ${r.weight})`);
-}
+
+// response.results is an array of result objects, each with:
+// - id:            fact ID
+// - text:          the extracted fact
+// - type:          "world", "experience", or "observation"
+// - context:       context label set during retain
+// - metadata:      Record<string, string> set during retain
+// - tags:          string[] of tags
+// - entities:      string[] of entity names linked to this fact
+// - occurredStart: ISO datetime of when the event started
+// - occurredEnd:   ISO datetime of when the event ended
+// - mentionedAt:   ISO datetime of when the fact was retained
+// - documentId:    document this fact belongs to
+// - chunkId:       chunk this fact was extracted from
+
+// Example response.results:
+// [
+//   { id: "a1b2...", text: "Alice works at Google as a software engineer", type: "world", context: "career", ... },
+//   { id: "c3d4...", text: "Alice got promoted to senior engineer", type: "experience", occurredStart: "2024-03-15T00:00:00Z", ... },
+// ]
 ```
 
 ### CLI
@@ -35,58 +72,19 @@ for (const r of response.results) {
 hindsight memory recall my-bank "What does Alice do?"
 ```
 
-## Recall Parameters
+---
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | string | required | Natural language query |
-| `types` | list | all | Filter: `world`, `experience`, `observation` |
-| `budget` | string | "mid" | Budget level: `low`, `mid`, `high` |
-| `max_tokens` | int | 4096 | Token budget for memory facts (text only) |
-| `trace` | bool | false | Enable trace output for debugging |
-| `include_chunks` | bool | false | Include raw text chunks that generated the memories |
-| `max_chunk_tokens` | int | 500 | Token budget for chunks (independent of `max_tokens`) |
-| `include_source_facts` | bool | false | Include source facts for observation-type results (see [Source Facts](#source-facts)) |
-| `max_source_facts_tokens` | int | 4096 | Token budget for source facts |
-| `tags` | list | None | Filter memories by tags (see [Tag Filtering](#filter-by-tags)) |
-| `tags_match` | string | "any" | How to match tags: `any`, `all`, `any_strict`, `all_strict` |
+## Parameters
 
-### Python
+### query
 
-```python
-response = client.recall(
-    bank_id="my-bank",
-    query="What does Alice do?",
-    types=["world", "experience"],
-    budget="high",
-    max_tokens=8000,
-    trace=True,
-)
+The natural language question or statement to search for. This is the only required field. The query drives all four retrieval strategies simultaneously: it is embedded for semantic search, tokenized for BM25 keyword search, used to seed graph traversal, and parsed for temporal expressions. After retrieval, the raw query text is also passed to the cross-encoder reranker to re-score every candidate. Queries exceeding 500 tokens are rejected.
 
-# Access results
-for r in response.results:
-    print(f"- {r.text}")
-```
+### types
 
-### Node.js
+Controls which categories of memory facts are searched. Accepted values are `world` (objective facts), `experience` (events and conversations), and `observation` (consolidated knowledge synthesized over time). When omitted, all three types are searched.
 
-```javascript
-const detailedResponse = await client.recall('my-bank', 'What does Alice do?', {
-    types: ['world', 'experience'],
-    budget: 'high',
-    maxTokens: 8000,
-    trace: true
-});
-
-// Access results
-for (const r of detailedResponse.results) {
-    console.log(`${r.text} (score: ${r.weight})`);
-}
-```
-
-## Filter by Fact Type
-
-Recall specific memory types:
+Each type runs the full four-strategy retrieval pipeline independently, so narrowing `types` reduces both the result set and query cost.
 
 ### Python
 
@@ -123,12 +121,62 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 
 > **💡 About Observations**
 > 
-Observations are consolidated knowledge synthesized from multiple facts. They capture patterns, preferences, and learnings that the memory bank has built up over time. Observations are automatically created in the background after retain operations.
-## Source Facts
+Observations are consolidated knowledge synthesized from multiple facts over time — patterns, preferences, and learnings the memory bank has built up. They are created automatically in the background after retain operations.
+### budget
 
-When recalling `observation`-type memories, you can fetch the underlying facts they were derived from. This is useful when you need to understand or verify the evidence behind a synthesized observation.
+Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.
 
-Source facts are returned as a top-level `source_facts` dict keyed by fact ID. Each observation result includes a `source_fact_ids` list for cross-referencing. Facts are deduplicated — if two observations share a source fact, it only appears once.
+### Python
+
+```python
+# Quick lookup
+results = client.recall(bank_id="my-bank", query="Alice's email", budget="low")
+
+# Deep exploration
+results = client.recall(bank_id="my-bank", query="How are Alice and Bob connected?", budget="high")
+```
+
+### Node.js
+
+```javascript
+// Quick lookup
+const quickResults = await client.recall('my-bank', "Alice's email", { budget: 'low' });
+
+// Deep exploration
+const deepResults = await client.recall('my-bank', 'How are Alice and Bob connected?', { budget: 'high' });
+```
+
+### max_tokens
+
+The maximum number of tokens the returned facts can collectively occupy. Defaults to `4096`. Only the `text` field of each fact is counted toward this budget — metadata, tags, entities, and other fields are not included. After reranking, facts are included in relevance order until this budget is exhausted — so you always get the most relevant memories that fit. Hindsight is designed for agents, which think in tokens rather than result counts: set `max_tokens` to however much of your context window you want to allocate to memories.
+
+### Python
+
+```python
+# Fill up to 4K tokens of context with relevant memories
+results = client.recall(bank_id="my-bank", query="What do I know about Alice?", max_tokens=4096)
+
+# Smaller budget for quick lookups
+results = client.recall(bank_id="my-bank", query="Alice's email", max_tokens=500)
+```
+
+### query_timestamp
+
+An ISO 8601 datetime representing when the query is being asked, from the user's perspective. When provided, it is used as the anchor for resolving relative temporal expressions in the query — for example, if the query says "last month" and `query_timestamp` is `2023-05-30`, the temporal search window becomes approximately April 2023. Without it, the server's current time is used as the anchor. This field matters most for replaying historical conversations or building agents that need time-anchored recall.
+
+### include
+
+An optional object controlling supplementary data returned alongside the main facts.
+
+#### chunks
+
+When enabled, the response includes the raw source text chunks from which each fact was extracted. Chunks are fetched before the `max_tokens` filter, so setting `max_tokens=0` returns no facts but can still return chunks. The `max_tokens` sub-option (default `8192`) controls the total chunk token budget independently of the main fact budget. This is useful when agents need surrounding context beyond the extracted fact text.
+
+:::note
+When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
+#### source_facts
+
+When enabled and `types` includes `observation`, each observation result is accompanied by the original contributing facts it was synthesized from. Source facts are returned in a top-level `source_facts` dict keyed by fact ID, and each observation result carries a `source_fact_ids` list for cross-referencing. Facts are deduplicated across observations. The `max_tokens` sub-option (default `4096`) limits the total token budget for source facts.
 
 ### Python
 
@@ -174,68 +222,20 @@ for (const obs of obsResponse.results) {
 }
 ```
 
-> **📝 Source Facts Token Budget**
-> 
-Source facts are fetched independently of the main `max_tokens` budget, up to `max_source_facts_tokens`. Facts are included in order of first appearance across all observations — once the budget is reached, remaining source facts are omitted.
-## Token Budget Management
+#### entities
 
-Hindsight is built for AI agents, not humans. Traditional retrieval systems return "top-k" results, but agents don't think in terms of result counts—they think in tokens. An agent's context window is measured in tokens, and that's exactly how Hindsight measures results.
+Enabled by default. When active, each returned fact includes the canonical names of entities associated with it. Set to `null` to skip the entity JOIN query and reduce response size. The `max_tokens` sub-option (default `500`) is a future-facing guard for entity data.
 
-The `max_tokens` parameter lets you control how much of your agent's context budget to spend on memories:
+### tags
 
-### Python
+Filters recall to only memories that match the specified tags. When omitted, all memories regardless of tags are eligible. Tag filtering is applied at the database level across all four retrieval strategies, not as a post-processing step.
 
-```python
-# Fill up to 4K tokens of context with relevant memories
-results = client.recall(bank_id="my-bank", query="What do I know about Alice?", max_tokens=4096)
+The `tags_match` parameter controls the filtering logic:
 
-# Smaller budget for quick lookups
-results = client.recall(bank_id="my-bank", query="Alice's email", max_tokens=500)
-```
-
-This design means you never have to guess whether 10 results or 50 results will fit your context. Just specify the token budget and Hindsight returns as many relevant memories as will fit.
-
-> **📝 Chunks are Independent**
-> 
-When `include_chunks=True`, chunks are fetched **independently** of the `max_tokens` filtering. This means:
-- Setting `max_tokens=0` will return **0 memory facts** but can still return **chunks** (up to `max_chunk_tokens`)
-- Chunks are based on the top-scored (reranked) results **before** token filtering
-- Chunks are fetched in batches (batch size estimated as `(max_chunk_tokens / retain_chunk_size) * 2`) until the token budget is exhausted
-- This batching approach handles varying chunk sizes across documents efficiently
-- This allows you to retrieve raw source text without memory facts when needed
-## Budget Levels
-
-The `budget` parameter controls graph traversal depth:
-
-- **"low"**: Fast, shallow retrieval — good for simple lookups
-- **"mid"**: Balanced — default for most queries
-- **"high"**: Deep exploration — finds indirect connections
-
-### Python
-
-```python
-# Quick lookup
-results = client.recall(bank_id="my-bank", query="Alice's email", budget="low")
-
-# Deep exploration
-results = client.recall(bank_id="my-bank", query="How are Alice and Bob connected?", budget="high")
-```
-
-### Node.js
-
-```javascript
-// Quick lookup
-const quickResults = await client.recall('my-bank', "Alice's email", { budget: 'low' });
-
-// Deep exploration
-const deepResults = await client.recall('my-bank', 'How are Alice and Bob connected?', { budget: 'high' });
-```
-
-## Filter by Tags
-
-Tags enable **visibility scoping**—filter memories based on tags assigned during [retain](./retain#tagging-memories). This is essential for multi-user agents where each user should only see their own memories.
-
-### Basic Tag Filtering
+- `any` (default) — memory matches if it has at least one of the specified tags, or has no tags at all. Use this for "user-specific + shared global" patterns.
+- `any_strict` — memory matches if it has at least one of the specified tags, and untagged memories are excluded. Use this when you want only explicitly scoped memories.
+- `all` — memory matches if it has every specified tag, or has no tags at all.
+- `all_strict` — memory matches if it has every specified tag, and untagged memories are excluded.
 
 ### Python
 
@@ -249,19 +249,6 @@ response = client.recall(
 )
 ```
 
-### Tag Match Modes
-
-The `tags_match` parameter controls how tags are matched:
-
-| Mode | Behavior | Untagged Memories |
-|------|----------|-------------------|
-| `any` | OR: memory has ANY of the specified tags | **Included** |
-| `all` | AND: memory has ALL of the specified tags | **Included** |
-| `any_strict` | OR: memory has ANY of the specified tags | **Excluded** |
-| `all_strict` | AND: memory has ALL of the specified tags | **Excluded** |
-
-**Strict modes** are useful when you want to ensure only tagged memories are returned:
-
 ### Python
 
 ```python
@@ -273,8 +260,6 @@ response = client.recall(
     tags_match="any_strict"  # OR matching, excludes untagged memories
 )
 ```
-
-**AND matching** requires all specified tags to be present:
 
 ### Python
 
@@ -288,11 +273,84 @@ response = client.recall(
 )
 ```
 
-### Use Cases
+### trace
 
-| Scenario | Tags | Mode | Result |
-|----------|------|------|--------|
-| User A's memories only | `["user:alice"]` | `any_strict` | Only memories tagged `user:alice` |
-| Support + feedback | `["support", "feedback"]` | `any` | Memories with either tag + untagged |
-| Multi-user room | `["user:alice", "room:general"]` | `all_strict` | Only memories with both tags |
-| Global + user-specific | `["user:alice"]` | `any` | Alice's memories + shared (untagged) |
+When set to `true`, the response includes a detailed debug trace covering the query embedding, entry points, per-strategy retrieval results, RRF fusion candidates, reranked results, temporal constraints detected, and per-phase timings. Has no effect on the retrieval logic itself. Useful for understanding why specific memories were or were not returned.
+
+---
+
+## Response
+
+### results
+
+The main list of recalled facts, ordered by relevance. Relevance is computed by running four retrieval strategies in parallel — semantic similarity, BM25 keyword, graph traversal, and temporal — fusing their rankings with Reciprocal Rank Fusion (RRF), then re-scoring the merged candidates with a cross-encoder reranker against the original query.
+
+Results do not include a numeric score. Raw retrieval scores are not meaningful on an absolute scale — a score of 0.8 from one query tells you nothing useful compared to a score of 0.8 from another. What matters is the relative ordering, which is already reflected in the list order. Agents should consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score.
+
+Each item in `results` has the following fields:
+
+#### id
+
+The unique identifier of this fact. Use it to cross-reference with `source_facts` or for application-level deduplication.
+
+#### text
+
+The extracted fact text as stored in the memory bank.
+
+#### type
+
+The fact category: `world` for objective information, `experience` for events and conversations, or `observation` for consolidated knowledge synthesized over time.
+
+#### context
+
+The context label provided when the fact was retained (e.g., `"team meeting"`, `"slack"`). `null` if none was set.
+
+#### metadata
+
+The key-value string pairs attached when the fact was retained. `null` if none were set.
+
+#### tags
+
+The visibility-scoping tags attached to this fact.
+
+#### entities
+
+A list of canonical entity name strings linked to this fact. Only populated when `include.entities` is enabled (the default). `null` otherwise.
+
+#### occurred_start / occurred_end
+
+ISO 8601 datetimes representing when the described event started and ended. Extracted by the LLM from the content during retain. `null` if the content had no temporal information.
+
+#### mentioned_at
+
+ISO 8601 datetime of when this fact was retained into the bank.
+
+#### document_id
+
+The document ID this fact belongs to, as set during retain.
+
+#### chunk_id
+
+The ID of the source text chunk this fact was extracted from. Used to cross-reference with `chunks` in the response when `include.chunks` is enabled.
+
+#### source_fact_ids
+
+For `observation`-type results only: the IDs of the original facts this observation was synthesized from. Cross-references with `source_facts` in the response. `null` for other types or when `include.source_facts` is not enabled.
+
+---
+
+### source_facts
+
+A dict keyed by fact ID containing full `RecallResult` objects for the source facts that contributed to observation results. Only present when `include.source_facts` is enabled. Facts are deduplicated — if two observations share a source fact, it appears once.
+
+### chunks
+
+A dict keyed by chunk ID containing the raw source text chunks associated with the returned facts. Only present when `include.chunks` is enabled. Each chunk has `id`, `text`, `chunk_index`, and `truncated` (whether the text was cut to fit the token budget).
+
+### entities
+
+A dict keyed by canonical entity name containing entity state objects. Only present when `include.entities` is enabled. Each entry has `entity_id`, `canonical_name`, and `observations`.
+
+### trace
+
+A debug object present only when `trace: true` was set in the request. Contains per-phase timings, retrieval breakdowns, and RRF fusion details.
