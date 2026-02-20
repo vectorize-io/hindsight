@@ -116,26 +116,25 @@ def load_config_file():
                         os.environ[key] = value
 
 
-# Default models per provider — keep in sync with hindsight_api/config.py PROVIDER_DEFAULT_MODELS
-PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
-    "gemini": "gemini-2.5-flash",
-    "groq": "openai/gpt-oss-120b",
-    "ollama": "gemma3:12b",
-    "lmstudio": "local-model",
-    "vertexai": "google/gemini-2.5-flash-lite",
-    "openai-codex": "gpt-5.2-codex",
-    "claude-code": "claude-sonnet-4-5-20250929",
-    "mock": "mock-model",
-}
+def get_default_model_for_provider(provider: str) -> str:
+    """Return the default model for a given provider.
+
+    Delegates to hindsight_api.config when available (same Python environment),
+    with a minimal fallback for standalone use.
+    """
+    try:
+        from hindsight_api.config import PROVIDER_DEFAULT_MODELS
+
+        return PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o-mini")
+    except ImportError:
+        return "gpt-4o-mini"
 
 
 def get_config():
     """Get configuration from environment variables."""
     load_config_file()
     provider = os.environ.get("HINDSIGHT_API_LLM_PROVIDER", "openai")
-    default_model = PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o-mini")
+    default_model = get_default_model_for_provider(provider)
     return {
         "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "llm_provider": provider,
@@ -146,11 +145,11 @@ def get_config():
 
 # Provider choices for interactive configure: (provider_id, default_model, env_key_name)
 PROVIDER_DEFAULTS = {
-    "openai": ("openai", PROVIDER_DEFAULT_MODELS["openai"], "OPENAI_API_KEY"),
-    "groq": ("groq", PROVIDER_DEFAULT_MODELS["groq"], "GROQ_API_KEY"),
-    "gemini": ("gemini", PROVIDER_DEFAULT_MODELS["gemini"], "GEMINI_API_KEY"),
-    "ollama": ("ollama", PROVIDER_DEFAULT_MODELS["ollama"], None),
-    "vertexai": ("vertexai", PROVIDER_DEFAULT_MODELS["vertexai"], None),
+    "openai": ("openai", get_default_model_for_provider("openai"), "OPENAI_API_KEY"),
+    "groq": ("groq", get_default_model_for_provider("groq"), "GROQ_API_KEY"),
+    "gemini": ("gemini", get_default_model_for_provider("gemini"), "GEMINI_API_KEY"),
+    "ollama": ("ollama", get_default_model_for_provider("ollama"), None),
+    "vertexai": ("vertexai", get_default_model_for_provider("vertexai"), None),
 }
 
 
