@@ -437,6 +437,28 @@ class GeminiLLM(LLMInterface):
         if temperature is not None:
             config_kwargs["temperature"] = temperature
 
+        # Map OpenAI-style tool_choice to Gemini FunctionCallingConfig
+        if tool_choice == "required":
+            config_kwargs["tool_config"] = genai_types.ToolConfig(
+                function_calling_config=genai_types.FunctionCallingConfig(
+                    mode="ANY",
+                )
+            )
+        elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+            fn_name = tool_choice.get("function", {}).get("name")
+            if fn_name:
+                config_kwargs["tool_config"] = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(
+                        mode="ANY",
+                        allowed_function_names=[fn_name],
+                    )
+                )
+        elif tool_choice == "none":
+            config_kwargs["tool_config"] = genai_types.ToolConfig(
+                function_calling_config=genai_types.FunctionCallingConfig(mode="NONE")
+            )
+        # "auto" is the default (no tool_config needed)
+
         config = genai_types.GenerateContentConfig(**config_kwargs)
 
         last_exception = None

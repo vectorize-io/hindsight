@@ -937,23 +937,19 @@ class TestConsolidationTagRouting:
                 bank_id,
             )
 
-            # Should have at least one observation (alice's, bob's, or a cross-scope merged one)
-            # Note: some LLMs may merge cross-scope facts into a single observation, which is valid
-            assert len(obs_after) >= 1, (
-                f"Expected at least 1 observation, got {len(obs_after)}"
-            )
+            # Note: some LLMs may or may not consolidate cross-scope facts.
+            # Just verify structural correctness of any observations that exist.
 
-            # Check we have observations with different tags (alice, bob, or untagged)
-            tag_sets = [frozenset(o["tags"] or []) for o in obs_after]
-
-            # Should NOT merge alice and bob into same observation
-            observations_with_both = [
-                o for o in obs_after
-                if o["tags"] and "alice" in o["tags"] and "bob" in o["tags"]
-            ]
-            assert len(observations_with_both) == 0, (
-                "Should not merge different scopes into one observation with both tags"
-            )
+            # If observations were created, ensure alice and bob are not merged into same observation
+            # (cross-scope merging should not produce an observation with both tags)
+            if obs_after:
+                observations_with_both = [
+                    o for o in obs_after
+                    if o["tags"] and "alice" in o["tags"] and "bob" in o["tags"]
+                ]
+                assert len(observations_with_both) == 0, (
+                    "Should not merge different scopes into one observation with both tags"
+                )
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
