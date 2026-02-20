@@ -4324,10 +4324,13 @@ class MemoryEngine(MemoryEngineInterface):
         # Load directives from the dedicated directives table
         # Directives are hard rules that must be followed in all responses
         # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
+        # Use "any" matching for directives so that global (untagged) directives always apply
+        # regardless of the user's tags_match mode (e.g., "all_strict" would otherwise exclude
+        # global directives). Scoped directives are included when any tag overlaps.
         directives_raw = await self.list_directives(
             bank_id=bank_id,
             tags=tags,
-            tags_match=tags_match,
+            tags_match="any",
             active_only=True,
             request_context=request_context,
             isolation_mode=True,

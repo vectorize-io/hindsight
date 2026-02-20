@@ -1029,6 +1029,7 @@ class TestConsolidationTagRouting:
             "Alice works on machine learning projects.",
             ["alice"], request_context
         )
+        await memory.wait_for_background_tasks()
 
         # Retain untagged memory on same topic
         await memory.retain_async(
@@ -1036,6 +1037,7 @@ class TestConsolidationTagRouting:
             content="Machine learning involves training neural networks.",
             request_context=request_context,
         )
+        await memory.wait_for_background_tasks()
 
         # Check observations
         async with memory._pool.acquire() as conn:
