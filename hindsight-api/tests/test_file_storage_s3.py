@@ -107,7 +107,7 @@ def seaweedfs_container():
         port = container.get_exposed_port(SEAWEEDFS_S3_PORT)
         endpoint = f"http://{host}:{port}"
 
-        _wait_for_seaweedfs(endpoint, timeout=120)
+        _wait_for_seaweedfs(endpoint, timeout=240)
 
         # Create test bucket using obstore (proper SigV4 signing)
         import obstore as obs

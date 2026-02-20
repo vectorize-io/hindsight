@@ -382,6 +382,7 @@ async def run_reflect_agent(
             f"total={elapsed_ms}ms"
         )
 
+    consecutive_errors = 0
     for iteration in range(max_iterations):
         is_last = iteration == max_iterations - 1
 
@@ -457,6 +458,7 @@ async def run_reflect_agent(
                 tool_choice=iter_tool_choice,
             )
             llm_duration = int((time.time() - llm_start) * 1000)
+            consecutive_errors = 0
             total_input_tokens += result.input_tokens
             total_output_tokens += result.output_tokens
             llm_trace.append(
@@ -470,13 +472,14 @@ async def run_reflect_agent(
 
         except Exception as e:
             err_duration = int((time.time() - llm_start) * 1000)
+            consecutive_errors += 1
             logger.warning(f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {e} ({err_duration}ms)")
             llm_trace.append({"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration})
-            # Guardrail: If no evidence gathered yet, retry
+            # Guardrail: If no evidence gathered yet, retry (but cap consecutive errors to avoid long hangs)
             has_gathered_evidence = (
                 bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
             )
-            if not has_gathered_evidence and iteration < max_iterations - 1:
+            if not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
             prompt = build_final_prompt(query, context_history, bank_profile, context)
             llm_start = time.time()

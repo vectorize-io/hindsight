@@ -98,7 +98,7 @@ log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
-addopts = "--timeout 120 -n 8 --dist loadgroup --durations=10 -v"
+addopts = "--timeout 300 -n 8 --dist loadgroup --durations=10 -v"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 log_auto_indent = true

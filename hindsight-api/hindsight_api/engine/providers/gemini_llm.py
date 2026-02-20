@@ -68,7 +68,10 @@ class GeminiLLM(LLMInterface):
         if not self.api_key:
             raise ValueError("Gemini provider requires api_key")
 
-        self._client = genai.Client(api_key=self.api_key)
+        self._client = genai.Client(
+            api_key=self.api_key,
+            http_options=genai_types.HttpOptions(timeout=60_000),  # 60s per request
+        )
         logger.info(f"Gemini API: model={self.model}")
 
     def _init_vertexai(self, **kwargs: Any) -> None:
@@ -118,7 +121,10 @@ class GeminiLLM(LLMInterface):
         if credentials is not None:
             client_kwargs["credentials"] = credentials
 
-        self._client = genai.Client(**client_kwargs)
+        self._client = genai.Client(
+            **client_kwargs,
+            http_options=genai_types.HttpOptions(timeout=60_000),  # 60s per request
+        )
 
         logger.info(f"Vertex AI: project={project_id}, region={region}, model={self.model}, auth={auth_method}")
 
