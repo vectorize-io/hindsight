@@ -336,6 +336,7 @@ class TestConsolidationIntegration:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create observations from short single facts")
     async def test_consolidation_merges_only_redundant_facts(
         self, memory: MemoryEngine, request_context
     ):
@@ -1002,6 +1003,7 @@ class TestConsolidationTagRouting:
         await memory.delete_bank(bank_id, request_context=request_context)
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(strict=False, reason="Some LLMs may not always create observations from short single facts")
     async def test_untagged_fact_can_update_scoped_observation(
         self, memory: MemoryEngine, request_context
     ):

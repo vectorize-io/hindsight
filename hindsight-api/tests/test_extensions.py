@@ -535,8 +535,9 @@ class TestOperationHooksParameters:
             request_context=ctx,
         )
 
-        assert len(validator.pre_recall_calls) == 1
-        assert len(validator.post_recall_calls) == 1
+        # Use >= 1 since consolidation may trigger internal recall calls when observations are enabled
+        assert len(validator.pre_recall_calls) >= 1
+        assert len(validator.post_recall_calls) >= 1
 
 
 class TestTenantExtension:
