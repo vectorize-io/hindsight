@@ -18,6 +18,7 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
+from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
 
@@ -247,15 +248,7 @@ class GeminiLLM(LLMInterface):
 
                 # Parse structured output if requested
                 if response_format is not None:
-                    try:
-                        json_data = json.loads(content)
-                    except json.JSONDecodeError:
-                        # Gemini sometimes returns control characters inside JSON strings.
-                        # Clean them and retry the parse before triggering the retry loop.
-                        import re as _re
-
-                        cleaned = _re.sub(r"[\x00-\x1f\x7f]", " ", content)
-                        json_data = json.loads(cleaned)
+                    json_data = parse_llm_json(content)
                     if skip_validation:
                         result = json_data
                     else:

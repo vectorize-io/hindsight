@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ...config import get_config
+from ..llm_wrapper import parse_llm_json
 from ..memory_engine import fq_table
 from ..retain import embedding_utils
 from .prompts import (
@@ -950,22 +951,7 @@ Focus on DURABLE knowledge that serves this mission, not ephemeral state.
         )
         # Parse JSON response - should be an array
         if isinstance(result, str):
-            # Strip markdown code fences (some models wrap JSON in ```json ... ```)
-            clean = result.strip()
-            if clean.startswith("```"):
-                clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
-                if clean.endswith("```"):
-                    clean = clean[:-3]
-                clean = clean.strip()
-            try:
-                result = json.loads(clean)
-            except json.JSONDecodeError:
-                # Gemini sometimes embeds control characters in JSON output.
-                # Strip them and retry the parse.
-                import re as _re
-
-                cleaned_control = _re.sub(r"[\x00-\x1f\x7f]", " ", clean)
-                result = json.loads(cleaned_control)
+            result = parse_llm_json(result)
         # Ensure result is a list
         if isinstance(result, list):
             return result

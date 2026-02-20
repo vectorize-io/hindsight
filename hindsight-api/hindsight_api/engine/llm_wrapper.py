@@ -60,6 +60,42 @@ class OutputTooLongError(Exception):
     pass
 
 
+def parse_llm_json(raw: str) -> Any:
+    """
+    Robustly parse JSON returned by an LLM.
+
+    Handles common LLM output quirks:
+    1. Markdown code fences (```json ... ```) — strip them before parsing.
+    2. Embedded control characters (\\x00-\\x1f, \\x7f) — replace with space
+       and retry if the initial parse fails.
+
+    Args:
+        raw: Raw text returned by the LLM.
+
+    Returns:
+        Parsed Python object (dict, list, etc.).
+
+    Raises:
+        json.JSONDecodeError: If the text cannot be parsed even after cleanup.
+    """
+    text = raw.strip()
+
+    # Strip markdown code fences (some models wrap JSON in ```json ... ```)
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Some models (e.g. Gemini) embed raw control characters inside JSON
+        # string values. Replacing them with a space usually produces valid JSON.
+        cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+        return json.loads(cleaned)
+
+
 _PROVIDERS_WITHOUT_API_KEY = frozenset(
     {
         "ollama",

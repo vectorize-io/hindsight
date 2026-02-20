@@ -55,33 +55,6 @@ def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
     return None
 
 
-def _replace_temporal_expressions(text: str, occurred_start_str: str) -> str:
-    """
-    Replace relative temporal expressions in fact text with an absolute date.
-
-    When the LLM doesn't convert "yesterday" to "November 12" in the fact text
-    but we have the resolved occurred_start, we inject the absolute date.
-    """
-    try:
-        dt = datetime.fromisoformat(occurred_start_str.replace("Z", "+00:00"))
-        date_str = dt.strftime("%B %-d, %Y")  # e.g., "November 12, 2024"
-    except (ValueError, AttributeError):
-        return text
-
-    replacements = [
-        (r"\byesterday\b", f"on {date_str}"),
-        (r"\blast night\b", f"on the night of {date_str}"),
-        (r"\btonight\b", f"on the night of {date_str}"),
-        (r"\bthis morning\b", f"on the morning of {date_str}"),
-        (r"\bthis afternoon\b", f"on the afternoon of {date_str}"),
-        (r"\bthis evening\b", f"on the evening of {date_str}"),
-        (r"\btoday\b", f"on {date_str}"),
-    ]
-
-    for pattern, replacement in replacements:
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    return text
-
 
 def _sanitize_text(text: str | None) -> str | None:
     """
@@ -509,7 +482,9 @@ TEMPORAL HANDLING
 ══════════════════════════════════════════════════════════════════════════
 
 Use "Event Date" from input as reference for relative dates.
-- "yesterday" relative to Event Date, not today
+- CRITICAL: Convert ALL relative temporal expressions to absolute dates in the fact text itself.
+  "yesterday" → write the resolved date (e.g. "on November 12, 2024"), NOT the word "yesterday"
+  "last night", "this morning", "today", "tonight" → convert to the resolved absolute date
 - For events: set occurred_start AND occurred_end (same for point events)
 - For conversation facts: NO occurred dates
 
@@ -990,11 +965,6 @@ async def _extract_facts_from_chunk(
                         fact_data["occurred_end"] = occurred_end
                     elif fact_data.get("occurred_start"):
                         fact_data["occurred_end"] = fact_data["occurred_start"]
-
-                    # Replace relative temporal expressions in the fact text with absolute dates
-                    # so the stored fact says "on November 12" rather than "yesterday"
-                    if fact_data.get("occurred_start"):
-                        combined_text = _replace_temporal_expressions(combined_text, fact_data["occurred_start"])
 
                 # Add entities if present (validate as Entity objects)
                 # LLM sometimes returns strings instead of {"text": "..."} format
