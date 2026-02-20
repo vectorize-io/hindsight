@@ -547,7 +547,7 @@ CONSOLIDATE related statements into ONE fact when possible."""
 _CONCISE_EXAMPLES = """
 
 ══════════════════════════════════════════════════════════════════════════
-EXAMPLES
+EXAMPLES (shown in English for illustration; for non-English input, ALL output values MUST be in the input language)
 ══════════════════════════════════════════════════════════════════════════
 
 Example 1 - Selective extraction (Event Date: June 10, 2024):

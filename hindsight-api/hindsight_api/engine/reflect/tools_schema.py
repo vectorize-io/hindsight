@@ -191,7 +191,11 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
                 "properties": {
                     "answer": {
                         "type": "string",
-                        "description": "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks for clarity. NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array.",
+                        "description": (
+                            "Your response as well-formatted markdown. Use headers, lists, bold/italic, and code blocks for clarity. "
+                            "NEVER include memory IDs, UUIDs, or 'Memory references' in this text - put IDs only in memory_ids array. "
+                            f"MANDATORY: Your answer MUST comply with ALL directives:\n{rules_list}"
+                        ),
                     },
                     "memory_ids": {
                         "type": "array",

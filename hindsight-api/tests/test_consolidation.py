@@ -828,6 +828,7 @@ class TestConsolidationTagRouting:
             content="Pizza is a popular Italian food.",
             request_context=request_context,
         )
+        await memory.wait_for_background_tasks()
 
         # Check untagged observation exists
         async with memory._pool.acquire() as conn:
@@ -849,6 +850,7 @@ class TestConsolidationTagRouting:
         await self._retain_with_tags(
             memory, bank_id, "Pizza originated in Naples.", ["history"], request_context
         )
+        await memory.wait_for_background_tasks()
 
         # Check - global observation should be updated OR new scoped observation created
         async with memory._pool.acquire() as conn:
