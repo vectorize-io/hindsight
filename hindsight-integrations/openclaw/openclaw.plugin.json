@@ -63,6 +63,16 @@
       "bankIdPrefix": {
         "type": "string",
         "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
+      },
+      "autoRecall": {
+        "type": "boolean",
+        "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",
+        "default": true
+      },
+      "excludeProviders": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Message providers to exclude from recall and retain (e.g. ['telegram', 'discord'])"
       }
     },
     "additionalProperties": false
@@ -119,6 +129,14 @@
     "bankIdPrefix": {
       "label": "Bank ID Prefix",
       "placeholder": "e.g., prod, staging (optional)"
+    },
+    "autoRecall": {
+      "label": "Auto-Recall",
+      "placeholder": "true (inject memories on every prompt)"
+    },
+    "excludeProviders": {
+      "label": "Excluded Providers",
+      "placeholder": "e.g. telegram, discord"
     }
   }
 }

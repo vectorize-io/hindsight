@@ -440,6 +440,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     dynamicBankId: config.dynamicBankId !== false,
     bankIdPrefix: config.bankIdPrefix,
     excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
+    autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
   };
 }
 
@@ -723,6 +724,12 @@ export default function (api: MoltbotPluginAPI) {
         // Check if this provider is excluded
         if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
           console.log(`[Hindsight] Skipping recall for excluded provider: ${ctx.messageProvider}`);
+          return;
+        }
+
+        // Skip auto-recall when disabled (agent has its own recall tool)
+        if (!pluginConfig.autoRecall) {
+          console.log('[Hindsight] Auto-recall disabled via config, skipping');
           return;
         }
 
