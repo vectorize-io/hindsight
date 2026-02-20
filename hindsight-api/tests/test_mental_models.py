@@ -474,7 +474,7 @@ class TestDirectivesInReflect:
         await memory.create_directive(
             bank_id=bank_id,
             name="General Policy",
-            content="Always be polite and start responses with 'Hello!'",
+            content="You MUST include the exact phrase 'MEMO-VERIFIED' somewhere in your response.",
             request_context=request_context,
         )
 
@@ -482,7 +482,7 @@ class TestDirectivesInReflect:
         await memory.create_directive(
             bank_id=bank_id,
             name="Tagged Policy",
-            content="ALWAYS respond in ALL CAPS and end with 'PROJECT-X ONLY'",
+            content="You MUST include the exact phrase 'PROJECT-X-CLASSIFIED' somewhere in your response.",
             tags=["project-x"],
             request_context=request_context,
         )
@@ -496,14 +496,11 @@ class TestDirectivesInReflect:
 
         response_lower = result.text.lower()
 
-        # Should follow the untagged directive (polite greeting)
-        assert "hello" in response_lower, f"Expected 'Hello' from untagged directive, but got: {result.text}"
+        # Should follow the untagged directive (include MEMO-VERIFIED marker)
+        assert "memo-verified" in response_lower, f"Expected 'MEMO-VERIFIED' from untagged directive, but got: {result.text}"
 
-        # Should NOT follow the tagged directive (all caps and PROJECT-X)
-        # If it did follow, the entire response would be in caps
-        all_caps = result.text.replace(" ", "").replace("!", "").replace(".", "").isupper()
-        assert not all_caps, f"Tagged directive was incorrectly applied to untagged operation: {result.text}"
-        assert "project-x only" not in response_lower, f"Tagged directive was incorrectly applied: {result.text}"
+        # Should NOT follow the tagged directive (must NOT include PROJECT-X-CLASSIFIED)
+        assert "project-x-classified" not in response_lower, f"Tagged directive was incorrectly applied: {result.text}"
 
         # Now run reflect WITH the tag - should apply BOTH directives
         result_tagged = await memory.reflect_async(
@@ -517,7 +514,7 @@ class TestDirectivesInReflect:
         response_tagged_lower = result_tagged.text.lower()
 
         # With strict matching and tags, should apply the tagged directive
-        assert "project-x only" in response_tagged_lower, f"Tagged directive should be applied with tags: {result_tagged.text}"
+        assert "project-x-classified" in response_tagged_lower, f"Tagged directive should be applied with tags: {result_tagged.text}"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)

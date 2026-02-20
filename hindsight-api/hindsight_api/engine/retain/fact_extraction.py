@@ -26,8 +26,6 @@ def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
     This is a fallback for when the LLM fails to extract temporal information
     from relative time expressions like "last night", "yesterday", etc.
     """
-    import re
-
     fact_lower = fact_text.lower()
 
     # Map relative time expressions to day offsets
@@ -55,6 +53,34 @@ def _infer_temporal_date(fact_text: str, event_date: datetime) -> str | None:
 
     # If no relative time expression found, return None
     return None
+
+
+def _replace_temporal_expressions(text: str, occurred_start_str: str) -> str:
+    """
+    Replace relative temporal expressions in fact text with an absolute date.
+
+    When the LLM doesn't convert "yesterday" to "November 12" in the fact text
+    but we have the resolved occurred_start, we inject the absolute date.
+    """
+    try:
+        dt = datetime.fromisoformat(occurred_start_str.replace("Z", "+00:00"))
+        date_str = dt.strftime("%B %-d, %Y")  # e.g., "November 12, 2024"
+    except (ValueError, AttributeError):
+        return text
+
+    replacements = [
+        (r"\byesterday\b", f"on {date_str}"),
+        (r"\blast night\b", f"on the night of {date_str}"),
+        (r"\btonight\b", f"on the night of {date_str}"),
+        (r"\bthis morning\b", f"on the morning of {date_str}"),
+        (r"\bthis afternoon\b", f"on the afternoon of {date_str}"),
+        (r"\bthis evening\b", f"on the evening of {date_str}"),
+        (r"\btoday\b", f"on {date_str}"),
+    ]
+
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 
 def _sanitize_text(text: str | None) -> str | None:
@@ -440,7 +466,7 @@ def _chunk_conversation(turns: list[dict], max_chars: int) -> list[str]:
 # Uses {extraction_guidelines} placeholder for mode-specific instructions
 _BASE_FACT_EXTRACTION_PROMPT = """Extract SIGNIFICANT facts from text. Be SELECTIVE - only extract facts worth remembering long-term.
 
-LANGUAGE: Detect the input language. All output MUST be in the same language as the input. Never translate.
+LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL output in that EXACT same language. You are STRICTLY FORBIDDEN from translating or switching to any other language. Every single word of your output must be in the same language as the input. Do NOT output in a different language under any circumstance.
 
 {fact_types_instruction}
 
@@ -567,7 +593,7 @@ CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
 # Verbose extraction prompt - detailed, comprehensive facts (legacy mode)
 VERBOSE_FACT_EXTRACTION_PROMPT = """Extract facts from text into structured format with FIVE required dimensions - BE EXTREMELY DETAILED.
 
-LANGUAGE: Detect the input language. All output MUST be in the same language as the input. Never translate.
+LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL output in that EXACT same language. You are STRICTLY FORBIDDEN from translating or switching to any other language. Every single word of your output must be in the same language as the input. Do NOT output in a different language under any circumstance.
 
 {fact_types_instruction}
 
@@ -964,6 +990,11 @@ async def _extract_facts_from_chunk(
                         fact_data["occurred_end"] = occurred_end
                     elif fact_data.get("occurred_start"):
                         fact_data["occurred_end"] = fact_data["occurred_start"]
+
+                    # Replace relative temporal expressions in the fact text with absolute dates
+                    # so the stored fact says "on November 12" rather than "yesterday"
+                    if fact_data.get("occurred_start"):
+                        combined_text = _replace_temporal_expressions(combined_text, fact_data["occurred_start"])
 
                 # Add entities if present (validate as Entity objects)
                 # LLM sometimes returns strings instead of {"text": "..."} format

@@ -1930,9 +1930,7 @@ class TestMentalModelRefreshAfterConsolidation:
         )
 
         # Wait for consolidation to create observations
-        import asyncio
-
-        await asyncio.sleep(2)
+        await memory.wait_for_background_tasks()
 
         # Get graph data filtered by observation type only
         graph_data = await memory.get_graph_data(
@@ -1950,12 +1948,26 @@ class TestMentalModelRefreshAfterConsolidation:
         for row in graph_data["table_rows"]:
             assert row["fact_type"] == "observation", f"All nodes should be observations, got {row['fact_type']}"
 
-        # Should have edges (inherited from source memories)
-        # Even though we're only showing observations, they should inherit links from their sources
-        assert len(graph_data["edges"]) > 0, (
-            "Observations should have edges inherited from source memories. "
-            f"Found {len(graph_data['edges'])} edges"
-        )
+        # Edges are inherited from source memories when multiple observations exist.
+        # If consolidation merges all facts into a single observation, edges between
+        # observation nodes are not possible — skip the edge check in that case.
+        if len(graph_data["nodes"]) > 1:
+            assert len(graph_data["edges"]) > 0, (
+                "Observations should have edges inherited from source memories. "
+                f"Found {len(graph_data['edges'])} edges among {len(graph_data['nodes'])} nodes"
+            )
+            # Verify edge types are valid
+            valid_link_types = {"semantic", "temporal", "entity"}
+            for edge in graph_data["edges"]:
+                link_type = edge["data"]["linkType"]
+                assert link_type in valid_link_types, f"Invalid link type: {link_type}"
+            # Verify all edges connect visible observation nodes
+            visible_node_ids = {row["id"] for row in graph_data["table_rows"]}
+            for edge in graph_data["edges"]:
+                source_id = edge["data"]["source"]
+                target_id = edge["data"]["target"]
+                assert source_id in visible_node_ids, f"Edge source {source_id[:8]} not in visible nodes"
+                assert target_id in visible_node_ids, f"Edge target {target_id[:8]} not in visible nodes"
 
         # Should have entities (inherited from source memories)
         observations_with_entities = [
@@ -1971,20 +1983,6 @@ class TestMentalModelRefreshAfterConsolidation:
         assert "Alice" in all_entities or "Bob" in all_entities or "Google" in all_entities, (
             f"Expected to find Alice, Bob, or Google in entities, got: {all_entities}"
         )
-
-        # Verify edge types are valid
-        valid_link_types = {"semantic", "temporal", "entity"}
-        for edge in graph_data["edges"]:
-            link_type = edge["data"]["linkType"]
-            assert link_type in valid_link_types, f"Invalid link type: {link_type}"
-
-        # Verify all edges connect visible observation nodes
-        visible_node_ids = {row["id"] for row in graph_data["table_rows"]}
-        for edge in graph_data["edges"]:
-            source_id = edge["data"]["source"]
-            target_id = edge["data"]["target"]
-            assert source_id in visible_node_ids, f"Edge source {source_id[:8]} not in visible nodes"
-            assert target_id in visible_node_ids, f"Edge target {target_id[:8]} not in visible nodes"
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)

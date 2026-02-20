@@ -47,7 +47,8 @@ TOOL_SEARCH_OBSERVATIONS = {
         "description": (
             "Search consolidated observations (auto-generated knowledge). These are automatically "
             "synthesized from memories. Returns observations with freshness info (updated_at, is_stale). "
-            "If an observation is STALE, you should ALSO use recall() to verify with current facts."
+            "If an observation is STALE, you should ALSO use recall() to verify with current facts. "
+            "IMPORTANT: If search_mental_models is available, you MUST call it FIRST before using this tool."
         ),
         "parameters": {
             "type": "object",
