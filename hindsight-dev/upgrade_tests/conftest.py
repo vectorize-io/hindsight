@@ -94,11 +94,29 @@ def llm_config():
     Provide LLM configuration from environment.
 
     Returns a dict with provider, api_key, and model.
+
+    Note: Upgrade tests require a provider that is supported by old server versions.
+    vertexai is only supported in newer versions, so upgrade tests are skipped when
+    using vertexai provider without a fallback API key.
     """
+    provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq")
+    api_key = os.getenv("HINDSIGHT_API_LLM_API_KEY") or os.getenv("GROQ_API_KEY")
+    model = os.getenv("HINDSIGHT_API_LLM_MODEL", "llama-3.3-70b-versatile")
+
+    # Old server versions (e.g., v0.3.0) do not support vertexai provider.
+    # Skip upgrade tests when using vertexai without a fallback traditional API key.
+    providers_unsupported_by_old_versions = ("vertexai",)
+    if provider in providers_unsupported_by_old_versions and not api_key:
+        pytest.skip(
+            f"Upgrade tests require a provider supported by old server versions. "
+            f"Provider '{provider}' is not supported by older versions (e.g., v0.3.0). "
+            f"Set HINDSIGHT_API_LLM_API_KEY to use a fallback provider."
+        )
+
     return {
-        "provider": os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
-        "api_key": os.getenv("HINDSIGHT_API_LLM_API_KEY") or os.getenv("GROQ_API_KEY"),
-        "model": os.getenv("HINDSIGHT_API_LLM_MODEL", "llama-3.3-70b-versatile"),
+        "provider": provider,
+        "api_key": api_key,
+        "model": model,
     }
 
 
