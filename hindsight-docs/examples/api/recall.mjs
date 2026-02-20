@@ -23,9 +23,26 @@ await client.retain('my-bank', 'Bob is a data scientist who works with Alice');
 
 // [docs:recall-basic]
 const response = await client.recall('my-bank', 'What does Alice do?');
-for (const r of response.results) {
-    console.log(`${r.text} (score: ${r.weight})`);
-}
+
+// response.results is an array of result objects, each with:
+// - id:            fact ID
+// - text:          the extracted fact
+// - type:          "world", "experience", or "observation"
+// - context:       context label set during retain
+// - metadata:      Record<string, string> set during retain
+// - tags:          string[] of tags
+// - entities:      string[] of entity names linked to this fact
+// - occurredStart: ISO datetime of when the event started
+// - occurredEnd:   ISO datetime of when the event ended
+// - mentionedAt:   ISO datetime of when the fact was retained
+// - documentId:    document this fact belongs to
+// - chunkId:       chunk this fact was extracted from
+
+// Example response.results:
+// [
+//   { id: "a1b2...", text: "Alice works at Google as a software engineer", type: "world", context: "career", ... },
+//   { id: "c3d4...", text: "Alice got promoted to senior engineer", type: "experience", occurredStart: "2024-03-15T00:00:00Z", ... },
+// ]
 // [/docs:recall-basic]
 
 

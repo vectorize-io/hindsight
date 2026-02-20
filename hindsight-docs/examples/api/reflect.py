@@ -32,9 +32,8 @@ client.reflect(bank_id="my-bank", query="What should I know about Alice?")
 # [docs:reflect-with-params]
 response = client.reflect(
     bank_id="my-bank",
-    query="What do you think about remote work?",
+    query="We're considering a hybrid work policy. What do you think about remote work?",
     budget="mid",
-    context="We're considering a hybrid work policy"
 )
 # [/docs:reflect-with-params]
 
@@ -72,11 +71,16 @@ response = client.reflect(
 
 
 # [docs:reflect-sources]
-response = client.reflect(bank_id="my-bank", query="Tell me about Alice")
+# include_facts=True enables the based_on field in the response
+response = client.reflect(
+    bank_id="my-bank",
+    query="Tell me about Alice",
+    include_facts=True,
+)
 
 print("Response:", response.text)
 print("\nBased on:")
-for fact in response.based_on or []:
+for fact in (response.based_on.memories if response.based_on else []):
     print(f"  - [{fact.type}] {fact.text}")
 # [/docs:reflect-sources]
 

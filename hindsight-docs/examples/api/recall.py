@@ -26,8 +26,26 @@ client.retain(bank_id="my-bank", content="Bob is a data scientist who works with
 
 # [docs:recall-basic]
 response = client.recall(bank_id="my-bank", query="What does Alice do?")
-for r in response.results:
-    print(f"- {r.text}")
+
+# response.results is a list of RecallResult objects, each with:
+# - id:             fact ID
+# - text:           the extracted fact
+# - type:           "world", "experience", or "observation"
+# - context:        context label set during retain
+# - metadata:       dict[str, str] set during retain
+# - tags:           list of tags
+# - entities:       list of entity name strings linked to this fact
+# - occurred_start: ISO datetime of when the event started
+# - occurred_end:   ISO datetime of when the event ended
+# - mentioned_at:   ISO datetime of when the fact was retained
+# - document_id:    document this fact belongs to
+# - chunk_id:       chunk this fact was extracted from
+
+# Example response.results:
+# [
+#   RecallResult(id="a1b2...", text="Alice works at Google as a software engineer", type="world", context="career", ...),
+#   RecallResult(id="c3d4...", text="Alice got promoted to senior engineer", type="experience", occurred_start="2024-03-15T00:00:00Z", ...),
+# ]
 # [/docs:recall-basic]
 
 

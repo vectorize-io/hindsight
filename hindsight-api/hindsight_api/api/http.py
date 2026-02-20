@@ -429,7 +429,6 @@ class RetainRequest(BaseModel):
                     },
                 ],
                 "async": False,
-                "document_tags": ["user_a", "user_b"],
             }
         }
     )
@@ -442,7 +441,8 @@ class RetainRequest(BaseModel):
     )
     document_tags: list[str] | None = Field(
         default=None,
-        description="Tags applied to all items in this request. These are merged with any item-level tags.",
+        description="Deprecated. Use item-level tags instead.",
+        deprecated=True,
     )
 
 

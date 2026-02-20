@@ -77,7 +77,7 @@ docker run --rm -it -p 8888:8888 \
   -e HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai \
   -e HINDSIGHT_API_RERANKER_PROVIDER=cohere \
   -e HINDSIGHT_API_COHERE_API_KEY=$COHERE_API_KEY \
-  ghcr.io/vectorize-io/hindsight:slim
+  ghcr.io/vectorize-io/hindsight:latest-slim
 ```
 - ✅ Dramatically smaller image (~95% reduction on AMD64)
 - ✅ Faster pull/deploy times
@@ -114,7 +114,7 @@ See [Configuration](./configuration#embeddings-and-reranking) for all embedding 
 ```bash
 # Standalone (API + Control Plane)
 ghcr.io/vectorize-io/hindsight:latest        # Full, latest release
-ghcr.io/vectorize-io/hindsight:slim          # Slim, latest release
+ghcr.io/vectorize-io/hindsight:latest-slim          # Slim, latest release
 ghcr.io/vectorize-io/hindsight:0.4.9         # Full, specific version
 ghcr.io/vectorize-io/hindsight:0.4.9-slim    # Slim, specific version
 

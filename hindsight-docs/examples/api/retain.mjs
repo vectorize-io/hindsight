@@ -21,6 +21,26 @@ await client.retain('my-bank', 'Alice works at Google as a software engineer');
 // [/docs:retain-basic]
 
 
+// [docs:retain-conversation]
+// Retain an entire conversation as a single document.
+// Format each message as "Name (timestamp): text" so the LLM can attribute
+// facts to the right person and resolve temporal references across the thread.
+const conversation = [
+    'Alice (2024-03-15T09:00:00Z): Hi Bob! Did you end up going to the doctor last week?',
+    'Bob (2024-03-15T09:01:00Z): Yes, finally. Turns out I have a mild peanut allergy.',
+    'Alice (2024-03-15T09:02:00Z): Oh no! Are you okay?',
+    'Bob (2024-03-15T09:03:00Z): Yeah, nothing serious. Just need to carry an antihistamine.',
+    'Alice (2024-03-15T09:04:00Z): Good to know. We\'ll avoid peanuts at the team lunch.',
+].join('\n');
+
+await client.retain('my-bank', conversation, {
+    context: 'team chat',
+    timestamp: '2024-03-15T09:04:00Z',
+    documentId: 'chat-2024-03-15-alice-bob',
+});
+// [/docs:retain-conversation]
+
+
 // [docs:retain-with-context]
 await client.retain('my-bank', 'Alice got promoted to senior engineer', {
     context: 'career update',
