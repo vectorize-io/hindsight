@@ -26,8 +26,11 @@ try:
 except ImportError:
     _has_testcontainers = False
 
+_in_ci = os.getenv("CI") == "true"
+
 pytestmark = [
     pytest.mark.skipif(not _has_testcontainers, reason="testcontainers not installed"),
+    pytest.mark.skipif(_in_ci, reason="SeaweedFS Docker image pull too slow in CI"),
     pytest.mark.timeout(300),
 ]
 

@@ -68,10 +68,7 @@ class GeminiLLM(LLMInterface):
         if not self.api_key:
             raise ValueError("Gemini provider requires api_key")
 
-        self._client = genai.Client(
-            api_key=self.api_key,
-            http_options=genai_types.HttpOptions(timeout=60_000),  # 60s per request
-        )
+        self._client = genai.Client(api_key=self.api_key)
         logger.info(f"Gemini API: model={self.model}")
 
     def _init_vertexai(self, **kwargs: Any) -> None:
@@ -121,10 +118,7 @@ class GeminiLLM(LLMInterface):
         if credentials is not None:
             client_kwargs["credentials"] = credentials
 
-        self._client = genai.Client(
-            **client_kwargs,
-            http_options=genai_types.HttpOptions(timeout=60_000),  # 60s per request
-        )
+        self._client = genai.Client(**client_kwargs)
 
         logger.info(f"Vertex AI: project={project_id}, region={region}, model={self.model}, auth={auth_method}")
 
@@ -228,10 +222,13 @@ class GeminiLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             try:
-                response = await self._client.aio.models.generate_content(
-                    model=self.model,
-                    contents=gemini_contents,
-                    config=generation_config,
+                response = await asyncio.wait_for(
+                    self._client.aio.models.generate_content(
+                        model=self.model,
+                        contents=gemini_contents,
+                        config=generation_config,
+                    ),
+                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
 
                 content = response.text
@@ -497,10 +494,13 @@ class GeminiLLM(LLMInterface):
         last_exception = None
         for attempt in range(max_retries + 1):
             try:
-                response = await self._client.aio.models.generate_content(
-                    model=self.model,
-                    contents=gemini_contents,
-                    config=config,
+                response = await asyncio.wait_for(
+                    self._client.aio.models.generate_content(
+                        model=self.model,
+                        contents=gemini_contents,
+                        config=config,
+                    ),
+                    timeout=90.0,  # Safety net for network hangs; valid slow responses are <90s
                 )
 
                 # Extract content and tool calls

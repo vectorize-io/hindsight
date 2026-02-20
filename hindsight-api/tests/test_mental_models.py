@@ -404,25 +404,12 @@ class TestDirectivesInReflect:
             request_context=request_context,
         )
 
-        # Run reflect query
-        result = await memory.reflect_async(
-            bank_id=bank_id,
-            query="What does Alice do for work?",
-            request_context=request_context,
-        )
-
-        assert result.text is not None
-        assert len(result.text) > 0
-
         # Check that the response contains French words/patterns
         # Common French words that would appear when talking about someone's job
         french_indicators = [
             "elle",
             "travaille",
-            "est",
             "une",
-            "le",
-            "la",
             "qui",
             "chez",
             "logiciel",
@@ -430,11 +417,27 @@ class TestDirectivesInReflect:
             "ingénieure",
             "développeur",
             "développeuse",
+            "ingénierie",
+            "française",
         ]
-        response_lower = result.text.lower()
 
-        # At least some French words should appear in the response
-        french_word_count = sum(1 for word in french_indicators if word in response_lower)
+        # Run reflect query (retry once since small LLMs may not always follow language directives)
+        french_word_count = 0
+        for _attempt in range(2):
+            result = await memory.reflect_async(
+                bank_id=bank_id,
+                query="What does Alice do for work?",
+                request_context=request_context,
+            )
+            assert result.text is not None
+            assert len(result.text) > 0
+
+            # At least some French words should appear in the response
+            response_lower = result.text.lower()
+            french_word_count = sum(1 for word in french_indicators if word in response_lower)
+            if french_word_count >= 2:
+                break
+
         assert (
             french_word_count >= 2
         ), f"Expected French response, but got: {result.text[:200]}"

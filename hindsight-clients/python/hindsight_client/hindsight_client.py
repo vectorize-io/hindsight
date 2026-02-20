@@ -67,14 +67,14 @@ class Hindsight:
         ```
     """
 
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 120.0):
+    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 300.0):
         """
         Initialize the Hindsight client.
 
         Args:
             base_url: The base URL of the Hindsight API server
             api_key: Optional API key for authentication (sent as Bearer token)
-            timeout: Request timeout in seconds (default: 120.0)
+            timeout: Request timeout in seconds (default: 300.0)
         """
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)

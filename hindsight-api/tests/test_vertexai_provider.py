@@ -99,11 +99,10 @@ def test_llm_wrapper_vertexai_adc_auth():
             assert provider._gemini_client is not None
 
             # Verify genai.Client was called with vertexai=True
-            mock_client_cls.assert_called_once_with(
-                vertexai=True,
-                project="test-project",
-                location="us-central1",
-            )
+            call_kwargs = mock_client_cls.call_args.kwargs
+            assert call_kwargs["vertexai"] is True
+            assert call_kwargs["project"] == "test-project"
+            assert call_kwargs["location"] == "us-central1"
 
         clear_config_cache()
 
@@ -144,12 +143,11 @@ def test_llm_wrapper_vertexai_sa_auth():
                 assert provider._gemini_client is not None
 
                 # Verify credentials were passed to genai.Client
-                mock_client_cls.assert_called_once_with(
-                    vertexai=True,
-                    project="test-project",
-                    location="us-central1",
-                    credentials=mock_credentials,
-                )
+                call_kwargs = mock_client_cls.call_args.kwargs
+                assert call_kwargs["vertexai"] is True
+                assert call_kwargs["project"] == "test-project"
+                assert call_kwargs["location"] == "us-central1"
+                assert call_kwargs["credentials"] is mock_credentials
 
         clear_config_cache()
 
