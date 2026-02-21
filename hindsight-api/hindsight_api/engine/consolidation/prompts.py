@@ -1,8 +1,51 @@
 """Prompts for the consolidation engine."""
 
-CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
+# Data section template - shared across all modes, holds the dynamic per-call data
+_DATA_SECTION = """
+{mission_section}NEW FACT: {fact_text}
 
-You must output a JSON object with an "actions" array. The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
+EXISTING OBSERVATIONS (JSON array with source memories and dates):
+{observations_text}
+
+Each observation includes:
+- id: unique identifier for updating
+- text: the observation content
+- proof_count: number of supporting memories
+- tags: visibility scope (handled automatically)
+- occurred_start/occurred_end: temporal range of source facts
+- source_memories: array of supporting facts with their text and dates
+
+Instructions:
+1. Extract DURABLE KNOWLEDGE from the new fact (not ephemeral state)
+2. Review source_memories in existing observations to understand evidence
+3. Check dates to detect contradictions or updates
+4. Compare with observations:
+   - Same topic → UPDATE with learning_id
+   - New topic → CREATE new observation
+   - Purely ephemeral → return empty actions list"""
+
+# Output format instructions - shared across all modes
+_OUTPUT_FORMAT = """
+Output a JSON object with an "actions" array (the "text" field should use markdown formatting for structure):
+{{"actions": [
+  {{"action": "update", "learning_id": "uuid-from-observations", "text": "## Updated Knowledge\n\n**Key point**: details here\n\n- Supporting detail 1\n- Supporting detail 2", "reason": "..."}},
+  {{"action": "create", "text": "## New Durable Knowledge\n\nDescription with **emphasis** and proper structure", "reason": "..."}}
+]}}
+
+Return {{"actions": []}} if fact contains no durable knowledge.
+
+IMPORTANT: Format the "text" field with markdown for better readability:
+- Use headers, lists, bold/italic, tables where appropriate
+- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)
+- Ensure proper spacing for markdown to render correctly
+- Do NOT include "tags" in output - tags are handled automatically"""
+
+
+# Standard prompt - full detailed rules
+STANDARD_CONSOLIDATION_PROMPT = (
+    """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
+
+The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
 
 ## EXTRACT DURABLE KNOWLEDGE, NOT EPHEMERAL STATE
 Facts often describe events or actions. Extract the DURABLE KNOWLEDGE implied by the fact, not the transient state.
@@ -43,42 +86,19 @@ BAD examples:
   * Use "used to X, now Y" OR "changed from X to Y" OR "X but now Y"
   * DO NOT just state the new fact - you MUST show the change
 - Keep observations focused on ONE specific topic per person
-- The "text" field MUST contain durable knowledge, not ephemeral state
-- Do NOT include "tags" in output - tags are handled automatically"""
+- The "text" field MUST contain durable knowledge, not ephemeral state"""
+    + _DATA_SECTION
+    + _OUTPUT_FORMAT
+)
 
-CONSOLIDATION_USER_PROMPT = """Analyze this new fact and consolidate into knowledge.
-{mission_section}
-NEW FACT: {fact_text}
 
-EXISTING OBSERVATIONS (JSON array with source memories and dates):
-{observations_text}
+# Custom prompt template - user-provided instructions replace the rules section
+CUSTOM_CONSOLIDATION_PROMPT = (
+    """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
 
-Each observation includes:
-- id: unique identifier for updating
-- text: the observation content
-- proof_count: number of supporting memories
-- tags: visibility scope (handled automatically)
-- occurred_start/occurred_end: temporal range of source facts
-- source_memories: array of supporting facts with their text and dates
+The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
 
-Instructions:
-1. Extract DURABLE KNOWLEDGE from the new fact (not ephemeral state)
-2. Review source_memories in existing observations to understand evidence
-3. Check dates to detect contradictions or updates
-4. Compare with observations:
-   - Same topic → UPDATE with learning_id
-   - New topic → CREATE new observation
-   - Purely ephemeral → return empty actions list
-
-Output a JSON object with an "actions" array (the "text" field should use markdown formatting for structure):
-{{"actions": [
-  {{"action": "update", "learning_id": "uuid-from-observations", "text": "## Updated Knowledge\n\n**Key point**: details here\n\n- Supporting detail 1\n- Supporting detail 2", "reason": "..."}},
-  {{"action": "create", "text": "## New Durable Knowledge\n\nDescription with **emphasis** and proper structure", "reason": "..."}}
-]}}
-
-Return {{"actions": []}} if fact contains no durable knowledge.
-
-IMPORTANT: Format the "text" field with markdown for better readability:
-- Use headers, lists, bold/italic, tables where appropriate
-- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)
-- Ensure proper spacing for markdown to render correctly"""
+{custom_instructions}"""
+    + _DATA_SECTION
+    + _OUTPUT_FORMAT
+)

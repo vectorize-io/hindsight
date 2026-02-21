@@ -24,8 +24,8 @@ from ...config import get_config
 from ..memory_engine import fq_table
 from ..retain import embedding_utils
 from .prompts import (
-    CONSOLIDATION_SYSTEM_PROMPT,
-    CONSOLIDATION_USER_PROMPT,
+    CUSTOM_CONSOLIDATION_PROMPT,
+    STANDARD_CONSOLIDATION_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -208,6 +208,7 @@ async def run_consolidation_job(
                     mission=mission,
                     request_context=request_context,
                     perf=perf,
+                    config=config,
                 )
 
                 # Mark memory as consolidated (committed immediately)
@@ -423,6 +424,7 @@ async def _process_memory(
     mission: str,
     request_context: "RequestContext",
     perf: ConsolidationPerfLog | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """
     Process a single memory for consolidation using a SINGLE LLM call.
@@ -477,6 +479,7 @@ async def _process_memory(
             fact_text=fact_text,
             recall_result=recall_result,
             mission=mission,
+            config=config,
         )
         if perf:
             perf.record_timing("llm", time.time() - t0)
@@ -831,6 +834,7 @@ async def _consolidate_with_llm(
     fact_text: str,
     recall_result: "RecallResult",
     mission: str,
+    config: Any = None,
 ) -> list[dict[str, Any]]:
     """
     Single LLM call to extract durable knowledge and decide on consolidation actions.
@@ -868,15 +872,25 @@ MISSION CONTEXT: {mission}
 Focus on DURABLE knowledge that serves this mission, not ephemeral state.
 """
 
-    user_prompt = CONSOLIDATION_USER_PROMPT.format(
-        mission_section=mission_section,
-        fact_text=fact_text,
-        observations_text=observations_text,
-    )
+    # Select and render prompt based on configured mode
+    prompt_mode = config.consolidation_prompt_mode if config is not None else "standard"
+    if prompt_mode == "custom":
+        custom_instructions = config.consolidation_custom_instructions or ""
+        prompt = CUSTOM_CONSOLIDATION_PROMPT.format(
+            custom_instructions=custom_instructions,
+            mission_section=mission_section,
+            fact_text=fact_text,
+            observations_text=observations_text,
+        )
+    else:
+        prompt = STANDARD_CONSOLIDATION_PROMPT.format(
+            mission_section=mission_section,
+            fact_text=fact_text,
+            observations_text=observations_text,
+        )
 
     messages = [
-        {"role": "system", "content": CONSOLIDATION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": prompt},
     ]
 
     response: _ConsolidationResponse = await memory_engine._consolidation_llm_config.call(

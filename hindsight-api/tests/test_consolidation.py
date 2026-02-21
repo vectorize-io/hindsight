@@ -1990,3 +1990,121 @@ class TestMentalModelRefreshAfterConsolidation:
 
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_consolidation_prompt_mode_selection():
+    """Test that the correct prompt is selected based on consolidation_prompt_mode."""
+    from hindsight_api.engine.consolidation.prompts import (
+        CUSTOM_CONSOLIDATION_PROMPT,
+        STANDARD_CONSOLIDATION_PROMPT,
+    )
+
+    # Verify the two prompts are distinct
+    assert CUSTOM_CONSOLIDATION_PROMPT != STANDARD_CONSOLIDATION_PROMPT
+
+    # Verify standard prompt contains the detailed rules
+    assert "EXTRACT DURABLE KNOWLEDGE" in STANDARD_CONSOLIDATION_PROMPT
+    assert "PRESERVE SPECIFIC DETAILS" in STANDARD_CONSOLIDATION_PROMPT
+    assert "MERGE RULES" in STANDARD_CONSOLIDATION_PROMPT
+
+    # Verify both prompts include the output format and data section placeholders
+    for prompt in (STANDARD_CONSOLIDATION_PROMPT, CUSTOM_CONSOLIDATION_PROMPT):
+        assert "actions" in prompt
+        assert "{fact_text}" in prompt
+        assert "{observations_text}" in prompt
+
+    # Verify custom prompt template has placeholder
+    assert "{custom_instructions}" in CUSTOM_CONSOLIDATION_PROMPT
+
+    # Verify custom prompt with instructions renders correctly
+    rendered = CUSTOM_CONSOLIDATION_PROMPT.format(
+        custom_instructions="Only extract facts about cats.",
+        mission_section="",
+        fact_text="test",
+        observations_text="[]",
+    )
+    assert "Only extract facts about cats." in rendered
+    assert "{custom_instructions}" not in rendered
+
+
+def test_consolidation_prompt_mode_config_validation():
+    """Test that consolidation_prompt_mode config validation works correctly."""
+    from hindsight_api.config import (
+        CONSOLIDATION_PROMPT_MODES,
+        DEFAULT_CONSOLIDATION_PROMPT_MODE,
+        _validate_consolidation_prompt_mode,
+    )
+
+    assert DEFAULT_CONSOLIDATION_PROMPT_MODE == "standard"
+    assert "standard" in CONSOLIDATION_PROMPT_MODES
+    assert "custom" in CONSOLIDATION_PROMPT_MODES
+    assert "basic" not in CONSOLIDATION_PROMPT_MODES
+
+    # Valid modes
+    assert _validate_consolidation_prompt_mode("standard") == "standard"
+    assert _validate_consolidation_prompt_mode("custom") == "custom"
+    assert _validate_consolidation_prompt_mode("STANDARD") == "standard"
+
+    # Invalid mode falls back to default
+    assert _validate_consolidation_prompt_mode("invalid") == DEFAULT_CONSOLIDATION_PROMPT_MODE
+
+
+@pytest.mark.asyncio
+async def test_consolidation_custom_prompt_mode(memory: "MemoryEngine", request_context):
+    """Test that custom consolidation prompt mode uses custom guidelines."""
+    import os
+
+    from hindsight_api.config import _get_raw_config, clear_config_cache
+
+    original_mode = os.getenv("HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE")
+    original_instructions = os.getenv("HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS")
+
+    try:
+        os.environ["HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE"] = "custom"
+        os.environ["HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS"] = (
+            "ONLY extract facts about programming languages. Ignore all other topics."
+        )
+        clear_config_cache()
+
+        config = _get_raw_config()
+        assert config.consolidation_prompt_mode == "custom"
+        assert config.consolidation_custom_instructions is not None
+
+        bank_id = f"test-custom-consolidation-{uuid.uuid4().hex[:8]}"
+
+        # Override config on memory engine for this test
+        original_base_config = memory._config_resolver._base_config
+        memory._config_resolver._base_config = config
+
+        try:
+            await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+            # Retain memory - consolidation runs automatically
+            await memory.retain_async(
+                bank_id=bank_id,
+                content="Alice uses Python for data analysis and loves its simplicity.",
+                request_context=request_context,
+            )
+            # Verify no errors occurred during consolidation with custom prompt
+            async with memory._pool.acquire() as conn:
+                observations = await conn.fetch(
+                    "SELECT id, text, fact_type FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
+                    bank_id,
+                )
+            # The important thing is no errors - LLM may or may not create observations
+            assert isinstance(observations, list)
+        finally:
+            memory._config_resolver._base_config = original_base_config
+            await memory.delete_bank(bank_id, request_context=request_context)
+
+    finally:
+        if original_mode is None:
+            os.environ.pop("HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE", None)
+        else:
+            os.environ["HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE"] = original_mode
+
+        if original_instructions is None:
+            os.environ.pop("HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS", None)
+        else:
+            os.environ["HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS"] = original_instructions
+
+        clear_config_cache()
