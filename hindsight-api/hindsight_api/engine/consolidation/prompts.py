@@ -1,6 +1,35 @@
 """Prompts for the consolidation engine."""
 
-CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
+# Output format instructions shared across all modes
+_OUTPUT_FORMAT = """
+Output a JSON object with an "actions" array (the "text" field should use markdown formatting for structure):
+{{"actions": [
+  {{"action": "update", "learning_id": "uuid-from-observations", "text": "## Updated Knowledge\n\n**Key point**: details here\n\n- Supporting detail 1\n- Supporting detail 2", "reason": "..."}},
+  {{"action": "create", "text": "## New Durable Knowledge\n\nDescription with **emphasis** and proper structure", "reason": "..."}}
+]}}
+
+Return {{"actions": []}} if fact contains no durable knowledge.
+
+IMPORTANT: Format the "text" field with markdown for better readability:
+- Use headers, lists, bold/italic, tables where appropriate
+- CRITICAL: Add blank lines before and after block elements (tables, code blocks, lists)
+- Ensure proper spacing for markdown to render correctly
+- Do NOT include "tags" in output - tags are handled automatically"""
+
+
+# Basic prompt - minimal rules + output format only
+BASIC_CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
+
+The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
+
+- Extract DURABLE knowledge from facts, not ephemeral state (current position, temporary actions)
+- NEVER merge facts about DIFFERENT people or unrelated topics
+- REDUNDANT facts → update existing; CONTRADICTIONS → update with temporal markers ("used to X, now Y")
+- Keep observations focused on ONE specific topic per person""" + _OUTPUT_FORMAT
+
+
+# Standard prompt - full detailed rules (original prompt)
+STANDARD_CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
 
 You must output a JSON object with an "actions" array. The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
 
@@ -45,6 +74,18 @@ BAD examples:
 - Keep observations focused on ONE specific topic per person
 - The "text" field MUST contain durable knowledge, not ephemeral state
 - Do NOT include "tags" in output - tags are handled automatically"""
+
+
+# Custom prompt template - uses base output format with user-provided instructions
+CUSTOM_CONSOLIDATION_SYSTEM_PROMPT = """You are a memory consolidation system. Your job is to convert facts into durable knowledge (observations) and merge with existing knowledge when appropriate.
+
+The "text" field within each action should use markdown formatting (headers, lists, bold, etc.) for clarity and readability.
+
+{custom_instructions}""" + _OUTPUT_FORMAT
+
+
+# Default alias for backward compatibility - points to basic
+CONSOLIDATION_SYSTEM_PROMPT = BASIC_CONSOLIDATION_SYSTEM_PROMPT
 
 CONSOLIDATION_USER_PROMPT = """Analyze this new fact and consolidate into knowledge.
 {mission_section}
