@@ -24,10 +24,8 @@ from ...config import get_config
 from ..memory_engine import fq_table
 from ..retain import embedding_utils
 from .prompts import (
-    BASIC_CONSOLIDATION_SYSTEM_PROMPT,
-    CONSOLIDATION_USER_PROMPT,
-    CUSTOM_CONSOLIDATION_SYSTEM_PROMPT,
-    STANDARD_CONSOLIDATION_SYSTEM_PROMPT,
+    CUSTOM_CONSOLIDATION_PROMPT,
+    STANDARD_CONSOLIDATION_PROMPT,
 )
 
 if TYPE_CHECKING:
@@ -874,25 +872,25 @@ MISSION CONTEXT: {mission}
 Focus on DURABLE knowledge that serves this mission, not ephemeral state.
 """
 
-    user_prompt = CONSOLIDATION_USER_PROMPT.format(
-        mission_section=mission_section,
-        fact_text=fact_text,
-        observations_text=observations_text,
-    )
-
-    # Select system prompt based on configured mode
-    prompt_mode = config.consolidation_prompt_mode if config is not None else "basic"
+    # Select and render prompt based on configured mode
+    prompt_mode = config.consolidation_prompt_mode if config is not None else "standard"
     if prompt_mode == "custom":
         custom_instructions = config.consolidation_custom_instructions or ""
-        system_prompt = CUSTOM_CONSOLIDATION_SYSTEM_PROMPT.format(custom_instructions=custom_instructions)
-    elif prompt_mode == "standard":
-        system_prompt = STANDARD_CONSOLIDATION_SYSTEM_PROMPT
+        prompt = CUSTOM_CONSOLIDATION_PROMPT.format(
+            custom_instructions=custom_instructions,
+            mission_section=mission_section,
+            fact_text=fact_text,
+            observations_text=observations_text,
+        )
     else:
-        system_prompt = BASIC_CONSOLIDATION_SYSTEM_PROMPT
+        prompt = STANDARD_CONSOLIDATION_PROMPT.format(
+            mission_section=mission_section,
+            fact_text=fact_text,
+            observations_text=observations_text,
+        )
 
     messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": prompt},
     ]
 
     response: _ConsolidationResponse = await memory_engine._consolidation_llm_config.call(

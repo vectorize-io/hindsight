@@ -414,8 +414,8 @@ DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 1024  # Max tokens for recall when finding related observations
-DEFAULT_CONSOLIDATION_PROMPT_MODE = "basic"  # Prompt mode: "basic", "standard", or "custom"
-CONSOLIDATION_PROMPT_MODES = ("basic", "standard", "custom")  # Allowed prompt modes
+DEFAULT_CONSOLIDATION_PROMPT_MODE = "standard"  # Prompt mode: "standard" or "custom"
+CONSOLIDATION_PROMPT_MODES = ("standard", "custom")  # Allowed prompt modes
 DEFAULT_CONSOLIDATION_CUSTOM_INSTRUCTIONS = None  # Custom consolidation guidelines (only used when mode="custom")
 
 # Database migrations

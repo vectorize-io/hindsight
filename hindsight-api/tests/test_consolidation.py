@@ -1993,31 +1993,36 @@ class TestMentalModelRefreshAfterConsolidation:
 
 
 def test_consolidation_prompt_mode_selection():
-    """Test that the correct system prompt is selected based on consolidation_prompt_mode."""
+    """Test that the correct prompt is selected based on consolidation_prompt_mode."""
     from hindsight_api.engine.consolidation.prompts import (
-        BASIC_CONSOLIDATION_SYSTEM_PROMPT,
-        CUSTOM_CONSOLIDATION_SYSTEM_PROMPT,
-        STANDARD_CONSOLIDATION_SYSTEM_PROMPT,
+        CUSTOM_CONSOLIDATION_PROMPT,
+        STANDARD_CONSOLIDATION_PROMPT,
     )
 
-    # Verify the three prompts are distinct
-    assert BASIC_CONSOLIDATION_SYSTEM_PROMPT != STANDARD_CONSOLIDATION_SYSTEM_PROMPT
-    assert CUSTOM_CONSOLIDATION_SYSTEM_PROMPT != STANDARD_CONSOLIDATION_SYSTEM_PROMPT
+    # Verify the two prompts are distinct
+    assert CUSTOM_CONSOLIDATION_PROMPT != STANDARD_CONSOLIDATION_PROMPT
 
     # Verify standard prompt contains the detailed rules
-    assert "EXTRACT DURABLE KNOWLEDGE" in STANDARD_CONSOLIDATION_SYSTEM_PROMPT
-    assert "PRESERVE SPECIFIC DETAILS" in STANDARD_CONSOLIDATION_SYSTEM_PROMPT
-    assert "MERGE RULES" in STANDARD_CONSOLIDATION_SYSTEM_PROMPT
+    assert "EXTRACT DURABLE KNOWLEDGE" in STANDARD_CONSOLIDATION_PROMPT
+    assert "PRESERVE SPECIFIC DETAILS" in STANDARD_CONSOLIDATION_PROMPT
+    assert "MERGE RULES" in STANDARD_CONSOLIDATION_PROMPT
 
-    # Verify basic prompt is minimal but still has output format
-    assert "actions" in BASIC_CONSOLIDATION_SYSTEM_PROMPT
-    assert "durable" in BASIC_CONSOLIDATION_SYSTEM_PROMPT.lower()
+    # Verify both prompts include the output format and data section placeholders
+    for prompt in (STANDARD_CONSOLIDATION_PROMPT, CUSTOM_CONSOLIDATION_PROMPT):
+        assert "actions" in prompt
+        assert "{fact_text}" in prompt
+        assert "{observations_text}" in prompt
 
     # Verify custom prompt template has placeholder
-    assert "{custom_instructions}" in CUSTOM_CONSOLIDATION_SYSTEM_PROMPT
+    assert "{custom_instructions}" in CUSTOM_CONSOLIDATION_PROMPT
 
     # Verify custom prompt with instructions renders correctly
-    rendered = CUSTOM_CONSOLIDATION_SYSTEM_PROMPT.format(custom_instructions="Only extract facts about cats.")
+    rendered = CUSTOM_CONSOLIDATION_PROMPT.format(
+        custom_instructions="Only extract facts about cats.",
+        mission_section="",
+        fact_text="test",
+        observations_text="[]",
+    )
     assert "Only extract facts about cats." in rendered
     assert "{custom_instructions}" not in rendered
 
@@ -2030,13 +2035,12 @@ def test_consolidation_prompt_mode_config_validation():
         _validate_consolidation_prompt_mode,
     )
 
-    assert DEFAULT_CONSOLIDATION_PROMPT_MODE == "basic"
-    assert "basic" in CONSOLIDATION_PROMPT_MODES
+    assert DEFAULT_CONSOLIDATION_PROMPT_MODE == "standard"
     assert "standard" in CONSOLIDATION_PROMPT_MODES
     assert "custom" in CONSOLIDATION_PROMPT_MODES
+    assert "basic" not in CONSOLIDATION_PROMPT_MODES
 
     # Valid modes
-    assert _validate_consolidation_prompt_mode("basic") == "basic"
     assert _validate_consolidation_prompt_mode("standard") == "standard"
     assert _validate_consolidation_prompt_mode("custom") == "custom"
     assert _validate_consolidation_prompt_mode("STANDARD") == "standard"
