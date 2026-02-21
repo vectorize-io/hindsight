@@ -717,6 +717,36 @@ Observations are consolidated knowledge synthesized from facts.
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
+| `HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE` | Observation synthesis prompt mode: `standard` or `custom` | `standard` |
+| `HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS` | Custom synthesis guidelines (only used when mode is `custom`) | - |
+
+#### Prompt Modes
+
+The prompt mode controls the instructions given to the LLM when synthesizing observations from facts:
+
+- **`standard`** (default): Full detailed rules covering durable knowledge extraction, merge strategies, contradiction handling, and specificity preservation. Produces high-quality, well-structured observations.
+
+- **`custom`**: Inject your own synthesis guidelines while keeping the structural parts of the prompt (output format, data section with fact and observations) intact. Useful for domain-specific consolidation strategies or A/B testing different synthesis approaches.
+
+**Example: Custom Consolidation Prompt Mode**
+
+```bash
+# Set mode to custom
+export HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE=custom
+
+# Define custom guidelines
+export HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS="ONLY extract observations that are:
+✅ Durable preferences or traits about specific people
+✅ Factual knowledge about named entities (organizations, places, products)
+✅ Skill levels, certifications, or expertise areas
+
+DO NOT create observations for:
+❌ Ephemeral state (current location, temporary status)
+❌ Generic facts without named entities
+❌ Information that changes frequently
+
+When merging: prefer specificity over generality. Keep names, numbers, and details."
+```
 
 ### Reflect
 
@@ -914,7 +944,7 @@ Configuration fields are categorized for security:
 
 1. **Configurable Fields** - Safe behavioral settings that can be customized per-bank:
    - Retention: `retain_chunk_size`, `retain_extraction_mode`, `retain_custom_instructions`
-   - Consolidation: `enable_observations`
+   - Consolidation: `enable_observations`, `consolidation_prompt_mode`, `consolidation_custom_instructions`
 
 2. **Credential Fields** - NEVER exposed or configurable via API:
    - API keys: `*_api_key` (all LLM API keys)

@@ -80,6 +80,20 @@ const FIELD_CATEGORIES = {
         type: "boolean",
         description: "Enable automatic consolidation of facts into observations",
       },
+      consolidation_prompt_mode: {
+        label: "Prompt Mode",
+        type: "select",
+        description: "How to prompt the LLM for observation synthesis",
+        options: ["standard", "custom"],
+      },
+      consolidation_custom_instructions: {
+        label: "Custom Instructions",
+        type: "textarea",
+        description:
+          "Custom guidelines for observation synthesis (requires consolidation_prompt_mode='custom')",
+        placeholder: "Focus on durable knowledge relevant to this domain...",
+        rows: 3,
+      },
     },
   },
 };
