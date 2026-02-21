@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.cross_encoder import CohereCrossEncoder, LocalSTCrossEncoder
+from hindsight_api.engine.cross_encoder import CohereCrossEncoder, LocalSTCrossEncoder, ZeroEntropyCrossEncoder
 from hindsight_api.engine.embeddings import CohereEmbeddings, LocalSTEmbeddings, OpenAIEmbeddings
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
@@ -98,9 +98,7 @@ def get_row_count(db_url: str, schema: str = "public") -> int:
     """Get the number of rows with embeddings in memory_units."""
     engine = create_engine(db_url)
     with engine.connect() as conn:
-        return conn.execute(
-            text(f"SELECT COUNT(*) FROM {schema}.memory_units WHERE embedding IS NOT NULL")
-        ).scalar()
+        return conn.execute(text(f"SELECT COUNT(*) FROM {schema}.memory_units WHERE embedding IS NOT NULL")).scalar()
 
 
 def insert_test_embedding(db_url: str, schema: str, dimension: int):
@@ -610,3 +608,59 @@ class TestCohereIntegration:
                     await memory.close()
             except Exception:
                 pass
+
+
+# =============================================================================
+# ZeroEntropy Reranker Tests
+# =============================================================================
+
+
+def has_zeroentropy_api_key() -> bool:
+    """Check if ZeroEntropy API key is available."""
+    return bool(os.environ.get("ZEROENTROPY_API_KEY"))
+
+
+def get_zeroentropy_api_key() -> str:
+    """Get ZeroEntropy API key from environment."""
+    return os.environ.get("ZEROENTROPY_API_KEY", "")
+
+
+@pytest.fixture(scope="module")
+def zeroentropy_cross_encoder():
+    """Create ZeroEntropy cross-encoder instance."""
+    if not has_zeroentropy_api_key():
+        pytest.skip("ZeroEntropy API key not available (set ZEROENTROPY_API_KEY)")
+
+    cross_encoder = ZeroEntropyCrossEncoder(
+        api_key=get_zeroentropy_api_key(),
+        model="zerank-2",
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(cross_encoder.initialize())
+    finally:
+        loop.close()
+    return cross_encoder
+
+
+class TestZeroEntropyCrossEncoder:
+    """Tests for ZeroEntropy cross-encoder/reranker."""
+
+    def test_zeroentropy_cross_encoder_initialization(self, zeroentropy_cross_encoder):
+        """Test that ZeroEntropy cross-encoder initializes correctly."""
+        assert zeroentropy_cross_encoder.provider_name == "zeroentropy"
+
+    @pytest.mark.asyncio
+    async def test_zeroentropy_cross_encoder_predict(self, zeroentropy_cross_encoder):
+        """Test that ZeroEntropy cross-encoder can score pairs."""
+        pairs = [
+            ("What is the capital of France?", "Paris is the capital of France."),
+            ("What is the capital of France?", "The Eiffel Tower is in Paris."),
+            ("What is the capital of France?", "Python is a programming language."),
+        ]
+        scores = await zeroentropy_cross_encoder.predict(pairs)
+
+        assert len(scores) == 3
+        assert all(isinstance(s, float) for s in scores)
+        # The first result should be most relevant
+        assert scores[0] > scores[2], "Direct answer should score higher than unrelated text"

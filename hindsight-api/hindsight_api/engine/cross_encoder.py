@@ -29,6 +29,7 @@ from ..config import (
     DEFAULT_RERANKER_PROVIDER,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
+    DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     ENV_RERANKER_COHERE_API_KEY,
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
@@ -42,6 +43,7 @@ from ..config import (
     ENV_RERANKER_TEI_BATCH_SIZE,
     ENV_RERANKER_TEI_MAX_CONCURRENT,
     ENV_RERANKER_TEI_URL,
+    ENV_RERANKER_ZEROENTROPY_API_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -556,6 +558,104 @@ class CohereCrossEncoder(CrossEncoderModel):
         return all_scores
 
 
+class ZeroEntropyCrossEncoder(CrossEncoderModel):
+    """
+    ZeroEntropy cross-encoder implementation using the ZeroEntropy Rerank API.
+
+    Supports zerank-2 (flagship) and zerank-2-small models.
+    See: https://docs.zeroentropy.dev/models
+    """
+
+    RERANK_URL = "https://api.zeroentropy.dev/models/rerank"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_ZEROENTROPY_MODEL,
+        timeout: float = 60.0,
+    ):
+        """
+        Initialize ZeroEntropy cross-encoder client.
+
+        Args:
+            api_key: ZeroEntropy API key
+            model: ZeroEntropy rerank model name (default: zerank-2)
+            timeout: Request timeout in seconds (default: 60.0)
+        """
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self._async_client: httpx.AsyncClient | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "zeroentropy"
+
+    async def initialize(self) -> None:
+        """Initialize the async HTTP client."""
+        if self._async_client is not None:
+            return
+
+        logger.info(f"Reranker: initializing ZeroEntropy provider with model {self.model}")
+        self._async_client = httpx.AsyncClient(
+            timeout=self.timeout,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        logger.info("Reranker: ZeroEntropy provider initialized")
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Score query-document pairs using the ZeroEntropy Rerank API.
+
+        Args:
+            pairs: List of (query, document) tuples to score
+
+        Returns:
+            List of relevance scores
+        """
+        if self._async_client is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        if not pairs:
+            return []
+
+        # Group pairs by query for efficient batching
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            texts = [text for _, text in indexed_texts]
+            indices = [idx for idx, _ in indexed_texts]
+
+            response = await self._async_client.post(
+                self.RERANK_URL,
+                json={
+                    "model": self.model,
+                    "query": query,
+                    "documents": texts,
+                    "top_n": len(texts),
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Map scores back to original positions
+            for item in result.get("results", []):
+                original_idx = item["index"]
+                score = item["relevance_score"]
+                all_scores[indices[original_idx]] = score
+
+        return all_scores
+
+
 class RRFPassthroughCrossEncoder(CrossEncoderModel):
     """
     Passthrough cross-encoder that preserves RRF scores without neural reranking.
@@ -1010,9 +1110,19 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             model=config.reranker_litellm_sdk_model,
             api_base=config.reranker_litellm_sdk_api_base,
         )
+    elif provider == "zeroentropy":
+        api_key = config.reranker_zeroentropy_api_key
+        if not api_key:
+            raise ValueError(
+                f"{ENV_RERANKER_ZEROENTROPY_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'zeroentropy'"
+            )
+        return ZeroEntropyCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_zeroentropy_model,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'flashrank', 'litellm', 'litellm-sdk', 'rrf'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'flashrank', 'litellm', 'litellm-sdk', 'rrf'"
         )
