@@ -4401,9 +4401,12 @@ class MemoryEngine(MemoryEngineInterface):
                 LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace
             ]
 
-            # Extract memories from recall tool outputs - only include memories the agent actually used
-            # agent_result.used_memory_ids contains validated IDs from the done action
+            # Extract memories and observations from tool outputs - only include those the agent actually used
+            # agent_result.used_memory_ids / used_observation_ids contain validated IDs from the done action
             used_memory_ids_set = set(agent_result.used_memory_ids) if agent_result.used_memory_ids else set()
+            used_observation_ids_set = (
+                set(agent_result.used_observation_ids) if agent_result.used_observation_ids else set()
+            )
             # based_on stores facts, mental models, and directives
             # Note: directives list stores raw directive dicts (not MemoryFact), which will be converted to Directive objects
             based_on: dict[str, list[MemoryFact] | list[dict[str, Any]]] = {
@@ -4436,6 +4439,21 @@ class MemoryEngine(MemoryEngineInterface):
                                         occurred_end=memory_data.get("occurred"),
                                     )
                                 )
+                elif tc.tool == "search_observations" and "observations" in tc.output:
+                    for obs_data in tc.output["observations"]:
+                        obs_id = obs_data.get("id")
+                        if obs_id and obs_id not in seen_memory_ids:
+                            if used_observation_ids_set and obs_id not in used_observation_ids_set:
+                                continue  # Skip observations not actually used by the agent
+                            seen_memory_ids.add(obs_id)
+                            based_on["observation"].append(
+                                MemoryFact(
+                                    id=obs_id,
+                                    text=obs_data.get("text", ""),
+                                    fact_type="observation",
+                                    context=None,
+                                )
+                            )
 
             # Extract mental models from tool outputs - only include models the agent actually used
             # agent_result.used_mental_model_ids contains validated IDs from the done action
@@ -4457,11 +4475,11 @@ class MemoryEngine(MemoryEngineInterface):
                             seen_model_ids.add(model_id)
                             # Add to based_on as MemoryFact with type "mental-models"
                             model_name = model.get("name", "")
-                            model_summary = model.get("summary") or model.get("description", "")
+                            model_content = model.get("content", "")
                             based_on["mental-models"].append(
                                 MemoryFact(
                                     id=model_id,
-                                    text=f"{model_name}: {model_summary}",
+                                    text=f"{model_name}: {model_content}",
                                     fact_type="mental-models",
                                     context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                     occurred_start=None,
@@ -4479,43 +4497,17 @@ class MemoryEngine(MemoryEngineInterface):
                             seen_model_ids.add(model_id)
                             # Add to based_on as MemoryFact with type "mental-models"
                             model_name = model.get("name", "")
-                            model_summary = model.get("summary") or model.get("description", "")
+                            model_content = model.get("content", "")
                             based_on["mental-models"].append(
                                 MemoryFact(
                                     id=model_id,
-                                    text=f"{model_name}: {model_summary}",
+                                    text=f"{model_name}: {model_content}",
                                     fact_type="mental-models",
                                     context=f"{model.get('type', 'concept')} ({model.get('subtype', 'structural')})",
                                     occurred_start=None,
                                     occurred_end=None,
                                 )
                             )
-                elif tc.tool == "search_mental_models":
-                    # Search mental models - include all returned mental models (filtered by used_mental_model_ids_set if specified)
-                    used_mental_model_ids_set = (
-                        set(agent_result.used_mental_model_ids) if agent_result.used_mental_model_ids else set()
-                    )
-                    for mental_model in tc.output.get("mental_models", []):
-                        mental_model_id = mental_model.get("id")
-                        if mental_model_id and mental_model_id not in seen_model_ids:
-                            # Only include mental models that the agent declared as used (or all if none specified)
-                            if used_mental_model_ids_set and mental_model_id not in used_mental_model_ids_set:
-                                continue  # Skip mental models not actually used by the agent
-                            seen_model_ids.add(mental_model_id)
-                            # Add to based_on as MemoryFact with type "mental-models" (mental models are synthesized knowledge)
-                            mental_model_name = mental_model.get("name", "")
-                            mental_model_content = mental_model.get("content", "")
-                            based_on["mental-models"].append(
-                                MemoryFact(
-                                    id=mental_model_id,
-                                    text=f"{mental_model_name}: {mental_model_content}",
-                                    fact_type="mental-models",
-                                    context="mental model (user-curated)",
-                                    occurred_start=None,
-                                    occurred_end=None,
-                                )
-                            )
-                    # List all models lookup - don't add to based_on (too verbose, just a listing)
 
             # Add directives to based_on["directives"]
             # Store raw directive dicts (with id, name, content) for http.py to convert to ReflectDirective

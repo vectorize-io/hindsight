@@ -437,15 +437,18 @@ async def run_reflect_agent(
         llm_start = time.time()
 
         # Determine tool_choice for this iteration.
+        # Force the full hierarchical retrieval path before allowing auto:
         # With mental models:
-        #   0 → search_mental_models, 1+ → auto
-        # Without mental models, enforce a minimum retrieval path:
+        #   0 → search_mental_models, 1 → search_observations, 2 → recall, 3+ → auto
+        # Without mental models:
         #   0 → search_observations, 1 → recall, 2+ → auto
         if iteration == 0 and has_mental_models:
             iter_tool_choice: str | dict = {"type": "function", "function": {"name": "search_mental_models"}}
         elif iteration == 0:
             iter_tool_choice = {"type": "function", "function": {"name": "search_observations"}}
-        elif iteration == 1 and not has_mental_models:
+        elif iteration == 1 and has_mental_models:
+            iter_tool_choice = {"type": "function", "function": {"name": "search_observations"}}
+        elif iteration == 1 or (iteration == 2 and has_mental_models):
             iter_tool_choice = {"type": "function", "function": {"name": "recall"}}
         else:
             iter_tool_choice = "auto"
