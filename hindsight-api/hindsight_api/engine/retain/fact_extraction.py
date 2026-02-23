@@ -442,7 +442,7 @@ LANGUAGE: MANDATORY — Detect the language of the input text and produce ALL ou
 
 {fact_types_instruction}
 
-{extraction_guidelines}
+{retain_spec_section}{extraction_guidelines}
 
 ══════════════════════════════════════════════════════════════════════════
 FACT FORMAT - BE CONCISE
@@ -552,6 +552,7 @@ an experience or person."""
 # Assembled concise prompt (backward compatible - exact same output as before)
 CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     fact_types_instruction="{fact_types_instruction}",
+    retain_spec_section="{retain_spec_section}",
     extraction_guidelines=_CONCISE_GUIDELINES,
     examples=_CONCISE_EXAMPLES,
 )
@@ -559,6 +560,7 @@ CONCISE_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
 # Custom prompt uses same base but without examples
 CUSTOM_FACT_EXTRACTION_PROMPT = _BASE_FACT_EXTRACTION_PROMPT.format(
     fact_types_instruction="{fact_types_instruction}",
+    retain_spec_section="{retain_spec_section}",
     extraction_guidelines="{custom_instructions}",
     examples="",  # No examples for custom mode
 )
@@ -705,15 +707,31 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     extraction_mode = config.retain_extraction_mode
     extract_causal_links = config.retain_extract_causal_links
 
+    # Build retain_spec section if set - injected before the mode-specific guidelines
+    retain_spec = getattr(config, "retain_spec", None)
+    if retain_spec:
+        retain_spec_section = (
+            f"══════════════════════════════════════════════════════════════════════════\n"
+            f"FOCUS — What to retain for this bank\n"
+            f"══════════════════════════════════════════════════════════════════════════\n\n"
+            f"{retain_spec}\n\n"
+        )
+    else:
+        retain_spec_section = ""
+
     # Select base prompt based on extraction mode
     if extraction_mode == "custom":
         if not config.retain_custom_instructions:
             base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
-            prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+            prompt = base_prompt.format(
+                fact_types_instruction=fact_types_instruction,
+                retain_spec_section=retain_spec_section,
+            )
         else:
             base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
             prompt = base_prompt.format(
                 fact_types_instruction=fact_types_instruction,
+                retain_spec_section=retain_spec_section,
                 custom_instructions=config.retain_custom_instructions,
             )
     elif extraction_mode == "verbose":
@@ -721,7 +739,10 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
         prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
     else:
         base_prompt = CONCISE_FACT_EXTRACTION_PROMPT
-        prompt = base_prompt.format(fact_types_instruction=fact_types_instruction)
+        prompt = base_prompt.format(
+            fact_types_instruction=fact_types_instruction,
+            retain_spec_section=retain_spec_section,
+        )
 
     # Add causal relationships section if enabled
     if extract_causal_links:

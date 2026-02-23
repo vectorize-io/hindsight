@@ -45,53 +45,58 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 // Field metadata for UI rendering
 const FIELD_CATEGORIES = {
   retention: {
-    title: "Retention Settings",
-    description: "Control how memories are extracted and stored",
+    title: "Retain",
+    description: "Control what gets extracted and stored from content",
     fields: {
       retain_chunk_size: {
         label: "Chunk Size",
         type: "number",
-        description: "Size of text chunks for processing (tokens)",
+        description: "Size of text chunks for processing (characters)",
         min: 500,
         max: 8000,
       },
       retain_extraction_mode: {
         label: "Extraction Mode",
         type: "select",
-        description: "How to extract facts from content",
+        description:
+          "Verbosity of fact extraction: concise (default), verbose (more detail), or custom (full prompt override)",
         options: ["concise", "verbose", "custom"],
+      },
+      retain_spec: {
+        label: "Retain Spec",
+        type: "textarea",
+        description:
+          "Declarative description of what to focus on when retaining memories. Injected into the prompt alongside the extraction mode — no need to rewrite the full prompt.",
+        placeholder:
+          "Focus on technical decisions, code architecture choices, and team member expertise...",
+        rows: 3,
       },
       retain_custom_instructions: {
         label: "Custom Instructions",
         type: "textarea",
         description:
-          "Custom instructions for fact extraction (requires retain_extraction_mode='custom')",
-        placeholder: "Focus on technical details and implementation specifics...",
+          "Full prompt override for fact extraction (requires retain_extraction_mode='custom'). Replaces the built-in extraction rules entirely.",
+        placeholder: "Extract only facts about...",
         rows: 3,
       },
     },
   },
   consolidation: {
-    title: "Consolidation Settings",
-    description: "Control observation synthesis",
+    title: "Observations",
+    description: "Control how facts are synthesized into durable observations",
     fields: {
       enable_observations: {
         label: "Enable Observations",
         type: "boolean",
         description: "Enable automatic consolidation of facts into observations",
       },
-      consolidation_prompt_mode: {
-        label: "Prompt Mode",
-        type: "select",
-        description: "How to prompt the LLM for observation synthesis",
-        options: ["standard", "custom"],
-      },
-      consolidation_custom_instructions: {
-        label: "Custom Instructions",
+      observations_spec: {
+        label: "Observations Spec",
         type: "textarea",
         description:
-          "Custom guidelines for observation synthesis (requires consolidation_prompt_mode='custom')",
-        placeholder: "Focus on durable knowledge relevant to this domain...",
+          "Declarative description of what observations are for this bank. Defines the type of knowledge to synthesize — replaces the built-in durable-knowledge rules.",
+        placeholder:
+          "Observations are weekly summaries of sprint outcomes, blockers encountered, and team dynamics patterns...",
         rows: 3,
       },
     },

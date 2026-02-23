@@ -23,10 +23,7 @@ from pydantic import BaseModel
 from ...config import get_config
 from ..memory_engine import fq_table
 from ..retain import embedding_utils
-from .prompts import (
-    CUSTOM_CONSOLIDATION_PROMPT,
-    STANDARD_CONSOLIDATION_PROMPT,
-)
+from .prompts import build_consolidation_prompt
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -114,7 +111,7 @@ async def run_consolidation_job(
         t0 = time.time()
         bank_row = await conn.fetchrow(
             f"""
-            SELECT bank_id, name, mission
+            SELECT bank_id, name
             FROM {fq_table("banks")}
             WHERE bank_id = $1
             """,
@@ -125,7 +122,6 @@ async def run_consolidation_job(
             logger.warning(f"Bank {bank_id} not found for consolidation")
             return {"status": "bank_not_found", "bank_id": bank_id}
 
-        mission = bank_row["mission"] or "General memory consolidation"
         perf.record_timing("fetch_bank", time.time() - t0)
 
         # Count total unconsolidated memories for progress logging
@@ -205,7 +201,6 @@ async def run_consolidation_job(
                     memory_engine=memory_engine,
                     bank_id=bank_id,
                     memory=dict(memory),
-                    mission=mission,
                     request_context=request_context,
                     perf=perf,
                     config=config,
@@ -421,7 +416,6 @@ async def _process_memory(
     memory_engine: "MemoryEngine",
     bank_id: str,
     memory: dict[str, Any],
-    mission: str,
     request_context: "RequestContext",
     perf: ConsolidationPerfLog | None = None,
     config: Any = None,
@@ -478,7 +472,6 @@ async def _process_memory(
             memory_engine=memory_engine,
             fact_text=fact_text,
             recall_result=recall_result,
-            mission=mission,
             config=config,
         )
         if perf:
@@ -833,7 +826,6 @@ async def _consolidate_with_llm(
     memory_engine: "MemoryEngine",
     fact_text: str,
     recall_result: "RecallResult",
-    mission: str,
     config: Any = None,
 ) -> list[dict[str, Any]]:
     """
@@ -863,31 +855,12 @@ async def _consolidate_with_llm(
     else:
         observations_text = "[]"
 
-    # Only include mission section if mission is set and not the default
-    mission_section = ""
-    if mission and mission != "General memory consolidation":
-        mission_section = f"""
-MISSION CONTEXT: {mission}
-
-Focus on DURABLE knowledge that serves this mission, not ephemeral state.
-"""
-
-    # Select and render prompt based on configured mode
-    prompt_mode = config.consolidation_prompt_mode if config is not None else "standard"
-    if prompt_mode == "custom":
-        custom_instructions = config.consolidation_custom_instructions or ""
-        prompt = CUSTOM_CONSOLIDATION_PROMPT.format(
-            custom_instructions=custom_instructions,
-            mission_section=mission_section,
-            fact_text=fact_text,
-            observations_text=observations_text,
-        )
-    else:
-        prompt = STANDARD_CONSOLIDATION_PROMPT.format(
-            mission_section=mission_section,
-            fact_text=fact_text,
-            observations_text=observations_text,
-        )
+    observations_spec = config.observations_spec if config is not None else None
+    prompt_template = build_consolidation_prompt(observations_spec)
+    prompt = prompt_template.format(
+        fact_text=fact_text,
+        observations_text=observations_text,
+    )
 
     messages = [
         {"role": "user", "content": prompt},

@@ -540,7 +540,8 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS` | Max completion tokens for fact extraction LLM calls | `64000` |
 | `HINDSIGHT_API_RETAIN_CHUNK_SIZE` | Max characters per chunk for fact extraction. Larger chunks extract fewer LLM calls but may lose context. | `3000` |
 | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE` | Fact extraction mode: `concise`, `verbose`, or `custom` | `concise` |
-| `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Custom extraction guidelines (only used when mode is `custom`) | - |
+| `HINDSIGHT_API_RETAIN_SPEC` | Declarative description of what to focus on when retaining. Injected into any extraction mode alongside the built-in rules. | - |
+| `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` | Full prompt override for fact extraction (only used when mode is `custom`). Replaces built-in extraction rules entirely. | - |
 | `HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS` | Extract causal relationships between facts | `true` |
 | `HINDSIGHT_API_RETAIN_BATCH_ENABLED` | Use LLM Batch API for fact extraction (50% cost savings, only with async operations) | `false` |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
@@ -553,9 +554,19 @@ The extraction mode controls how aggressively facts are extracted from content:
 
 - **`verbose`**: Detailed extraction that captures every piece of information with maximum verbosity. Produces more facts with extensive detail but slower performance and higher token usage.
 
-- **`custom`**: Inject your own extraction guidelines while keeping the structural parts of the prompt (output format, coreference resolution, temporal handling, etc.) intact. Useful for A/B testing different extraction strategies or domain-specific customization.
+- **`custom`**: Full prompt override. Replaces the built-in extraction rules entirely with your own guidelines while keeping the structural parts of the prompt (output format, coreference resolution, temporal handling) intact.
 
-**Example: Custom Extraction Mode**
+**Example: Retain Spec (light-touch focus)**
+
+Use `HINDSIGHT_API_RETAIN_SPEC` when you want to steer extraction without rewriting the full prompt. It's declarative and works alongside any extraction mode:
+
+```bash
+export HINDSIGHT_API_RETAIN_SPEC="Focus on technical decisions, architecture choices, team member expertise, and project milestones. Deprioritize social or personal information."
+```
+
+**Example: Custom Extraction Mode (full override)**
+
+Use `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` with `mode=custom` when you need complete control over the extraction rules:
 
 ```bash
 # Set mode to custom
@@ -717,35 +728,24 @@ Observations are consolidated knowledge synthesized from facts.
 | `HINDSIGHT_API_ENABLE_OBSERVATIONS` | Enable observation consolidation | `true` |
 | `HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE` | Memories to load per batch (internal optimization) | `50` |
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
-| `HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE` | Observation synthesis prompt mode: `standard` or `custom` | `standard` |
-| `HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS` | Custom synthesis guidelines (only used when mode is `custom`) | - |
+| `HINDSIGHT_API_OBSERVATIONS_SPEC` | Declarative description of what observations are for this bank. Replaces the built-in durable-knowledge rules. | - |
 
-#### Prompt Modes
+#### Observations Spec
 
-The prompt mode controls the instructions given to the LLM when synthesizing observations from facts:
+By default, the consolidation engine uses built-in rules to extract durable, specific knowledge from facts — filtering out ephemeral state, avoiding over-abstraction, and handling contradictions with temporal markers.
 
-- **`standard`** (default): Full detailed rules covering durable knowledge extraction, merge strategies, contradiction handling, and specificity preservation. Produces high-quality, well-structured observations.
+Set `HINDSIGHT_API_OBSERVATIONS_SPEC` to replace these rules with your own declarative definition of what observations should be for your use case. This is the primary customization lever for observation synthesis.
 
-- **`custom`**: Inject your own synthesis guidelines while keeping the structural parts of the prompt (output format, data section with fact and observations) intact. Useful for domain-specific consolidation strategies or A/B testing different synthesis approaches.
-
-**Example: Custom Consolidation Prompt Mode**
+**Example: Event timeline summaries**
 
 ```bash
-# Set mode to custom
-export HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE=custom
+export HINDSIGHT_API_OBSERVATIONS_SPEC="Observations are broad summaries of project events grouped by week. Each observation should capture what happened, what was decided, and what was blocked — not individual facts. Merge related events into cohesive weekly narratives."
+```
 
-# Define custom guidelines
-export HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS="ONLY extract observations that are:
-✅ Durable preferences or traits about specific people
-✅ Factual knowledge about named entities (organizations, places, products)
-✅ Skill levels, certifications, or expertise areas
+**Example: Person-centric durable knowledge**
 
-DO NOT create observations for:
-❌ Ephemeral state (current location, temporary status)
-❌ Generic facts without named entities
-❌ Information that changes frequently
-
-When merging: prefer specificity over generality. Keep names, numbers, and details."
+```bash
+export HINDSIGHT_API_OBSERVATIONS_SPEC="Observations are durable facts about specific named people: their preferences, skills, relationships, and behavioral patterns. Only create observations for facts that are stable over time and tied to a named individual."
 ```
 
 ### Reflect
@@ -943,8 +943,8 @@ This design prevents bugs where global defaults are used instead of bank overrid
 Configuration fields are categorized for security:
 
 1. **Configurable Fields** - Safe behavioral settings that can be customized per-bank:
-   - Retention: `retain_chunk_size`, `retain_extraction_mode`, `retain_custom_instructions`
-   - Consolidation: `enable_observations`, `consolidation_prompt_mode`, `consolidation_custom_instructions`
+   - Retention: `retain_chunk_size`, `retain_extraction_mode`, `retain_spec`, `retain_custom_instructions`
+   - Observations: `enable_observations`, `observations_spec`
 
 2. **Credential Fields** - NEVER exposed or configurable via API:
    - API keys: `*_api_key` (all LLM API keys)

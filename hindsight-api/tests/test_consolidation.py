@@ -1992,119 +1992,98 @@ class TestMentalModelRefreshAfterConsolidation:
         await memory.delete_bank(bank_id, request_context=request_context)
 
 
-def test_consolidation_prompt_mode_selection():
-    """Test that the correct prompt is selected based on consolidation_prompt_mode."""
-    from hindsight_api.engine.consolidation.prompts import (
-        CUSTOM_CONSOLIDATION_PROMPT,
-        STANDARD_CONSOLIDATION_PROMPT,
-    )
+def test_consolidation_prompt_default():
+    """Test that the default consolidation prompt contains the built-in durable-knowledge rules."""
+    from hindsight_api.engine.consolidation.prompts import build_consolidation_prompt
 
-    # Verify the two prompts are distinct
-    assert CUSTOM_CONSOLIDATION_PROMPT != STANDARD_CONSOLIDATION_PROMPT
-
-    # Verify standard prompt contains the detailed rules
-    assert "EXTRACT DURABLE KNOWLEDGE" in STANDARD_CONSOLIDATION_PROMPT
-    assert "PRESERVE SPECIFIC DETAILS" in STANDARD_CONSOLIDATION_PROMPT
-    assert "MERGE RULES" in STANDARD_CONSOLIDATION_PROMPT
-
-    # Verify both prompts include the output format and data section placeholders
-    for prompt in (STANDARD_CONSOLIDATION_PROMPT, CUSTOM_CONSOLIDATION_PROMPT):
-        assert "actions" in prompt
-        assert "{fact_text}" in prompt
-        assert "{observations_text}" in prompt
-
-    # Verify custom prompt template has placeholder
-    assert "{custom_instructions}" in CUSTOM_CONSOLIDATION_PROMPT
-
-    # Verify custom prompt with instructions renders correctly
-    rendered = CUSTOM_CONSOLIDATION_PROMPT.format(
-        custom_instructions="Only extract facts about cats.",
-        mission_section="",
-        fact_text="test",
-        observations_text="[]",
-    )
-    assert "Only extract facts about cats." in rendered
-    assert "{custom_instructions}" not in rendered
+    prompt = build_consolidation_prompt()
+    assert "DURABLE KNOWLEDGE" in prompt
+    assert "temporal markers" in prompt
+    assert "{fact_text}" in prompt
+    assert "{observations_text}" in prompt
 
 
-def test_consolidation_prompt_mode_config_validation():
-    """Test that consolidation_prompt_mode config validation works correctly."""
-    from hindsight_api.config import (
-        CONSOLIDATION_PROMPT_MODES,
-        DEFAULT_CONSOLIDATION_PROMPT_MODE,
-        _validate_consolidation_prompt_mode,
-    )
+def test_consolidation_prompt_observations_spec():
+    """Test that observations_spec replaces the default rules."""
+    from hindsight_api.engine.consolidation.prompts import build_consolidation_prompt
 
-    assert DEFAULT_CONSOLIDATION_PROMPT_MODE == "standard"
-    assert "standard" in CONSOLIDATION_PROMPT_MODES
-    assert "custom" in CONSOLIDATION_PROMPT_MODES
-    assert "basic" not in CONSOLIDATION_PROMPT_MODES
+    spec = "Observations are weekly summaries of sprint outcomes and team dynamics."
+    prompt = build_consolidation_prompt(observations_spec=spec)
 
-    # Valid modes
-    assert _validate_consolidation_prompt_mode("standard") == "standard"
-    assert _validate_consolidation_prompt_mode("custom") == "custom"
-    assert _validate_consolidation_prompt_mode("STANDARD") == "standard"
+    # Spec is injected
+    assert spec in prompt
+    # Default rules are NOT present
+    assert "EXTRACT DURABLE KNOWLEDGE" not in prompt
+    # Output format and data placeholders remain
+    assert "actions" in prompt
+    assert "{fact_text}" in prompt
+    assert "{observations_text}" in prompt
 
-    # Invalid mode falls back to default
-    assert _validate_consolidation_prompt_mode("invalid") == DEFAULT_CONSOLIDATION_PROMPT_MODE
+    # Renders cleanly
+    rendered = prompt.format(fact_text="Alice fixed a bug.", observations_text="[]")
+    assert "{fact_text}" not in rendered
+    assert spec in rendered
+
+
+def test_observations_spec_config():
+    """Test that observations_spec is loaded from env and exposed as configurable."""
+    import os
+
+    from hindsight_api.config import HindsightConfig, _get_raw_config, clear_config_cache
+
+    original = os.getenv("HINDSIGHT_API_OBSERVATIONS_SPEC")
+    try:
+        os.environ["HINDSIGHT_API_OBSERVATIONS_SPEC"] = "Weekly sprint summaries only."
+        clear_config_cache()
+        config = _get_raw_config()
+        assert config.observations_spec == "Weekly sprint summaries only."
+        assert "observations_spec" in HindsightConfig.get_configurable_fields()
+    finally:
+        if original is None:
+            os.environ.pop("HINDSIGHT_API_OBSERVATIONS_SPEC", None)
+        else:
+            os.environ["HINDSIGHT_API_OBSERVATIONS_SPEC"] = original
+        clear_config_cache()
 
 
 @pytest.mark.asyncio
-async def test_consolidation_custom_prompt_mode(memory: "MemoryEngine", request_context):
-    """Test that custom consolidation prompt mode uses custom guidelines."""
+async def test_consolidation_with_observations_spec(memory: "MemoryEngine", request_context):
+    """Test that observations_spec is used during consolidation without errors."""
     import os
 
     from hindsight_api.config import _get_raw_config, clear_config_cache
 
-    original_mode = os.getenv("HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE")
-    original_instructions = os.getenv("HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS")
-
+    original = os.getenv("HINDSIGHT_API_OBSERVATIONS_SPEC")
     try:
-        os.environ["HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE"] = "custom"
-        os.environ["HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS"] = (
-            "ONLY extract facts about programming languages. Ignore all other topics."
+        os.environ["HINDSIGHT_API_OBSERVATIONS_SPEC"] = (
+            "Observations are summaries of programming language usage patterns."
         )
         clear_config_cache()
-
         config = _get_raw_config()
-        assert config.consolidation_prompt_mode == "custom"
-        assert config.consolidation_custom_instructions is not None
 
-        bank_id = f"test-custom-consolidation-{uuid.uuid4().hex[:8]}"
-
-        # Override config on memory engine for this test
+        bank_id = f"test-obs-spec-{uuid.uuid4().hex[:8]}"
         original_base_config = memory._config_resolver._base_config
         memory._config_resolver._base_config = config
 
         try:
             await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
-            # Retain memory - consolidation runs automatically
             await memory.retain_async(
                 bank_id=bank_id,
                 content="Alice uses Python for data analysis and loves its simplicity.",
                 request_context=request_context,
             )
-            # Verify no errors occurred during consolidation with custom prompt
             async with memory._pool.acquire() as conn:
                 observations = await conn.fetch(
                     "SELECT id, text, fact_type FROM memory_units WHERE bank_id = $1 AND fact_type = 'observation'",
                     bank_id,
                 )
-            # The important thing is no errors - LLM may or may not create observations
             assert isinstance(observations, list)
         finally:
             memory._config_resolver._base_config = original_base_config
             await memory.delete_bank(bank_id, request_context=request_context)
-
     finally:
-        if original_mode is None:
-            os.environ.pop("HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE", None)
+        if original is None:
+            os.environ.pop("HINDSIGHT_API_OBSERVATIONS_SPEC", None)
         else:
-            os.environ["HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE"] = original_mode
-
-        if original_instructions is None:
-            os.environ.pop("HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS", None)
-        else:
-            os.environ["HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS"] = original_instructions
-
+            os.environ["HINDSIGHT_API_OBSERVATIONS_SPEC"] = original
         clear_config_cache()

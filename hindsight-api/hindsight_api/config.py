@@ -252,6 +252,7 @@ ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
+ENV_RETAIN_SPEC = "HINDSIGHT_API_RETAIN_SPEC"
 ENV_RETAIN_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS"
 ENV_RETAIN_BATCH_TOKENS = "HINDSIGHT_API_RETAIN_BATCH_TOKENS"
 ENV_RETAIN_BATCH_ENABLED = "HINDSIGHT_API_RETAIN_BATCH_ENABLED"
@@ -281,8 +282,7 @@ ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
-ENV_CONSOLIDATION_PROMPT_MODE = "HINDSIGHT_API_CONSOLIDATION_PROMPT_MODE"
-ENV_CONSOLIDATION_CUSTOM_INSTRUCTIONS = "HINDSIGHT_API_CONSOLIDATION_CUSTOM_INSTRUCTIONS"
+ENV_OBSERVATIONS_SPEC = "HINDSIGHT_API_OBSERVATIONS_SPEC"
 
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
@@ -397,6 +397,7 @@ DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
 DEFAULT_RETAIN_EXTRACTION_MODE = "concise"  # Extraction mode: "concise", "verbose", or "custom"
 RETAIN_EXTRACTION_MODES = ("concise", "verbose", "custom")  # Allowed extraction modes
+DEFAULT_RETAIN_SPEC = None  # Declarative spec of what to retain (injected into any extraction mode)
 DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS = None  # Custom extraction guidelines (only used when mode="custom")
 DEFAULT_RETAIN_BATCH_TOKENS = 10_000  # ~40KB of text  # Max chars per sub-batch for async retain auto-splitting
 DEFAULT_RETAIN_BATCH_ENABLED = False  # Use LLM Batch API for fact extraction (only when async=True)
@@ -414,9 +415,7 @@ DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 1024  # Max tokens for recall when finding related observations
-DEFAULT_CONSOLIDATION_PROMPT_MODE = "standard"  # Prompt mode: "standard" or "custom"
-CONSOLIDATION_PROMPT_MODES = ("standard", "custom")  # Allowed prompt modes
-DEFAULT_CONSOLIDATION_CUSTOM_INSTRUCTIONS = None  # Custom consolidation guidelines (only used when mode="custom")
+DEFAULT_OBSERVATIONS_SPEC = None  # Declarative spec of what observations are for this bank
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
@@ -507,18 +506,6 @@ def _validate_extraction_mode(mode: str) -> str:
             f"Defaulting to '{DEFAULT_RETAIN_EXTRACTION_MODE}'."
         )
         return DEFAULT_RETAIN_EXTRACTION_MODE
-    return mode_lower
-
-
-def _validate_consolidation_prompt_mode(mode: str) -> str:
-    """Validate and normalize consolidation prompt mode."""
-    mode_lower = mode.lower()
-    if mode_lower not in CONSOLIDATION_PROMPT_MODES:
-        logger.warning(
-            f"Invalid consolidation prompt mode '{mode}', must be one of {CONSOLIDATION_PROMPT_MODES}. "
-            f"Defaulting to '{DEFAULT_CONSOLIDATION_PROMPT_MODE}'."
-        )
-        return DEFAULT_CONSOLIDATION_PROMPT_MODE
     return mode_lower
 
 
@@ -644,6 +631,7 @@ class HindsightConfig:
     retain_chunk_size: int
     retain_extract_causal_links: bool
     retain_extraction_mode: str
+    retain_spec: str | None
     retain_custom_instructions: str | None
     retain_batch_tokens: int
     retain_batch_enabled: bool
@@ -673,8 +661,7 @@ class HindsightConfig:
     enable_observations: bool
     consolidation_batch_size: int
     consolidation_max_tokens: int
-    consolidation_prompt_mode: str
-    consolidation_custom_instructions: str | None
+    observations_spec: str | None
 
     # Optimization flags
     skip_llm_verification: bool
@@ -743,11 +730,11 @@ class HindsightConfig:
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_extraction_mode",
+        "retain_spec",
         "retain_custom_instructions",
         # Consolidation settings
         "enable_observations",
-        "consolidation_prompt_mode",
-        "consolidation_custom_instructions",
+        "observations_spec",
     }
 
     @property
@@ -1034,6 +1021,7 @@ class HindsightConfig:
             retain_extraction_mode=_validate_extraction_mode(
                 os.getenv(ENV_RETAIN_EXTRACTION_MODE, DEFAULT_RETAIN_EXTRACTION_MODE)
             ),
+            retain_spec=os.getenv(ENV_RETAIN_SPEC) or DEFAULT_RETAIN_SPEC,
             retain_custom_instructions=os.getenv(ENV_RETAIN_CUSTOM_INSTRUCTIONS) or DEFAULT_RETAIN_CUSTOM_INSTRUCTIONS,
             retain_batch_tokens=int(os.getenv(ENV_RETAIN_BATCH_TOKENS, str(DEFAULT_RETAIN_BATCH_TOKENS))),
             retain_batch_enabled=os.getenv(ENV_RETAIN_BATCH_ENABLED, str(DEFAULT_RETAIN_BATCH_ENABLED)).lower()
@@ -1076,11 +1064,7 @@ class HindsightConfig:
             consolidation_max_tokens=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_TOKENS, str(DEFAULT_CONSOLIDATION_MAX_TOKENS))
             ),
-            consolidation_prompt_mode=_validate_consolidation_prompt_mode(
-                os.getenv(ENV_CONSOLIDATION_PROMPT_MODE, DEFAULT_CONSOLIDATION_PROMPT_MODE)
-            ),
-            consolidation_custom_instructions=os.getenv(ENV_CONSOLIDATION_CUSTOM_INSTRUCTIONS)
-            or DEFAULT_CONSOLIDATION_CUSTOM_INSTRUCTIONS,
+            observations_spec=os.getenv(ENV_OBSERVATIONS_SPEC) or DEFAULT_OBSERVATIONS_SPEC,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
             # Database connection pool
