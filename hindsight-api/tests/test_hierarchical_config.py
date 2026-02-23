@@ -74,12 +74,14 @@ async def test_hierarchical_fields_categorization():
 
     # Verify configurable fields include behavioral settings (safe to modify)
     assert "retain_extraction_mode" in configurable
-    assert "enable_observations" in configurable
-    assert "retain_chunk_size" in configurable
+    assert "retain_spec" in configurable
     assert "retain_custom_instructions" in configurable
+    assert "retain_chunk_size" in configurable
+    assert "enable_observations" in configurable
+    assert "observations_spec" in configurable
 
-    # Verify count is correct (only 4 fields)
-    assert len(configurable) == 4
+    # Verify count is correct
+    assert len(configurable) == 6
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

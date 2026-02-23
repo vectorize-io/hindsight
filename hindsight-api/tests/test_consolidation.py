@@ -2062,8 +2062,8 @@ async def test_consolidation_with_observations_spec(memory: "MemoryEngine", requ
         config = _get_raw_config()
 
         bank_id = f"test-obs-spec-{uuid.uuid4().hex[:8]}"
-        original_base_config = memory._config_resolver._base_config
-        memory._config_resolver._base_config = config
+        original_global_config = memory._config_resolver._global_config
+        memory._config_resolver._global_config = config
 
         try:
             await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
@@ -2079,7 +2079,7 @@ async def test_consolidation_with_observations_spec(memory: "MemoryEngine", requ
                 )
             assert isinstance(observations, list)
         finally:
-            memory._config_resolver._base_config = original_base_config
+            memory._config_resolver._global_config = original_global_config
             await memory.delete_bank(bank_id, request_context=request_context)
     finally:
         if original is None:

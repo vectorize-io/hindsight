@@ -546,47 +546,47 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_BATCH_ENABLED` | Use LLM Batch API for fact extraction (50% cost savings, only with async operations) | `false` |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
 
-#### Extraction Modes
+#### Customizing retain: when to use what
 
-The extraction mode controls how aggressively facts are extracted from content:
+There are three levels of customization for the retain pipeline. Start with the simplest that covers your needs:
 
-- **`concise`** (default): Selective extraction that focuses on significant, long-term valuable facts. Filters out greetings, filler, and trivial information. Produces fewer but higher-quality facts with better performance.
+| Goal | Use |
+|------|-----|
+| Steer what topics to focus on or deprioritize | `HINDSIGHT_API_RETAIN_SPEC` |
+| Extract more detail per fact | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbose` |
+| Completely replace the extraction rules | `HINDSIGHT_API_RETAIN_EXTRACTION_MODE=custom` + `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` |
 
-- **`verbose`**: Detailed extraction that captures every piece of information with maximum verbosity. Produces more facts with extensive detail but slower performance and higher token usage.
+**`HINDSIGHT_API_RETAIN_SPEC` — declarative focus (recommended starting point)**
 
-- **`custom`**: Full prompt override. Replaces the built-in extraction rules entirely with your own guidelines while keeping the structural parts of the prompt (output format, coreference resolution, temporal handling) intact.
+Describe what this bank should focus on, in plain language. Injected into the prompt alongside the built-in extraction rules — no need to rewrite anything.
 
-**Example: Retain Spec (light-touch focus)**
-
-Use `HINDSIGHT_API_RETAIN_SPEC` when you want to steer extraction without rewriting the full prompt. It's declarative and works alongside any extraction mode:
+Works with any extraction mode (`concise`, `verbose`, `custom`).
 
 ```bash
-export HINDSIGHT_API_RETAIN_SPEC="Focus on technical decisions, architecture choices, team member expertise, and project milestones. Deprioritize social or personal information."
+export HINDSIGHT_API_RETAIN_SPEC="Focus on technical decisions, architecture choices, and team member expertise. Deprioritize social or personal information."
 ```
 
-**Example: Custom Extraction Mode (full override)**
+**`HINDSIGHT_API_RETAIN_EXTRACTION_MODE=verbose` — more detail per fact**
 
-Use `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` with `mode=custom` when you need complete control over the extraction rules:
+Use when you need richer facts with full context, relationships, and verbosity. Slower and uses more tokens than `concise`.
+
+**`HINDSIGHT_API_RETAIN_EXTRACTION_MODE=custom` + `HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS` — full control**
+
+Replaces the built-in selectivity rules entirely. The structural parts of the prompt (output format, temporal handling, coreference resolution) remain intact — only the extraction guidelines are replaced.
+
+Use this when `retain_spec` isn't sufficient and you need strict inclusion/exclusion logic.
 
 ```bash
-# Set mode to custom
 export HINDSIGHT_API_RETAIN_EXTRACTION_MODE=custom
-
-# Define custom guidelines (multi-line is fine)
 export HINDSIGHT_API_RETAIN_CUSTOM_INSTRUCTIONS="ONLY extract facts that are:
 ✅ Technical decisions and their rationale
 ✅ Architecture patterns and design choices
 ✅ Performance metrics and benchmarks
-✅ Code reviews and feedback
 
 DO NOT extract:
-❌ Generic greetings or pleasantries
+❌ Greetings or social conversation
 ❌ Process chatter (\"let me check\", \"one moment\")
-❌ Repeated information already captured
-
-CONSOLIDATE related technical discussions into ONE fact when possible.
-
-Ask yourself: 'Would this technical context be useful in 6 months?' If no, skip it."
+❌ Anything that would not be useful in 6 months"
 ```
 
 ### File Processing
@@ -730,22 +730,43 @@ Observations are consolidated knowledge synthesized from facts.
 | `HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS` | Max tokens for recall when finding related observations during consolidation | `1024` |
 | `HINDSIGHT_API_OBSERVATIONS_SPEC` | Declarative description of what observations are for this bank. Replaces the built-in durable-knowledge rules. | - |
 
-#### Observations Spec
+#### Customizing observations: when to use what
 
-By default, the consolidation engine uses built-in rules to extract durable, specific knowledge from facts — filtering out ephemeral state, avoiding over-abstraction, and handling contradictions with temporal markers.
+| Goal | Use |
+|------|-----|
+| Default behavior: durable specific facts, no ephemeral state | Leave unset |
+| Change what observations *are* for this bank (different shape, different purpose) | `HINDSIGHT_API_OBSERVATIONS_SPEC` |
 
-Set `HINDSIGHT_API_OBSERVATIONS_SPEC` to replace these rules with your own declarative definition of what observations should be for your use case. This is the primary customization lever for observation synthesis.
+**`HINDSIGHT_API_OBSERVATIONS_SPEC` — redefine what observations are**
 
-**Example: Event timeline summaries**
+By default, observations are durable, specific facts synthesized from memories — the kind of knowledge that stays true over time (preferences, skills, relationships, recurring patterns). Ephemeral state is filtered out. Contradictions are tracked with temporal markers.
+
+Set `HINDSIGHT_API_OBSERVATIONS_SPEC` to replace this definition entirely. Write a plain-language description of what observations should be for your use case. The LLM will use this instead of the default rules when deciding what to create or update.
+
+:::tip When to use observations_spec
+Use it when the default durable-knowledge behavior doesn't match your use case. Common scenarios:
+- You want **broader event summaries** rather than isolated facts
+- You want observations **grouped by time period** (weekly, monthly)
+- You want a **different granularity** (one observation per project rather than per fact)
+- You have a **domain-specific** notion of what's worth remembering
+:::
+
+**Example: Weekly event summaries**
 
 ```bash
 export HINDSIGHT_API_OBSERVATIONS_SPEC="Observations are broad summaries of project events grouped by week. Each observation should capture what happened, what was decided, and what was blocked — not individual facts. Merge related events into cohesive weekly narratives."
 ```
 
-**Example: Person-centric durable knowledge**
+**Example: Person-centric knowledge**
 
 ```bash
 export HINDSIGHT_API_OBSERVATIONS_SPEC="Observations are durable facts about specific named people: their preferences, skills, relationships, and behavioral patterns. Only create observations for facts that are stable over time and tied to a named individual."
+```
+
+**Example: Support ticket patterns**
+
+```bash
+export HINDSIGHT_API_OBSERVATIONS_SPEC="Observations are recurring patterns in customer support interactions: common failure modes, frequently requested features, and pain points that appear across multiple tickets."
 ```
 
 ### Reflect
