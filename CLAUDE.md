@@ -323,4 +323,4 @@ Optional (uses local models by default):
 - `HINDSIGHT_API_EMBEDDINGS_PROVIDER`: local (default) or tei
 - `HINDSIGHT_API_RERANKER_PROVIDER`: local (default) or tei
 - `HINDSIGHT_API_DATABASE_URL`: External PostgreSQL (uses embedded pg0 by default)
-- `HINDSIGHT_API_ENABLE_BANK_CONFIG_API`: Enable per-bank config API (default: false, disabled for security)
+- `HINDSIGHT_API_ENABLE_BANK_CONFIG_API`: Enable per-bank config API (default: true)

@@ -3563,7 +3563,7 @@ def _register_routes(app: FastAPI):
         if not get_config().enable_bank_config_api:
             raise HTTPException(
                 status_code=404,
-                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
+                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
             # Authenticate and set schema context for multi-tenant DB queries
@@ -3601,7 +3601,7 @@ def _register_routes(app: FastAPI):
         if not get_config().enable_bank_config_api:
             raise HTTPException(
                 status_code=404,
-                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
+                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
             # Authenticate and set schema context for multi-tenant DB queries
@@ -3641,7 +3641,7 @@ def _register_routes(app: FastAPI):
         if not get_config().enable_bank_config_api:
             raise HTTPException(
                 status_code=404,
-                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to enable.",
+                detail="Bank configuration API is disabled. Set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true to re-enable.",
             )
         try:
             # Authenticate and set schema context for multi-tenant DB queries

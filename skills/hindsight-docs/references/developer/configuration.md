@@ -929,13 +929,7 @@ Configuration fields are categorized for security:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `false` |
-
-**Important:** The bank config API is **disabled by default** for security. Enable it explicitly:
-
-```bash
-export HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true
-```
+| `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
 
 #### API Endpoints
 

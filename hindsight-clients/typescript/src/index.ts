@@ -431,7 +431,7 @@ export class HindsightClient {
     /**
      * Get the resolved configuration for a bank, including any bank-level overrides.
      *
-     * Requires `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true` on the server.
+     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
      */
     async getBankConfig(bankId: string): Promise<BankConfigResponse> {
         const response = await sdk.getBankConfig({
@@ -445,7 +445,7 @@ export class HindsightClient {
     /**
      * Update configuration overrides for a bank.
      *
-     * Requires `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true` on the server.
+     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
      *
      * @param bankId - The memory bank ID
      * @param options - Fields to override
@@ -493,7 +493,7 @@ export class HindsightClient {
     /**
      * Reset all bank-level configuration overrides, reverting to server defaults.
      *
-     * Requires `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true` on the server.
+     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
      */
     async resetBankConfig(bankId: string): Promise<BankConfigResponse> {
         const response = await sdk.resetBankConfig({

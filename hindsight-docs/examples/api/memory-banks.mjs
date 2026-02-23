@@ -33,8 +33,6 @@ await client.updateBankConfig('architect-bank', {
 
 
 // [docs:update-bank-config]
-// Requires HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true on the server
-
 await client.updateBankConfig('my-bank', {
     retainMission: 'Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics and social exchanges.',
     retainExtractionMode: 'verbose',

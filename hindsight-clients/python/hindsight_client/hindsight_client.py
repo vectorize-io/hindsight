@@ -1021,7 +1021,7 @@ class Hindsight:
         """
         Get the resolved configuration for a bank, including any bank-level overrides.
 
-        Requires ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true`` on the server.
+        Can be disabled on the server by setting ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false``.
 
         Args:
             bank_id: The memory bank ID
@@ -1059,7 +1059,7 @@ class Hindsight:
         """
         Update configuration overrides for a bank.
 
-        Requires ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true`` on the server.
+        Can be disabled on the server by setting ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false``.
 
         Args:
             bank_id: The memory bank ID
@@ -1111,7 +1111,7 @@ class Hindsight:
         """
         Reset all bank-level configuration overrides, reverting to server defaults.
 
-        Requires ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true`` on the server.
+        Can be disabled on the server by setting ``HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false``.
 
         Args:
             bank_id: The memory bank ID

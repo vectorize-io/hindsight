@@ -67,7 +67,7 @@ fn format_error_message(err: &anyhow::Error, api_url: &str) -> String {
                 "Bank configuration API is disabled".bright_red().bold(),
                 "API URL:".bright_yellow(),
                 api_url.bright_white(),
-                "This feature is disabled by default for security.".bright_yellow(),
+                "This feature has been disabled on the server.".bright_yellow(),
                 "To enable, set HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true on the API server".bright_white(),
                 "Note:".bright_cyan(),
                 "This allows per-bank LLM configuration overrides via API".bright_white()

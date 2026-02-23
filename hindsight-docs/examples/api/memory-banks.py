@@ -38,8 +38,6 @@ client.update_bank_config(
 
 
 # [docs:update-bank-config]
-# Requires HINDSIGHT_API_ENABLE_BANK_CONFIG_API=true on the server
-
 client.update_bank_config(
     "my-bank",
     retain_mission="Always include technical decisions, API design choices, and architectural trade-offs. Ignore meeting logistics and social exchanges.",
