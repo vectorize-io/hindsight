@@ -16,6 +16,7 @@ Features:
 """
 
 import asyncio
+import contextvars
 import io
 import json
 import logging
@@ -33,6 +34,11 @@ from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult,
 from hindsight_api.metrics import get_metrics_collector
 
 logger = logging.getLogger(__name__)
+
+# Context variable for upstream proxy attribution — injected as the "user" field
+# in OpenAI API requests. Set this before making LLM calls to enable per-caller
+# cost tracking when running behind a proxy.
+llm_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("llm_user", default=None)
 
 # Seed applied to every Groq request for deterministic behavior
 DEFAULT_LLM_SEED = 4242
@@ -215,6 +221,11 @@ class OpenAICompatibleLLM(LLMInterface):
             "model": self.model,
             "messages": messages,
         }
+
+        # Inject llm_user as "user" for upstream proxy attribution
+        _llm_user = llm_user.get()
+        if _llm_user:
+            call_params["user"] = _llm_user
 
         # Check if model supports reasoning parameter
         is_reasoning_model = self._supports_reasoning_model()
@@ -529,6 +540,11 @@ class OpenAICompatibleLLM(LLMInterface):
             "tools": tools,
             "tool_choice": tool_choice,
         }
+
+        # Inject llm_user as "user" for upstream proxy attribution
+        _llm_user = llm_user.get()
+        if _llm_user:
+            call_params["user"] = _llm_user
 
         if max_completion_tokens is not None:
             call_params["max_completion_tokens"] = max_completion_tokens

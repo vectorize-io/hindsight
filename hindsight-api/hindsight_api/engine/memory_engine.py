@@ -25,6 +25,7 @@ from ..metrics import get_metrics_collector
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
 from .db_budget import budgeted_operation
+from .providers.openai_compatible_llm import llm_user
 from .operation_metadata import (
     BatchRetainChildMetadata,
     BatchRetainParentMetadata,
@@ -933,6 +934,11 @@ class MemoryEngine(MemoryEngineInterface):
         if schema:
             _current_schema.set(schema)
 
+        # Set llm_user so LLM calls include it for upstream proxy attribution
+        bank_id = task_dict.get("bank_id")
+        if bank_id:
+            llm_user.set(bank_id)
+
         # Check if operation was cancelled (only for tasks with operation_id)
         if operation_id:
             try:
@@ -1739,6 +1745,9 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Returns: [["unit-id-1"], ["unit-id-2"]]
         """
+        # Set llm_user so LLM calls include it for upstream proxy attribution
+        llm_user.set(bank_id)
+
         start_time = time.time()
 
         if not contents:
@@ -4234,6 +4243,9 @@ class MemoryEngine(MemoryEngineInterface):
                 - based_on: Empty dict (agent retrieves facts dynamically)
                 - structured_output: None (not yet supported for agentic reflect)
         """
+        # Set llm_user so LLM calls include it for upstream proxy attribution
+        llm_user.set(bank_id)
+
         # Use cached LLM config
         if self._reflect_llm_config is None:
             raise ValueError("Memory LLM API key not set. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
