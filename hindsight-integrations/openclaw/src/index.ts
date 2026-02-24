@@ -54,7 +54,7 @@ async function lazyReinit(): Promise<void> {
 
   console.log('[Hindsight] Attempting lazy re-initialization...');
   try {
-    await checkExternalApiHealth(externalApi.apiUrl);
+    await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
 
     // Health check passed — set up env vars and create client
     process.env.HINDSIGHT_EMBED_API_URL = externalApi.apiUrl;
@@ -394,7 +394,7 @@ function buildClientOptions(
  * Health check for external Hindsight API.
  * Retries up to 3 times with 2s delay — container DNS may not be ready on first boot.
  */
-async function checkExternalApiHealth(apiUrl: string): Promise<void> {
+async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null): Promise<void> {
   const healthUrl = `${apiUrl.replace(/\/$/, '')}/health`;
   const maxRetries = 3;
   const retryDelay = 2000;
@@ -402,7 +402,11 @@ async function checkExternalApiHealth(apiUrl: string): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[Hindsight] Checking external API health at ${healthUrl}... (attempt ${attempt}/${maxRetries})`);
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(10000) });
+      const headers: Record<string, string> = {};
+      if (apiToken) {
+        headers['Authorization'] = `Bearer ${apiToken}`;
+      }
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(10000), headers });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -508,7 +512,7 @@ export default function (api: MoltbotPluginAPI) {
         if (usingExternalApi && externalApi.apiUrl) {
           // External API mode - check health, skip daemon startup
           console.log('[Hindsight] External API mode - skipping local daemon...');
-          await checkExternalApiHealth(externalApi.apiUrl);
+          await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
 
           // Initialize client with direct HTTP mode
           console.log('[Hindsight] Creating HindsightClient (HTTP mode)...');
@@ -596,7 +600,7 @@ export default function (api: MoltbotPluginAPI) {
           const externalApi = detectExternalApi(pluginConfig);
           if (externalApi.apiUrl && isInitialized) {
             try {
-              await checkExternalApiHealth(externalApi.apiUrl);
+              await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
               console.log('[Hindsight] External API is healthy');
               return;
             } catch (error) {
@@ -640,7 +644,7 @@ export default function (api: MoltbotPluginAPI) {
               process.env.HINDSIGHT_EMBED_API_TOKEN = externalApi.apiToken;
             }
 
-            await checkExternalApiHealth(externalApi.apiUrl);
+            await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
 
             client = new HindsightClient(buildClientOptions(llmConfig, reinitPluginConfig, externalApi));
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
