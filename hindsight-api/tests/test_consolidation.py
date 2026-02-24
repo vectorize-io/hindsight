@@ -1990,35 +1990,35 @@ class TestMentalModelRefreshAfterConsolidation:
 
 
 def test_consolidation_prompt_default():
-    """Test that the default consolidation prompt contains the built-in durable-knowledge rules."""
-    from hindsight_api.engine.consolidation.prompts import build_consolidation_prompt
+    """Test that the default consolidation prompt contains the built-in mission and processing rules."""
+    from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
 
-    prompt = build_consolidation_prompt()
-    assert "DURABLE KNOWLEDGE" in prompt
+    prompt = build_batch_consolidation_prompt()
     assert "temporal markers" in prompt
-    assert "{fact_text}" in prompt
+    assert "RESOLVE REFERENCES" in prompt
+    assert "{facts_text}" in prompt
     assert "{observations_text}" in prompt
 
 
 def test_consolidation_prompt_observations_mission():
-    """Test that observations_mission replaces the default rules."""
-    from hindsight_api.engine.consolidation.prompts import build_consolidation_prompt
+    """Test that observations_mission replaces the default mission but keeps processing rules."""
+    from hindsight_api.engine.consolidation.prompts import build_batch_consolidation_prompt
 
     spec = "Observations are weekly summaries of sprint outcomes and team dynamics."
-    prompt = build_consolidation_prompt(observations_mission=spec)
+    prompt = build_batch_consolidation_prompt(observations_mission=spec)
 
     # Spec is injected
     assert spec in prompt
-    # Default rules are NOT present
-    assert "EXTRACT DURABLE KNOWLEDGE" not in prompt
-    # Output format and data placeholders remain
-    assert "actions" in prompt
-    assert "{fact_text}" in prompt
+    # Processing rules and output format always remain
+    assert "RESOLVE REFERENCES" in prompt
+    assert "creates" in prompt
+    assert "updates" in prompt
+    assert "{facts_text}" in prompt
     assert "{observations_text}" in prompt
 
     # Renders cleanly
-    rendered = prompt.format(fact_text="Alice fixed a bug.", observations_text="[]")
-    assert "{fact_text}" not in rendered
+    rendered = prompt.format(facts_text="Alice fixed a bug.", observations_text="[]")
+    assert "{facts_text}" not in rendered
     assert spec in rendered
 
 

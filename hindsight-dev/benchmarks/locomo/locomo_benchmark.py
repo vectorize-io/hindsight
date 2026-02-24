@@ -295,6 +295,7 @@ async def run_benchmark(
     only_failed: bool = False,
     only_invalid: bool = False,
     question_index: int = None,
+    wait_consolidation: bool = False,
 ):
     """
     Run the LoComo benchmark.
@@ -461,6 +462,7 @@ async def run_benchmark(
         max_concurrent_items=concurrent_items,
         output_path=output_path,  # Save results incrementally
         merge_with_existing=merge_with_existing,
+        wait_consolidation=wait_consolidation,
     )
 
     # Display results (final save already happened incrementally)
@@ -591,6 +593,11 @@ if __name__ == "__main__":
         default=None,
         help="Run only the question at this 0-based index within each conversation (e.g., 11)",
     )
+    parser.add_argument(
+        "--wait-consolidation",
+        action="store_true",
+        help="Wait for consolidation to complete after ingestion (or immediately when using --skip-ingestion) before evaluating QA.",
+    )
 
     args = parser.parse_args()
 
@@ -610,5 +617,6 @@ if __name__ == "__main__":
             only_failed=args.only_failed,
             only_invalid=args.only_invalid,
             question_index=args.question_index,
+            wait_consolidation=args.wait_consolidation,
         )
     )

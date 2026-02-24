@@ -273,6 +273,7 @@ def main():
             file_delete_after_retain=config.file_delete_after_retain,
             enable_observations=config.enable_observations,
             consolidation_batch_size=config.consolidation_batch_size,
+            consolidation_llm_batch_size=config.consolidation_llm_batch_size,
             consolidation_max_tokens=config.consolidation_max_tokens,
             observations_mission=config.observations_mission,
             skip_llm_verification=config.skip_llm_verification,
