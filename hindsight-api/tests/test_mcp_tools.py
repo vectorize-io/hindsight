@@ -1246,3 +1246,114 @@ class TestEmptyListReturns:
         mcp = _make_mcp_server(mock_memory, {"list_tags"}, include_bank_id=True)
         result = await _tools(mcp)["list_tags"].fn()
         assert '"items": []' in result or "[]" in result
+
+# =========================================================================
+# Bank-Level Tool Filtering Tests
+# =========================================================================
+
+
+@pytest.fixture
+def mock_memory_with_resolver():
+    """Create a mock MemoryEngine with config resolver for bank filtering tests."""
+    memory = MagicMock()
+    memory.retain_batch_async = AsyncMock()
+    memory.recall_async = AsyncMock(
+        return_value=MagicMock(
+            model_dump_json=lambda indent=None: '{"results": []}',
+            model_dump=lambda: {"results": []},
+        )
+    )
+    memory._config_resolver = MagicMock()
+    memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+    return memory
+
+
+class TestBankToolFiltering:
+    """Tests for bank-level mcp_enabled_tools filtering via _apply_bank_tool_filtering."""
+
+    @pytest.mark.asyncio
+    async def test_disallowed_tool_raises_error(self, mock_memory_with_resolver):
+        """Tool not in bank's mcp_enabled_tools list is hidden from get_tools()."""
+        from fastmcp import FastMCP
+
+        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
+            return_value={"mcp_enabled_tools": ["retain"]}
+        )
+
+        mcp = FastMCP("test")
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=False,
+            tools={"retain", "recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_with_resolver, config)
+
+        # Both tools are registered in the manager's internal dict
+        assert "recall" in mcp._tool_manager._tools
+
+        # But get_tools() (used by tools/list and tools/call) filters it out
+        visible = await mcp._tool_manager.get_tools()
+        assert "retain" in visible
+        assert "recall" not in visible
+
+    @pytest.mark.asyncio
+    async def test_allowed_tool_remains_visible(self, mock_memory_with_resolver):
+        """Tool in bank's mcp_enabled_tools list stays visible in get_tools()."""
+        from fastmcp import FastMCP
+
+        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
+            return_value={"mcp_enabled_tools": ["retain", "recall"]}
+        )
+
+        mcp = FastMCP("test")
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=False,
+            tools={"retain", "recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_with_resolver, config)
+
+        visible = await mcp._tool_manager.get_tools()
+        assert "retain" in visible
+        assert "recall" in visible
+
+    @pytest.mark.asyncio
+    async def test_no_filter_when_mcp_enabled_tools_absent(self, mock_memory_with_resolver):
+        """When bank config has no mcp_enabled_tools key, all tools remain visible."""
+        from fastmcp import FastMCP
+
+        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(return_value={})
+
+        mcp = FastMCP("test")
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=False,
+            tools={"retain", "recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_with_resolver, config)
+
+        visible = await mcp._tool_manager.get_tools()
+        assert "retain" in visible
+        assert "recall" in visible
+
+    @pytest.mark.asyncio
+    async def test_filter_skipped_when_no_bank_id(self, mock_memory_with_resolver):
+        """When bank_id resolver returns None, config is not fetched and all tools are visible."""
+        from fastmcp import FastMCP
+
+        mock_memory_with_resolver._config_resolver.get_bank_config = AsyncMock(
+            return_value={"mcp_enabled_tools": ["retain"]}  # Would block recall
+        )
+
+        mcp = FastMCP("test")
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: None,  # No bank_id context
+            include_bank_id_param=False,
+            tools={"retain", "recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_with_resolver, config)
+
+        visible = await mcp._tool_manager.get_tools()
+        # Filter bypassed — config resolver was never consulted, all tools visible
+        assert "recall" in visible
+        mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()

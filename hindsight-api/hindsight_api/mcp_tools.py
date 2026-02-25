@@ -265,6 +265,55 @@ def register_mcp_tools(
     if "clear_memories" in tools_to_register:
         _register_clear_memories(mcp, memory, config)
 
+    _apply_bank_tool_filtering(mcp, memory, config)
+
+
+def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Filter bank-level mcp_enabled_tools from both tools/list and tool invocation.
+
+    Wraps _tool_manager.get_tools() so that:
+    - tools/list only returns permitted tools (they are hidden, not just blocked)
+    - tools/call for a disabled tool raises NotFoundError (via the manager) before run()
+
+    tool.run wrappers are kept as defense-in-depth for any caller that bypasses the manager.
+    """
+    try:
+        tool_manager = mcp._tool_manager
+        original_get_tools = tool_manager.get_tools
+
+        async def _filtered_get_tools():
+            all_tools = await original_get_tools()
+            bank_id = config.bank_id_resolver()
+            if not bank_id:
+                return all_tools
+            request_context = _get_request_context(config)
+            bank_cfg = await memory._config_resolver.get_bank_config(bank_id, request_context)
+            enabled: list[str] | None = bank_cfg.get("mcp_enabled_tools")
+            if enabled is None:
+                return all_tools
+            enabled_set = set(enabled)
+            return {k: v for k, v in all_tools.items() if k in enabled_set}
+
+        setattr(tool_manager, "get_tools", _filtered_get_tools)
+
+        # Defense-in-depth: also wrap tool.run for any direct caller that bypasses the manager
+        for name, tool in tool_manager._tools.items():
+            original_run = tool.run
+
+            async def _filtered_run(arguments, _name=name, _orig=original_run):
+                bank_id = config.bank_id_resolver()
+                if bank_id:
+                    request_context = _get_request_context(config)
+                    bank_cfg = await memory._config_resolver.get_bank_config(bank_id, request_context)
+                    enabled: list[str] | None = bank_cfg.get("mcp_enabled_tools")
+                    if enabled is not None and _name not in enabled:
+                        raise ValueError(f"Tool '{_name}' is not enabled for bank '{bank_id}'")
+                return await _orig(arguments)
+
+            object.__setattr__(tool, "run", _filtered_run)
+    except (AttributeError, KeyError) as e:
+        logger.warning(f"Could not apply bank tool filtering: {e}")
+
 
 def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the retain tool."""

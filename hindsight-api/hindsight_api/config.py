@@ -232,6 +232,7 @@ ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
+ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
 ENV_ENABLE_BANK_CONFIG_API = "HINDSIGHT_API_ENABLE_BANK_CONFIG_API"
 ENV_GRAPH_RETRIEVER = "HINDSIGHT_API_GRAPH_RETRIEVER"
 ENV_MPFP_TOP_K_NEIGHBORS = "HINDSIGHT_API_MPFP_TOP_K_NEIGHBORS"
@@ -397,6 +398,7 @@ DEFAULT_LOG_LEVEL = "info"
 DEFAULT_LOG_FORMAT = "text"  # Options: "text", "json"
 DEFAULT_WORKERS = 1
 DEFAULT_MCP_ENABLED = True
+DEFAULT_MCP_ENABLED_TOOLS: list[str] | None = None  # None = all tools enabled
 DEFAULT_ENABLE_BANK_CONFIG_API = True
 DEFAULT_GRAPH_RETRIEVER = "link_expansion"  # Options: "link_expansion", "mpfp", "bfs"
 DEFAULT_MPFP_TOP_K_NEIGHBORS = 20  # Fan-out limit per node in MPFP graph traversal
@@ -638,6 +640,7 @@ class HindsightConfig:
     log_level: str
     log_format: str
     mcp_enabled: bool
+    mcp_enabled_tools: list[str] | None  # None = all tools; explicit list = allowlist
     enable_bank_config_api: bool
 
     # Recall
@@ -757,6 +760,8 @@ class HindsightConfig:
     # These fields are manually tagged as safe to expose and modify.
     # Excludes credentials, infrastructure config, provider/model selection, and performance tuning.
     _CONFIGURABLE_FIELDS = {
+        # MCP tool access control
+        "mcp_enabled_tools",
         # Retention settings (behavioral)
         "retain_chunk_size",
         "retain_extraction_mode",
@@ -1033,6 +1038,9 @@ class HindsightConfig:
             log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
             log_format=os.getenv(ENV_LOG_FORMAT, DEFAULT_LOG_FORMAT).lower(),
             mcp_enabled=os.getenv(ENV_MCP_ENABLED, str(DEFAULT_MCP_ENABLED)).lower() == "true",
+            mcp_enabled_tools=[t.strip() for t in os.getenv(ENV_MCP_ENABLED_TOOLS).split(",") if t.strip()]
+            if os.getenv(ENV_MCP_ENABLED_TOOLS)
+            else DEFAULT_MCP_ENABLED_TOOLS,
             enable_bank_config_api=os.getenv(ENV_ENABLE_BANK_CONFIG_API, str(DEFAULT_ENABLE_BANK_CONFIG_API)).lower()
             == "true",
             # Recall

@@ -352,6 +352,69 @@ async def test_middleware_handles_both_endpoints(mock_memory):
     assert "create_bank" not in single_bank_tools
 
 
+def test_global_mcp_enabled_tools_filter_restricts_registered_tools(mock_memory):
+    """Test that global mcp_enabled_tools env setting restricts which tools are registered."""
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_api.api.mcp import create_mcp_server
+
+    mock_cfg = MagicMock()
+    mock_cfg.mcp_enabled_tools = ["retain", "recall"]
+
+    with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
+        mcp_server = create_mcp_server(mock_memory, multi_bank=True)
+
+    tools = mcp_server._tool_manager._tools
+    assert "retain" in tools
+    assert "recall" in tools
+    assert "reflect" not in tools
+    assert "list_banks" not in tools
+    assert "create_bank" not in tools
+    assert "list_mental_models" not in tools
+
+
+def test_global_mcp_enabled_tools_none_exposes_all_tools(mock_memory):
+    """Test that mcp_enabled_tools=None (default) exposes all tools."""
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_api.api.mcp import create_mcp_server
+
+    mock_cfg = MagicMock()
+    mock_cfg.mcp_enabled_tools = None
+
+    with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
+        mcp_server = create_mcp_server(mock_memory, multi_bank=True)
+
+    tools = mcp_server._tool_manager._tools
+    assert "retain" in tools
+    assert "recall" in tools
+    assert "reflect" in tools
+    assert "list_banks" in tools
+    assert "create_bank" in tools
+
+
+def test_global_mcp_enabled_tools_intersects_with_single_bank_mode(mock_memory):
+    """Test that global filter intersects with single-bank mode tool set.
+
+    list_banks is in the global allowlist but NOT in single-bank mode, so it
+    should be absent from the final registered set.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_api.api.mcp import create_mcp_server
+
+    mock_cfg = MagicMock()
+    mock_cfg.mcp_enabled_tools = ["retain", "recall", "list_banks"]
+
+    with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
+        mcp_server = create_mcp_server(mock_memory, multi_bank=False)
+
+    tools = mcp_server._tool_manager._tools
+    assert "retain" in tools
+    assert "recall" in tools
+    assert "list_banks" not in tools  # single-bank mode excludes it regardless
+
+
 @pytest.mark.asyncio
 async def test_routing_logic_from_url_path():
     """Test that routing correctly selects server based on URL structure.

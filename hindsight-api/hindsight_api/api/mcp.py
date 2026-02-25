@@ -8,11 +8,47 @@ from contextvars import ContextVar
 from fastmcp import FastMCP
 
 from hindsight_api import MemoryEngine
+from hindsight_api.config import _get_raw_config
 from hindsight_api.engine.memory_engine import _current_schema
 from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.mcp_tools import MCPToolsConfig, register_mcp_tools
 from hindsight_api.models import RequestContext
+
+# All tools available in the system (explicit list — no wildcards)
+_ALL_TOOLS: frozenset[str] = frozenset(
+    {
+        "retain",
+        "recall",
+        "reflect",
+        "list_banks",
+        "create_bank",
+        "list_mental_models",
+        "get_mental_model",
+        "create_mental_model",
+        "update_mental_model",
+        "delete_mental_model",
+        "refresh_mental_model",
+        "list_directives",
+        "create_directive",
+        "delete_directive",
+        "list_memories",
+        "get_memory",
+        "delete_memory",
+        "list_documents",
+        "get_document",
+        "delete_document",
+        "list_operations",
+        "get_operation",
+        "cancel_operation",
+        "list_tags",
+        "get_bank",
+        "get_bank_stats",
+        "update_bank",
+        "delete_bank",
+        "clear_memories",
+    }
+)
 
 # Configure logging from HINDSIGHT_API_LOG_LEVEL environment variable
 _log_level_str = os.environ.get("HINDSIGHT_API_LOG_LEVEL", "info").lower()
@@ -82,16 +118,11 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     """
     mcp = FastMCP("hindsight-mcp-server")
 
-    # Configure and register tools using shared module
-    config = MCPToolsConfig(
-        bank_id_resolver=get_current_bank_id,
-        api_key_resolver=get_current_api_key,  # Propagate API key for tenant auth
-        tenant_id_resolver=get_current_tenant_id,  # Propagate tenant_id for usage metering
-        api_key_id_resolver=get_current_api_key_id,  # Propagate api_key_id for usage metering
-        include_bank_id_param=multi_bank,
-        tools=None
-        if multi_bank
-        else {
+    global_config = _get_raw_config()
+
+    # Tools available for this mode (multi-bank exposes all tools; single-bank excludes bank-management tools)
+    _SINGLE_BANK_TOOLS: frozenset[str] = frozenset(
+        {
             "retain",
             "recall",
             "reflect",
@@ -118,7 +149,23 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
             "update_bank",
             "delete_bank",
             "clear_memories",
-        },  # Scoped tools for single-bank mode (excludes multi-bank management: list_banks, create_bank, get_bank_stats)
+        }
+    )
+    base_tools: frozenset[str] | None = None if multi_bank else _SINGLE_BANK_TOOLS
+
+    # Apply global mcp_enabled_tools filter (env-level allowlist)
+    if global_config.mcp_enabled_tools is not None:
+        allowed = frozenset(global_config.mcp_enabled_tools)
+        base_tools = (base_tools if base_tools is not None else _ALL_TOOLS) & allowed
+
+    # Configure and register tools using shared module
+    config = MCPToolsConfig(
+        bank_id_resolver=get_current_bank_id,
+        api_key_resolver=get_current_api_key,  # Propagate API key for tenant auth
+        tenant_id_resolver=get_current_tenant_id,  # Propagate tenant_id for usage metering
+        api_key_id_resolver=get_current_api_key_id,  # Propagate api_key_id for usage metering
+        include_bank_id_param=multi_bank,
+        tools=base_tools,
         retain_fire_and_forget=False,  # HTTP MCP supports sync/async modes
     )
 

@@ -38,6 +38,46 @@ type ObservationsEdits = {
   observations_mission: string | null;
 };
 
+type MCPEdits = {
+  mcp_enabled_tools: string[] | null;
+};
+
+// ─── MCP tool catalogue ───────────────────────────────────────────────────────
+
+const MCP_TOOL_GROUPS: { label: string; tools: string[] }[] = [
+  { label: "Core", tools: ["retain", "recall", "reflect"] },
+  {
+    label: "Bank management",
+    tools: [
+      "list_banks",
+      "create_bank",
+      "get_bank",
+      "get_bank_stats",
+      "update_bank",
+      "delete_bank",
+      "clear_memories",
+    ],
+  },
+  {
+    label: "Mental models",
+    tools: [
+      "list_mental_models",
+      "get_mental_model",
+      "create_mental_model",
+      "update_mental_model",
+      "delete_mental_model",
+      "refresh_mental_model",
+    ],
+  },
+  { label: "Directives", tools: ["list_directives", "create_directive", "delete_directive"] },
+  { label: "Memories", tools: ["list_memories", "get_memory", "delete_memory"] },
+  { label: "Documents", tools: ["list_documents", "get_document", "delete_document"] },
+  { label: "Operations", tools: ["list_operations", "get_operation", "cancel_operation"] },
+  { label: "Tags", tools: ["list_tags"] },
+];
+
+const ALL_TOOLS: string[] = MCP_TOOL_GROUPS.flatMap((g) => g.tools);
+
 // ─── Slice helpers ────────────────────────────────────────────────────────────
 
 function retainSlice(config: Record<string, any>): RetainEdits {
@@ -53,6 +93,12 @@ function observationsSlice(config: Record<string, any>): ObservationsEdits {
   return {
     enable_observations: config.enable_observations ?? null,
     observations_mission: config.observations_mission ?? null,
+  };
+}
+
+function mcpSlice(config: Record<string, any>): MCPEdits {
+  return {
+    mcp_enabled_tools: config.mcp_enabled_tools ?? null,
   };
 }
 
@@ -79,14 +125,17 @@ export function BankConfigView() {
     observationsSlice({})
   );
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
+  const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}));
 
   // Per-section saving/error state
   const [retainSaving, setRetainSaving] = useState(false);
   const [observationsSaving, setObservationsSaving] = useState(false);
   const [reflectSaving, setReflectSaving] = useState(false);
+  const [mcpSaving, setMcpSaving] = useState(false);
   const [retainError, setRetainError] = useState<string | null>(null);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
 
   // Reset dialog
 
@@ -102,6 +151,10 @@ export function BankConfigView() {
   const reflectDirty = useMemo(
     () => JSON.stringify(reflectEdits) !== JSON.stringify(baseProfile),
     [reflectEdits, baseProfile]
+  );
+  const mcpDirty = useMemo(
+    () => JSON.stringify(mcpEdits) !== JSON.stringify(mcpSlice(baseConfig)),
+    [mcpEdits, baseConfig]
   );
 
   useEffect(() => {
@@ -130,6 +183,7 @@ export function BankConfigView() {
       setRetainEdits(retainSlice(cfg));
       setObservationsEdits(observationsSlice(cfg));
       setReflectEdits(prof);
+      setMcpEdits(mcpSlice(cfg));
     } catch (err) {
       console.error("Failed to load bank data:", err);
     } finally {
@@ -181,6 +235,20 @@ export function BankConfigView() {
       setReflectError(err.message || "Failed to save reflect settings");
     } finally {
       setReflectSaving(false);
+    }
+  };
+
+  const saveMCP = async () => {
+    if (!bankId) return;
+    setMcpSaving(true);
+    setMcpError(null);
+    try {
+      await client.updateBankConfig(bankId, mcpEdits);
+      setBaseConfig((prev) => ({ ...prev, ...mcpEdits }));
+    } catch (err: any) {
+      setMcpError(err.message || "Failed to save MCP settings");
+    } finally {
+      setMcpSaving(false);
     }
   };
 
@@ -348,8 +416,136 @@ export function BankConfigView() {
             onChange={(v) => setReflectEdits((prev) => ({ ...prev, disposition_empathy: v }))}
           />
         </ConfigSection>
+
+        {/* MCP Tools Section */}
+        <ConfigSection
+          title="MCP Tools"
+          description="Restrict which MCP tools this bank exposes to agents"
+          error={mcpError}
+          dirty={mcpDirty}
+          saving={mcpSaving}
+          onSave={saveMCP}
+        >
+          <FieldRow
+            label="Restrict tools"
+            description="When off, all tools are available. When on, only the selected tools can be invoked for this bank."
+          >
+            <div className="flex justify-end">
+              <Toggle
+                value={mcpEdits.mcp_enabled_tools !== null}
+                onChange={(restricted) =>
+                  setMcpEdits({
+                    mcp_enabled_tools: restricted ? [...ALL_TOOLS] : null,
+                  })
+                }
+              />
+            </div>
+          </FieldRow>
+          {mcpEdits.mcp_enabled_tools !== null && (
+            <ToolSelector
+              selected={mcpEdits.mcp_enabled_tools}
+              onChange={(tools) => setMcpEdits({ mcp_enabled_tools: tools })}
+            />
+          )}
+        </ConfigSection>
       </div>
     </>
+  );
+}
+
+// ─── ToolSelector ─────────────────────────────────────────────────────────────
+
+function ToolSelector({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (tools: string[]) => void;
+}) {
+  const selectedSet = new Set(selected);
+
+  const toggleTool = (tool: string) => {
+    const next = new Set(selectedSet);
+    if (next.has(tool)) {
+      next.delete(tool);
+    } else {
+      next.add(tool);
+    }
+    onChange(ALL_TOOLS.filter((t) => next.has(t)));
+  };
+
+  const allSelected = ALL_TOOLS.every((t) => selectedSet.has(t));
+  const noneSelected = selected.length === 0;
+
+  const toggleAll = () => {
+    onChange(allSelected ? [] : [...ALL_TOOLS]);
+  };
+
+  return (
+    <div className="px-6 py-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {selected.length} of {ALL_TOOLS.length} tools enabled
+        </p>
+        <button type="button" onClick={toggleAll} className="text-xs text-primary hover:underline">
+          {allSelected ? "Deselect all" : "Select all"}
+        </button>
+      </div>
+      <div className="space-y-4">
+        {MCP_TOOL_GROUPS.map((group) => {
+          const groupSelected = group.tools.filter((t) => selectedSet.has(t)).length;
+          const groupAll = groupSelected === group.tools.length;
+          return (
+            <div key={group.label}>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {group.label}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = new Set(selectedSet);
+                    if (groupAll) {
+                      group.tools.forEach((t) => next.delete(t));
+                    } else {
+                      group.tools.forEach((t) => next.add(t));
+                    }
+                    onChange(ALL_TOOLS.filter((t) => next.has(t)));
+                  }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {groupAll ? "Deselect" : "Select all"}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {group.tools.map((tool) => {
+                  const active = selectedSet.has(tool);
+                  return (
+                    <button
+                      key={tool}
+                      type="button"
+                      onClick={() => toggleTool(tool)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono transition-colors border ${
+                        active
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-muted/30 text-muted-foreground border-border/40 hover:border-primary/40"
+                      }`}
+                    >
+                      {tool}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {noneSelected && (
+        <p className="text-xs text-destructive">
+          Warning: no tools selected — agents will be blocked from all MCP calls for this bank.
+        </p>
+      )}
+    </div>
   );
 }
 
