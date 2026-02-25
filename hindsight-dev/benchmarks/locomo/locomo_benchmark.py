@@ -96,7 +96,7 @@ class LoComoDataset(BenchmarkDataset):
         try:
             dt = datetime.strptime(date_string, "%I:%M %p on %d %B, %Y")
             return dt.replace(tzinfo=timezone.utc)
-        except:
+        except ValueError:
             raise
 
 
