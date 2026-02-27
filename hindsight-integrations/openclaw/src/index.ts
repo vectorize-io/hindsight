@@ -20,6 +20,7 @@ const banksWithMissionSet = new Set<string>();
 // In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
 import type { RecallResponse } from './types.js';
 const inflightRecalls = new Map<string, Promise<RecallResponse>>();
+const turnCountBySession = new Map<string, number>();
 const RECALL_TIMEOUT_MS = 10_000;
 
 // Cooldown + guard to prevent concurrent reinit attempts
@@ -857,8 +858,29 @@ User message: ${prompt}
           return;
         }
 
+        // --- Chunked retention: only retain every Nth turn ---
+        const retainEveryN = pluginConfig.retainEveryNTurns ?? 10;
+        let messagesToRetain = event.messages;
+
+        if (retainEveryN > 1) {
+          const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || currentSessionKey || 'session'}`;
+          const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
+          turnCountBySession.set(sessionTrackingKey, turnCount);
+
+          if (turnCount % retainEveryN !== 0) {
+            const nextRetain = Math.ceil(turnCount / retainEveryN) * retainEveryN;
+            console.log(`[Hindsight Hook] Skipping retain (turn ${turnCount}, next at ${nextRetain})`);
+            return;
+          }
+
+          // Sliding window: N turns of new content + 2-turn overlap for context continuity
+          const windowSize = retainEveryN * 2 + 4;
+          messagesToRetain = event.messages.slice(-windowSize);
+          console.log(`[Hindsight Hook] Chunked retain at turn ${turnCount} \u2014 last ${messagesToRetain.length} msgs`);
+        }
+
         // Format messages into a transcript
-        const transcript = event.messages
+        const transcript = messagesToRetain
           .map((msg: any) => {
             const role = msg.role || 'unknown';
             let content = '';
@@ -895,14 +917,14 @@ User message: ${prompt}
           document_id: documentId,
           metadata: {
             retained_at: new Date().toISOString(),
-            message_count: String(event.messages.length),
+            message_count: String(messagesToRetain.length),
             channel_type: effectiveCtx?.messageProvider,
             channel_id: effectiveCtx?.channelId,
             sender_id: effectiveCtx?.senderId,
           },
         });
 
-        console.log(`[Hindsight] Retained ${event.messages.length} messages to bank ${bankId} for session ${documentId}`);
+        console.log(`[Hindsight] Retained ${messagesToRetain.length} messages to bank ${bankId} for session ${documentId}`);
       } catch (error) {
         console.error('[Hindsight] Error retaining messages:', error);
       }
