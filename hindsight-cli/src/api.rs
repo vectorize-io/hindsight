@@ -300,6 +300,8 @@ impl ApiClient {
                 offset.map(|o| o as i64),
                 q,
                 None,
+                None,
+                None,
             ).await?;
             Ok(response.into_inner())
         })
