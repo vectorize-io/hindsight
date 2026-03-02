@@ -21,7 +21,6 @@ from hindsight_api.engine.retain.entity_labels import (
     parse_entity_labels,
 )
 
-
 # ─── parse_entity_labels ───────────────────────────────────────────────────────
 
 
@@ -36,12 +35,12 @@ def test_parse_entity_labels_empty_list():
 
 
 def test_parse_entity_labels_list_format():
-    """Legacy list format: just a list of attribute dicts."""
+    """Legacy list format: just a list of attribute dicts (using new type field)."""
     raw = [
         {
             "key": "pedagogy",
             "description": "Teaching strategy",
-            "multi_value": True,
+            "type": "multi-values",
             "values": [
                 {"value": "scaffolding", "description": "Break down tasks"},
                 {"value": "active_engagement", "description": "Group work"},
@@ -54,7 +53,7 @@ def test_parse_entity_labels_list_format():
     assert len(result.attributes) == 1
     attr = result.attributes[0]
     assert attr.key == "pedagogy"
-    assert attr.multi_value is True
+    assert attr.type == "multi-values"
     assert len(attr.values) == 2
     assert attr.values[0].value == "scaffolding"
 
@@ -129,7 +128,7 @@ def test_build_labels_model_multi_value():
         attributes=[
             LabelGroup(
                 key="pedagogy",
-                multi_value=True,
+                type="multi-values",
                 values=[LabelValue(value="scaffolding"), LabelValue(value="active_engagement")],
             )
         ]
@@ -154,7 +153,7 @@ def test_build_labels_model_mixed():
     labels_cfg = EntityLabelsConfig(
         attributes=[
             LabelGroup(key="engagement", values=[LabelValue(value="active")]),
-            LabelGroup(key="pedagogy", multi_value=True, values=[LabelValue(value="scaffolding")]),
+            LabelGroup(key="pedagogy", type="multi-values", values=[LabelValue(value="scaffolding")]),
         ]
     )
     Model = build_labels_model(labels_cfg)
@@ -173,11 +172,11 @@ def test_build_labels_model_none_when_no_values():
 
 
 def test_build_labels_model_free_values_optional():
-    """free_values=True, optional=True → str | None field."""
+    """type='text', optional=True → str | None field."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
     labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", free_values=True, optional=True, values=[])]
+        attributes=[LabelGroup(key="topic", type="text", optional=True, values=[])]
     )
     Model = build_labels_model(labels_cfg)
     assert Model is not None
@@ -189,11 +188,11 @@ def test_build_labels_model_free_values_optional():
 
 
 def test_build_labels_model_free_values_always_optional():
-    """free_values=True with optional=False is still treated as str | None — always optional."""
+    """type='text' with optional=False is still treated as str | None — always optional."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
     labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="topic", free_values=True, optional=False, values=[])]
+        attributes=[LabelGroup(key="topic", type="text", optional=False, values=[])]
     )
     Model = build_labels_model(labels_cfg)
     assert Model is not None
@@ -205,11 +204,11 @@ def test_build_labels_model_free_values_always_optional():
 
 
 def test_build_labels_model_free_values_multi_still_optional():
-    """free_values=True with multi_value=True is still treated as str | None — multi ignored."""
+    """type='text' is always str | None — multi-values only applies to enum types."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
     labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="tags", free_values=True, multi_value=True, values=[])]
+        attributes=[LabelGroup(key="tags", type="text", values=[])]
     )
     Model = build_labels_model(labels_cfg)
     assert Model is not None
@@ -221,11 +220,11 @@ def test_build_labels_model_free_values_multi_still_optional():
 
 
 def test_build_labels_model_free_values_no_values_still_creates_field():
-    """free_values group with no values still creates a field (values are just hints)."""
+    """type='text' group with no values still creates a field (description holds examples)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model
 
     labels_cfg = EntityLabelsConfig(
-        attributes=[LabelGroup(key="mood", free_values=True, values=[])]
+        attributes=[LabelGroup(key="mood", type="text", values=[])]
     )
     Model = build_labels_model(labels_cfg)
     assert Model is not None
@@ -255,7 +254,7 @@ def test_is_label_entity_enum_no_match():
 def test_is_label_entity_free_values_prefix_match():
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, is_label_entity, parse_entity_labels
 
-    cfg = parse_entity_labels([{"key": "topic", "free_values": True, "values": []}])
+    cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     lookup = build_labels_lookup(cfg)
     assert is_label_entity("topic:algebra", cfg, lookup) is True
     assert is_label_entity("topic:anything at all", cfg, lookup) is True
@@ -264,7 +263,7 @@ def test_is_label_entity_free_values_prefix_match():
 def test_is_label_entity_free_values_no_match_other_key():
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, is_label_entity, parse_entity_labels
 
-    cfg = parse_entity_labels([{"key": "topic", "free_values": True, "values": []}])
+    cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     lookup = build_labels_lookup(cfg)
     assert is_label_entity("Alice", cfg, lookup) is False
     assert is_label_entity("engagement:active", cfg, lookup) is False
@@ -334,7 +333,7 @@ def test_build_labels_prompt_section_generates_key_values():
             LabelGroup(
                 key="pedagogy",
                 description="Teaching strategy",
-                multi_value=True,
+                type="multi-values",
                 values=[
                     LabelValue(value="scaffolding", description="Break down tasks"),
                     LabelValue(value="active_engagement", description="Group work"),
@@ -348,7 +347,7 @@ def test_build_labels_prompt_section_generates_key_values():
     assert "active_engagement" in result
     assert "pedagogy" in result
     assert "Teaching strategy" in result
-    assert "multi-value" in result
+    assert "multi" in result  # prompt mentions multi-value nature
 
 
 def test_build_labels_prompt_section_free_form_true():
@@ -543,7 +542,7 @@ def _run_label_post_processing(labels_cfg, labels_data: dict) -> set[str]:
                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                     continue
                 label_str = f"{group.key}:{v.strip()}"
-                if group.free_values:
+                if group.type == "text":
                     if label_str.lower() not in existing_texts_lower:
                         validated_entities.append(Entity(text=label_str))
                         existing_texts_lower.add(label_str.lower())
@@ -555,31 +554,30 @@ def _run_label_post_processing(labels_cfg, labels_data: dict) -> set[str]:
 
 
 def test_free_values_label_accepts_any_string():
-    """free_values group: any non-empty string produces a key:value entity."""
+    """type='text' group: any non-empty string produces a key:value entity."""
     from hindsight_api.engine.retain.entity_labels import parse_entity_labels
 
-    labels_cfg = parse_entity_labels([{"key": "topic", "free_values": True, "values": []}])
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     entity_texts = _run_label_post_processing(labels_cfg, {"topic": "quadratic equations"})
     assert "topic:quadratic equations" in entity_texts
 
 
 def test_free_values_label_rejects_none_sentinel():
-    """free_values group: string 'None' / 'null' / 'n/a' are rejected."""
+    """type='text' group: string 'None' / 'null' / 'n/a' are rejected."""
     from hindsight_api.engine.retain.entity_labels import parse_entity_labels
 
-    labels_cfg = parse_entity_labels([{"key": "topic", "free_values": True, "values": []}])
+    labels_cfg = parse_entity_labels([{"key": "topic", "type": "text", "values": []}])
     for sentinel in ("None", "null", "n/a", "NULL", "NONE"):
         result = _run_label_post_processing(labels_cfg, {"topic": sentinel})
         assert result == set(), f"Sentinel '{sentinel}' should not produce an entity, got: {result}"
 
 
 def test_free_values_label_is_single_value():
-    """free_values groups are always single-value (str | None) — multi_value is ignored."""
+    """type='text' groups are always single-value (str | None)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_model, parse_entity_labels
 
-    # Even with multi_value=True, free_values produces str | None
     labels_cfg = parse_entity_labels(
-        [{"key": "topic", "free_values": True, "multi_value": True, "values": []}]
+        [{"key": "topic", "type": "text", "values": []}]
     )
     Model = build_labels_model(labels_cfg)
     assert Model is not None
@@ -591,11 +589,11 @@ def test_free_values_label_is_single_value():
 
 
 def test_free_values_label_not_in_lookup():
-    """free_values group values do NOT appear in the lookup set (no fixed vocabulary)."""
+    """type='text' group values do NOT appear in the lookup set (no fixed vocabulary)."""
     from hindsight_api.engine.retain.entity_labels import build_labels_lookup, parse_entity_labels
 
     labels_cfg = parse_entity_labels(
-        [{"key": "topic", "free_values": True, "values": [{"value": "algebra"}]}]
+        [{"key": "topic", "type": "text", "values": [{"value": "algebra"}]}]
     )
     lookup = build_labels_lookup(labels_cfg)
     assert "topic:algebra" not in lookup  # example hints not added to lookup
@@ -746,11 +744,11 @@ def test_extraction_schema_includes_labels_model():
         },
         {
             "key": "pedagogy",
-            "multi_value": True,
+            "type": "multi-values",
             "values": [{"value": "scaffolding"}, {"value": "active_engagement"}],
         },
     ]
-    config.retain_free_form_entities = True
+    config.entities_allow_free_form = True
     config.retain_extraction_mode = "concise"
     config.retain_extract_causal_links = False
     config.retain_mission = None
@@ -798,7 +796,7 @@ def test_extraction_schema_labels_in_required():
 
     config = MagicMock()
     config.entity_labels = [{"key": "topic", "values": [{"value": "math"}]}]
-    config.retain_free_form_entities = True
+    config.entities_allow_free_form = True
     config.retain_extraction_mode = "concise"
     config.retain_extract_causal_links = False
     config.retain_mission = None
@@ -819,7 +817,7 @@ def test_extraction_schema_no_labels_when_unconfigured():
 
     config = MagicMock()
     config.entity_labels = None
-    config.retain_free_form_entities = True
+    config.entities_allow_free_form = True
     config.retain_extraction_mode = "concise"
     config.retain_extract_causal_links = False
     config.retain_mission = None
@@ -863,7 +861,7 @@ async def test_retain_extracts_single_value_label(memory, request_context):
                         ],
                     }
                 ],
-                "retain_free_form_entities": False,  # labels-only mode
+                "entities_allow_free_form": False,  # labels-only mode
             },
             context=request_context,
         )
@@ -923,7 +921,7 @@ async def test_retain_extracts_multi_value_label(memory, request_context):
                     {
                         "key": "pedagogy",
                         "description": "Teaching strategies observed in the session",
-                        "multi_value": True,
+                        "type": "multi-values",
                         "values": [
                             {"value": "scaffolding", "description": "Teacher breaks tasks into smaller steps"},
                             {"value": "direct_instruction", "description": "Teacher explains concepts directly"},
@@ -931,7 +929,7 @@ async def test_retain_extracts_multi_value_label(memory, request_context):
                         ],
                     }
                 ],
-                "retain_free_form_entities": False,
+                "entities_allow_free_form": False,
             },
             context=request_context,
         )
@@ -989,16 +987,13 @@ async def test_retain_extracts_free_values_label(memory, request_context):
                 "entity_labels": [
                     {
                         "key": "topic",
-                        "description": "The specific subject being discussed in this session",
-                        "free_values": True,
+                        "description": "The specific subject being discussed in this session. Examples: algebra, geometry, quadratic equations.",
+                        "type": "text",
                         "optional": True,
-                        "values": [
-                            {"value": "algebra", "description": "Algebra"},
-                            {"value": "geometry", "description": "Geometry"},
-                        ],
+                        "values": [],
                     }
                 ],
-                "retain_free_form_entities": False,
+                "entities_allow_free_form": False,
             },
             context=request_context,
         )

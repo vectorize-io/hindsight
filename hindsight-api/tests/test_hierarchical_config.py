@@ -82,7 +82,7 @@ async def test_hierarchical_fields_categorization():
     assert "disposition_empathy" in configurable
 
     # Verify entity labels fields are included
-    assert "retain_free_form_entities" in configurable
+    assert "entities_allow_free_form" in configurable
     assert "entity_labels" in configurable
 
     # Verify count is correct

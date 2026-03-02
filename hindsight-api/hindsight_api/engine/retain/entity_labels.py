@@ -6,7 +6,6 @@ Defines a controlled vocabulary of key:value classification labels
 at retain time and stored as entities.
 """
 
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, create_model
@@ -20,13 +19,12 @@ class LabelValue(BaseModel):
 
 
 class LabelGroup(BaseModel):
-    """A label group (dimension) with its allowed values."""
+    """A label group (dimension) with its type and allowed values."""
 
     key: str
     description: str = ""
-    multi_value: bool = False
+    type: Literal["value", "multi-values", "text"] = "value"
     optional: bool = True
-    free_values: bool = False
     values: list[LabelValue] = []
 
 
@@ -42,8 +40,13 @@ def parse_entity_labels(raw: dict | list | None) -> EntityLabelsConfig | None:
 
     Accepts:
     - None → returns None
-    - list → legacy format (just attributes list)
-    - dict → new format {attributes: [...]}
+    - list → list of attribute dicts (each may use legacy free_values/multi_value or new type field)
+    - dict → {attributes: [...]}
+
+    Legacy migration (backward-compat):
+    - free_values=True          → type="text"
+    - multi_value=True          → type="multi-values"
+    - neither / free_values=False → type="value"
 
     Args:
         raw: Raw entity labels config from bank config
@@ -55,33 +58,47 @@ def parse_entity_labels(raw: dict | list | None) -> EntityLabelsConfig | None:
         return None
 
     if isinstance(raw, list):
-        # Legacy format: list of attribute dicts
         if not raw:
             return None
-        attributes = [LabelGroup.model_validate(a) for a in raw]
+        attributes = [LabelGroup.model_validate(_migrate_label_group(a)) for a in raw]
         return EntityLabelsConfig(attributes=attributes)
 
     if isinstance(raw, dict):
-        # Dict format: {attributes: [...]}
-        # Note: free_form_entities key is ignored here — it's a separate config field
         attrs_raw = raw.get("attributes", [])
         if not attrs_raw:
             return None
-        attributes = [LabelGroup.model_validate(a) for a in attrs_raw]
+        attributes = [LabelGroup.model_validate(_migrate_label_group(a)) for a in attrs_raw]
         return EntityLabelsConfig(attributes=attributes)
 
     return None
+
+
+def _migrate_label_group(raw: dict) -> dict:
+    """Migrate legacy free_values/multi_value fields to the new type field."""
+    if not isinstance(raw, dict) or "type" in raw:
+        return raw
+    patched = dict(raw)
+    if patched.get("free_values"):
+        patched["type"] = "text"
+    elif patched.get("multi_value"):
+        patched["type"] = "multi-values"
+    else:
+        patched["type"] = "value"
+    # Remove legacy keys so Pydantic doesn't error on unknown fields
+    patched.pop("free_values", None)
+    patched.pop("multi_value", None)
+    return patched
 
 
 def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None:
     """
     Build a dynamic Pydantic model for structured label extraction.
 
-    Each LabelGroup becomes a typed field:
-    - free_values=True                                     → str | None  (always optional, no multi)
-    - free_values=False, multi_value=False, optional=True  → Literal["v1","v2"] | None
-    - free_values=False, multi_value=False, optional=False → Literal["v1","v2"]  (required)
-    - free_values=False, multi_value=True                  → list[Literal["v1","v2"]]
+    Each LabelGroup becomes a typed field based on its type:
+    - type="text"                        → str | None  (always optional)
+    - type="value",   optional=True      → Literal["v1","v2"] | None
+    - type="value",   optional=False     → Literal["v1","v2"]  (required)
+    - type="multi-values"                → list[Literal["v1","v2"]]
 
     Args:
         labels_cfg: Parsed EntityLabelsConfig
@@ -95,8 +112,8 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
             continue
         description = group.description or group.key
 
-        if group.free_values:
-            # Free-form: any string value accepted, always optional, no multi-value
+        if group.type == "text":
+            # Free-form: any string value accepted, always optional
             fields[group.key] = (str | None, Field(default=None, description=description))
         else:
             # Enum-constrained: must have defined values
@@ -107,7 +124,7 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
                 continue
             # Literal[("v1", "v2")] is equivalent to Literal["v1", "v2"] in Python 3.11+
             literal_type = Literal[values]  # type: ignore[valid-type]
-            if group.multi_value:
+            if group.type == "multi-values":
                 fields[group.key] = (
                     list[literal_type],  # type: ignore[valid-type]
                     Field(default_factory=list, description=description),
@@ -134,12 +151,12 @@ def is_label_entity(text: str, labels_cfg: EntityLabelsConfig, labels_lookup: se
     Return True if entity text belongs to any configured label group.
 
     For enum groups: checks the pre-built lookup set.
-    For free_values groups: checks that the text starts with a known key prefix.
+    For text groups: checks that the text starts with a known key prefix.
     """
     if text.lower() in labels_lookup:
         return True
     for group in labels_cfg.attributes:
-        if group.free_values and group.key and text.lower().startswith(f"{group.key.lower()}:"):
+        if group.type == "text" and group.key and text.lower().startswith(f"{group.key.lower()}:"):
             return True
     return False
 
@@ -168,7 +185,7 @@ def build_labels_lookup(labels_cfg: EntityLabelsConfig | list | None) -> set[str
 
     valid = set()
     for group in labels_cfg.attributes:
-        if group.free_values:
+        if group.type == "text":
             continue  # No fixed vocabulary — all values accepted in post-processing
         for v in group.values:
             if group.key and v.value:

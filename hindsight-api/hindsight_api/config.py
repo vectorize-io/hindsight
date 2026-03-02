@@ -691,11 +691,11 @@ class HindsightConfig:
     observations_mission: str | None
 
     # Entity labels (controlled vocabulary of key:value classification labels extracted at retain time)
-    # List of label group dicts: [{key, description, multi_value, values: [{value, description}]}]
+    # List of label group dicts: [{key, description, type, optional, values: [{value, description}]}]
     entity_labels: list | None
     # Whether to extract regular named entities alongside entity labels (default: True)
     # When False: only label entities are extracted (or no entities at all if no labels configured)
-    retain_free_form_entities: bool
+    entities_allow_free_form: bool
 
     # Reflect agent settings
     reflect_mission: str | None
@@ -779,7 +779,7 @@ class HindsightConfig:
         "retain_custom_instructions",
         # Entity labels (controlled vocabulary for entity classification)
         "entity_labels",
-        "retain_free_form_entities",
+        "entities_allow_free_form",
         # Consolidation settings
         "enable_observations",
         "observations_mission",
@@ -1129,7 +1129,7 @@ class HindsightConfig:
             ),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             entity_labels=None,
-            retain_free_form_entities=True,
+            entities_allow_free_form=True,
             # Database migrations
             run_migrations_on_startup=os.getenv(ENV_RUN_MIGRATIONS_ON_STARTUP, "true").lower() == "true",
             # Database connection pool

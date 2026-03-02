@@ -220,6 +220,7 @@ Each label group defines one classification dimension:
     {
       "key": "engagement",
       "description": "Student engagement level during the session",
+      "type": "value",
       "optional": true,
       "values": [
         { "value": "active",  "description": "Student is actively participating" },
@@ -229,7 +230,7 @@ Each label group defines one classification dimension:
     {
       "key": "pedagogy",
       "description": "Teaching strategies used",
-      "multi_value": true,
+      "type": "multi-values",
       "values": [
         { "value": "scaffolding",           "description": "Breaking complex tasks into smaller steps" },
         { "value": "direct_instruction",    "description": "Explicit explanation by the teacher" },
@@ -244,27 +245,23 @@ Each label group defines one classification dimension:
 |-------|---------|-------------|
 | `key` | — | Label group identifier. Becomes the prefix in `key:value` entities. |
 | `description` | `""` | Shown to the LLM to help it assign the right label. |
-| `values` | `[]` | Allowed values (required for enum groups; optional hints for `free_values` groups). |
-| `multi_value` | `false` | `true` → the LLM can assign multiple values for a single fact. |
-| `optional` | `true` | `true` → the LLM may skip this label if not applicable (default). `false` → LLM must always assign a value. Has no effect on `multi_value` groups (always optional). |
-| `free_values` | `false` | `true` → accept any string value, not just those in `values`. See [Free-text labels](#free-text-labels). |
+| `type` | `"value"` | `"value"` → single enum value; `"multi-values"` → multiple enum values; `"text"` → free-form string. |
+| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"` type. |
+| `optional` | `true` | `true` → the LLM may skip this label if not applicable (default). `false` → LLM must always assign a value. Has no effect on `"multi-values"` groups (always optional). |
 
 ### Enum vs Free-text Labels
 
-**Enum groups** (`free_values: false`, the default): the LLM must pick from the predefined `values` list. Values not in the list are silently dropped. This is the most reliable option — the vocabulary is stable and graph clustering is tight.
+**Enum groups** (`type: "value"` or `type: "multi-values"`): the LLM must pick from the predefined `values` list. Values not in the list are silently dropped. This is the most reliable option — the vocabulary is stable and graph clustering is tight. Use `"multi-values"` when a single fact can match multiple values.
 
-**Free-text groups** (`free_values: true`): the LLM can write any string value. The `values` list becomes example hints shown in the prompt, not hard constraints. Use this for open-ended dimensions like topic or mood where you can't enumerate all possibilities upfront.
+**Free-text groups** (`type: "text"`): the LLM can write any string value. The `values` field is ignored — use the `description` to provide examples and guidance instead.
 
 ```json
 {
   "key": "topic",
-  "description": "The specific subject being discussed",
-  "free_values": true,
+  "description": "The specific subject being discussed. Examples: algebra, geometry, quadratic equations.",
+  "type": "text",
   "optional": true,
-  "values": [
-    { "value": "algebra" },
-    { "value": "geometry" }
-  ]
+  "values": []
 }
 ```
 
@@ -272,12 +269,12 @@ The trade-off with free-text: the LLM may use different phrasings for the same c
 
 ### Labels-only Mode
 
-By default, entity labels are extracted **alongside** regular named entities (people, places, concepts). Set `retain_free_form_entities: false` to disable free-form extraction and store only label entities:
+By default, entity labels are extracted **alongside** regular named entities (people, places, concepts). Set `entities_allow_free_form: false` to disable free-form extraction and store only label entities:
 
 ```json
 {
   "entity_labels": [...],
-  "retain_free_form_entities": false
+  "entities_allow_free_form": false
 }
 ```
 

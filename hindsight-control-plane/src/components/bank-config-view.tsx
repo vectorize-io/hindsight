@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Loader2, AlertCircle, Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -45,15 +44,14 @@ type LabelValue = { value: string; description: string };
 type LabelGroup = {
   key: string;
   description: string;
-  multi_value: boolean;
+  type: "value" | "multi-values" | "text";
   optional: boolean;
-  free_values: boolean;
   values: LabelValue[];
 };
 
 type EntityLabelsEdits = {
   entity_labels: LabelGroup[] | null;
-  retain_free_form_entities: boolean;
+  entities_allow_free_form: boolean;
 };
 
 type MCPEdits = {
@@ -124,7 +122,7 @@ function entityLabelsSlice(config: Record<string, any>): EntityLabelsEdits {
   }
   return {
     entity_labels: attrs,
-    retain_free_form_entities: config.retain_free_form_entities ?? true,
+    entities_allow_free_form: config.entities_allow_free_form ?? true,
   };
 }
 
@@ -268,7 +266,7 @@ export function BankConfigView() {
     try {
       const payload = {
         entity_labels: entityLabelsEdits.entity_labels,
-        retain_free_form_entities: entityLabelsEdits.retain_free_form_entities,
+        entities_allow_free_form: entityLabelsEdits.entities_allow_free_form,
       };
       await client.updateBankConfig(bankId, payload);
       setBaseConfig((prev) => ({ ...prev, ...payload }));
@@ -415,16 +413,16 @@ export function BankConfigView() {
           >
             <div className="flex justify-end items-center gap-2">
               <Label
-                htmlFor="retain-free-form-entities"
+                htmlFor="entities-allow-free-form"
                 className="text-sm text-muted-foreground cursor-pointer select-none"
               >
-                {entityLabelsEdits.retain_free_form_entities ? "Enabled" : "Disabled"}
+                {entityLabelsEdits.entities_allow_free_form ? "Enabled" : "Disabled"}
               </Label>
               <Switch
-                id="retain-free-form-entities"
-                checked={entityLabelsEdits.retain_free_form_entities}
+                id="entities-allow-free-form"
+                checked={entityLabelsEdits.entities_allow_free_form}
                 onCheckedChange={(v) =>
-                  setEntityLabelsEdits((prev) => ({ ...prev, retain_free_form_entities: v }))
+                  setEntityLabelsEdits((prev) => ({ ...prev, entities_allow_free_form: v }))
                 }
               />
             </div>
@@ -822,9 +820,8 @@ function emptyAttribute(): LabelGroup {
   return {
     key: "",
     description: "",
-    multi_value: false,
+    type: "value",
     optional: true,
-    free_values: false,
     values: [],
   };
 }
@@ -900,7 +897,8 @@ function EntityLabelsEditor({
       <div className="space-y-2">
         {value.map((attr, i) => {
           const isOpen = expanded[i] ?? false;
-          const isEnum = !attr.free_values;
+          const isText = attr.type === "text";
+          const hasValues = !isText;
           return (
             <div key={i} className="border border-border/50 rounded-md bg-background">
               {/* Attribute header */}
@@ -909,12 +907,12 @@ function EntityLabelsEditor({
                   type="button"
                   onClick={() => setExpanded((prev) => ({ ...prev, [i]: !isOpen }))}
                   className="text-muted-foreground hover:text-foreground shrink-0"
-                  disabled={attr.free_values}
+                  disabled={isText}
                 >
-                  {isOpen && isEnum ? (
+                  {isOpen && hasValues ? (
                     <ChevronDown className="h-4 w-4" />
                   ) : (
-                    <ChevronRight className={`h-4 w-4 ${attr.free_values ? "opacity-30" : ""}`} />
+                    <ChevronRight className={`h-4 w-4 ${isText ? "opacity-30" : ""}`} />
                   )}
                 </button>
                 <Input
@@ -924,48 +922,37 @@ function EntityLabelsEditor({
                   className="h-8 text-xs font-mono w-36 shrink-0"
                 />
                 <Input
-                  placeholder={attr.free_values ? "description / examples" : "description"}
+                  placeholder={isText ? "description / examples" : "description"}
                   value={attr.description}
                   onChange={(e) => updateAttr(i, { description: e.target.value })}
                   className="h-8 text-xs flex-1 min-w-0"
                 />
                 {/* Type dropdown */}
                 <Select
-                  value={attr.free_values ? "free_text" : "enum"}
-                  onValueChange={(v) =>
+                  value={attr.type}
+                  onValueChange={(v: "value" | "multi-values" | "text") =>
                     updateAttr(i, {
-                      free_values: v === "free_text",
-                      // reset enum-only fields when switching to free text
-                      ...(v === "free_text"
-                        ? { multi_value: false, optional: true, values: [] }
-                        : {}),
+                      type: v,
+                      // reset values when switching to free text
+                      ...(v === "text" ? { values: [] } : {}),
                     })
                   }
                 >
-                  <SelectTrigger className="h-8 text-xs w-28 shrink-0">
+                  <SelectTrigger className="h-8 text-xs w-32 shrink-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="enum" className="text-xs">
-                      Enum
+                    <SelectItem value="value" className="text-xs">
+                      Single value
                     </SelectItem>
-                    <SelectItem value="free_text" className="text-xs">
+                    <SelectItem value="multi-values" className="text-xs">
+                      Multi-values
+                    </SelectItem>
+                    <SelectItem value="text" className="text-xs">
                       Free text
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                {/* Multi checkbox — enum only */}
-                {isEnum && (
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 cursor-pointer select-none">
-                    <Checkbox
-                      id={`multi-${i}`}
-                      checked={attr.multi_value}
-                      onCheckedChange={(checked) => updateAttr(i, { multi_value: !!checked })}
-                      className="h-4 w-4"
-                    />
-                    multi
-                  </label>
-                )}
                 <button
                   type="button"
                   onClick={() => removeAttr(i)}
@@ -975,8 +962,8 @@ function EntityLabelsEditor({
                 </button>
               </div>
 
-              {/* Values list — enum only */}
-              {isOpen && isEnum && (
+              {/* Values list — enum and multi-values only */}
+              {isOpen && hasValues && (
                 <div className="px-3 pb-3 space-y-1 border-t border-border/30 pt-2">
                   {attr.values.length === 0 && (
                     <p className="text-xs text-muted-foreground italic pl-5">No values yet.</p>

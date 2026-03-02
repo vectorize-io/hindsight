@@ -278,7 +278,7 @@ def main():
             consolidation_max_tokens=config.consolidation_max_tokens,
             observations_mission=config.observations_mission,
             entity_labels=config.entity_labels,
-            retain_free_form_entities=config.retain_free_form_entities,
+            entities_allow_free_form=config.entities_allow_free_form,
             skip_llm_verification=config.skip_llm_verification,
             lazy_reranker=config.lazy_reranker,
             run_migrations_on_startup=config.run_migrations_on_startup,

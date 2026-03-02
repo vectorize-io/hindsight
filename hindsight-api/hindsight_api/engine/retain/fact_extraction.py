@@ -732,11 +732,11 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
     ]
 
     for attr in labels_cfg.attributes:
-        if attr.free_values:
+        if attr.type == "text":
             # Free-text: no predefined values — LLM writes any relevant string or null
             lines.append(f"- {attr.key} (free text or null): {attr.description}")
         else:
-            mode = "multi-value (list)" if attr.multi_value else "single value or null"
+            mode = "multi-value (list)" if attr.type == "multi-values" else "single value or null"
             lines.append(f"- {attr.key} ({mode}): {attr.description}")
             for v in attr.values:
                 desc = f" — {v.description}" if v.description else ""
@@ -806,7 +806,7 @@ def _build_extraction_prompt_and_schema(config) -> tuple[str, type]:
     # Add entity labels section if configured and build dynamic schema
     entity_labels_raw = getattr(config, "entity_labels", None)
     labels_cfg = parse_entity_labels(entity_labels_raw)
-    free_form_entities = getattr(config, "retain_free_form_entities", True)
+    free_form_entities = getattr(config, "entities_allow_free_form", True)
     labels_section = _build_labels_prompt_section(labels_cfg, free_form_entities)
     if labels_section:
         prompt = prompt + labels_section
@@ -1116,7 +1116,7 @@ async def _extract_facts_from_chunk(
                 # Post-process label entities from structured labels object
                 entity_labels_raw = getattr(config, "entity_labels", None)
                 labels_cfg = parse_entity_labels(entity_labels_raw)
-                free_form_entities = getattr(config, "retain_free_form_entities", True)
+                free_form_entities = getattr(config, "entities_allow_free_form", True)
                 if labels_cfg and labels_cfg.attributes:
                     labels_lookup = build_labels_lookup(labels_cfg)
                     labels_data = llm_fact.get("labels") or {}
@@ -1131,7 +1131,7 @@ async def _extract_facts_from_chunk(
                                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                     continue
                                 label_str = f"{group.key}:{v.strip()}"
-                                if group.free_values:
+                                if group.type == "text":
                                     if label_str.lower() not in existing_texts_lower:
                                         validated_entities.append(Entity(text=label_str))
                                         existing_texts_lower.add(label_str.lower())
@@ -1763,7 +1763,7 @@ async def extract_facts_from_contents_batch_api(
             # Post-process label entities from structured labels object
             entity_labels_raw = getattr(config, "entity_labels", None)
             labels_cfg_batch = parse_entity_labels(entity_labels_raw)
-            free_form_entities_batch = getattr(config, "retain_free_form_entities", True)
+            free_form_entities_batch = getattr(config, "entities_allow_free_form", True)
             if labels_cfg_batch and labels_cfg_batch.attributes:
                 labels_lookup_batch = build_labels_lookup(labels_cfg_batch)
                 labels_data = llm_fact.get("labels") or {}
@@ -1778,7 +1778,7 @@ async def extract_facts_from_contents_batch_api(
                             if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
                                 continue
                             label_str = f"{group.key}:{v.strip()}"
-                            if group.free_values:
+                            if group.type == "text":
                                 if label_str.lower() not in existing_texts_lower:
                                     validated_entities.append(Entity(text=label_str))
                                     existing_texts_lower.add(label_str.lower())
