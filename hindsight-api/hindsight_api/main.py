@@ -292,6 +292,7 @@ def main():
             worker_max_slots=config.worker_max_slots,
             worker_consolidation_max_slots=config.worker_consolidation_max_slots,
             reflect_max_iterations=config.reflect_max_iterations,
+            reflect_max_context_tokens=config.reflect_max_context_tokens,
             reflect_mission=config.reflect_mission,
             disposition_skepticism=config.disposition_skepticism,
             disposition_literalism=config.disposition_literalism,

@@ -14,6 +14,8 @@ import re
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+import tiktoken
+
 from .models import DirectiveInfo, LLMCall, ReflectAgentResult, TokenUsageSummary, ToolCall
 from .prompts import FINAL_SYSTEM_PROMPT, _extract_directive_rules, build_final_prompt, build_system_prompt_for_tools
 from .tools_schema import get_reflect_tools
@@ -259,6 +261,46 @@ OUTPUT:"""
         return None, 0, 0
 
 
+_TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+
+
+def _count_messages_tokens(messages: list[dict[str, Any]]) -> int:
+    """Estimate the token count of the messages list using cl100k_base encoding."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content") or ""
+        if isinstance(content, str):
+            total += len(_TIKTOKEN_ENCODING.encode(content))
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    total += len(_TIKTOKEN_ENCODING.encode(part["text"]))
+        # Tool call arguments and results also count
+        for tc in msg.get("tool_calls") or []:
+            if isinstance(tc, dict):
+                func = tc.get("function", {})
+                total += len(_TIKTOKEN_ENCODING.encode(func.get("arguments", "")))
+    return total
+
+
+def _is_context_overflow_error(exc: Exception) -> bool:
+    """Return True if the exception signals the LLM context window was exceeded."""
+    msg = str(exc).lower()
+    return any(
+        phrase in msg
+        for phrase in (
+            "context_length_exceeded",
+            "context length exceeded",
+            "maximum context length",
+            "prompt_too_long",
+            "prompt is too long",
+            "resource_exhausted",
+            "input is too long",
+            "too many tokens",
+        )
+    )
+
+
 async def run_reflect_agent(
     llm_config: "LLMProvider",
     bank_id: str,
@@ -275,6 +317,7 @@ async def run_reflect_agent(
     directives: list[dict[str, Any]] | None = None,
     has_mental_models: bool = False,
     budget: str | None = None,
+    max_context_tokens: int = 100_000,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop using native tool calling.
@@ -433,6 +476,60 @@ async def run_reflect_agent(
                 directives_applied=directives_applied,
             )
 
+        # Proactive context-window guard: if accumulated messages would exceed the
+        # configured token budget, bail out early and synthesize from what we have.
+        estimated_tokens = _count_messages_tokens(messages)
+        if estimated_tokens >= max_context_tokens and (
+            bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
+        ):
+            logger.warning(
+                f"[REFLECT {reflect_id}] Context budget exceeded on iteration {iteration + 1}: "
+                f"~{estimated_tokens} tokens >= {max_context_tokens} limit. Forcing final synthesis."
+            )
+            prompt = build_final_prompt(query, context_history, bank_profile, context)
+            llm_start = time.time()
+            response, usage = await llm_config.call(
+                messages=[
+                    {"role": "system", "content": FINAL_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                scope="reflect",
+                max_completion_tokens=max_tokens,
+                return_usage=True,
+            )
+            llm_duration = int((time.time() - llm_start) * 1000)
+            total_input_tokens += usage.input_tokens
+            total_output_tokens += usage.output_tokens
+            llm_trace.append(
+                {
+                    "scope": "final",
+                    "duration_ms": llm_duration,
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                }
+            )
+            answer = _clean_answer_text(response.strip())
+
+            structured_output = None
+            if response_schema and answer:
+                structured_output, struct_in, struct_out = await _generate_structured_output(
+                    answer, response_schema, llm_config, reflect_id
+                )
+                total_input_tokens += struct_in
+                total_output_tokens += struct_out
+
+            _log_completion(answer, iteration + 1, forced=True)
+            return ReflectAgentResult(
+                text=answer,
+                structured_output=structured_output,
+                iterations=iteration + 1,
+                tools_called=total_tools_called,
+                tool_trace=tool_trace,
+                llm_trace=_get_llm_trace(),
+                usage=_get_usage(),
+                directives_applied=directives_applied,
+            )
+
         # Call LLM with tools
         llm_start = time.time()
 
@@ -478,11 +575,18 @@ async def run_reflect_agent(
             consecutive_errors += 1
             logger.warning(f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {e} ({err_duration}ms)")
             llm_trace.append({"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration})
-            # Guardrail: If no evidence gathered yet, retry (but cap consecutive errors to avoid long hangs)
             has_gathered_evidence = (
                 bool(available_memory_ids) or bool(available_mental_model_ids) or bool(available_observation_ids)
             )
-            if not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
+            # Context overflow errors must never be retried — retrying would only make them worse.
+            # Skip straight to final synthesis with whatever evidence we have.
+            if _is_context_overflow_error(e):
+                logger.warning(
+                    f"[REFLECT {reflect_id}] Context window exceeded on iteration {iteration + 1}, "
+                    "forcing final synthesis from gathered evidence."
+                )
+            # For other errors: retry if no evidence yet (but cap consecutive errors to avoid long hangs)
+            elif not has_gathered_evidence and iteration < max_iterations - 1 and consecutive_errors < 2:
                 continue
             prompt = build_final_prompt(query, context_history, bank_profile, context)
             llm_start = time.time()

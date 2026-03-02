@@ -7,14 +7,17 @@ These tests verify:
 3. Recovery from tool execution errors
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from hindsight_api.engine.reflect.agent import (
-    _normalize_tool_name,
-    _is_done_tool,
     _clean_answer_text,
     _clean_done_answer,
+    _count_messages_tokens,
+    _is_context_overflow_error,
+    _is_done_tool,
+    _normalize_tool_name,
     run_reflect_agent,
 )
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
@@ -412,3 +415,193 @@ class TestReflectAgentMocked:
         # Should have a result even if no memories found
         assert result is not None
         assert result.iterations == 3
+
+
+class TestContextOverflowHelpers:
+    """Unit tests for context-overflow detection helpers."""
+
+    def test_count_messages_tokens_basic(self):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is the capital of France?"},
+        ]
+        count = _count_messages_tokens(messages)
+        assert count > 0
+        # Rough sanity check: ~10 tokens for each message
+        assert count < 100
+
+    def test_count_messages_tokens_with_tool_result(self):
+        """A large tool result should substantially increase the count."""
+        small_messages = [{"role": "user", "content": "hi"}]
+        large_messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "tool",
+                "tool_call_id": "x",
+                "name": "recall",
+                "content": '{"memories": [' + ', '.join([f'{{"id": "m{i}", "content": "A long memory fact about some topic that goes on and on."}}' for i in range(50)]) + ']}',
+            },
+        ]
+        small = _count_messages_tokens(small_messages)
+        large = _count_messages_tokens(large_messages)
+        assert large > small + 200
+
+    def test_is_context_overflow_error_openai(self):
+        assert _is_context_overflow_error(Exception("context_length_exceeded: too many tokens"))
+        assert _is_context_overflow_error(Exception("This model's maximum context length is 128000 tokens. However, your messages resulted in 142164 tokens."))
+
+    def test_is_context_overflow_error_anthropic(self):
+        assert _is_context_overflow_error(Exception("prompt_too_long"))
+        assert _is_context_overflow_error(Exception("prompt is too long for this model"))
+
+    def test_is_context_overflow_error_gemini(self):
+        assert _is_context_overflow_error(Exception("RESOURCE_EXHAUSTED: quota exceeded"))
+
+    def test_is_context_overflow_error_generic(self):
+        assert _is_context_overflow_error(Exception("input is too long to process"))
+        assert _is_context_overflow_error(Exception("too many tokens in the request"))
+
+    def test_is_context_overflow_error_unrelated(self):
+        assert not _is_context_overflow_error(Exception("connection timeout"))
+        assert not _is_context_overflow_error(Exception("rate limit exceeded"))
+        assert not _is_context_overflow_error(ValueError("invalid argument"))
+
+
+class TestContextOverflowBehavior:
+    """Test that the reflect agent handles context overflow gracefully."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock()
+        llm.call_with_tools = AsyncMock()
+        llm.call = AsyncMock(
+            return_value=("Synthesized answer from gathered evidence.", TokenUsage(input_tokens=50, output_tokens=20, total_tokens=70))
+        )
+        return llm
+
+    @pytest.fixture
+    def mock_functions_with_large_output(self):
+        """Mock functions that return a large enough payload to exceed a tiny token budget."""
+        large_memories = [
+            {"id": f"mem-{i}", "content": f"Memory fact number {i}: " + "A" * 200}
+            for i in range(20)
+        ]
+        return {
+            "search_mental_models_fn": AsyncMock(return_value={"mental_models": []}),
+            "search_observations_fn": AsyncMock(return_value={"observations": []}),
+            "recall_fn": AsyncMock(return_value={"memories": large_memories}),
+            "expand_fn": AsyncMock(return_value={"memories": []}),
+        }
+
+    @pytest.mark.asyncio
+    async def test_proactive_guard_fires_when_budget_exceeded(self, mock_llm, mock_functions_with_large_output):
+        """When token count exceeds max_context_tokens after a tool call, the agent
+        should immediately synthesize from gathered evidence instead of making
+        another LLM call that would overflow."""
+        # First call: LLM calls recall (forced by iter 0 with no mental models)
+        mock_llm.call_with_tools.return_value = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+            finish_reason="tool_calls",
+        )
+
+        # Set a tiny token budget — the recall result alone will blow past it
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_context_tokens=100,
+            **mock_functions_with_large_output,
+        )
+
+        assert result.text == "Synthesized answer from gathered evidence."
+        # call_with_tools was called once (for the forced recall), then the guard
+        # kicked in — no further tool-call iterations
+        assert mock_llm.call_with_tools.call_count == 1
+        # llm.call() was invoked to generate the final synthesis
+        mock_llm.call.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_context_overflow_error_skips_retry(self, mock_llm, mock_functions_with_large_output):
+        """A context_length_exceeded error from the LLM should NOT be retried —
+        it should immediately fall back to final synthesis."""
+        mock_llm.call_with_tools.side_effect = Exception(
+            "context_length_exceeded: messages resulted in 150000 tokens."
+        )
+
+        result = await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="What do you know?",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=5,
+            **mock_functions_with_large_output,
+        )
+
+        assert result is not None
+        # Should have attempted only 1 iteration (no retry on overflow error)
+        assert mock_llm.call_with_tools.call_count == 1
+        # Final synthesis was called
+        mock_llm.call.assert_called_once()
+
+
+class TestContextOverflowIntegration:
+    """Integration test: real LLM with a very small max_context_tokens.
+
+    The agent will make one real LLM call (forced tool choice), receive a large
+    tool result that exceeds the tiny budget, then synthesize from it via a second
+    real LLM call — all without raising a context_length_exceeded error.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reflect_completes_with_tiny_context_budget(self, memory, request_context):
+        """End-to-end: reflect on a bank with max_context_tokens=1 (tiny budget).
+
+        Setting max_context_tokens=1 guarantees the proactive guard fires as soon
+        as the first tool result is received and evidence is available.
+        The result must be a non-empty string with no exception raised.
+        """
+        import uuid
+        from unittest.mock import patch
+
+        bank_id = f"test-ctx-overflow-{uuid.uuid4().hex[:8]}"
+        try:
+            # Retain a handful of facts so the recall tool has something to return
+            await memory.retain_async(
+                bank_id=bank_id,
+                content="Alice is a software engineer who enjoys hiking on weekends.",
+                request_context=request_context,
+            )
+            await memory.retain_async(
+                bank_id=bank_id,
+                content="Bob is a designer who loves cooking Italian food.",
+                request_context=request_context,
+            )
+
+            # Patch get_config where memory_engine uses it, injecting a tiny
+            # max_context_tokens.  Everything else delegates to the real config.
+            real_config = memory._get_raw_config() if hasattr(memory, "_get_raw_config") else None
+            from hindsight_api.config import get_config as _real_get_config
+
+            class _TinyContextProxy:
+                """Forwards all attribute access to the real config proxy except
+                reflect_max_context_tokens which is forced to 1."""
+                _real = _real_get_config()
+
+                def __getattr__(self, name: str):
+                    if name == "reflect_max_context_tokens":
+                        return 1
+                    return getattr(self._real, name)
+
+            with patch("hindsight_api.engine.memory_engine.get_config", return_value=_TinyContextProxy()):
+                result = await memory.reflect_async(
+                    bank_id=bank_id,
+                    query="Tell me about the people you know.",
+                    request_context=request_context,
+                )
+
+            assert result.text, "reflect must return a non-empty answer"
+            assert result.usage.total_tokens > 0
+
+        finally:
+            await memory.delete_bank(bank_id, request_context=request_context)

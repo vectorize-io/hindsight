@@ -4582,6 +4582,7 @@ class MemoryEngine(MemoryEngineInterface):
         budget_multipliers = {Budget.LOW: 0.5, Budget.MID: 1.0, Budget.HIGH: 2.0}
         effective_budget = budget or Budget.LOW
         max_iterations = max(1, int(base_max_iterations * budget_multipliers.get(effective_budget, 1.0)))
+        max_context_tokens = config.reflect_max_context_tokens
 
         # Run agentic loop - acquire connections only when needed for DB operations
         # (not held during LLM calls which can be slow)
@@ -4691,6 +4692,7 @@ class MemoryEngine(MemoryEngineInterface):
                 directives=directives,
                 has_mental_models=has_mental_models,
                 budget=effective_budget,
+                max_context_tokens=max_context_tokens,
             )
 
             total_time = time.time() - reflect_start

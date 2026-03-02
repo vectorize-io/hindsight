@@ -10,6 +10,11 @@ The reflect agent uses hierarchical retrieval:
 import json
 from typing import Any
 
+import tiktoken
+
+_TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+_FINAL_PROMPT_CONTEXT_BUDGET = 60_000  # Max tokens for tool results in the final prompt
+
 
 def _extract_directive_rules(directives: list[dict[str, Any]]) -> list[str]:
     """Extract directive rules as a list of strings."""
@@ -423,18 +428,32 @@ def build_final_prompt(
     if additional_context:
         parts.append(f"\n## Additional Context\n{additional_context}")
 
-    # Tool call history
+    # Tool call history — include as many entries as fit within the token budget,
+    # preferring the most recent calls (they tend to be the most targeted).
     if context_history:
         parts.append("\n## Retrieved Data (synthesize and reason from this data)")
-        for entry in context_history:
+        token_budget = _FINAL_PROMPT_CONTEXT_BUDGET
+        # Render entries newest-first, then reverse so the prompt reads chronologically.
+        rendered: list[str] = []
+        truncated = False
+        for entry in reversed(context_history):
             tool = entry["tool"]
             output = entry["output"]
-            # Format as proper JSON for LLM readability
             try:
                 output_str = json.dumps(output, indent=2, default=str)
             except (TypeError, ValueError):
                 output_str = str(output)
-            parts.append(f"\n### From {tool}:\n```json\n{output_str}\n```")
+            block = f"\n### From {tool}:\n```json\n{output_str}\n```"
+            block_tokens = len(_TIKTOKEN_ENCODING.encode(block))
+            if block_tokens > token_budget:
+                truncated = True
+                break
+            rendered.append(block)
+            token_budget -= block_tokens
+        for block in reversed(rendered):
+            parts.append(block)
+        if truncated:
+            parts.append("\n*Note: Some earlier tool results were omitted to stay within the context window.*")
     else:
         parts.append("\n## Retrieved Data\nNo data was retrieved.")
 
