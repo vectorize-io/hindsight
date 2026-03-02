@@ -165,8 +165,6 @@ async def retain_batch(
         docs_tracked = 0
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
-                await fact_storage.ensure_bank_exists(conn, bank_id)
-
                 # Group contents by document_id (consistent with normal path)
                 contents_by_doc_early = defaultdict(list)
                 for idx, content_dict in enumerate(contents_dicts):
@@ -284,9 +282,6 @@ async def retain_batch(
     # Step 4: Database transaction
     async with acquire_with_retry(pool) as conn:
         async with conn.transaction():
-            # Ensure bank exists
-            await fact_storage.ensure_bank_exists(conn, bank_id)
-
             # Handle document tracking for all documents
             step_start = time.time()
             # Map None document_id to generated UUIDs
@@ -504,6 +499,10 @@ async def retain_batch(
 
             # Map results back to original content items
             result_unit_ids = _map_results_to_contents(contents, extracted_facts, is_duplicate_flags, unit_ids)
+
+        # Flush entity stats (mention_count / last_seen) now that the transaction
+        # has committed.  Uses a fresh pool connection — no locks held.
+        await entity_resolver.flush_pending_stats()
 
         # Log final summary
         total_time = time.time() - start_time

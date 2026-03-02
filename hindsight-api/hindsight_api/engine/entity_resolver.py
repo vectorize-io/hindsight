@@ -5,6 +5,10 @@ Uses spaCy for entity extraction and implements resolution logic
 to disambiguate entities across memory units.
 """
 
+import asyncio
+import logging
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 
@@ -13,6 +17,42 @@ import asyncpg
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
 from .retain.entity_labels import build_labels_lookup as _build_labels_lookup_from_config
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _EntityToCreate:
+    """An entity that needs to be inserted (no matching candidate found)."""
+
+    idx: int
+    name: str
+    event_date: datetime | None
+
+
+@dataclass
+class _EntityStat:
+    """Stat accumulation entry for a resolved entity (post-transaction update)."""
+
+    entity_id: str
+    event_date: datetime | None
+
+
+@dataclass
+class _EntityStatAgg:
+    """Aggregated stats used when flushing pending updates."""
+
+    count: int = 0
+    max_date: datetime | None = None
+
+
+@dataclass
+class _CooccurrencePair:
+    """A (entity_id_1, entity_id_2) pair observed in a retain batch (for post-txn flush)."""
+
+    entity_id_1: str
+    entity_id_2: str
+
 
 # Load spaCy model (singleton)
 _nlp = None
@@ -23,14 +63,87 @@ class EntityResolver:
     Resolves entities to canonical IDs with disambiguation.
     """
 
-    def __init__(self, pool: asyncpg.Pool):
+    def __init__(self, pool: asyncpg.Pool, entity_lookup: str = "full"):
         """
         Initialize entity resolver.
 
         Args:
             pool: asyncpg connection pool
+            entity_lookup: Lookup strategy — "full" loads all bank entities then
+                matches in Python; "trigram" uses pg_trgm GIN index to fetch only
+                similar candidates per entity name (much faster for large banks).
         """
         self.pool = pool
+        self.entity_lookup = entity_lookup
+        # Keyed by asyncio task id so concurrent retain batches never mix their
+        # pending updates.  flush_pending_stats() pops only the calling task's items.
+        self._pending_stats: dict[int, list[_EntityStat]] = {}
+        self._pending_cooccurrences: dict[int, list[_CooccurrencePair]] = {}
+
+    def _task_key(self) -> int:
+        """Return a unique key for the current asyncio task (or 0 for non-task context)."""
+        task = asyncio.current_task()
+        return id(task) if task is not None else 0
+
+    async def flush_pending_stats(self) -> None:
+        """
+        Flush accumulated entity stats and co-occurrence counts for the current task.
+
+        Must be called AFTER the retain transaction commits.  Pops only the items
+        accumulated by the calling asyncio task so concurrent retain batches never
+        flush each other's uncommitted entity IDs.
+        """
+        if self.pool is None:
+            return
+
+        key = self._task_key()
+        stats = self._pending_stats.pop(key, [])
+        cooccurrences = self._pending_cooccurrences.pop(key, [])
+
+        if not stats and not cooccurrences:
+            return
+
+        async with acquire_with_retry(self.pool) as conn:
+            if stats:
+                # Aggregate: sum counts and find max date per entity_id.
+                agg: dict[str, _EntityStatAgg] = defaultdict(_EntityStatAgg)
+                for s in stats:
+                    entry = agg[s.entity_id]
+                    entry.count += 1
+                    if s.event_date is not None:
+                        entry.max_date = s.event_date if entry.max_date is None else max(entry.max_date, s.event_date)
+
+                rows = [(eid, a.count, a.max_date) for eid, a in agg.items()]
+                await conn.executemany(
+                    f"""
+                    UPDATE {fq_table("entities")} SET
+                        mention_count = mention_count + $2,
+                        last_seen     = GREATEST(last_seen, $3)
+                    WHERE id = $1::uuid
+                    """,
+                    rows,
+                )
+
+            if cooccurrences:
+                # Aggregate: count occurrences per (entity_id_1, entity_id_2) pair.
+                coo_agg: dict[tuple[str, str], int] = {}
+                for c in cooccurrences:
+                    pair = (c.entity_id_1, c.entity_id_2)
+                    coo_agg[pair] = coo_agg.get(pair, 0) + 1
+
+                now = datetime.now(UTC)
+                await conn.executemany(
+                    f"""
+                    INSERT INTO {fq_table("entity_cooccurrences")}
+                        (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (entity_id_1, entity_id_2)
+                    DO UPDATE SET
+                        cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + EXCLUDED.cooccurrence_count,
+                        last_cooccurred    = GREATEST({fq_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
+                    """,
+                    [(e1, e2, count, now) for (e1, e2), count in coo_agg.items()],
+                )
 
     @staticmethod
     def _build_labels_lookup(entity_labels: list | None) -> set[str]:
@@ -85,6 +198,14 @@ class EntityResolver:
         unit_event_date,
         taxonomy_lookup: set[str] | None = None,
     ) -> list[str]:
+        if self.entity_lookup == "trigram":
+            return await self._resolve_entities_batch_trigram(conn, bank_id, entities_data, unit_event_date)
+        return await self._resolve_entities_batch_full(conn, bank_id, entities_data, unit_event_date)
+
+    async def _resolve_entities_batch_full(
+        self, conn, bank_id: str, entities_data: list[dict], unit_event_date
+    ) -> list[str]:
+        """Original strategy: load all bank entities then match in Python."""
         # Query ALL candidates for this bank
         all_entities = await conn.fetch(
             f"""
@@ -148,10 +269,103 @@ class EntityResolver:
                     matching.append((ent_id, canonical_name, metadata, last_seen, mention_count))
             all_candidates[entity_text] = matching
 
+        return await self._resolve_from_candidates(
+            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+        )
+
+    async def _resolve_entities_batch_trigram(
+        self, conn, bank_id: str, entities_data: list[dict], unit_event_date
+    ) -> list[str]:
+        """
+        Trigram strategy: fetch only similar candidates per entity name using pg_trgm.
+
+        Instead of loading all bank entities (O(N)), uses a GIN trigram index to fetch
+        only the small set of candidates that are textually similar to each input name.
+        Reduces DB data transfer from 165K rows to ~5-20 rows per entity.
+        """
+        entity_texts = list(set(e["text"] for e in entities_data))
+
+        # Fetch candidates for all unique entity texts in a single batched query.
+        # The trigram % operator uses the GIN index; the substring conditions cover
+        # exact prefix/suffix matches that trigrams might miss at low similarity.
+        rows = await conn.fetch(
+            f"""
+            SELECT DISTINCT ON (e.id)
+                e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                q.query_text
+            FROM unnest($2::text[]) AS q(query_text)
+            JOIN {fq_table("entities")} e ON (
+                e.bank_id = $1
+                AND (
+                    e.canonical_name % q.query_text
+                    OR LOWER(e.canonical_name) LIKE '%' || LOWER(q.query_text) || '%'
+                    OR LOWER(q.query_text) LIKE '%' || LOWER(e.canonical_name) || '%'
+                )
+            )
+            """,
+            bank_id,
+            entity_texts,
+        )
+
+        # Group candidates by query_text
+        all_candidates: dict[str, list] = {t: [] for t in entity_texts}
+        candidate_ids: set = set()
+        for row in rows:
+            query_text = row["query_text"]
+            all_candidates[query_text].append(
+                (row["id"], row["canonical_name"], row["metadata"], row["last_seen"], row["mention_count"])
+            )
+            candidate_ids.add(row["id"])
+
+        # Fetch co-occurrences only for the candidate entities (not all bank entities)
+        cooccurrence_map: dict[str, set[str]] = {}
+        if candidate_ids:
+            candidate_id_list = list(candidate_ids)
+            cooc_rows = await conn.fetch(
+                f"""
+                SELECT ec.entity_id_1, ec.entity_id_2
+                FROM {fq_table("entity_cooccurrences")} ec
+                WHERE ec.entity_id_1 = ANY($1::uuid[])
+                   OR ec.entity_id_2 = ANY($1::uuid[])
+                """,
+                candidate_id_list,
+            )
+            # Build name lookup for co-occurrence mapping
+            id_to_name = {
+                row["id"]: row["canonical_name"].lower()
+                for cands in all_candidates.values()
+                for row in [{"id": c[0], "canonical_name": c[1]} for c in cands]
+            }
+            for row in cooc_rows:
+                eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
+                if eid1 not in cooccurrence_map:
+                    cooccurrence_map[eid1] = set()
+                if eid2 not in cooccurrence_map:
+                    cooccurrence_map[eid2] = set()
+                if eid2 in id_to_name:
+                    cooccurrence_map[eid1].add(id_to_name[eid2])
+                if eid1 in id_to_name:
+                    cooccurrence_map[eid2].add(id_to_name[eid1])
+
+        return await self._resolve_from_candidates(
+            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+        )
+
+    async def _resolve_from_candidates(
+        self,
+        conn,
+        bank_id: str,
+        entities_data: list[dict],
+        unit_event_date,
+        all_candidates: dict[str, list],
+        cooccurrence_map: dict[str, set[str]],
+    ) -> list[str]:
+        """Shared scoring + upsert logic used by both lookup strategies."""
+
         # Resolve each entity using pre-fetched candidates
         entity_ids = [None] * len(entities_data)
-        entities_to_update = []  # (entity_id, event_date)
-        entities_to_create = []  # (idx, entity_data, event_date)
+        entities_to_update: list[_EntityStat] = []
+        entities_to_create: list[_EntityToCreate] = []
 
         taxonomy_lookup = taxonomy_lookup or set()
 
@@ -170,7 +384,7 @@ class EntityResolver:
 
             if not candidates:
                 # Will create new entity
-                entities_to_create.append((idx, entity_data, entity_event_date))
+                entities_to_create.append(_EntityToCreate(idx=idx, name=entity_text, event_date=entity_event_date))
                 continue
 
             # Score candidates
@@ -214,73 +428,83 @@ class EntityResolver:
 
             if best_score > threshold:
                 entity_ids[idx] = best_candidate
-                entities_to_update.append((best_candidate, entity_event_date))
+                entities_to_update.append(_EntityStat(entity_id=best_candidate, event_date=entity_event_date))
             else:
-                entities_to_create.append((idx, entity_data, entity_event_date))
+                entities_to_create.append(
+                    _EntityToCreate(idx=idx, name=entity_data["text"], event_date=entity_event_date)
+                )
 
-        # Batch update existing entities
-        if entities_to_update:
-            await conn.executemany(
-                f"""
-                UPDATE {fq_table("entities")} SET
-                    mention_count = mention_count + 1,
-                    last_seen = $2
-                WHERE id = $1::uuid
-                """,
-                entities_to_update,
-            )
+        # Existing entities: IDs already known from the candidate SELECT above.
+        # No in-transaction UPDATE — mention_count/last_seen are stats deferred to
+        # flush_pending_stats() which the orchestrator calls after the transaction.
+        pending: list[_EntityStat] = list(entities_to_update)
 
-        # Batch create new entities using COPY + INSERT for maximum speed
-        # This handles duplicates via ON CONFLICT and returns all IDs
+        # New entities: INSERT with DO NOTHING to avoid row locks on concurrent races.
+        # ON CONFLICT DO NOTHING returns nothing for rows that conflicted; we handle
+        # that rare case with a fallback SELECT.
         if entities_to_create:
-            # Group entities by canonical name (lowercase) to handle duplicates within batch
-            # For duplicates, we only insert once and reuse the ID, but track the count
-            unique_entities = {}  # lowercase_name -> (entity_data, event_date, [indices])
-            for idx, entity_data, event_date in entities_to_create:
-                name_lower = entity_data["text"].lower()
-                if name_lower not in unique_entities:
-                    unique_entities[name_lower] = (entity_data, event_date, [idx])
-                else:
-                    # Same entity appears multiple times - add index to list
-                    unique_entities[name_lower][2].append(idx)
+            # Group by lowercase name — deduplicate within the batch.
+            @dataclass
+            class _NameGroup:
+                name: str
+                event_date: datetime | None
+                indices: list[int] = field(default_factory=list)
 
-            # Batch insert unique entities and get their IDs
-            # Use a single query with unnest for speed
-            entity_names = []
-            entity_dates = []
-            entity_counts = []  # Track how many times each entity appears in this batch
-            indices_map = []  # Maps result index -> list of original indices
+            groups: dict[str, _NameGroup] = {}
+            for e in entities_to_create:
+                name_lower = e.name.lower()
+                if name_lower not in groups:
+                    groups[name_lower] = _NameGroup(name=e.name, event_date=e.event_date)
+                groups[name_lower].indices.append(e.idx)
 
-            for name_lower, (entity_data, event_date, indices) in unique_entities.items():
-                entity_names.append(entity_data["text"])
-                entity_dates.append(event_date)
-                entity_counts.append(len(indices))  # Count of occurrences in this batch
-                indices_map.append(indices)
+            # Sort by lowercase name for deterministic ordering.
+            sorted_groups = sorted(groups.items())
+            entity_names = [g.name for _, g in sorted_groups]
+            entity_dates = [g.event_date for _, g in sorted_groups]
 
-            # Batch INSERT ... ON CONFLICT with RETURNING
-            # Uses the batch count for mention_count instead of always 1
-            rows = await conn.fetch(
+            # INSERT ... ON CONFLICT DO NOTHING — no row lock on already-existing entities.
+            inserted_rows = await conn.fetch(
                 f"""
                 INSERT INTO {fq_table("entities")} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), cnt
-                FROM unnest($2::text[], $3::timestamptz[], $4::int[]) AS t(name, event_date, cnt)
+                SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 1
+                FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
                 ON CONFLICT (bank_id, LOWER(canonical_name))
-                DO UPDATE SET
-                    mention_count = {fq_table("entities")}.mention_count + EXCLUDED.mention_count,
-                    last_seen = EXCLUDED.last_seen
-                RETURNING id
+                DO NOTHING
+                RETURNING id, LOWER(canonical_name) AS name_lower
                 """,
                 bank_id,
                 entity_names,
                 entity_dates,
-                entity_counts,
             )
+            id_by_name: dict[str, str] = {row["name_lower"]: row["id"] for row in inserted_rows}
 
-            # Map returned IDs back to original indices
-            for result_idx, row in enumerate(rows):
-                entity_id = row["id"]
-                for original_idx in indices_map[result_idx]:
-                    entity_ids[original_idx] = entity_id
+            # Fallback SELECT for names that conflicted (another worker won the race).
+            missing = [n for n, _ in sorted_groups if n not in id_by_name]
+            if missing:
+                existing_rows = await conn.fetch(
+                    f"""
+                    SELECT id, LOWER(canonical_name) AS name_lower
+                    FROM {fq_table("entities")}
+                    WHERE bank_id = $1 AND LOWER(canonical_name) = ANY($2::text[])
+                    """,
+                    bank_id,
+                    missing,
+                )
+                for row in existing_rows:
+                    id_by_name[row["name_lower"]] = row["id"]
+
+            # Assign entity IDs back and queue for post-txn stats flush.
+            for name_lower, g in sorted_groups:
+                entity_id = id_by_name.get(name_lower)
+                if entity_id:
+                    for original_idx in g.indices:
+                        entity_ids[original_idx] = entity_id
+                    pending.append(_EntityStat(entity_id=entity_id, event_date=g.event_date))
+
+        # Accumulate into the resolver's pending list; the orchestrator flushes
+        # these with await entity_resolver.flush_pending_stats() after the txn.
+        key = self._task_key()
+        self._pending_stats.setdefault(key, []).extend(pending)
 
         return entity_ids
 
@@ -566,19 +790,14 @@ class EntityResolver:
                         entity_id_1, entity_id_2 = entity_id_2, entity_id_1
                     cooccurrence_pairs.add((entity_id_1, entity_id_2))
 
-        # Batch update co-occurrences
+        # Accumulate co-occurrence pairs for post-transaction flush.
+        # The actual INSERT/UPDATE is deferred to flush_pending_stats() to avoid
+        # row-level lock contention (ON CONFLICT DO UPDATE inside a long transaction
+        # serialises concurrent writers on popular entity pairs).
         if cooccurrence_pairs:
-            now = datetime.now(UTC)
-            await conn.executemany(
-                f"""
-                INSERT INTO {fq_table("entity_cooccurrences")} (entity_id_1, entity_id_2, cooccurrence_count, last_cooccurred)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (entity_id_1, entity_id_2)
-                DO UPDATE SET
-                    cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + 1,
-                    last_cooccurred = EXCLUDED.last_cooccurred
-                """,
-                [(e1, e2, 1, now) for e1, e2 in cooccurrence_pairs],
+            key = self._task_key()
+            self._pending_cooccurrences.setdefault(key, []).extend(
+                _CooccurrencePair(entity_id_1=e1, entity_id_2=e2) for e1, e2 in cooccurrence_pairs
             )
 
     async def get_units_by_entity(self, entity_id: str, limit: int = 100) -> list[str]:

@@ -252,6 +252,7 @@ def main():
             retain_mission=config.retain_mission,
             retain_custom_instructions=config.retain_custom_instructions,
             retain_batch_tokens=config.retain_batch_tokens,
+            retain_entity_lookup=config.retain_entity_lookup,
             retain_batch_enabled=config.retain_batch_enabled,
             retain_batch_poll_interval_seconds=config.retain_batch_poll_interval_seconds,
             file_storage_type=config.file_storage_type,

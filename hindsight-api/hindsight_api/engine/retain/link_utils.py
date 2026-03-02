@@ -498,14 +498,13 @@ async def create_temporal_links_batch_per_fact(
             # Batch inserts to avoid timeout on large batches
             BATCH_SIZE = 1000
             for batch_start in range(0, len(links), BATCH_SIZE):
-                batch = links[batch_start : batch_start + BATCH_SIZE]
                 await conn.executemany(
                     f"""
                     INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
                     VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                     """,
-                    batch,
+                    links[batch_start : batch_start + BATCH_SIZE],
                 )
             _log(log_buffer, f"      [7.4] Insert {len(links)} temporal links: {time_mod.time() - insert_start:.3f}s")
 
@@ -667,14 +666,13 @@ async def create_semantic_links_batch(
             # Batch inserts to avoid timeout on large batches
             BATCH_SIZE = 1000
             for batch_start in range(0, len(all_links), BATCH_SIZE):
-                batch = all_links[batch_start : batch_start + BATCH_SIZE]
                 await conn.executemany(
                     f"""
                     INSERT INTO {fq_table("memory_links")} (from_unit_id, to_unit_id, link_type, weight, entity_id)
                     VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (from_unit_id, to_unit_id, link_type, COALESCE(entity_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                     """,
-                    batch,
+                    all_links[batch_start : batch_start + BATCH_SIZE],
                 )
             _log(
                 log_buffer, f"      [8.3] Insert {len(all_links)} semantic links: {time_mod.time() - insert_start:.3f}s"
@@ -730,9 +728,7 @@ async def insert_entity_links_batch(conn, links: list[EntityLink], chunk_size: i
 
     # Convert EntityLink objects to tuples for COPY
     convert_start = time_mod.time()
-    records = []
-    for link in links:
-        records.append((link.from_unit_id, link.to_unit_id, link.link_type, link.weight, link.entity_id))
+    records = [(link.from_unit_id, link.to_unit_id, link.link_type, link.weight, link.entity_id) for link in links]
     logger.debug(f"      [9.3] Convert {len(records)} records: {time_mod.time() - convert_start:.3f}s")
 
     # Bulk load using COPY (fastest method)

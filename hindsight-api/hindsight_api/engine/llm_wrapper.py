@@ -503,6 +503,14 @@ class LLMProvider:
 
             return result
 
+    def set_response_callback(self, fn: Any) -> None:
+        """Set a callback invoked on each call() instead of the fixed mock response."""
+        if self.provider == "mock":
+            from .providers.mock_llm import MockLLM
+
+            if isinstance(self._provider_impl, MockLLM):
+                self._provider_impl.set_response_callback(fn)
+
     def set_mock_response(self, response: Any) -> None:
         """Set the response to return from mock calls."""
         # Backward compatibility: Store in both wrapper and provider implementation
