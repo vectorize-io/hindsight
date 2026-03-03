@@ -24,6 +24,44 @@ openclaw gateway
 
 That's it! The plugin will automatically start capturing and recalling memories.
 
+## Features
+
+- **Auto-capture** and **auto-recall** of memories each turn
+- **Memory isolation** — configurable per agent, channel, user, or provider via `dynamicBankGranularity`
+- **Retention controls** — choose which message roles to retain and toggle auto-retain on/off
+
+## Configuration
+
+Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsight-openclaw.config`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `apiPort` | `9077` | Port for the local Hindsight daemon |
+| `daemonIdleTimeout` | `0` | Seconds before daemon shuts down from inactivity (0 = never) |
+| `embedPort` | `0` | Port for `hindsight-embed` server (`0` = auto-assign) |
+| `embedVersion` | `"latest"` | hindsight-embed version |
+| `embedPackagePath` | — | Local path to `hindsight-embed` package for development |
+| `bankMission` | — | Agent identity/purpose stored on the memory bank. Helps the engine understand context for better fact extraction. Set once per bank — not a recall prompt. |
+| `llmProvider` | auto-detect | LLM provider override for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`) |
+| `llmModel` | provider default | LLM model override used with `llmProvider` |
+| `llmApiKeyEnv` | provider standard env var | Custom env var name for the provider API key |
+| `dynamicBankId` | `true` | Enable per-context memory banks |
+| `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
+| `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
+| `excludeProviders` | `[]` | Message providers to skip for recall/retain (e.g. `slack`, `telegram`, `discord`) |
+| `autoRecall` | `true` | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool. |
+| `autoRetain` | `true` | Auto-retain conversations after each turn |
+| `retainRoles` | `["user", "assistant"]` | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool` |
+| `retainEveryNTurns` | `1` | Retain every Nth turn. `1` = every turn (default). Values > 1 enable chunked retention with a sliding window. |
+| `retainOverlapTurns` | `0` | Extra prior turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns`. Only applies when `retainEveryNTurns > 1`. |
+| `recallBudget` | `"mid"` | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies. |
+| `recallMaxTokens` | `2048` | Max tokens for recall response. Controls how much memory context is injected per turn. |
+| `recallTypes` | `["world", "experience"]` | Memory types to recall. Options: `world`, `experience`, `observation`. Excludes verbose `observation` entries by default. |
+| `recallTopK` | — | Max number of memories to inject per turn. Applied after API response as a hard cap. |
+| `recallPromptPreamble` | built-in string | Prompt text placed above recalled memories in the injected `<hindsight_memories>` block. |
+| `hindsightApiUrl` | — | External Hindsight API URL (skips local daemon) |
+| `hindsightApiToken` | — | Auth token for external API |
+
 ## Documentation
 
 For full documentation, configuration options, troubleshooting, and development guide, see:

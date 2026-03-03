@@ -29,8 +29,6 @@ function sanitizeFilename(name: string): string {
 }
 
 export interface HindsightClientOptions {
-  llmProvider: string;
-  llmApiKey: string;
   llmModel?: string;
   embedVersion?: string;
   embedPackagePath?: string;
@@ -40,8 +38,6 @@ export interface HindsightClientOptions {
 
 export class HindsightClient {
   private bankId: string = 'default';
-  private llmProvider: string;
-  private llmApiKey: string;
   private llmModel?: string;
   private embedVersion: string;
   private embedPackagePath?: string;
@@ -49,8 +45,6 @@ export class HindsightClient {
   private apiToken?: string;
 
   constructor(opts: HindsightClientOptions) {
-    this.llmProvider = opts.llmProvider;
-    this.llmApiKey = opts.llmApiKey;
     this.llmModel = opts.llmModel;
     this.embedVersion = opts.embedVersion || 'latest';
     this.embedPackagePath = opts.embedPackagePath;
@@ -220,10 +214,13 @@ export class HindsightClient {
       ? (console.warn(`[Hindsight] Truncating recall query from ${request.query.length} to ${MAX_QUERY_CHARS} chars`),
          request.query.substring(0, MAX_QUERY_CHARS))
       : request.query;
-    const body = {
+    const body: Record<string, unknown> = {
       query,
       max_tokens: request.max_tokens || 1024,
     };
+    if (request.budget) {
+      body.budget = request.budget;
+    }
 
     const res = await fetch(url, {
       method: 'POST',

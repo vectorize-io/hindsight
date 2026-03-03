@@ -1962,6 +1962,16 @@ class MemoryEngine(MemoryEngineInterface):
         # Authenticate tenant and set schema in context (for fq_table())
         await self._authenticate_tenant(request_context)
 
+        # Normalize first-person pronouns to "user" so queries like "do I have cats?"
+        # match stored facts like "user has 2 cats" in BM25 keyword search.
+        import re as _re
+
+        query = _re.sub(r"\bI\b", "user", query)
+        query = _re.sub(r"\bmy\b", "user's", query, flags=_re.IGNORECASE)
+        query = _re.sub(r"\bme\b", "user", query, flags=_re.IGNORECASE)
+        query = _re.sub(r"\bmine\b", "user's", query, flags=_re.IGNORECASE)
+        query = _re.sub(r"\bmyself\b", "user", query, flags=_re.IGNORECASE)
+
         # Default to all fact types if not specified
         if fact_type is None:
             fact_type = list(VALID_RECALL_FACT_TYPES)
