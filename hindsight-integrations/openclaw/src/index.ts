@@ -288,7 +288,7 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
 
   // Warn when 'user' is in active fields but senderId is missing — bank ID will contain "anonymous"
   if (fields.includes('user') && ctx && !ctx.senderId) {
-    console.warn('[Hindsight] senderId not available in context — bank ID will use "anonymous". Ensure your OpenClaw provider passes senderId.');
+    debug('[Hindsight] senderId not available in context — bank ID will use "anonymous". Ensure your OpenClaw provider passes senderId.');
   }
 
   const fieldMap: Record<string, string> = {
