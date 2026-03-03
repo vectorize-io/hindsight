@@ -45,6 +45,7 @@ export interface PluginConfig {
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
   retainEveryNTurns?: number; // Retain every Nth turn instead of every turn (default: 10). Reduces O(n²) storage growth for long sessions.
+  debug?: boolean; // Enable debug logging (default: false)
 }
 
 export interface ServiceConfig {
