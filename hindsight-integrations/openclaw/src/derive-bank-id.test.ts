@@ -82,7 +82,7 @@ describe('deriveBankId', () => {
     };
     const config: PluginConfig = { ...baseConfig, dynamicBankGranularity: ['agent', 'channel', 'provider'] };
     const bankId = deriveBankId(ctxWithSession, config);
-    expect(bankId).toBe('my-agent::group:-100123456:topic:7::telegram');
+    expect(bankId).toBe('my-agent::group%3A-100123456%3Atopic%3A7::telegram');
   });
 
   it('should return "openclaw" if dynamicBankId is false', () => {
@@ -91,7 +91,7 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('openclaw');
   });
 
-  it('should escape :: in field values to prevent collisions', () => {
+  it('should encode segments to prevent separator collisions', () => {
     const ctxWithSeparator: PluginHookAgentContext = {
       agentId: 'a::b',
       channelId: 'c',
@@ -106,8 +106,8 @@ describe('deriveBankId', () => {
     const bankId2 = deriveBankId(ctxWithoutSeparator, baseConfig);
     // These must NOT collide
     expect(bankId1).not.toBe(bankId2);
-    // :: in values should be replaced with __
-    expect(bankId1).toBe('a__b::c::user-1');
-    expect(bankId2).toBe('a::b__c::user-1');
+    // Segment delimiters are encoded, preserving unique values.
+    expect(bankId1).toBe('a%3A%3Ab::c::user-1');
+    expect(bankId2).toBe('a::b%3A%3Ac::user-1');
   });
 });

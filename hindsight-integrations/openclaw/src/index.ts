@@ -26,6 +26,7 @@ let currentPluginConfig: PluginConfig | null = null;
 const banksWithMissionSet = new Set<string>();
 // Use dedicated client instances per bank to avoid cross-session bankId mutation races.
 const clientsByBankId = new Map<string, HindsightClient>();
+const MAX_TRACKED_BANK_CLIENTS = 10_000;
 
 // In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
 import type { RecallResponse } from './types.js';
@@ -132,6 +133,9 @@ if (typeof global !== 'undefined') {
     getClientForContext: async (ctx: PluginHookAgentContext | undefined) => {
       if (!client) {return null;}
       const config = currentPluginConfig || {};
+      if (config.dynamicBankId === false) {
+        return client;
+      }
       const bankId = deriveBankId(ctx, config);
       let bankClient = clientsByBankId.get(bankId);
       if (!bankClient) {
@@ -141,6 +145,12 @@ if (typeof global !== 'undefined') {
         bankClient = new HindsightClient(clientOptions);
         bankClient.setBankId(bankId);
         clientsByBankId.set(bankId, bankClient);
+        if (clientsByBankId.size > MAX_TRACKED_BANK_CLIENTS) {
+          const oldestKey = clientsByBankId.keys().next().value;
+          if (oldestKey) {
+            clientsByBankId.delete(oldestKey);
+          }
+        }
       }
 
       // Set bank mission on first use of this bank (if configured)
@@ -299,7 +309,7 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
   };
 
   const baseBankId = fields
-    .map(f => (fieldMap[f] || 'unknown').replace(/::/g, '__'))
+    .map(f => encodeURIComponent(fieldMap[f] || 'unknown'))
     .join('::');
 
   return pluginConfig.bankIdPrefix
