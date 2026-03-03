@@ -1,6 +1,7 @@
 import type { MoltbotPluginAPI, PluginConfig, PluginHookAgentContext, MemoryResult } from './types.js';
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient, type HindsightClientOptions } from './client.js';
+import { createHash } from 'crypto';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,6 +14,7 @@ const debug = (...args: unknown[]) => {
 // Module-level state
 let embedManager: HindsightEmbedManager | null = null;
 let client: HindsightClient | null = null;
+let clientOptions: HindsightClientOptions | null = null;
 let initPromise: Promise<void> | null = null;
 let isInitialized = false;
 let usingExternalApi = false; // Track if using external API (skip daemon management)
@@ -22,11 +24,14 @@ let currentPluginConfig: PluginConfig | null = null;
 
 // Track which banks have had their mission set (to avoid re-setting on every request)
 const banksWithMissionSet = new Set<string>();
+// Use dedicated client instances per bank to avoid cross-session bankId mutation races.
+const clientsByBankId = new Map<string, HindsightClient>();
 
 // In-flight recall deduplication: concurrent recalls for the same bank reuse one promise
 import type { RecallResponse } from './types.js';
 const inflightRecalls = new Map<string, Promise<RecallResponse>>();
 const turnCountBySession = new Map<string, number>();
+const MAX_TRACKED_SESSIONS = 10_000;
 const RECALL_TIMEOUT_MS = 10_000;
 
 // Guard against double hook registration on the same api instance
@@ -77,7 +82,10 @@ async function lazyReinit(): Promise<void> {
     }
 
     const llmConfig = detectLLMConfig(config);
-    client = new HindsightClient(buildClientOptions(llmConfig, config, externalApi));
+    clientOptions = buildClientOptions(llmConfig, config, externalApi);
+    clientsByBankId.clear();
+    banksWithMissionSet.clear();
+    client = new HindsightClient(clientOptions);
     const defaultBankId = deriveBankId(undefined, config);
     client.setBankId(defaultBankId);
 
@@ -125,12 +133,20 @@ if (typeof global !== 'undefined') {
       if (!client) {return null;}
       const config = currentPluginConfig || {};
       const bankId = deriveBankId(ctx, config);
-      client.setBankId(bankId);
+      let bankClient = clientsByBankId.get(bankId);
+      if (!bankClient) {
+        if (!clientOptions) {
+          return null;
+        }
+        bankClient = new HindsightClient(clientOptions);
+        bankClient.setBankId(bankId);
+        clientsByBankId.set(bankId, bankClient);
+      }
 
       // Set bank mission on first use of this bank (if configured)
       if (config.bankMission && config.dynamicBankId && !banksWithMissionSet.has(bankId)) {
         try {
-          await client.setBankMission(config.bankMission);
+          await bankClient.setBankMission(config.bankMission);
           banksWithMissionSet.add(bankId);
           debug(`[Hindsight] Set mission for new bank: ${bankId}`);
         } catch (error) {
@@ -139,7 +155,7 @@ if (typeof global !== 'undefined') {
         }
       }
 
-      return client;
+      return bankClient;
     },
     getPluginConfig: () => currentPluginConfig,
   };
@@ -607,7 +623,10 @@ export default function (api: MoltbotPluginAPI) {
 
           // Initialize client with direct HTTP mode
           debug('[Hindsight] Creating HindsightClient (HTTP mode)...');
-          client = new HindsightClient(buildClientOptions(llmConfig, pluginConfig, externalApi));
+          clientOptions = buildClientOptions(llmConfig, pluginConfig, externalApi);
+          clientsByBankId.clear();
+          banksWithMissionSet.clear();
+          client = new HindsightClient(clientOptions);
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -643,7 +662,10 @@ export default function (api: MoltbotPluginAPI) {
 
           // Initialize client (local daemon mode — no apiUrl)
           debug('[Hindsight] Creating HindsightClient (subprocess mode)...');
-          client = new HindsightClient(buildClientOptions(llmConfig, pluginConfig, { apiUrl: null, apiToken: null }));
+          clientOptions = buildClientOptions(llmConfig, pluginConfig, { apiUrl: null, apiToken: null });
+          clientsByBankId.clear();
+          banksWithMissionSet.clear();
+          client = new HindsightClient(clientOptions);
 
           // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
           const defaultBankId = deriveBankId(undefined, pluginConfig);
@@ -698,6 +720,9 @@ export default function (api: MoltbotPluginAPI) {
               console.error('[Hindsight] External API health check failed:', error);
               // Reset state for reinitialization attempt
               client = null;
+              clientOptions = null;
+              clientsByBankId.clear();
+              banksWithMissionSet.clear();
               isInitialized = false;
             }
           }
@@ -714,6 +739,9 @@ export default function (api: MoltbotPluginAPI) {
             // Reset state for reinitialization
             embedManager = null;
             client = null;
+            clientOptions = null;
+            clientsByBankId.clear();
+            banksWithMissionSet.clear();
             isInitialized = false;
           }
         }
@@ -737,7 +765,10 @@ export default function (api: MoltbotPluginAPI) {
 
             await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
 
-            client = new HindsightClient(buildClientOptions(llmConfig, reinitPluginConfig, externalApi));
+            clientOptions = buildClientOptions(llmConfig, reinitPluginConfig, externalApi);
+            clientsByBankId.clear();
+            banksWithMissionSet.clear();
+            client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
@@ -762,7 +793,10 @@ export default function (api: MoltbotPluginAPI) {
 
             await embedManager.start();
 
-            client = new HindsightClient(buildClientOptions(llmConfig, reinitPluginConfig, { apiUrl: null, apiToken: null }));
+            clientOptions = buildClientOptions(llmConfig, reinitPluginConfig, { apiUrl: null, apiToken: null });
+            clientsByBankId.clear();
+            banksWithMissionSet.clear();
+            client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
@@ -787,6 +821,9 @@ export default function (api: MoltbotPluginAPI) {
           }
 
           client = null;
+          clientOptions = null;
+          clientsByBankId.clear();
+          banksWithMissionSet.clear();
           isInitialized = false;
 
           debug('[Hindsight] Service stopped');
@@ -807,20 +844,10 @@ export default function (api: MoltbotPluginAPI) {
     registeredApis.add(api);
     debug('[Hindsight] Registering agent hooks...');
 
-    // Store session key and context for retention
-    let currentSessionKey: string | undefined;
-    let currentAgentContext: PluginHookAgentContext | undefined;
-
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
-        // Capture session key and context for use in agent_end
-        if (ctx?.sessionKey) {
-          currentSessionKey = ctx.sessionKey;
-        }
-        currentAgentContext = ctx;
-
         // Check if this provider is excluded
         if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
           debug(`[Hindsight] Skipping recall for excluded provider: ${ctx.messageProvider}`);
@@ -839,13 +866,13 @@ export default function (api: MoltbotPluginAPI) {
 
         // Get the user's latest message for recall — only the raw user text, not the full prompt
         // rawMessage is clean user text; prompt includes envelope, system events, media notes, etc.
-        console.log(`[Hindsight] extractRecallQuery - rawMessage: ${JSON.stringify(event.rawMessage?.substring(0, 80))}, prompt: ${JSON.stringify(event.prompt?.substring(0, 80))}`);
+        debug(`[Hindsight] extractRecallQuery input lengths - raw: ${event.rawMessage?.length ?? 0}, prompt: ${event.prompt?.length ?? 0}`);
         const extracted = extractRecallQuery(event.rawMessage, event.prompt);
         if (!extracted) {
-          console.log('[Hindsight] extractRecallQuery returned null, skipping recall');
+          debug('[Hindsight] extractRecallQuery returned null, skipping recall');
           return;
         }
-        console.log(`[Hindsight] extractRecallQuery result: ${JSON.stringify(extracted.substring(0, 80))}`);
+        debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
         let prompt = extracted;
 
         // Truncate — Hindsight API recall has a 500 token limit; 800 chars stays safely under even with non-ASCII
@@ -873,7 +900,9 @@ export default function (api: MoltbotPluginAPI) {
         debug(`[Hindsight] Auto-recall for bank ${bankId}, prompt: ${prompt.substring(0, 50)}`);
 
         // Recall with deduplication: reuse in-flight request for same bank
-        const recallKey = bankId;
+        const normalizedPrompt = prompt.trim().toLowerCase().replace(/\s+/g, ' ');
+        const queryHash = createHash('sha256').update(normalizedPrompt).digest('hex').slice(0, 16);
+        const recallKey = `${bankId}::${queryHash}`;
         const existing = inflightRecalls.get(recallKey);
         let recallPromise: Promise<RecallResponse>;
         if (existing) {
@@ -894,7 +923,7 @@ export default function (api: MoltbotPluginAPI) {
 
         const results = pluginConfig.recallTopK ? response.results.slice(0, pluginConfig.recallTopK) : response.results;
 
-        console.log(`[Hindsight] Auto-recall results (${results.length}): ${results.map(r => `[${r.type}] ${r.text?.substring(0, 60)}`).join(' | ')}`);
+        debug(`[Hindsight] Auto-recall results count: ${results.length}`);
 
         // Format memories as JSON with all fields from recall
         const memoriesFormatted = formatMemories(results);
@@ -905,7 +934,7 @@ ${pluginConfig.recallPromptPreamble || DEFAULT_RECALL_PROMPT_PREAMBLE}
 ${memoriesFormatted}
 </hindsight_memories>`;
 
-        debug(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories from bank ${bankId}`);
+        debug(`[Hindsight] Auto-recall: Injecting ${results.length} memories from bank ${bankId}`);
 
         // Inject context before the user message
         return { prependContext: contextMessage };
@@ -924,8 +953,9 @@ ${memoriesFormatted}
     // Hook signature: (event, ctx) where event has {messages, success, error?, durationMs?}
     api.on('agent_end', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
-        // Use context from this hook, or fall back to context captured in before_agent_start
-        const effectiveCtx = ctx || currentAgentContext;
+        // Avoid cross-session contamination: only use context carried by this event.
+        const eventSessionKey = typeof event?.sessionKey === 'string' ? event.sessionKey : undefined;
+        const effectiveCtx = ctx || (eventSessionKey ? ({ sessionKey: eventSessionKey } as PluginHookAgentContext) : undefined);
 
         // Check if this provider is excluded
         if (effectiveCtx?.messageProvider && pluginConfig.excludeProviders?.includes(effectiveCtx.messageProvider)) {
@@ -948,7 +978,7 @@ ${memoriesFormatted}
         }
 
         if (pluginConfig.autoRetain === false) {
-          console.log('[Hindsight Hook] autoRetain is disabled, skipping retention');
+          debug('[Hindsight Hook] autoRetain is disabled, skipping retention');
           return;
         }
 
@@ -958,13 +988,19 @@ ${memoriesFormatted}
         let retainFullWindow = false;
 
         if (retainEveryN > 1) {
-          const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || currentSessionKey || 'session'}`;
+          const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || 'session'}`;
           const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
           turnCountBySession.set(sessionTrackingKey, turnCount);
+          if (turnCountBySession.size > MAX_TRACKED_SESSIONS) {
+            const oldestKey = turnCountBySession.keys().next().value;
+            if (oldestKey) {
+              turnCountBySession.delete(oldestKey);
+            }
+          }
 
           if (turnCount % retainEveryN !== 0) {
             const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
-            console.log(`[Hindsight Hook] Turn ${turnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`);
+            debug(`[Hindsight Hook] Turn ${turnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`);
             return;
           }
 
@@ -975,12 +1011,12 @@ ${memoriesFormatted}
           const windowTurns = retainEveryN + overlapTurns;
           messagesToRetain = sliceLastTurnsByUserBoundary(event.messages, windowTurns);
           retainFullWindow = true;
-          console.log(`[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
+          debug(`[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
         }
 
         const retention = prepareRetentionTranscript(messagesToRetain, pluginConfig, retainFullWindow);
         if (!retention) {
-          console.log('[Hindsight Hook] No messages to retain (filtered/short/no-user)');
+          debug('[Hindsight Hook] No messages to retain (filtered/short/no-user)');
           return;
         }
         const { transcript, messageCount } = retention;
@@ -1004,7 +1040,7 @@ ${memoriesFormatted}
 
         // Use unique document ID per conversation (sessionKey + timestamp)
         // Static sessionKey (e.g. "agent:main:main") causes CASCADE delete of old memories
-        const documentId = `${effectiveCtx?.sessionKey || currentSessionKey || 'session'}-${Date.now()}`;
+        const documentId = `${effectiveCtx?.sessionKey || 'session'}-${Date.now()}`;
 
         // Retain to Hindsight
         await client.retain({
