@@ -216,10 +216,13 @@ export class HindsightClient {
       : request.query;
     const body: Record<string, unknown> = {
       query,
-      max_tokens: request.max_tokens || 1024,
+      max_tokens: request.max_tokens || 2048,
     };
     if (request.budget) {
       body.budget = request.budget;
+    }
+    if (request.types) {
+      body.types = request.types;
     }
 
     const res = await fetch(url, {
@@ -239,7 +242,7 @@ export class HindsightClient {
 
   private async recallSubprocess(request: RecallRequest, timeoutMs?: number): Promise<RecallResponse> {
     const query = sanitize(request.query);
-    const maxTokens = request.max_tokens || 1024;
+    const maxTokens = request.max_tokens || 2048;
     const [cmd, ...baseArgs] = this.getEmbedCommand();
     const args = [...baseArgs, '--profile', 'openclaw', 'memory', 'recall', this.bankId, query, '--output', 'json', '--max-tokens', String(maxTokens)];
 

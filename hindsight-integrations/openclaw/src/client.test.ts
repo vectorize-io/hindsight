@@ -9,9 +9,7 @@ describe('HindsightClient', () => {
 
   it('should set bank ID', () => {
     const client = new HindsightClient({});
-    client.setBankId('test-bank');
-    // No error thrown means success
-    expect(true).toBe(true);
+    expect(() => client.setBankId('test-bank')).not.toThrow();
   });
 
   it('should create instance with embed package path', () => {

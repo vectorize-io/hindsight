@@ -189,10 +189,26 @@ describe('extractRecallQuery', () => {
 // ---------------------------------------------------------------------------
 
 describe('formatMemories', () => {
+  const makeMemoryResult = (overrides: Partial<MemoryResult>): MemoryResult => ({
+    id: 'mem-1',
+    text: 'default text',
+    type: 'world',
+    entities: [],
+    context: '',
+    occurred_start: null,
+    occurred_end: null,
+    mentioned_at: null,
+    document_id: null,
+    metadata: null,
+    chunk_id: null,
+    tags: [],
+    ...overrides,
+  });
+
   it('formats memories as a bulleted list', () => {
     const memories: MemoryResult[] = [
-      { id: '1', text: 'User prefers dark mode', type: 'world', mentioned_at: '2023-01-01T12:00:00Z' } as any,
-      { id: '2', text: 'User is learning Rust', type: 'experience', mentioned_at: null } as any,
+      makeMemoryResult({ id: '1', text: 'User prefers dark mode', type: 'world', mentioned_at: '2023-01-01T12:00:00Z' }),
+      makeMemoryResult({ id: '2', text: 'User is learning Rust', type: 'experience', mentioned_at: null }),
     ];
     const output = formatMemories(memories);
     expect(output).toBe('- User prefers dark mode [world] (2023-01-01T12:00:00Z)\n\n- User is learning Rust [experience]');

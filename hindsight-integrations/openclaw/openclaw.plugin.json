@@ -125,13 +125,15 @@
         ]
       },
       "retainEveryNTurns": {
-        "type": "number",
+        "type": "integer",
         "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
+        "minimum": 1,
         "default": 1
       },
       "retainOverlapTurns": {
-        "type": "number",
+        "type": "integer",
         "description": "Extra prior turns to include when chunked retention fires. Window = retainEveryNTurns + retainOverlapTurns. Only applies when retainEveryNTurns > 1.",
+        "minimum": 0,
         "default": 0
       },
       "recallBudget": {
@@ -141,8 +143,9 @@
         "default": "mid"
       },
       "recallMaxTokens": {
-        "type": "number",
+        "type": "integer",
         "description": "Maximum tokens for recall response. Controls how much memory context is injected per turn.",
+        "minimum": 1,
         "default": 2048
       },
       "recallTypes": {
@@ -155,7 +158,8 @@
         "default": ["world", "experience"]
       },
       "recallTopK": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1,
         "description": "Maximum number of memories to inject per turn. Applied after API response as a hard cap."
       },
       "recallPromptPreamble": {

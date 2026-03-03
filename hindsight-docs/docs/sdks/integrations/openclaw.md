@@ -57,7 +57,7 @@ The plugin will automatically:
 
 **Auto-Capture:** Every conversation is automatically stored after each turn. Facts, entities, and relationships are extracted in the background.
 
-**Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 1024 tokens). The agent uses past context without needing to call tools.
+**Auto-Recall:** Before each agent response, relevant memories are automatically injected into the context (up to 2048 tokens by default). The agent uses past context without needing to call tools.
 
 **Feedback Loop Prevention:** The plugin automatically strips injected memory tags (`<hindsight_memories>`) before storing conversations. This prevents recalled memories from being re-extracted as new facts, which would cause exponential memory growth and duplicate entries.
 
