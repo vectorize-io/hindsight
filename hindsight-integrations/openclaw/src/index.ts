@@ -1155,9 +1155,12 @@ ${memoriesFormatted}
 
         // Derive bank ID from context — enrich ctx.senderId from inbound metadata blocks
         // embedded in the messages when it's missing (agent_end ctx lacks sender identity).
+        // Scan from the END so we get the sender who triggered this run, not an earlier
+        // participant (important in group chats where multiple senders appear in history).
         const allMessagesForSender = event.context?.sessionEntry?.messages ?? event.messages ?? [];
         const senderIdFromMessages = !effectiveCtx?.senderId
-          ? allMessagesForSender
+          ? [...allMessagesForSender]
+              .reverse()
               .filter((m: any) => m?.role === 'user')
               .map((m: any) => extractSenderIdFromText(typeof m.content === 'string' ? m.content : ''))
               .find((id: string | undefined) => Boolean(id))
