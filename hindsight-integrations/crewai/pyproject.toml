@@ -29,6 +29,9 @@ classifiers = [
 dependencies = [
     "crewai>=0.86.0",
     "hindsight-client>=0.4.0",
+    # Transitive dependency security fixes
+    "cryptography>=46.0.5", # Subgroup attack vulnerability fix
+    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
 ]
 
 [project.optional-dependencies]

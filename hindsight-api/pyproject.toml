@@ -53,7 +53,11 @@ dependencies = [
     # Transitive dependency security fixes
     "pyasn1>=0.6.2", # DoS vulnerability fix
     "urllib3>=2.6.3", # Decompression-bomb safeguards bypass fix
-    "langchain-core>=1.2.5", # Serialization injection vulnerability fix
+    "langchain-core>=1.2.11", # Serialization injection + SSRF vulnerability fix
+    "langsmith>=0.6.3", # SSRF via tracing header injection fix
+    "protobuf>=6.33.5", # JSON recursion depth bypass fix
+    "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
+    "cryptography>=46.0.5", # Subgroup attack vulnerability fix
     "filelock>=3.20.1", # TOCTOU race condition fix
     "authlib>=1.6.6", # Account takeover vulnerability fix
     "aiohttp>=3.13.3", # Multiple DoS vulnerabilities

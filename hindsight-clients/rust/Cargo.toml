@@ -10,6 +10,8 @@ keywords = ["api", "client", "memory", "ai"]
 categories = ["api-bindings"]
 
 [dependencies]
+# Security: bytes >= 1.11.1 fixes integer overflow in BytesMut::reserve (GHSA-...)
+bytes = "1.11.1"
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 # Async runtime
