@@ -331,8 +331,7 @@ export function composeRecallQuery(
   return [
     'Prior context:',
     contextLines.join('\n'),
-    RECALL_QUERY_PRIORITY_INSTRUCTION,
-    `Latest user message: ${latest}`,
+    latest,
   ].join('\n\n');
 }
 
@@ -360,13 +359,13 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
     return latestOnly;
   }
 
-  const suffixMarker = '\n\n' + RECALL_QUERY_PRIORITY_INSTRUCTION;
-  const suffixIndex = query.indexOf(suffixMarker);
+  const suffixMarker = '\n\n' + latest;
+  const suffixIndex = query.lastIndexOf(suffixMarker);
   if (suffixIndex === -1) {
     return latestOnly;
   }
 
-  const suffix = query.slice(suffixIndex); // includes priority instruction + latest message
+  const suffix = query.slice(suffixIndex); // \n\n<latest>
   if (suffix.length >= maxChars) {
     return latestOnly;
   }
@@ -1090,9 +1089,9 @@ export default function (api: MoltbotPluginAPI) {
         // Format memories as JSON with all fields from recall
         const memoriesFormatted = formatMemories(results);
 
-        const contextMessage = `Current time - ${formatCurrentTimeForRecall()}
-<hindsight_memories>
+        const contextMessage = `<hindsight_memories>
 ${pluginConfig.recallPromptPreamble || DEFAULT_RECALL_PROMPT_PREAMBLE}
+Current time - ${formatCurrentTimeForRecall()}
 
 ${memoriesFormatted}
 </hindsight_memories>`;
