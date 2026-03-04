@@ -1014,13 +1014,14 @@ export default function (api: MoltbotPluginAPI) {
         debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
         const recallContextTurns = pluginConfig.recallContextTurns ?? 1;
         const recallMaxQueryChars = pluginConfig.recallMaxQueryChars ?? 800;
-        const messageCount = event.messages?.length ?? 0;
-        debug(`[Hindsight] event.messages count: ${messageCount}, roles: ${(event.messages ?? []).map((m: any) => m.role).join(',')}`);
+        const sessionMessages = event.context?.sessionEntry?.messages ?? event.messages ?? [];
+        const messageCount = sessionMessages.length;
+        debug(`[Hindsight] event.messages count: ${messageCount}, roles: ${sessionMessages.map((m: any) => m.role).join(',')}`);
         if (recallContextTurns > 1 && messageCount === 0) {
           debug('[Hindsight] recallContextTurns > 1 but event.messages is empty — prior context unavailable at before_agent_start for this provider');
         }
         const recallRoles = pluginConfig.recallRoles ?? ['user', 'assistant'];
-        const composedPrompt = composeRecallQuery(extracted, event.messages, recallContextTurns, recallRoles);
+        const composedPrompt = composeRecallQuery(extracted, sessionMessages, recallContextTurns, recallRoles);
         let prompt = truncateRecallQuery(composedPrompt, extracted, recallMaxQueryChars);
 
         // Final defensive cap
@@ -1122,7 +1123,7 @@ ${memoriesFormatted}
           return;
         }
 
-        if (!Array.isArray(event.messages) || event.messages.length === 0) {
+        if (!Array.isArray(event.context?.sessionEntry?.messages ?? event.messages) || (event.context?.sessionEntry?.messages ?? event.messages ?? []).length === 0) {
           debug('[Hindsight Hook] No messages in event, skipping retention');
           return;
         }
@@ -1134,7 +1135,8 @@ ${memoriesFormatted}
 
         // Chunked retention: skip non-Nth turns and use a sliding window when firing
         const retainEveryN = pluginConfig.retainEveryNTurns ?? 1;
-        let messagesToRetain = event.messages;
+        const allMessages = event.context?.sessionEntry?.messages ?? event.messages ?? [];
+        let messagesToRetain = allMessages;
         let retainFullWindow = false;
 
         if (retainEveryN > 1) {
@@ -1159,7 +1161,7 @@ ${memoriesFormatted}
           // remains stable even when system/tool messages are present.
           const overlapTurns = pluginConfig.retainOverlapTurns ?? 0;
           const windowTurns = retainEveryN + overlapTurns;
-          messagesToRetain = sliceLastTurnsByUserBoundary(event.messages, windowTurns);
+          messagesToRetain = sliceLastTurnsByUserBoundary(allMessages, windowTurns);
           retainFullWindow = true;
           debug(`[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
         }
