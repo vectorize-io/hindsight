@@ -1037,6 +1037,7 @@ export default function (api: MoltbotPluginAPI) {
         // block when it's missing (agent-phase hooks don't carry senderId in ctx directly).
         const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
         const effectiveCtxForRecall = senderIdFromPrompt ? { ...ctx, senderId: senderIdFromPrompt } : ctx;
+
         const bankId = deriveBankId(effectiveCtxForRecall, pluginConfig);
         debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
@@ -1153,13 +1154,12 @@ ${memoriesFormatted}
           return;
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from inbound metadata blocks
-        // embedded in the messages when it's missing (agent_end ctx lacks sender identity).
-        // Scan from the END so we get the sender who triggered this run, not an earlier
-        // participant (important in group chats where multiple senders appear in history).
-        const allMessagesForSender = event.context?.sessionEntry?.messages ?? event.messages ?? [];
+        // Derive bank ID from context — enrich ctx.senderId from inbound metadata blocks.
+        // Use event.messages directly (not sessionEntry.messages) — it contains the raw
+        // messages with OpenClaw's injected metadata prefix. Scan from the END to get the
+        // sender who triggered this run, not an earlier participant in a group chat.
         const senderIdFromMessages = !effectiveCtx?.senderId
-          ? [...allMessagesForSender]
+          ? [...(event.messages ?? [])]
               .reverse()
               .filter((m: any) => m?.role === 'user')
               .map((m: any) => extractSenderIdFromText(typeof m.content === 'string' ? m.content : ''))
