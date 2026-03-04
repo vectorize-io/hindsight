@@ -35,6 +35,10 @@ const turnCountBySession = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 10_000;
 const RECALL_TIMEOUT_MS = 10_000;
 
+// Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
+// blocks) so agent_end can look them up — event.messages in agent_end is clean history.
+const senderIdBySession = new Map<string, string>();
+
 // Guard against double hook registration on the same api instance
 // Uses a WeakSet so each api instance can only register hooks once
 const registeredApis = new WeakSet<object>();
@@ -1038,6 +1042,18 @@ export default function (api: MoltbotPluginAPI) {
         const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
         const effectiveCtxForRecall = senderIdFromPrompt ? { ...ctx, senderId: senderIdFromPrompt } : ctx;
 
+        // Cache the resolved sender ID keyed by sessionKey so agent_end can use it.
+        // event.messages in agent_end is clean history without the metadata blocks.
+        const resolvedSenderId = effectiveCtxForRecall?.senderId;
+        const sessionKeyForCache = ctx?.sessionKey;
+        if (resolvedSenderId && sessionKeyForCache) {
+          senderIdBySession.set(sessionKeyForCache, resolvedSenderId);
+          if (senderIdBySession.size > MAX_TRACKED_SESSIONS) {
+            const oldest = senderIdBySession.keys().next().value;
+            if (oldest) senderIdBySession.delete(oldest);
+          }
+        }
+
         const bankId = deriveBankId(effectiveCtxForRecall, pluginConfig);
         debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
@@ -1154,18 +1170,14 @@ ${memoriesFormatted}
           return;
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from inbound metadata blocks.
-        // Use event.messages directly (not sessionEntry.messages) — it contains the raw
-        // messages with OpenClaw's injected metadata prefix. Scan from the END to get the
-        // sender who triggered this run, not an earlier participant in a group chat.
-        const senderIdFromMessages = !effectiveCtx?.senderId
-          ? [...(event.messages ?? [])]
-              .reverse()
-              .filter((m: any) => m?.role === 'user')
-              .map((m: any) => extractSenderIdFromText(typeof m.content === 'string' ? m.content : ''))
-              .find((id: string | undefined) => Boolean(id))
+        // Derive bank ID from context — enrich ctx.senderId from the session cache.
+        // event.messages in agent_end is clean history without OpenClaw's metadata blocks;
+        // the sender ID was captured during before_prompt_build where event.prompt has them.
+        const sessionKeyForLookup = effectiveCtx?.sessionKey;
+        const senderIdFromCache = !effectiveCtx?.senderId && sessionKeyForLookup
+          ? senderIdBySession.get(sessionKeyForLookup)
           : undefined;
-        const effectiveCtxForRetain = senderIdFromMessages ? { ...effectiveCtx, senderId: senderIdFromMessages } : effectiveCtx;
+        const effectiveCtxForRetain = senderIdFromCache ? { ...effectiveCtx, senderId: senderIdFromCache } : effectiveCtx;
         const bankId = deriveBankId(effectiveCtxForRetain, pluginConfig);
         debug(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
 
