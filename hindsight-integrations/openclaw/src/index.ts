@@ -1014,7 +1014,11 @@ export default function (api: MoltbotPluginAPI) {
         debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
         const recallContextTurns = pluginConfig.recallContextTurns ?? 1;
         const recallMaxQueryChars = pluginConfig.recallMaxQueryChars ?? 800;
-        debug(`[Hindsight] event.messages count: ${event.messages?.length ?? 0}, roles: ${(event.messages ?? []).map((m: any) => m.role).join(',')}`);
+        const messageCount = event.messages?.length ?? 0;
+        debug(`[Hindsight] event.messages count: ${messageCount}, roles: ${(event.messages ?? []).map((m: any) => m.role).join(',')}`);
+        if (recallContextTurns > 1 && messageCount === 0) {
+          debug('[Hindsight] recallContextTurns > 1 but event.messages is empty — prior context unavailable at before_agent_start for this provider');
+        }
         const recallRoles = pluginConfig.recallRoles ?? ['user', 'assistant'];
         const composedPrompt = composeRecallQuery(extracted, event.messages, recallContextTurns, recallRoles);
         let prompt = truncateRecallQuery(composedPrompt, extracted, recallMaxQueryChars);
