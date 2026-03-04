@@ -313,10 +313,10 @@ export function composeRecallQuery(
   }
 
   return [
-    `Latest user message: ${latest}`,
-    RECALL_QUERY_PRIORITY_INSTRUCTION,
     'Prior context:',
     contextLines.join('\n'),
+    RECALL_QUERY_PRIORITY_INSTRUCTION,
+    `Latest user message: ${latest}`,
   ].join('\n\n');
 }
 
@@ -336,33 +336,41 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
     return latestOnly;
   }
 
-  const contextMarker = '\n\nPrior context:\n\n';
+  // New order: Prior context at top, latest user message at bottom.
+  // Truncate by dropping oldest context lines first to preserve the suffix.
+  const contextMarker = 'Prior context:\n\n';
   const markerIndex = query.indexOf(contextMarker);
   if (markerIndex === -1) {
     return latestOnly;
   }
 
-  const prefix = query.slice(0, markerIndex + contextMarker.length);
-  if (prefix.length >= maxChars) {
+  const suffixMarker = '\n\n' + RECALL_QUERY_PRIORITY_INSTRUCTION;
+  const suffixIndex = query.indexOf(suffixMarker);
+  if (suffixIndex === -1) {
     return latestOnly;
   }
 
-  const contextBody = query.slice(markerIndex + contextMarker.length);
+  const suffix = query.slice(suffixIndex); // includes priority instruction + latest message
+  if (suffix.length >= maxChars) {
+    return latestOnly;
+  }
+
+  const contextBody = query.slice(markerIndex + contextMarker.length, suffixIndex);
   const contextLines = contextBody.split('\n').filter(Boolean);
   const keptContextLines: string[] = [];
 
+  // Add context lines from newest (bottom) to oldest (top), stopping when we exceed maxChars
   for (let i = contextLines.length - 1; i >= 0; i--) {
     keptContextLines.unshift(contextLines[i]);
-    const candidate = `${prefix}${keptContextLines.join('\n')}`;
+    const candidate = `${contextMarker}${keptContextLines.join('\n')}${suffix}`;
     if (candidate.length > maxChars) {
       keptContextLines.shift();
       break;
     }
   }
 
-  const withContext = `${prefix}${keptContextLines.join('\n')}`;
-  if (withContext.length <= maxChars && keptContextLines.length > 0) {
-    return withContext;
+  if (keptContextLines.length > 0) {
+    return `${contextMarker}${keptContextLines.join('\n')}${suffix}`;
   }
 
   return latestOnly;

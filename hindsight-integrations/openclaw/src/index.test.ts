@@ -377,6 +377,8 @@ describe('composeRecallQuery', () => {
     expect(query).toContain('Use the latest user message as the primary query; use prior turns only as supporting context.');
     expect(query).toContain('user: I like dark mode.');
     expect(query).toContain('assistant: Got it, dark mode noted.');
+    // latest message should appear after prior context
+    expect(query.indexOf('Prior context:')).toBeLessThan(query.indexOf('Latest user message:'));
   });
 
   it('respects recallRoles when building prior context', () => {
@@ -412,12 +414,12 @@ describe('truncateRecallQuery', () => {
   it('trims prior context first and preserves latest section', () => {
     const latest = 'What foods do I like?';
     const composed = [
-      `Latest user message: ${latest}`,
-      'Use the latest user message as the primary query; use prior turns only as supporting context.',
       'Prior context:',
       'user: I like sushi.',
       'assistant: You like sushi and ramen.',
       'user: Also pizza.',
+      'Use the latest user message as the primary query; use prior turns only as supporting context.',
+      `Latest user message: ${latest}`,
     ].join('\n\n');
 
     const truncated = truncateRecallQuery(composed, latest, 180);
