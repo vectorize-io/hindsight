@@ -59,9 +59,12 @@ export interface PluginConfig {
   recallBudget?: 'low' | 'mid' | 'high'; // Recall effort. Default: 'mid'
   recallMaxTokens?: number; // Max tokens for recall response. Default: 2048
   recallTypes?: Array<'world' | 'experience' | 'observation'>; // Memory types to recall. Default: ['world', 'experience']
+  recallRoles?: Array<'user' | 'assistant' | 'system' | 'tool'>; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.
   retainOverlapTurns?: number; // Extra prior turns included when chunked retention fires (default: 0). Window = retainEveryNTurns + retainOverlapTurns.
   recallTopK?: number; // Max number of memories to inject. Default: unlimited
+  recallContextTurns?: number; // Number of user turns to include in recall query context. Default: 1 (latest only)
+  recallMaxQueryChars?: number; // Max chars for composed recall query. Default: 800
   recallPromptPreamble?: string; // Prompt preamble placed above recalled memories. Default: built-in guidance text.
   debug?: boolean; // Enable debug logging (default: false)
 }

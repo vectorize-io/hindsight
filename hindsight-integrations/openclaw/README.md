@@ -57,7 +57,10 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `recallBudget` | `"mid"` | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies. |
 | `recallMaxTokens` | `2048` | Max tokens for recall response. Controls how much memory context is injected per turn. |
 | `recallTypes` | `["world", "experience"]` | Memory types to recall. Options: `world`, `experience`, `observation`. Excludes verbose `observation` entries by default. |
+| `recallRoles` | `["user", "assistant"]` | Roles included when building prior context for recall query composition. Options: `user`, `assistant`, `system`, `tool`. |
 | `recallTopK` | — | Max number of memories to inject per turn. Applied after API response as a hard cap. |
+| `recallContextTurns` | `1` | Number of user turns to include when composing recall query context. `1` keeps latest-message-only behavior. |
+| `recallMaxQueryChars` | `800` | Maximum character length for the composed recall query before calling recall. |
 | `recallPromptPreamble` | built-in string | Prompt text placed above recalled memories in the injected `<hindsight_memories>` block. |
 | `hindsightApiUrl` | — | External Hindsight API URL (skips local daemon) |
 | `hindsightApiToken` | — | Auth token for external API |

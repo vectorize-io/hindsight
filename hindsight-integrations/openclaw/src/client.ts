@@ -216,7 +216,7 @@ export class HindsightClient {
       : request.query;
     const body: Record<string, unknown> = {
       query,
-      max_tokens: request.max_tokens || 2048,
+      max_tokens: request.max_tokens || 1024,
     };
     if (request.budget) {
       body.budget = request.budget;

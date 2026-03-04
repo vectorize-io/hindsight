@@ -46,6 +46,8 @@ const REINIT_COOLDOWN_MS = 30_000;
 
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   'Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:';
+const RECALL_QUERY_PRIORITY_INSTRUCTION =
+  'Use the latest user message as the primary query; use prior turns only as supporting context.';
 
 function formatCurrentTimeForRecall(date = new Date()): string {
   const year = date.getUTCFullYear();
@@ -263,6 +265,107 @@ export function extractRecallQuery(
   const trimmed = recallQuery.trim();
   if (trimmed.length < 5 || isMetadata(trimmed)) return null;
   return trimmed;
+}
+
+export function composeRecallQuery(
+  latestQuery: string,
+  messages: any[] | undefined,
+  recallContextTurns: number,
+  recallRoles: Array<'user' | 'assistant' | 'system' | 'tool'> = ['user', 'assistant'],
+): string {
+  const latest = latestQuery.trim();
+  if (recallContextTurns <= 1 || !Array.isArray(messages) || messages.length === 0) {
+    return latest;
+  }
+
+  const allowedRoles = new Set(recallRoles);
+  const contextualMessages = sliceLastTurnsByUserBoundary(messages, recallContextTurns);
+  const contextLines = contextualMessages
+    .map((msg: any) => {
+      const role = msg?.role;
+      if (!allowedRoles.has(role)) {
+        return null;
+      }
+
+      let content = '';
+      if (typeof msg?.content === 'string') {
+        content = msg.content;
+      } else if (Array.isArray(msg?.content)) {
+        content = msg.content
+          .filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
+          .map((block: any) => block.text)
+          .join('\n');
+      }
+
+      content = stripMemoryTags(content).trim();
+      if (!content) {
+        return null;
+      }
+      if (role === 'user' && content === latest) {
+        return null;
+      }
+      return `${role}: ${content}`;
+    })
+    .filter((line: string | null): line is string => Boolean(line));
+
+  if (contextLines.length === 0) {
+    return latest;
+  }
+
+  return [
+    `Latest user message: ${latest}`,
+    RECALL_QUERY_PRIORITY_INSTRUCTION,
+    'Prior context:',
+    contextLines.join('\n'),
+  ].join('\n\n');
+}
+
+export function truncateRecallQuery(query: string, latestQuery: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return query;
+  }
+
+  const latest = latestQuery.trim();
+  if (query.length <= maxChars) {
+    return query;
+  }
+
+  const latestOnly = latest.length <= maxChars ? latest : latest.slice(0, maxChars);
+
+  if (!query.includes('Prior context:')) {
+    return latestOnly;
+  }
+
+  const contextMarker = '\n\nPrior context:\n\n';
+  const markerIndex = query.indexOf(contextMarker);
+  if (markerIndex === -1) {
+    return latestOnly;
+  }
+
+  const prefix = query.slice(0, markerIndex + contextMarker.length);
+  if (prefix.length >= maxChars) {
+    return latestOnly;
+  }
+
+  const contextBody = query.slice(markerIndex + contextMarker.length);
+  const contextLines = contextBody.split('\n').filter(Boolean);
+  const keptContextLines: string[] = [];
+
+  for (let i = contextLines.length - 1; i >= 0; i--) {
+    keptContextLines.unshift(contextLines[i]);
+    const candidate = `${prefix}${keptContextLines.join('\n')}`;
+    if (candidate.length > maxChars) {
+      keptContextLines.shift();
+      break;
+    }
+  }
+
+  const withContext = `${prefix}${keptContextLines.join('\n')}`;
+  if (withContext.length <= maxChars && keptContextLines.length > 0) {
+    return withContext;
+  }
+
+  return latestOnly;
 }
 
 /**
@@ -563,9 +666,12 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     recallBudget: config.recallBudget || 'mid',
     recallMaxTokens: config.recallMaxTokens || 2048,
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ['world', 'experience'],
+    recallRoles: Array.isArray(config.recallRoles) ? config.recallRoles : ['user', 'assistant'],
     retainEveryNTurns: typeof config.retainEveryNTurns === 'number' && config.retainEveryNTurns >= 1 ? config.retainEveryNTurns : 1,
     retainOverlapTurns: typeof config.retainOverlapTurns === 'number' && config.retainOverlapTurns >= 0 ? config.retainOverlapTurns : 0,
     recallTopK: typeof config.recallTopK === 'number' ? config.recallTopK : undefined,
+    recallContextTurns: typeof config.recallContextTurns === 'number' && config.recallContextTurns >= 1 ? config.recallContextTurns : 1,
+    recallMaxQueryChars: typeof config.recallMaxQueryChars === 'number' && config.recallMaxQueryChars >= 1 ? config.recallMaxQueryChars : 800,
     recallPromptPreamble:
       typeof config.recallPromptPreamble === 'string' && config.recallPromptPreamble.trim().length > 0
         ? config.recallPromptPreamble
@@ -892,12 +998,15 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
         debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
-        let prompt = extracted;
+        const recallContextTurns = pluginConfig.recallContextTurns ?? 1;
+        const recallMaxQueryChars = pluginConfig.recallMaxQueryChars ?? 800;
+        const recallRoles = pluginConfig.recallRoles ?? ['user', 'assistant'];
+        const composedPrompt = composeRecallQuery(extracted, event.messages, recallContextTurns, recallRoles);
+        let prompt = truncateRecallQuery(composedPrompt, extracted, recallMaxQueryChars);
 
-        // Truncate — Hindsight API recall has a 500 token limit; 800 chars stays safely under even with non-ASCII
-        const MAX_RECALL_QUERY_CHARS = 800;
-        if (prompt.length > MAX_RECALL_QUERY_CHARS) {
-          prompt = prompt.substring(0, MAX_RECALL_QUERY_CHARS);
+        // Final defensive cap
+        if (prompt.length > recallMaxQueryChars) {
+          prompt = prompt.substring(0, recallMaxQueryChars);
         }
 
         // Wait for client to be ready

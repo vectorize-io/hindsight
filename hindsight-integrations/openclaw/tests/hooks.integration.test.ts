@@ -141,6 +141,9 @@ beforeAll(async () => {
     dynamicBankId: true,
     excludeProviders: ['slack'],
     retainEveryNTurns: 1, // retain every turn so individual tests aren't affected by chunking
+    recallContextTurns: 3,
+    recallMaxQueryChars: 180,
+    recallRoles: ['user'],
     // No bankMission — keeps init lean
   });
   triggerHook = handle.trigger;
@@ -281,6 +284,35 @@ describe('before_agent_start hook', () => {
     expect(callArgs.query).not.toContain('[Telegram');
     expect(callArgs.query).not.toContain('[from: Alice]');
     expect(callArgs.query).toContain('What is my favorite food?');
+  });
+
+  it('passes a latest-priority contextual recall query and respects max query chars', async () => {
+    if (!apiReachable) return;
+    recallSpy.mockResolvedValue(EMPTY_RECALL);
+
+    await triggerHook(
+      'before_agent_start',
+      {
+        rawMessage: 'Do I still prefer dark mode?',
+        prompt: '',
+        messages: [
+          { role: 'user', content: 'I prefer dark mode in IDEs.' },
+          { role: 'assistant', content: 'Noted: dark mode preference.' },
+          { role: 'user', content: 'Do I still prefer dark mode?' },
+        ],
+      },
+      { messageProvider: 'telegram', senderId: 'U006A' },
+    );
+
+    expect(recallSpy).toHaveBeenCalledOnce();
+    const [callArgs] = recallSpy.mock.calls[0];
+    expect(callArgs.query).toContain('Latest user message: Do I still prefer dark mode?');
+    expect(callArgs.query).toContain(
+      'Use the latest user message as the primary query; use prior turns only as supporting context.',
+    );
+    expect(callArgs.query).toContain('user: I prefer dark mode in IDEs.');
+    expect(callArgs.query).not.toContain('assistant: Noted: dark mode preference.');
+    expect(callArgs.query.length).toBeLessThanOrEqual(180);
   });
 
   it('passes max_tokens to recall', async () => {

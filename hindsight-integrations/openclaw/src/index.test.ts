@@ -5,6 +5,8 @@ import {
   formatMemories,
   prepareRetentionTranscript,
   sliceLastTurnsByUserBoundary,
+  composeRecallQuery,
+  truncateRecallQuery,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -350,5 +352,76 @@ describe('sliceLastTurnsByUserBoundary', () => {
   it('returns empty list for invalid turn counts', () => {
     const messages = [{ role: 'user', content: 'Hello' }];
     expect(sliceLastTurnsByUserBoundary(messages, 0)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeRecallQuery + truncateRecallQuery
+// ---------------------------------------------------------------------------
+
+describe('composeRecallQuery', () => {
+  it('returns latest query unchanged when recallContextTurns is 1', () => {
+    const query = composeRecallQuery('What is my preference?', [{ role: 'user', content: 'Old message' }], 1);
+    expect(query).toBe('What is my preference?');
+  });
+
+  it('includes prior user/assistant context when recallContextTurns > 1', () => {
+    const messages = [
+      { role: 'user', content: 'I like dark mode.' },
+      { role: 'assistant', content: 'Got it, dark mode noted.' },
+      { role: 'user', content: 'What theme do I prefer?' },
+    ];
+
+    const query = composeRecallQuery('What theme do I prefer?', messages, 2);
+    expect(query).toContain('Latest user message: What theme do I prefer?');
+    expect(query).toContain('Use the latest user message as the primary query; use prior turns only as supporting context.');
+    expect(query).toContain('user: I like dark mode.');
+    expect(query).toContain('assistant: Got it, dark mode noted.');
+  });
+
+  it('respects recallRoles when building prior context', () => {
+    const messages = [
+      { role: 'system', content: 'System context' },
+      { role: 'assistant', content: 'Assistant context' },
+      { role: 'user', content: 'What theme do I prefer?' },
+    ];
+
+    const query = composeRecallQuery('What theme do I prefer?', messages, 2, ['user']);
+    expect(query).toBe('What theme do I prefer?');
+  });
+
+  it('falls back to latest query when context has no usable text', () => {
+    const messages = [{ role: 'tool', content: 'binary blob' }];
+    const query = composeRecallQuery('Summarize my preference', messages, 3);
+    expect(query).toBe('Summarize my preference');
+  });
+});
+
+describe('truncateRecallQuery', () => {
+  it('keeps query unchanged when under max', () => {
+    const query = 'short query';
+    expect(truncateRecallQuery(query, query, 100)).toBe(query);
+  });
+
+  it('falls back to latest query when non-context query is over max', () => {
+    const latest = 'What foods do I like?';
+    const long = `${latest} ${'x'.repeat(300)}`;
+    expect(truncateRecallQuery(long, latest, 20)).toBe(latest.slice(0, 20));
+  });
+
+  it('trims prior context first and preserves latest section', () => {
+    const latest = 'What foods do I like?';
+    const composed = [
+      `Latest user message: ${latest}`,
+      'Use the latest user message as the primary query; use prior turns only as supporting context.',
+      'Prior context:',
+      'user: I like sushi.',
+      'assistant: You like sushi and ramen.',
+      'user: Also pizza.',
+    ].join('\n\n');
+
+    const truncated = truncateRecallQuery(composed, latest, 180);
+    expect(truncated).toContain(`Latest user message: ${latest}`);
+    expect(truncated.length).toBeLessThanOrEqual(180);
   });
 });

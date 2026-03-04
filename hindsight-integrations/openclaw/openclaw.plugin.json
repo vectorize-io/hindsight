@@ -157,6 +157,27 @@
         "description": "Memory types to recall. Defaults to ['world', 'experience'] — excludes verbose observation entries.",
         "default": ["world", "experience"]
       },
+      "recallRoles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["user", "assistant", "system", "tool"]
+        },
+        "description": "Roles to include when composing contextual recall query. Default: ['user', 'assistant'].",
+        "default": ["user", "assistant"]
+      },
+      "recallContextTurns": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Number of user turns to include in recall query context. 1 keeps latest-message-only behavior.",
+        "default": 1
+      },
+      "recallMaxQueryChars": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum character length for composed recall query before calling recall.",
+        "default": 800
+      },
       "recallTopK": {
         "type": "integer",
         "minimum": 1,
@@ -262,6 +283,18 @@
     "recallTypes": {
       "label": "Recall Types",
       "placeholder": "e.g. ['world', 'experience']"
+    },
+    "recallRoles": {
+      "label": "Recall Roles",
+      "placeholder": "e.g. ['user', 'assistant']"
+    },
+    "recallContextTurns": {
+      "label": "Recall Context Turns",
+      "placeholder": "1 (latest only, default)"
+    },
+    "recallMaxQueryChars": {
+      "label": "Recall Max Query Chars",
+      "placeholder": "800 (default)"
     },
     "recallTopK": {
       "label": "Recall Top K",
