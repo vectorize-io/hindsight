@@ -298,6 +298,8 @@ export function composeRecallQuery(
       }
 
       content = stripMemoryTags(content).trim();
+      // Strip sender metadata envelope (untrusted metadata blocks injected by OpenClaw)
+      content = content.replace(/^---\n(?:[\w\s]+\s*)?\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n\n?/i, '').replace(/\n---$/, '').trim();
       if (!content) {
         return null;
       }
