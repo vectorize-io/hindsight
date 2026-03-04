@@ -201,6 +201,18 @@ export function stripMemoryTags(content: string): string {
 }
 
 /**
+ * Strip OpenClaw sender/conversation metadata envelopes from message content.
+ * These blocks are injected by OpenClaw but are noise for memory storage and recall.
+ */
+export function stripMetadataEnvelopes(content: string): string {
+  // Strip: ---\n<Label> (untrusted metadata):\n```json\n{...}\n```\n<message>\n---
+  content = content.replace(/^---\n[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n\n?/im, '').replace(/\n---$/, '');
+  // Strip: <Label> (untrusted metadata):\n```json\n{...}\n```  (without --- wrapper)
+  content = content.replace(/[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n?/gim, '');
+  return content.trim();
+}
+
+/**
  * Extract a recall query from a hook event's rawMessage or prompt.
  *
  * Prefers rawMessage (clean user text). Falls back to prompt, stripping
@@ -221,22 +233,17 @@ export function extractRecallQuery(
   const isMetadata = (s: string) => METADATA_PATTERNS.some(p => p.test(s));
 
   let recallQuery = rawMessage;
-  // Strip sender metadata envelope before any checks (format: ---\nSender (untrusted metadata):\n```json...```\n<message>\n---)
-  if (recallQuery && /^---\n[\w\s]+\(untrusted metadata\)/i.test(recallQuery)) {
-    recallQuery = recallQuery.replace(/^---\n[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n\n?/i, '').replace(/\n---$/, '').trim();
+  // Strip sender metadata envelope before any checks
+  if (recallQuery) {
+    recallQuery = stripMetadataEnvelopes(recallQuery);
   }
   if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.trim().length < 5 || isMetadata(recallQuery)) {
     recallQuery = prompt;
-    // Strip leading "Conversation info (untrusted metadata): ```json ... ```" block if present,
-    // then check if anything useful remains. If nothing remains, it's a bare metadata fire — skip.
-    if (recallQuery && /^\s*(?:[\w\s]+\s*)?\(untrusted metadata\)/i.test(recallQuery)) {
-      const stripped = recallQuery.replace(/^\s*(?:[\w\s]+\s*)?\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\s*/i, '').trim();
-      if (!stripped || stripped.length < 5) {
-        return null;
-      }
-      recallQuery = stripped;
+    // Strip metadata envelopes from prompt too, then check if anything useful remains
+    if (recallQuery) {
+      recallQuery = stripMetadataEnvelopes(recallQuery);
     }
-    if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.length < 5) {
+    if (!recallQuery || recallQuery.length < 5) {
       return null;
     }
 
@@ -302,8 +309,7 @@ export function composeRecallQuery(
       }
 
       content = stripMemoryTags(content).trim();
-      // Strip sender metadata envelope (untrusted metadata blocks injected by OpenClaw)
-      content = content.replace(/^---\n(?:[\w\s]+\s*)?\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n\n?/i, '').replace(/\n---$/, '').trim();
+      content = stripMetadataEnvelopes(content);
       if (!content) {
         return null;
       }
@@ -1002,6 +1008,8 @@ export default function (api: MoltbotPluginAPI) {
         // Derive bank ID from context
         const bankId = deriveBankId(ctx, pluginConfig);
         debug(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
+        debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
+        debug(`[Hindsight] event.context keys: ${Object.keys(event.context ?? {}).join(', ')}`);
 
         // Get the user's latest message for recall — only the raw user text, not the full prompt
         // rawMessage is clean user text; prompt includes envelope, system events, media notes, etc.
@@ -1277,8 +1285,9 @@ export function prepareRetentionTranscript(
           .join('\n');
       }
 
-      // Strip plugin-injected memory tags to prevent feedback loop
+      // Strip plugin-injected memory tags and metadata envelopes to prevent feedback loop
       content = stripMemoryTags(content);
+      content = stripMetadataEnvelopes(content);
 
       return content.trim() ? `[role: ${role}]\n${content}\n[${role}:end]` : null;
     })
