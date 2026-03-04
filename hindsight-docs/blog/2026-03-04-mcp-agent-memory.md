@@ -1,5 +1,5 @@
 ---
-title: "Give Your AI Agent Long-Term Memory with Hindsight"
+title: "The Open-Source MCP Memory Server Your AI Agent Is Missing"
 authors: [hindsight]
 date: 2026-03-04
 tags: [mcp, memory, agents, docker, tutorial]
