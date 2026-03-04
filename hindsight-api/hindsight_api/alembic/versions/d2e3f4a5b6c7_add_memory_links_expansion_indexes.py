@@ -20,10 +20,10 @@ memory_links table:
    scan), eliminating the heap reads entirely.
    Partial index (WHERE link_type = 'entity') keeps index size ~40 % smaller.
 
-Both indexes are created with CONCURRENTLY so the migration does not block
-concurrent reads or writes on memory_links.  CONCURRENTLY requires running
-outside a transaction block, so the migration emits an explicit COMMIT before
-each statement and uses IF NOT EXISTS for idempotency.
+Uses CONCURRENTLY for schemas with existing data (avoids blocking writes during
+production deployments on large tables). Uses regular CREATE INDEX for empty
+schemas (new tenant provisioning) because CONCURRENTLY waits for ALL open
+transactions database-wide, which deadlocks against the worker's polling loop.
 
 Revision ID: d2e3f4a5b6c7
 Revises: b3c4d5e6f7g8
@@ -33,6 +33,7 @@ Create Date: 2026-03-02
 from collections.abc import Sequence
 
 from alembic import context, op
+from sqlalchemy import text
 
 revision: str = "d2e3f4a5b6c7"
 down_revision: str | Sequence[str] | None = "b3c4d5e6f7g8"
@@ -45,33 +46,46 @@ def _get_schema_prefix() -> str:
     return f'"{schema}".' if schema else ""
 
 
+def _table_has_data(table: str) -> bool:
+    """Check if a table has any rows (used to decide CONCURRENTLY vs regular)."""
+    conn = op.get_bind()
+    result = conn.execute(text(f"SELECT EXISTS (SELECT 1 FROM {table} LIMIT 1)"))
+    return result.scalar()
+
+
+def _create_index(schema: str, definition: str) -> None:
+    """Create an index, using CONCURRENTLY only when the table has data."""
+    # Extract table name from "ON {schema}table_name(...)"
+    table_part = definition.split(" ON ")[1].split("(")[0].strip()
+    if _table_has_data(table_part):
+        op.execute("COMMIT")
+        op.execute(f"CREATE INDEX CONCURRENTLY {definition}")
+    else:
+        op.execute(f"CREATE INDEX {definition}")
+
+
 def upgrade() -> None:
     schema = _get_schema_prefix()
-
-    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
-    # Commit the current Alembic transaction, then issue each CONCURRENTLY
-    # statement in its own implicit autocommit transaction.
-    # IF NOT EXISTS makes each statement idempotent if the migration is retried.
 
     # Index for the semantic *incoming* direction in link_expansion_retrieval.py.
     # Replaces the BitmapAnd of idx_memory_links_to_unit ∩ idx_memory_links_link_type
     # with a single composite index scan.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_to_type_weight "
-        f"ON {schema}memory_links(to_unit_id, link_type, weight DESC)"
+    _create_index(
+        schema,
+        f"IF NOT EXISTS idx_memory_links_to_type_weight "
+        f"ON {schema}memory_links(to_unit_id, link_type, weight DESC)",
     )
 
     # Covering index for entity co-occurrence expansion.
     # Enables an index-only scan: entity_id and to_unit_id are read from the
     # index leaf pages instead of the heap, eliminating ~2 500 random heap-page
     # reads per expansion query.
-    op.execute("COMMIT")
-    op.execute(
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_links_entity_covering "
+    _create_index(
+        schema,
+        f"IF NOT EXISTS idx_memory_links_entity_covering "
         f"ON {schema}memory_links(from_unit_id) "
         f"INCLUDE (to_unit_id, entity_id) "
-        f"WHERE link_type = 'entity'"
+        f"WHERE link_type = 'entity'",
     )
 
 
