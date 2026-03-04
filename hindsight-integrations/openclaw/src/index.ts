@@ -200,6 +200,27 @@ export function stripMemoryTags(content: string): string {
 }
 
 /**
+ * Extract sender_id from OpenClaw's injected inbound metadata blocks.
+ * Checks both "Conversation info (untrusted metadata)" and "Sender (untrusted metadata)" blocks.
+ * Returns the first sender_id / id string found, or undefined if none.
+ */
+export function extractSenderIdFromText(text: string): string | undefined {
+  if (!text) return undefined;
+  const metaBlockRe = /[\w\s]+\(untrusted metadata\)[^\n]*\n```json\n([\s\S]*?)\n```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = metaBlockRe.exec(text)) !== null) {
+    try {
+      const obj = JSON.parse(match[1]);
+      const id = obj?.sender_id ?? obj?.id;
+      if (id && typeof id === 'string') return id;
+    } catch {
+      // continue to next block
+    }
+  }
+  return undefined;
+}
+
+/**
  * Strip OpenClaw sender/conversation metadata envelopes from message content.
  * These blocks are injected by OpenClaw but are noise for memory storage and recall.
  */
@@ -1012,8 +1033,11 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        // Derive bank ID from context
-        const bankId = deriveBankId(ctx, pluginConfig);
+        // Derive bank ID from context — enrich ctx.senderId from the inbound metadata
+        // block when it's missing (agent-phase hooks don't carry senderId in ctx directly).
+        const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
+        const effectiveCtxForRecall = senderIdFromPrompt ? { ...ctx, senderId: senderIdFromPrompt } : ctx;
+        const bankId = deriveBankId(effectiveCtxForRecall, pluginConfig);
         debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
         debug(`[Hindsight] event.context keys: ${Object.keys(event.context ?? {}).join(', ')}`);
@@ -1054,7 +1078,7 @@ export default function (api: MoltbotPluginAPI) {
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(ctx);
+        const client = await clientGlobal.getClientForContext(effectiveCtxForRecall);
         if (!client) {
           debug('[Hindsight] Client not initialized, skipping auto-recall');
           return;
@@ -1129,8 +1153,17 @@ ${memoriesFormatted}
           return;
         }
 
-        // Derive bank ID from context
-        const bankId = deriveBankId(effectiveCtx, pluginConfig);
+        // Derive bank ID from context — enrich ctx.senderId from inbound metadata blocks
+        // embedded in the messages when it's missing (agent_end ctx lacks sender identity).
+        const allMessagesForSender = event.context?.sessionEntry?.messages ?? event.messages ?? [];
+        const senderIdFromMessages = !effectiveCtx?.senderId
+          ? allMessagesForSender
+              .filter((m: any) => m?.role === 'user')
+              .map((m: any) => extractSenderIdFromText(typeof m.content === 'string' ? m.content : ''))
+              .find((id: string | undefined) => Boolean(id))
+          : undefined;
+        const effectiveCtxForRetain = senderIdFromMessages ? { ...effectiveCtx, senderId: senderIdFromMessages } : effectiveCtx;
+        const bankId = deriveBankId(effectiveCtxForRetain, pluginConfig);
         debug(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
 
         if (event.success === false) {
@@ -1198,7 +1231,7 @@ ${memoriesFormatted}
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(effectiveCtx);
+        const client = await clientGlobal.getClientForContext(effectiveCtxForRetain);
         if (!client) {
           console.warn('[Hindsight] Client not initialized, skipping retain');
           return;
