@@ -1033,7 +1033,7 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        debug(`[Hindsight] Auto-recall for bank ${bankId}, prompt: ${prompt.substring(0, 50)}`);
+        debug(`[Hindsight] Auto-recall for bank ${bankId}, full query:\n---\n${prompt}\n---`);
 
         // Recall with deduplication: reuse in-flight request for same bank
         const normalizedPrompt = prompt.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -1057,9 +1057,11 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
+        debug(`[Hindsight] Raw recall response (${response.results.length} results before topK):\n${response.results.map((r: any, i: number) => `  [${i}] score=${r.score?.toFixed(3) ?? 'n/a'} type=${r.type ?? 'n/a'}: ${JSON.stringify(r.content ?? r.text ?? r).substring(0, 200)}`).join('\n')}`);
+
         const results = pluginConfig.recallTopK ? response.results.slice(0, pluginConfig.recallTopK) : response.results;
 
-        debug(`[Hindsight] Auto-recall results count: ${results.length}`);
+        debug(`[Hindsight] After topK (${pluginConfig.recallTopK ?? 'unlimited'}): ${results.length} results injected`);
 
         // Format memories as JSON with all fields from recall
         const memoriesFormatted = formatMemories(results);
@@ -1180,6 +1182,7 @@ ${memoriesFormatted}
         const documentId = `${effectiveCtx?.sessionKey || 'session'}-${Date.now()}`;
 
         // Retain to Hindsight
+        debug(`[Hindsight] Retaining to bank ${bankId}, document: ${documentId}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? '\n...(truncated)' : ''}\n---`);
         await client.retain({
           content: transcript,
           document_id: documentId,
