@@ -270,6 +270,10 @@ export function extractRecallQuery(
     // Remove trailing [from: SenderName] metadata (group chats)
     cleaned = cleaned.replace(/\n\[from:[^\]]*\]\s*$/, '');
 
+    // Strip metadata envelopes again after channel envelope extraction, in case
+    // the metadata block appeared after the [ChannelName] header
+    cleaned = stripMetadataEnvelopes(cleaned);
+
     recallQuery = cleaned.trim() || recallQuery;
   }
 
