@@ -46,8 +46,6 @@ const REINIT_COOLDOWN_MS = 30_000;
 
 const DEFAULT_RECALL_PROMPT_PREAMBLE =
   'Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:';
-const RECALL_QUERY_PRIORITY_INSTRUCTION =
-  'Use the latest user message as the primary query; use prior turns only as supporting context.';
 
 function formatCurrentTimeForRecall(date = new Date()): string {
   const year = date.getUTCFullYear();
@@ -160,6 +158,7 @@ if (typeof global !== 'undefined') {
           const oldestKey = clientsByBankId.keys().next().value;
           if (oldestKey) {
             clientsByBankId.delete(oldestKey);
+            banksWithMissionSet.delete(oldestKey);
           }
         }
       }
@@ -415,6 +414,11 @@ function parseSessionKey(sessionKey: string): { agentId?: string; provider?: str
 
 export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConfig: PluginConfig): string {
   if (pluginConfig.dynamicBankId === false) {
+    return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-openclaw` : 'openclaw';
+  }
+
+  // When no context is available, fall back to the static default bank.
+  if (!ctx) {
     return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-openclaw` : 'openclaw';
   }
 

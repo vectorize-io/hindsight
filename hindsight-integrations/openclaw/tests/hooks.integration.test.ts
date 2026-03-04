@@ -291,7 +291,7 @@ describe('before_agent_start hook', () => {
     recallSpy.mockResolvedValue(EMPTY_RECALL);
 
     await triggerHook(
-      'before_agent_start',
+      'before_prompt_build',
       {
         rawMessage: 'Do I still prefer dark mode?',
         prompt: '',
@@ -306,10 +306,7 @@ describe('before_agent_start hook', () => {
 
     expect(recallSpy).toHaveBeenCalledOnce();
     const [callArgs] = recallSpy.mock.calls[0];
-    expect(callArgs.query).toContain('Latest user message: Do I still prefer dark mode?');
-    expect(callArgs.query).toContain(
-      'Use the latest user message as the primary query; use prior turns only as supporting context.',
-    );
+    expect(callArgs.query).toContain('Do I still prefer dark mode?');
     expect(callArgs.query).toContain('user: I prefer dark mode in IDEs.');
     expect(callArgs.query).not.toContain('assistant: Noted: dark mode preference.');
     expect(callArgs.query.length).toBeLessThanOrEqual(180);
