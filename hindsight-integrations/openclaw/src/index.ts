@@ -221,6 +221,10 @@ export function extractRecallQuery(
   const isMetadata = (s: string) => METADATA_PATTERNS.some(p => p.test(s));
 
   let recallQuery = rawMessage;
+  // Strip sender metadata envelope before any checks (format: ---\nSender (untrusted metadata):\n```json...```\n<message>\n---)
+  if (recallQuery && /^---\n[\w\s]+\(untrusted metadata\)/i.test(recallQuery)) {
+    recallQuery = recallQuery.replace(/^---\n[\w\s]+\(untrusted metadata\)[^\n]*\n```json[\s\S]*?```\n\n?/i, '').replace(/\n---$/, '').trim();
+  }
   if (!recallQuery || typeof recallQuery !== 'string' || recallQuery.trim().length < 5 || isMetadata(recallQuery)) {
     recallQuery = prompt;
     // Strip leading "Conversation info (untrusted metadata): ```json ... ```" block if present,
