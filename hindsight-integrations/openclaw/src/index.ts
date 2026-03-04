@@ -995,7 +995,7 @@ export default function (api: MoltbotPluginAPI) {
 
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
-    api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
+    api.on('before_prompt_build', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
         // Check if this provider is excluded
         if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
@@ -1011,7 +1011,7 @@ export default function (api: MoltbotPluginAPI) {
 
         // Derive bank ID from context
         const bankId = deriveBankId(ctx, pluginConfig);
-        debug(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
+        debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
         debug(`[Hindsight] event.context keys: ${Object.keys(event.context ?? {}).join(', ')}`);
 
