@@ -160,12 +160,6 @@ Blank stare.
 
 ## Step 3 — Add `retain()`
 
-Install the client:
-
-```bash
-pip install hindsight-client openai
-```
-
 Create a memory bank:
 
 ```python
