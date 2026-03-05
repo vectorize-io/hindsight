@@ -294,6 +294,12 @@ ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 
+# Webhook configuration (global, static - server-level only)
+ENV_WEBHOOK_URL = "HINDSIGHT_API_WEBHOOK_URL"
+ENV_WEBHOOK_SECRET = "HINDSIGHT_API_WEBHOOK_SECRET"
+ENV_WEBHOOK_EVENT_TYPES = "HINDSIGHT_API_WEBHOOK_EVENT_TYPES"
+ENV_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS = "HINDSIGHT_API_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS"
+
 # Optimization flags
 ENV_SKIP_LLM_VERIFICATION = "HINDSIGHT_API_SKIP_LLM_VERIFICATION"
 ENV_LAZY_RERANKER = "HINDSIGHT_API_LAZY_RERANKER"
@@ -496,6 +502,12 @@ Use this tool PROACTIVELY to:
 
 # Default embedding dimension (used by initial migration, adjusted at runtime)
 EMBEDDING_DIMENSION = DEFAULT_EMBEDDING_DIMENSION
+
+# Webhook configuration defaults
+DEFAULT_WEBHOOK_URL = None  # None = no global webhook configured
+DEFAULT_WEBHOOK_SECRET = None  # None = no signing
+DEFAULT_WEBHOOK_EVENT_TYPES = "consolidation.completed"  # Comma-separated; default = all supported events
+DEFAULT_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS = 30  # How often to poll for pending deliveries
 
 
 class JsonFormatter(logging.Formatter):
@@ -749,6 +761,12 @@ class HindsightConfig:
     otel_exporter_otlp_headers: str | None
     otel_service_name: str
     otel_deployment_environment: str
+
+    # Webhook configuration (static - server-level only, not per-bank)
+    webhook_url: str | None  # Global webhook URL (None = disabled)
+    webhook_secret: str | None  # HMAC signing secret (None = unsigned)
+    webhook_event_types: list[str]  # Event types to deliver globally
+    webhook_delivery_poll_interval_seconds: int  # How often the delivery worker polls
 
     # Class-level sets for configuration categorization
 
@@ -1187,6 +1205,20 @@ class HindsightConfig:
             otel_exporter_otlp_headers=os.getenv(ENV_OTEL_EXPORTER_OTLP_HEADERS) or None,
             otel_service_name=os.getenv(ENV_OTEL_SERVICE_NAME, DEFAULT_OTEL_SERVICE_NAME),
             otel_deployment_environment=os.getenv(ENV_OTEL_DEPLOYMENT_ENVIRONMENT, DEFAULT_OTEL_DEPLOYMENT_ENVIRONMENT),
+            # Webhook configuration (static, server-level only)
+            webhook_url=os.getenv(ENV_WEBHOOK_URL) or DEFAULT_WEBHOOK_URL,
+            webhook_secret=os.getenv(ENV_WEBHOOK_SECRET) or DEFAULT_WEBHOOK_SECRET,
+            webhook_event_types=[
+                t.strip()
+                for t in os.getenv(ENV_WEBHOOK_EVENT_TYPES, DEFAULT_WEBHOOK_EVENT_TYPES).split(",")
+                if t.strip()
+            ],
+            webhook_delivery_poll_interval_seconds=int(
+                os.getenv(
+                    ENV_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS,
+                    str(DEFAULT_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS),
+                )
+            ),
         )
         config.validate()
         return config

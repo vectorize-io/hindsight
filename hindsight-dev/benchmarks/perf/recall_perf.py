@@ -561,6 +561,78 @@ def _build_engine(*, disable_observations: bool = False) -> "Any":
 
 
 # ---------------------------------------------------------------------------
+# Synthetic observation insertion
+# ---------------------------------------------------------------------------
+
+_BATCH_SIZE = 500
+
+
+async def _insert_synthetic_observations(pool: Any, bank_id: str) -> int:
+    """
+    For every non-observation memory unit in *bank_id*, insert one synthetic
+    observation with the same text, embedding, and tags, pointing back to that
+    unit as its sole source fact.
+
+    Returns the number of observations inserted.
+    """
+    import uuid
+
+    from hindsight_api.engine.task_backend import fq_table
+
+    table = fq_table("memory_units")
+
+    # Fetch all non-observation units
+    rows = await pool.fetch(
+        f"""
+        SELECT id, text, embedding, tags, event_date, occurred_start, occurred_end, mentioned_at
+        FROM {table}
+        WHERE bank_id = $1 AND fact_type != 'observation'
+        ORDER BY id
+        """,
+        bank_id,
+    )
+
+    if not rows:
+        return 0
+
+    inserted = 0
+    for offset in range(0, len(rows), _BATCH_SIZE):
+        batch = rows[offset : offset + _BATCH_SIZE]
+        await pool.executemany(
+            f"""
+            INSERT INTO {table} (
+                id, bank_id, text, fact_type, embedding,
+                proof_count, source_memory_ids, history,
+                tags, event_date, occurred_start, occurred_end, mentioned_at
+            ) VALUES (
+                $1, $2, $3, 'observation', $4::vector,
+                1, ARRAY[$5::uuid], '[]'::jsonb,
+                $6, $7, $8, $9, $10
+            )
+            ON CONFLICT DO NOTHING
+            """,
+            [
+                (
+                    uuid.uuid4(),  # new observation id
+                    bank_id,  # bank_id
+                    row["text"],
+                    row["embedding"],
+                    row["id"],  # source fact id
+                    row["tags"] or [],
+                    row["event_date"],
+                    row["occurred_start"],
+                    row["occurred_end"],
+                    row["mentioned_at"],
+                )
+                for row in batch
+            ],
+        )
+        inserted += len(batch)
+
+    return inserted
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: generate
 # ---------------------------------------------------------------------------
 
@@ -613,7 +685,7 @@ async def _wait_for_operation(pool: Any, operation_id: str, timeout: float = 864
     raise TimeoutError(f"Operation {operation_id} did not complete within {timeout}s")
 
 
-async def cmd_generate(bank_id: str, scale: str, workers: int = 16) -> None:
+async def cmd_generate(bank_id: str, scale: str, workers: int = 16, with_observations: bool = False) -> None:
     """Submit all content as a single async batch and process with an in-process worker."""
     from hindsight_api.models import RequestContext
     from hindsight_api.worker.poller import WorkerPoller
@@ -654,7 +726,6 @@ async def cmd_generate(bank_id: str, scale: str, workers: int = 16) -> None:
         poll_interval_ms=200,
         max_slots=workers,
         consolidation_max_slots=0,
-        max_retries=20,
     )
     poller_task = asyncio.create_task(poller.run())
     console.print("  Worker     : started\n")
@@ -681,14 +752,21 @@ async def cmd_generate(bank_id: str, scale: str, workers: int = 16) -> None:
     except asyncio.CancelledError:
         pass
 
-    await pool.close()
-
     status_color = "green" if final_status == "completed" else "red"
     console.print(
         f"\n[{status_color}]Done[/{status_color}] — status=[bold]{final_status}[/bold] "
         f"in {elapsed:.1f}s  ({total_items / elapsed:.0f} items/s)"
     )
     console.print(f"LLM callback invoked {call_counter[0]:,} times.")
+
+    if with_observations:
+        console.print("\n  Inserting synthetic observations (1 per fact)…")
+        t_obs = time.perf_counter()
+        n_obs = await _insert_synthetic_observations(pool, bank_id)
+        elapsed_obs = time.perf_counter() - t_obs
+        console.print(f"  Inserted {n_obs:,} observations in {elapsed_obs:.1f}s")
+
+    await pool.close()
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +798,9 @@ class _RRFReranker:
 # ---------------------------------------------------------------------------
 
 
-async def cmd_benchmark(bank_id: str, query: str, iterations: int, concurrency: int, reranker: str) -> None:
+async def cmd_benchmark(
+    bank_id: str, query: str, iterations: int, concurrency: int, reranker: str, fact_types: list[str] | None = None
+) -> None:
     """Run recall in parallel and report p50/p95/p99 timings with per-step breakdown."""
     from hindsight_api.models import RequestContext
 
@@ -728,7 +808,8 @@ async def cmd_benchmark(bank_id: str, query: str, iterations: int, concurrency: 
     console.print(f"  Query       : {query}")
     console.print(f"  Iterations  : {iterations}  (total recall calls)")
     console.print(f"  Concurrency : {concurrency}")
-    console.print(f"  Reranker    : {reranker}\n")
+    console.print(f"  Reranker    : {reranker}")
+    console.print(f"  Fact types  : {', '.join(fact_types) if fact_types else 'all'}\n")
 
     engine = _build_engine()
     await engine.initialize()
@@ -752,6 +833,8 @@ async def cmd_benchmark(bank_id: str, query: str, iterations: int, concurrency: 
             enable_trace=True,
             include_chunks=True,
             include_entities=True,
+            include_source_facts=True,
+            fact_type=fact_types,
             request_context=request_context,
             _quiet=True,
         )
@@ -914,6 +997,12 @@ def main() -> None:
     gen.add_argument("--bank-id", required=True)
     gen.add_argument("--scale", choices=list(SCALES), default="small")
     gen.add_argument("--workers", type=int, default=8, help="Max concurrent worker slots (default: 8)")
+    gen.add_argument(
+        "--with-observations",
+        action="store_true",
+        default=False,
+        help="After retain, insert one synthetic observation per fact (same text, same embedding)",
+    )
 
     # benchmark
     bm = sub.add_parser("benchmark", help="Run recall and report latency")
@@ -927,6 +1016,14 @@ def main() -> None:
         default="rrf",
         help="Reranker to use: rrf=RRF scores only (no ML), cross-encoder=neural reranker (default: rrf)",
     )
+    bm.add_argument(
+        "--fact-types",
+        nargs="+",
+        choices=["world", "experience", "observation"],
+        default=None,
+        metavar="TYPE",
+        help="Fact types to include in recall (default: all). E.g. --fact-types observation",
+    )
 
     # stats
     st = sub.add_parser("stats", help="Print memory/entity/link counts for banks")
@@ -939,9 +1036,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.cmd == "generate":
-        asyncio.run(cmd_generate(args.bank_id, args.scale, workers=args.workers))
+        asyncio.run(
+            cmd_generate(args.bank_id, args.scale, workers=args.workers, with_observations=args.with_observations)
+        )
     elif args.cmd == "benchmark":
-        asyncio.run(cmd_benchmark(args.bank_id, args.query, args.iterations, args.concurrency, args.reranker))
+        asyncio.run(
+            cmd_benchmark(args.bank_id, args.query, args.iterations, args.concurrency, args.reranker, args.fact_types)
+        )
     elif args.cmd == "stats":
         asyncio.run(cmd_stats(args.bank_ids))
     elif args.cmd == "clean":

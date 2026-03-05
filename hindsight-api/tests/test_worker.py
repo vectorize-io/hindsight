@@ -294,14 +294,17 @@ class TestWorkerPoller:
             payload,
         )
 
+        from datetime import datetime, timezone
+
+        from hindsight_api.worker.exceptions import RetryTaskAt
+
         async def failing_executor(task_dict):
-            raise ValueError("TimeoutError during recall")
+            raise RetryTaskAt(retry_at=datetime.now(timezone.utc), message="TimeoutError during recall")
 
         poller = WorkerPoller(
             pool=pool,
             worker_id="test-worker-1",
             executor=failing_executor,
-            max_retries=3,
         )
 
         task_dict = json.loads(payload)
@@ -326,39 +329,35 @@ class TestWorkerPoller:
         assert row["retry_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_executor_exception_marks_failed_after_max_retries(self, pool, clean_operations):
-        """Test that a task is permanently marked 'failed' once retry_count hits max_retries.
+    async def test_executor_exception_marks_failed_immediately(self, pool, clean_operations):
+        """Test that a plain exception (not RetryTaskAt) permanently marks a task as 'failed'.
 
-        After max_retries exhaustion the task must NOT be reset to 'pending' — it should
-        be marked 'failed' with an error message so it stops consuming retry budget.
+        With the task-owned retry model, plain exceptions are non-retryable — the poller
+        marks them as 'failed' immediately. Tasks that want to be retried must raise RetryTaskAt.
         """
         from hindsight_api.worker import WorkerPoller
         from hindsight_api.worker.poller import ClaimedTask
 
-        max_retries = 3
         bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
         op_id = uuid.uuid4()
         payload = json.dumps({"type": "consolidation", "operation_id": str(op_id), "bank_id": bank_id})
-        # Insert with retry_count already at the limit
         await pool.execute(
             """
             INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, retry_count)
-            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'test-worker-1', now(), $4)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'test-worker-1', now(), 0)
             """,
             op_id,
             bank_id,
             payload,
-            max_retries,
         )
 
         async def failing_executor(task_dict):
-            raise ValueError("Still failing after all retries")
+            raise ValueError("Non-retryable error")
 
         poller = WorkerPoller(
             pool=pool,
             worker_id="test-worker-1",
             executor=failing_executor,
-            max_retries=max_retries,
         )
 
         task_dict = json.loads(payload)
@@ -373,11 +372,10 @@ class TestWorkerPoller:
             op_id,
         )
         assert row["status"] == "failed", (
-            f"Expected 'failed' after max retries, got '{row['status']}'"
+            f"Expected 'failed' for plain exception, got '{row['status']}'"
         )
         assert row["error_message"] is not None
-        assert "Max retries" in row["error_message"]
-        assert row["retry_count"] == max_retries  # not incremented further
+        assert row["retry_count"] == 0  # not incremented; plain exception = immediate fail
 
     @pytest.mark.asyncio
     async def test_executor_failed_status_not_overridden(self, pool, clean_operations):

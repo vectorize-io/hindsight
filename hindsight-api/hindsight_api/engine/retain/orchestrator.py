@@ -7,6 +7,7 @@ Coordinates all retain pipeline modules to store memories efficiently.
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,6 +53,8 @@ def parse_datetime_flexible(value: Any) -> datetime:
         raise TypeError(f"Expected datetime or string, got {type(value).__name__}")
 
 
+import asyncpg
+
 from ..response_models import TokenUsage
 from . import (
     chunk_storage,
@@ -82,6 +85,7 @@ async def retain_batch(
     document_tags: list[str] | None = None,
     operation_id: str | None = None,
     schema: str | None = None,
+    outbox_callback: Callable[["asyncpg.Connection"], Awaitable[None]] | None = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a batch of content through the retain pipeline.
@@ -483,6 +487,11 @@ async def retain_batch(
 
             # Map results back to original content items
             result_unit_ids = _map_results_to_contents(contents, extracted_facts, unit_ids)
+
+            # Transactional outbox: queue any side-effect tasks (e.g. webhook deliveries)
+            # inside the same transaction so they are atomically committed with the retain data.
+            if outbox_callback:
+                await outbox_callback(conn)
 
         # Flush entity stats (mention_count / last_seen) now that the transaction
         # has committed.  Uses a fresh pool connection — no locks held.

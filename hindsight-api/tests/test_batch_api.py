@@ -413,7 +413,6 @@ async def test_worker_batch_recovery(memory, request_context):
             worker_id="test_worker_recovery",
             executor=memory,
             poll_interval_ms=100,
-            max_retries=3,
             schema=schema,
             tenant_extension=tenant_extension,
             max_slots=5,

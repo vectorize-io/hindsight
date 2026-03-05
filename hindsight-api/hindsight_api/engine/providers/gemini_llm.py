@@ -25,23 +25,10 @@ from hindsight_api.metrics import get_metrics_collector
 
 logger = logging.getLogger(__name__)
 
-# Context variable for per-request Gemini safety settings override (supports per-bank configuration)
+# Per-request Gemini safety settings override.
+# Set exclusively by ConfiguredLLMProvider.call() / call_with_tools() via token-based
+# set/reset, so it is properly scoped to each individual LLM call and never leaks.
 _safety_settings_ctx: ContextVar[list | None] = ContextVar("gemini_safety_settings", default=None)
-
-
-def set_gemini_safety_settings(settings: list | None) -> None:
-    """
-    Set Gemini safety settings for the current async context.
-
-    This allows per-bank safety settings to be applied without changing
-    the LLM provider interface. Call this before making LLM calls within
-    an operation that has resolved bank-specific configuration.
-
-    Args:
-        settings: List of safety setting dicts with 'category' and 'threshold' keys,
-                  or None to use the instance default (from env var).
-    """
-    _safety_settings_ctx.set(settings)
 
 
 # Vertex AI imports (optional)

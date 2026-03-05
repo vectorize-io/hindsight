@@ -14,4 +14,4 @@ echo ""
 echo "Starting Docusaurus development server..."
 echo "Documentation will be available at: http://localhost:3000"
 echo ""
-npm run start -w hindsight-docs
+npm run start -w hindsight-docs -- --no-open

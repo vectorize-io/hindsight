@@ -102,10 +102,22 @@ import CookbookGrid from '@site/src/components/CookbookGrid';
 <CookbookGrid
   items={[
     {
+      title: "CableConnect — AI Customer Service Copilot Demo",
+      href: "/cookbook/applications/cable-co",
+      description: "AI customer service copilot that learns from CSR feedback via Hindsight",
+      tags: { sdk: "hindsight-client", topic: "Customer Service" }
+    },
+    {
       title: "Chat Memory App",
       href: "/cookbook/applications/chat-memory",
       description: "Real-time chat app with per-user memory using Groq and Hindsight",
-      tags: { sdk: "hindsight-client", topic: "Chat" }
+      tags: { sdk: "@vectorize-io/hindsight-client", topic: "Chat" }
+    },
+    {
+      title: "Chat Memory App (Hindsight Cloud)",
+      href: "/cookbook/applications/chat-memory-cloud",
+      description: "Real-time chat app with per-user memory powered by Hindsight Cloud",
+      tags: { sdk: "@vectorize-io/hindsight-client", topic: "Chat" }
     },
     {
       title: "Chat SDK Multi-Platform Bot",
@@ -114,22 +126,28 @@ import CookbookGrid from '@site/src/components/CookbookGrid';
       tags: { sdk: "@vectorize-io/hindsight-chat", topic: "Recommendation" }
     },
     {
+      title: "ClaimsIQ — Insurance Claims Triage Agent Demo",
+      href: "/cookbook/applications/claims-iq",
+      description: "Insurance claims triage agent that learns adjudication rules via Hindsight",
+      tags: { sdk: "hindsight-litellm", topic: "Agents" }
+    },
+    {
       title: "CrewAI + Hindsight Memory",
       href: "/cookbook/applications/crewai-memory",
       description: "CrewAI agents with persistent long-term memory via Hindsight",
-      tags: { sdk: "Agents" }
+      tags: { sdk: "hindsight-crewai", topic: "Agents" }
     },
     {
       title: "Deliveryman Demo",
       href: "/cookbook/applications/deliveryman-demo",
       description: "Delivery agent simulation demonstrating learning through mental models",
-      tags: { sdk: "hindsight-client", topic: "Learning" }
+      tags: { sdk: "hindsight-litellm", topic: "Learning" }
     },
     {
       title: "Go Memory-Augmented API",
       href: "/cookbook/applications/go-memory-service",
       description: "Go HTTP microservice with per-user memory banks for a developer knowledge assistant",
-      tags: { sdk: "hindsight-go", topic: "Learning" }
+      tags: { sdk: "hindsight-client-go", topic: "Learning" }
     },
     {
       title: "Memory Approaches Comparison Demo",
@@ -147,19 +165,25 @@ import CookbookGrid from '@site/src/components/CookbookGrid';
       title: "OpenAI Agent + Hindsight Memory Integration",
       href: "/cookbook/applications/openai-fitness-coach",
       description: "Fitness coach using OpenAI Assistants with Hindsight as memory backend",
-      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+      tags: { sdk: "hindsight-api", topic: "Recommendation" }
+    },
+    {
+      title: "Pydantic AI + Hindsight Memory",
+      href: "/cookbook/applications/pydantic-ai-memory",
+      description: "Pydantic AI agent with persistent long-term memory via Hindsight",
+      tags: { sdk: "hindsight-pydantic-ai", topic: "Agents" }
     },
     {
       title: "Sanity CMS Blog Memory",
       href: "/cookbook/applications/sanity-blog-memory",
       description: "Sync Sanity CMS blog posts to Hindsight for semantic search and AI insights",
-      tags: { sdk: "hindsight-client", topic: "Learning" }
+      tags: { sdk: "@vectorize-io/hindsight-client", topic: "Learning" }
     },
     {
       title: "Stance Tracker",
       href: "/cookbook/applications/stancetracker",
       description: "Track political candidates' stances over time with automated web scraping",
-      tags: { sdk: "hindsight-client", topic: "Recommendation" }
+      tags: { sdk: "@vectorize-io/hindsight-client", topic: "Recommendation" }
     },
     {
       title: "Hindsight AI SDK - Personal Chef",

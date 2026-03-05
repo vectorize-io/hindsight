@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-chat",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Hindsight memory integration for Vercel Chat SDK - Give your chat bots persistent, per-user memory",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

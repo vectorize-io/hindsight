@@ -5,6 +5,40 @@
 
 import { toast } from "sonner";
 
+export interface WebhookHttpConfig {
+  method: string;
+  timeout_seconds: number;
+  headers: Record<string, string>;
+  params: Record<string, string>;
+}
+
+export interface Webhook {
+  id: string;
+  bank_id: string | null;
+  url: string;
+  event_types: string[];
+  enabled: boolean;
+  http_config: WebhookHttpConfig;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string | null;
+  url: string;
+  event_type: string;
+  status: string;
+  attempts: number;
+  next_retry_at: string | null;
+  last_error: string | null;
+  last_response_status: number | null;
+  last_response_body: string | null;
+  last_attempt_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface MentalModel {
   id: string;
   bank_id: string;
@@ -857,6 +891,79 @@ export class ControlPlaneClient {
     }>(`/api/banks/${bankId}/config`, {
       method: "DELETE",
     });
+  }
+
+  /**
+   * List webhooks for a bank
+   */
+  async listWebhooks(bankId: string): Promise<{ items: Webhook[] }> {
+    return this.fetchApi<{ items: Webhook[] }>(`/api/banks/${bankId}/webhooks`);
+  }
+
+  /**
+   * Create a webhook
+   */
+  async createWebhook(
+    bankId: string,
+    params: {
+      url: string;
+      secret?: string;
+      event_types?: string[];
+      enabled?: boolean;
+      http_config?: WebhookHttpConfig;
+    }
+  ): Promise<Webhook> {
+    return this.fetchApi<Webhook>(`/api/banks/${bankId}/webhooks`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Update a webhook (PATCH — only provided fields are changed)
+   */
+  async updateWebhook(
+    bankId: string,
+    webhookId: string,
+    params: {
+      url?: string;
+      secret?: string | null;
+      event_types?: string[];
+      enabled?: boolean;
+      http_config?: WebhookHttpConfig;
+    }
+  ): Promise<Webhook> {
+    return this.fetchApi<Webhook>(`/api/banks/${bankId}/webhooks/${webhookId}`, {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  }
+
+  /**
+   * Delete a webhook
+   */
+  async deleteWebhook(bankId: string, webhookId: string): Promise<{ success: boolean }> {
+    return this.fetchApi<{ success: boolean }>(`/api/banks/${bankId}/webhooks/${webhookId}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * List webhook deliveries
+   */
+  async listWebhookDeliveries(
+    bankId: string,
+    webhookId: string,
+    limit?: number,
+    cursor?: string
+  ): Promise<{ items: WebhookDelivery[]; next_cursor: string | null }> {
+    const params = new URLSearchParams();
+    if (limit) params.append("limit", limit.toString());
+    if (cursor) params.append("cursor", cursor);
+    const query = params.toString();
+    return this.fetchApi<{ items: WebhookDelivery[]; next_cursor: string | null }>(
+      `/api/banks/${bankId}/webhooks/${webhookId}/deliveries${query ? `?${query}` : ""}`
+    );
   }
 }
 

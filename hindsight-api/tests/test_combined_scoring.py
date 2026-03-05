@@ -1,334 +1,171 @@
 """
-Tests for combined scoring functionality.
+Tests for combined scoring (apply_combined_scoring).
 
-Verifies that:
-1. RRF scores are properly normalized to [0, 1] range
-2. Combined scoring formula is applied correctly
-3. Tracer captures normalized values (not raw values)
+The function applies multiplicative recency/temporal boosts to the cross-encoder
+score so that the relative influence of these signals is proportional to the base
+relevance score, independent of the cross-encoder model's score calibration.
 """
+
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
+
 import pytest
-from datetime import datetime, timezone
-from hindsight_api.engine.search.types import RetrievalResult, MergedCandidate, ScoredResult
-from hindsight_api.engine.memory_engine import Budget
-from hindsight_api import RequestContext
+
+from hindsight_api.engine.search.reranking import apply_combined_scoring, _RECENCY_ALPHA, _TEMPORAL_ALPHA
+from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult, ScoredResult
+
+UTC = timezone.utc
+NOW = datetime(2024, 6, 1, tzinfo=UTC)
 
 
-class TestRRFNormalization:
-    """Test that RRF scores are properly normalized."""
+def _make_result(
+    ce_norm: float,
+    occurred_start: datetime | None = None,
+    temporal_proximity: float | None = None,
+) -> ScoredResult:
+    retrieval = MagicMock(spec=RetrievalResult)
+    retrieval.occurred_start = occurred_start
+    retrieval.temporal_proximity = temporal_proximity
 
-    def test_rrf_normalized_range(self):
-        """RRF normalized values should be in [0, 1] range, not raw [0.04, 0.06]."""
-        # Simulate RRF scores like what we get from actual retrieval
-        raw_rrf_scores = [0.0607, 0.0550, 0.0480, 0.0390]
+    candidate = MagicMock(spec=MergedCandidate)
+    candidate.retrieval = retrieval
+    candidate.rrf_score = 0.05
 
-        max_rrf = max(raw_rrf_scores)
-        min_rrf = min(raw_rrf_scores)
-        rrf_range = max_rrf - min_rrf
-
-        normalized = []
-        for score in raw_rrf_scores:
-            if rrf_range > 0:
-                norm = (score - min_rrf) / rrf_range
-            else:
-                norm = 0.5
-            normalized.append(norm)
-
-        # Verify normalized values are in [0, 1]
-        for i, norm in enumerate(normalized):
-            assert 0.0 <= norm <= 1.0, f"Normalized RRF {norm} not in [0, 1] for raw {raw_rrf_scores[i]}"
-
-        # Highest raw should be 1.0
-        assert normalized[0] == 1.0, f"Highest RRF should normalize to 1.0, got {normalized[0]}"
-
-        # Lowest raw should be 0.0
-        assert normalized[-1] == 0.0, f"Lowest RRF should normalize to 0.0, got {normalized[-1]}"
-
-    def test_rrf_all_same_scores(self):
-        """When all RRF scores are the same, normalized should be 0.5 (neutral)."""
-        raw_rrf_scores = [0.0500, 0.0500, 0.0500]
-
-        max_rrf = max(raw_rrf_scores)
-        min_rrf = min(raw_rrf_scores)
-        rrf_range = max_rrf - min_rrf
-
-        normalized = []
-        for score in raw_rrf_scores:
-            if rrf_range > 0:
-                norm = (score - min_rrf) / rrf_range
-            else:
-                norm = 0.5  # Neutral value when all same
-            normalized.append(norm)
-
-        # All should be 0.5 when scores are identical
-        for norm in normalized:
-            assert norm == 0.5, f"Expected 0.5 for identical scores, got {norm}"
+    return ScoredResult(
+        candidate=candidate,
+        cross_encoder_score=1.0,
+        cross_encoder_score_normalized=ce_norm,
+        weight=ce_norm,
+    )
 
 
-class TestCombinedScoringFormula:
-    """Test that the combined scoring formula is applied correctly."""
+class TestBoostFormula:
+    def test_neutral_signals_leave_score_unchanged(self):
+        """recency=0.5 and temporal=0.5 both produce boost=1.0, so weight == ce."""
+        sr = _make_result(ce_norm=0.6)
+        apply_combined_scoring([sr], now=NOW)
+        assert abs(sr.weight - 0.6) < 1e-9
 
-    def test_combined_score_calculation(self):
-        """Verify the weighted combination: 0.6*CE + 0.2*RRF + 0.1*temporal + 0.1*recency."""
-        # Test case 1: All components at 1.0
-        ce_norm = 1.0
-        rrf_norm = 1.0
-        temporal = 1.0
-        recency = 1.0
+    def test_max_recency_boost(self):
+        """A memory from today (recency≈1.0) should boost by (1 + alpha*0.5)."""
+        sr = _make_result(ce_norm=0.5, occurred_start=NOW)
+        apply_combined_scoring([sr], now=NOW)
+        expected = 0.5 * (1.0 + _RECENCY_ALPHA * 0.5) * 1.0  # temporal neutral
+        assert abs(sr.weight - expected) < 1e-6
 
-        expected = 0.6 * ce_norm + 0.2 * rrf_norm + 0.1 * temporal + 0.1 * recency
-        assert expected == 1.0, f"All 1.0 should give 1.0, got {expected}"
+    def test_min_recency_penalty(self):
+        """A memory from >365 days ago (recency=0.1) should penalise score."""
+        old = NOW - timedelta(days=400)
+        sr = _make_result(ce_norm=0.5, occurred_start=old)
+        apply_combined_scoring([sr], now=NOW)
+        expected = 0.5 * (1.0 + _RECENCY_ALPHA * (0.1 - 0.5)) * 1.0
+        assert abs(sr.weight - expected) < 1e-6
 
-        # Test case 2: All components at 0.0
-        ce_norm = 0.0
-        rrf_norm = 0.0
-        temporal = 0.0
-        recency = 0.0
+    def test_max_temporal_boost(self):
+        """temporal_proximity=1.0 should boost by (1 + alpha*0.5)."""
+        sr = _make_result(ce_norm=0.5, temporal_proximity=1.0)
+        apply_combined_scoring([sr], now=NOW)
+        expected = 0.5 * 1.0 * (1.0 + _TEMPORAL_ALPHA * 0.5)  # recency neutral
+        assert abs(sr.weight - expected) < 1e-6
 
-        expected = 0.6 * ce_norm + 0.2 * rrf_norm + 0.1 * temporal + 0.1 * recency
-        assert expected == 0.0, f"All 0.0 should give 0.0, got {expected}"
+    def test_temporal_none_is_neutral(self):
+        """temporal_proximity=None must be treated as 0.5 (no boost/penalty)."""
+        sr_none = _make_result(ce_norm=0.5, temporal_proximity=None)
+        sr_half = _make_result(ce_norm=0.5, temporal_proximity=0.5)
+        apply_combined_scoring([sr_none], now=NOW)
+        apply_combined_scoring([sr_half], now=NOW)
+        assert abs(sr_none.weight - sr_half.weight) < 1e-9
 
-        # Test case 3: High CE, low RRF (cross-encoder finds something retrieval missed)
-        ce_norm = 0.999
-        rrf_norm = 0.0  # Lowest in set
-        temporal = 0.5
-        recency = 0.5
+    def test_both_signals_combined(self):
+        """Both boosts are applied multiplicatively."""
+        sr = _make_result(ce_norm=0.5, occurred_start=NOW, temporal_proximity=1.0)
+        apply_combined_scoring([sr], now=NOW)
+        recency_boost = 1.0 + _RECENCY_ALPHA * (1.0 - 0.5)
+        temporal_boost = 1.0 + _TEMPORAL_ALPHA * (1.0 - 0.5)
+        expected = 0.5 * recency_boost * temporal_boost
+        assert abs(sr.weight - expected) < 1e-6
 
-        expected = 0.6 * ce_norm + 0.2 * rrf_norm + 0.1 * temporal + 0.1 * recency
-        # 0.5994 + 0.0 + 0.05 + 0.05 = 0.6994
-        assert abs(expected - 0.6994) < 0.001, f"Expected ~0.6994, got {expected}"
+    def test_boost_is_proportional_to_ce(self):
+        """The absolute boost from recency scales with the CE score."""
+        sr_high = _make_result(ce_norm=0.9, occurred_start=NOW)
+        sr_low = _make_result(ce_norm=0.3, occurred_start=NOW)
+        apply_combined_scoring([sr_high, sr_low], now=NOW)
 
-        # Test case 4: Medium CE, high RRF (retrieval consensus)
-        ce_norm = 0.8
-        rrf_norm = 1.0  # Highest in set
-        temporal = 0.5
-        recency = 0.5
+        # Both get the same recency boost factor — absolute gain is proportional to CE
+        boost_factor = 1.0 + _RECENCY_ALPHA * 0.5
+        assert abs(sr_high.weight - 0.9 * boost_factor) < 1e-6
+        assert abs(sr_low.weight - 0.3 * boost_factor) < 1e-6
 
-        expected = 0.6 * ce_norm + 0.2 * rrf_norm + 0.1 * temporal + 0.1 * recency
-        # 0.48 + 0.2 + 0.05 + 0.05 = 0.78
-        assert abs(expected - 0.78) < 0.001, f"Expected ~0.78, got {expected}"
+    def test_boost_capped(self):
+        """Max boost: recency=1.0 + temporal=1.0 gives ≤21% uplift on CE."""
+        sr = _make_result(ce_norm=1.0, occurred_start=NOW, temporal_proximity=1.0)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.weight <= 1.0 * (1 + _RECENCY_ALPHA / 2) * (1 + _TEMPORAL_ALPHA / 2) + 1e-9
 
-    def test_rrf_contribution_is_significant(self):
-        """Verify RRF actually contributes to the final score (not negligible)."""
-        # Same CE, different RRF
-        ce_norm = 0.8
-        temporal = 0.5
-        recency = 0.5
+    def test_rrf_normalized_always_zero(self):
+        """RRF is excluded from scoring; rrf_normalized is set to 0.0 for trace clarity."""
+        sr = _make_result(ce_norm=0.5)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.rrf_normalized == 0.0
 
-        # Low RRF
-        score_low_rrf = 0.6 * ce_norm + 0.2 * 0.0 + 0.1 * temporal + 0.1 * recency
+    def test_combined_score_equals_weight(self):
+        """combined_score and weight must stay in sync."""
+        sr = _make_result(ce_norm=0.7, occurred_start=NOW, temporal_proximity=0.8)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.combined_score == sr.weight
 
-        # High RRF
-        score_high_rrf = 0.6 * ce_norm + 0.2 * 1.0 + 0.1 * temporal + 0.1 * recency
+    def test_model_calibration_independence(self):
+        """
+        A low-calibration model (low CE scores) and a high-calibration model
+        (high CE scores) should produce the same ranking for identical content.
 
-        # Difference should be 0.2 (20% contribution)
-        diff = score_high_rrf - score_low_rrf
-        assert abs(diff - 0.2) < 0.001, f"RRF should contribute 0.2 difference, got {diff}"
+        With additive scoring the recency term would dominate for low-CE models;
+        with multiplicative boosting the relative ranking is stable.
+        """
+        recent = NOW - timedelta(days=10)
+        old = NOW - timedelta(days=300)
 
+        # High-calibration model: clear winner is #1 (more relevant, slightly older)
+        h_relevant = _make_result(ce_norm=0.85, occurred_start=old)
+        h_recent = _make_result(ce_norm=0.60, occurred_start=recent)
+        apply_combined_scoring([h_relevant, h_recent], now=NOW)
+        assert h_relevant.weight > h_recent.weight, "High-CE model: relevance should win"
 
-@pytest.mark.asyncio
-async def test_trace_has_normalized_rrf(memory, request_context):
-    """Integration test: verify trace contains normalized RRF values, not raw."""
-    bank_id = f"test_scoring_{datetime.now(timezone.utc).timestamp()}"
+        # Low-calibration model: same relative difference, just compressed scores
+        l_relevant = _make_result(ce_norm=0.34, occurred_start=old)
+        l_recent = _make_result(ce_norm=0.24, occurred_start=recent)
+        apply_combined_scoring([l_relevant, l_recent], now=NOW)
+        assert l_relevant.weight > l_recent.weight, "Low-CE model: relevance should still win"
 
-    try:
-        # Store multiple memories to ensure different RRF scores
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Python is a programming language created by Guido van Rossum",
-            context="tech facts",
-            request_context=request_context,
-        )
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="JavaScript was created by Brendan Eich at Netscape",
-            context="tech facts",
-            request_context=request_context,
-        )
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="The Eiffel Tower is located in Paris, France",
-            context="geography facts",
-            request_context=request_context,
-        )
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="Mount Everest is the tallest mountain on Earth",
-            context="geography facts",
-            request_context=request_context,
-        )
+    def test_no_occurred_start_defaults_recency_neutral(self):
+        """Missing occurred_start → recency=0.5 → no boost/penalty."""
+        sr = _make_result(ce_norm=0.5, occurred_start=None)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.recency == 0.5
+        assert abs(sr.weight - 0.5) < 1e-9
 
-        # Search with tracing
-        result = await memory.recall_async(
-            bank_id=bank_id,
-            query="programming languages",
-            fact_type=["world"],
-            budget=Budget.LOW,
-            max_tokens=1024,
-            enable_trace=True,
-            request_context=request_context,
-        )
+    def test_timezone_naive_occurred_start_handled(self):
+        """Naive datetimes in occurred_start should not raise."""
+        naive_date = datetime(2024, 1, 1)  # no tzinfo
+        sr = _make_result(ce_norm=0.5, occurred_start=naive_date)
+        apply_combined_scoring([sr], now=NOW)  # must not raise
+        assert 0.0 < sr.weight < 1.0
 
-        assert result.trace is not None, "Trace should be present"
-        trace = result.trace
+    def test_custom_alpha_values(self):
+        """Custom alpha parameters are respected."""
+        sr = _make_result(ce_norm=0.5, occurred_start=NOW)
+        apply_combined_scoring([sr], now=NOW, recency_alpha=0.4, temporal_alpha=0.0)
+        expected = 0.5 * (1.0 + 0.4 * 0.5) * 1.0
+        assert abs(sr.weight - expected) < 1e-6
 
-        # Check reranked results have proper score_components
-        assert "reranked" in trace, "Trace should have reranked results"
-        assert len(trace["reranked"]) > 0, "Should have reranked results"
+    def test_future_event_recency_capped_at_one(self):
+        """Events in the future must not produce recency > 1.0, keeping boost within bounds."""
+        future = NOW + timedelta(days=180)
+        sr = _make_result(ce_norm=0.5, occurred_start=future)
+        apply_combined_scoring([sr], now=NOW)
+        assert sr.recency == 1.0
+        expected_max_boost = 1.0 + _RECENCY_ALPHA * 0.5
+        assert sr.weight <= 0.5 * expected_max_boost + 1e-9
 
-        has_valid_rrf = False
-        has_valid_temporal = False
-        has_valid_recency = False
-
-        for r in trace["reranked"]:
-            sc = r.get("score_components", {})
-
-            # Check RRF normalized is present and in valid range
-            if "rrf_normalized" in sc:
-                rrf_norm = sc["rrf_normalized"]
-                assert 0.0 <= rrf_norm <= 1.0, f"rrf_normalized {rrf_norm} should be in [0, 1]"
-                # Should NOT be raw RRF score (which would be ~0.04-0.06)
-                # A normalized value of exactly 0.0 or 1.0 is valid (min/max of set)
-                # But raw scores like 0.0607 should never appear as normalized
-                if rrf_norm > 0.1:  # Any value > 0.1 is likely properly normalized
-                    has_valid_rrf = True
-
-            # Check temporal is present and in valid range
-            if "temporal" in sc:
-                temporal = sc["temporal"]
-                assert 0.0 <= temporal <= 1.0, f"temporal {temporal} should be in [0, 1]"
-                has_valid_temporal = True
-
-            # Check recency is present and in valid range
-            if "recency" in sc:
-                recency = sc["recency"]
-                assert 0.0 <= recency <= 1.0, f"recency {recency} should be in [0, 1]"
-                has_valid_recency = True
-
-        # At least some results should have these components
-        # (might not have rrf > 0.1 if all scores are same, which is fine)
-        assert has_valid_temporal, "Should have temporal scores in trace"
-        assert has_valid_recency, "Should have recency scores in trace"
-
-        print("\n✓ Combined scoring trace test passed!")
-        print(f"  - Reranked results: {len(trace['reranked'])}")
-        if trace["reranked"]:
-            sc = trace["reranked"][0].get("score_components", {})
-            print(f"  - First result score components: {sc}")
-
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
-@pytest.mark.asyncio
-async def test_rrf_normalized_not_raw_in_trace(memory, request_context):
-    """Verify that raw RRF scores (0.04-0.06 range) don't appear as normalized values."""
-    bank_id = f"test_rrf_raw_{datetime.now(timezone.utc).timestamp()}"
-
-    try:
-        # Store enough memories to get varied RRF scores
-        for i in range(5):
-            await memory.retain_async(
-                bank_id=bank_id,
-                content=f"Test fact number {i} about various topics",
-                context="test context",
-                request_context=request_context,
-            )
-
-        result = await memory.recall_async(
-            bank_id=bank_id,
-            query="test fact",
-            fact_type=["world"],
-            budget=Budget.LOW,
-            max_tokens=512,
-            enable_trace=True,
-            request_context=request_context,
-        )
-
-        trace = result.trace
-        assert trace is not None
-
-        # Check that rrf_normalized values are NOT in the raw range
-        raw_rrf_range = (0.01, 0.08)  # Raw RRF scores are typically in this range
-
-        for r in trace.get("reranked", []):
-            sc = r.get("score_components", {})
-
-            if "rrf_normalized" in sc and "rrf_score" in sc:
-                rrf_norm = sc["rrf_normalized"]
-                rrf_raw = sc["rrf_score"]
-
-                # Raw should be in the typical range
-                assert raw_rrf_range[0] <= rrf_raw <= raw_rrf_range[1], \
-                    f"Raw RRF {rrf_raw} should be in typical range {raw_rrf_range}"
-
-                # Normalized should either be:
-                # - 0.0 (min in set)
-                # - 1.0 (max in set)
-                # - 0.5 (all same)
-                # - Something in between (0.0 to 1.0)
-                # But NOT the same as raw (which would indicate no normalization)
-                if len(trace["reranked"]) > 1:
-                    # If we have multiple results, normalized should differ from raw
-                    # (unless by coincidence, which is very unlikely)
-                    assert rrf_norm != rrf_raw, \
-                        f"Normalized RRF ({rrf_norm}) should differ from raw ({rrf_raw})"
-
-        print("\n✓ RRF raw vs normalized test passed!")
-
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
-@pytest.mark.asyncio
-async def test_combined_score_matches_components(memory, request_context):
-    """Verify the final score actually equals the weighted sum of components."""
-    bank_id = f"test_combined_{datetime.now(timezone.utc).timestamp()}"
-
-    try:
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="The quick brown fox jumps over the lazy dog",
-            context="test",
-            request_context=request_context,
-        )
-        await memory.retain_async(
-            bank_id=bank_id,
-            content="A quick test of the emergency broadcast system",
-            context="test",
-            request_context=request_context,
-        )
-
-        result = await memory.recall_async(
-            bank_id=bank_id,
-            query="quick test",
-            fact_type=["world"],
-            budget=Budget.LOW,
-            max_tokens=512,
-            enable_trace=True,
-            request_context=request_context,
-        )
-
-        trace = result.trace
-        assert trace is not None
-
-        for r in trace.get("reranked", []):
-            sc = r.get("score_components", {})
-            final_score = r.get("rerank_score", 0)
-
-            # Get components (use defaults if missing)
-            ce = sc.get("cross_encoder_score_normalized", 0)
-            rrf = sc.get("rrf_normalized", 0.5)
-            tmp = sc.get("temporal", 0.5)
-            rec = sc.get("recency", 0.5)
-
-            # Calculate expected score
-            expected = 0.6 * ce + 0.2 * rrf + 0.1 * tmp + 0.1 * rec
-
-            # Allow small floating point difference
-            assert abs(final_score - expected) < 0.01, \
-                f"Final score {final_score} doesn't match expected {expected} from components"
-
-        print("\n✓ Combined score verification test passed!")
-
-    finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
+    def test_empty_list_is_noop(self):
+        apply_combined_scoring([], now=NOW)  # must not raise

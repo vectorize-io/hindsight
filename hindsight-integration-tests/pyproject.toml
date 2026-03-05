@@ -14,6 +14,8 @@ dependencies = [
     "pytest-timeout>=2.4.0",
     "mcp>=1.0.0",
     "httpx>=0.27.0",
+    # Transitive dependency security fixes
+    "cryptography>=46.0.5", # Subgroup attack vulnerability fix
 ]
 
 [tool.hatch.build.targets.wheel]

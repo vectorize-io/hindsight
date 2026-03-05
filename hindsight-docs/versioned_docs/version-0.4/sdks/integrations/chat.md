@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Vercel Chat SDK
 
-The `@vectorize-io/hindsight-chat` package gives your [Vercel Chat SDK](https://github.com/vercel/chat) bots persistent, per-user memory with a single handler wrapper. Works with Slack, Discord, Teams, Google Chat, GitHub, and Linear.
+We built `@vectorize-io/hindsight-chat` to give [Vercel Chat SDK](https://github.com/vercel/chat) bots persistent, per-user memory with a single handler wrapper. The integration works across Slack, Discord, Teams, Google Chat, GitHub, and Linear — no custom plumbing required.
 
 ## Installation
 
@@ -60,7 +60,7 @@ chat.onNewMention(
 
 ### `withHindsightChat(options, handler)`
 
-Returns a standard Chat SDK handler `(thread, message) => Promise<void>`.
+`withHindsightChat` wraps your existing Chat SDK handler and injects memory context automatically. It returns a standard handler `(thread, message) => Promise<void>` so it drops in without changing your handler signature.
 
 #### Options
 
@@ -80,7 +80,7 @@ Returns a standard Chat SDK handler `(thread, message) => Promise<void>`.
 
 ### Context (`ctx`)
 
-The third argument passed to your handler:
+We inject a third `ctx` argument into your handler that exposes the full Hindsight memory API scoped to the current user's bank:
 
 | Property/Method | Description |
 |----------------|-------------|
@@ -160,4 +160,4 @@ chat.onNewMention(
 
 ## Error Handling
 
-Memory failures never break your bot. Auto-recall and auto-retain errors are logged as warnings and the handler continues with empty memories. Manual `ctx.retain()`, `ctx.recall()`, and `ctx.reflect()` calls propagate errors normally so you can handle them as needed.
+We designed the integration so that memory failures never break your bot. Auto-recall and auto-retain errors are caught internally, logged as warnings, and the handler continues with empty memories. Manual `ctx.retain()`, `ctx.recall()`, and `ctx.reflect()` calls propagate errors normally so you can handle them as needed.

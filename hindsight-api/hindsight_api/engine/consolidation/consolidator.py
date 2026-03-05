@@ -127,10 +127,9 @@ async def run_consolidation_job(
     # Resolve bank-specific config with hierarchical overrides
     config = await memory_engine._config_resolver.resolve_full_config(bank_id, request_context)
 
-    # Apply bank-specific Gemini safety settings for this request context
-    from ..providers.gemini_llm import set_gemini_safety_settings
-
-    set_gemini_safety_settings(config.llm_gemini_safety_settings)
+    # Build a configured LLM wrapper that applies per-bank settings (e.g. safety settings)
+    # to every call without leaking across operations.
+    llm_config = memory_engine._consolidation_llm_config.with_config(config)
 
     perf = ConsolidationPerfLog(bank_id)
     max_memories_per_batch = config.consolidation_batch_size
@@ -181,11 +180,12 @@ async def run_consolidation_job(
     perf.log(f"[1] Found {total_count} pending memories to consolidate")
 
     # Process each memory with individual commits for crash recovery
-    stats = {
+    stats: dict[str, int] = {
         "memories_processed": 0,
         "observations_created": 0,
         "observations_updated": 0,
         "observations_merged": 0,
+        "observations_deleted": 0,
         "actions_executed": 0,
         "skipped": 0,
     }
@@ -274,13 +274,15 @@ async def run_consolidation_job(
                     # explicit list[list[str]]
                     obs_tags_list = _obs_parsed
 
+                batch_deleted: int = 0
                 if obs_tags_list:
                     # Multi-pass: run one observation consolidation pass per tag set
                     results = []
                     for obs_tags in obs_tags_list:
-                        pass_results = await _process_memory_batch(
+                        pass_results, pass_deleted = await _process_memory_batch(
                             conn=conn,
                             memory_engine=memory_engine,
+                            llm_config=llm_config,
                             bank_id=bank_id,
                             memories=llm_batch,
                             request_context=request_context,
@@ -288,6 +290,7 @@ async def run_consolidation_job(
                             config=config,
                             obs_tags_override=obs_tags,
                         )
+                        batch_deleted += pass_deleted
                         # Merge results: prefer non-skipped actions
                         if not results:
                             results = pass_results
@@ -315,15 +318,17 @@ async def run_consolidation_job(
                                     }
                 else:
                     # Normal single pass using the memory's own tags
-                    results = await _process_memory_batch(
+                    results, batch_deleted = await _process_memory_batch(
                         conn=conn,
                         memory_engine=memory_engine,
+                        llm_config=llm_config,
                         bank_id=bank_id,
                         memories=llm_batch,
                         request_context=request_context,
                         perf=perf,
                         config=config,
                     )
+                stats["observations_deleted"] += batch_deleted
 
                 await conn.executemany(
                     f"UPDATE {fq_table('memory_units')} SET consolidated_at = NOW() WHERE id = $1",
@@ -513,13 +518,14 @@ async def _trigger_mental_model_refreshes(
 async def _process_memory_batch(
     conn: "Connection",
     memory_engine: "MemoryEngine",
+    llm_config: Any,
     bank_id: str,
     memories: list[dict[str, Any]],
     request_context: "RequestContext",
     perf: ConsolidationPerfLog | None = None,
     config: Any = None,
     obs_tags_override: list[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
     """
     Process a batch of memories in a single LLM call.
 
@@ -581,7 +587,7 @@ async def _process_memory_batch(
     # 3. Single LLM call
     t0 = time.time()
     llm_result = await _consolidate_batch_with_llm(
-        memory_engine=memory_engine,
+        llm_config=llm_config,
         memories=memories,
         union_observations=union_observations,
         union_source_facts=union_source_facts,
@@ -654,6 +660,7 @@ async def _process_memory_batch(
         for m in source_mems:
             per_memory_updated.add(str(m["id"]))
 
+    deleted_count = 0
     for delete in llm_result.deletes:
         # Security: the observation must be present in the unioned recall
         if not any(str(obs.id) == delete.observation_id for obs in union_observations):
@@ -662,6 +669,7 @@ async def _process_memory_batch(
             )
             continue
         await _execute_delete_action(conn=conn, bank_id=bank_id, observation_id=delete.observation_id)
+        deleted_count += 1
 
     # Build per-memory result dicts for the stats tracker in the outer loop
     results: list[dict[str, Any]] = []
@@ -678,7 +686,7 @@ async def _process_memory_batch(
         else:
             results.append({"action": "skipped", "reason": "no_durable_knowledge"})
 
-    return results
+    return results, deleted_count
 
 
 def _min_date(dates: "Any") -> "datetime | None":
@@ -945,7 +953,7 @@ def _build_observations_for_llm(
 
 
 async def _consolidate_batch_with_llm(
-    memory_engine: "MemoryEngine",
+    llm_config: Any,
     memories: list[dict[str, Any]],
     union_observations: "list[MemoryFact]",
     union_source_facts: "dict[str, MemoryFact]",
@@ -981,7 +989,7 @@ async def _consolidate_batch_with_llm(
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            response: _ConsolidationBatchResponse = await memory_engine._consolidation_llm_config.call(
+            response: _ConsolidationBatchResponse = await llm_config.call(
                 messages=[{"role": "user", "content": prompt}],
                 response_format=_ConsolidationBatchResponse,
                 scope="consolidation",

@@ -1,0 +1,96 @@
+---
+sidebar_position: 10
+---
+
+# Webhooks
+
+Hindsight can notify your application in real-time when memory events occur by sending HTTP POST requests to a URL you configure.
+
+## Delivery and Retries
+
+Webhooks are registered per memory bank and fire automatically when matching events occur. Each delivery attempt is tracked, and failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay after failure |
+|---------|---------------------|
+| 1 | 5 seconds |
+| 2 | 5 minutes |
+| 3 | 30 minutes |
+| 4 | 2 hours |
+| 5 | 5 hours |
+| 6 | Permanent failure |
+
+A delivery is considered failed if your endpoint returns a non-2xx status code or does not respond within the configured timeout (default 30 seconds). After 6 failed attempts, the delivery is marked as permanently failed and no further retries are made.
+
+:::info At-least-once delivery
+Webhook delivery tasks are queued in the same database transaction as the primary operation (e.g. the retain or consolidation write). This means if the server crashes after committing but before sending, the delivery task survives and will be retried. As a result, **your endpoint may receive the same event more than once** — use the `operation_id` field to deduplicate if needed.
+:::
+
+## Event Types
+
+### `consolidation.completed`
+
+Fired after Hindsight finishes consolidating new memories into observations for a bank.
+
+**Payload:**
+
+```json
+{
+  "event": "consolidation.completed",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "completed",
+  "timestamp": "2026-03-04T12:00:00Z",
+  "data": {
+    "observations_created": 3,
+    "observations_updated": 1,
+    "observations_deleted": null,
+    "error_message": null
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `observations_created` | `integer \| null` | Number of new observations created |
+| `observations_updated` | `integer \| null` | Number of existing observations updated |
+| `observations_deleted` | `integer \| null` | Number of observations deleted |
+| `error_message` | `string \| null` | Set when `status` is `"failed"` |
+
+**`status` values:** `"completed"` or `"failed"`
+
+---
+
+### `retain.completed`
+
+Fired once per document after a retain operation completes (both synchronous and asynchronous). When retaining a batch of N documents, N separate events are fired.
+
+**Payload:**
+
+```json
+{
+  "event": "retain.completed",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "completed",
+  "timestamp": "2026-03-04T12:00:01Z",
+  "data": {
+    "document_id": "doc-abc123",
+    "tags": ["meeting", "q1-2026"]
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_id` | `string \| null` | The document ID if one was provided in the retain request |
+| `tags` | `string[] \| null` | Document-level tags applied during retain |
+
+**Notes:**
+- For async retain (`async: true`), `operation_id` matches the `operation_id` returned by the retain API.
+- For sync retain, `operation_id` is a generated identifier for tracing purposes.
+- One event is fired per content item in the retain request.
+

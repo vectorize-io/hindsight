@@ -15,6 +15,7 @@ import { BankConfigView } from "@/components/bank-config-view";
 import { BankStatsView } from "@/components/bank-stats-view";
 import { BankOperationsView } from "@/components/bank-operations-view";
 import { MentalModelsView } from "@/components/mental-models-view";
+import { WebhooksView } from "@/components/webhooks-view";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
 import { client } from "@/lib/api";
@@ -40,7 +41,7 @@ import { Brain, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
-type BankConfigTab = "general" | "configuration";
+type BankConfigTab = "general" | "configuration" | "webhooks";
 
 export default function BankPage() {
   const params = useParams();
@@ -250,6 +251,19 @@ export default function BankPage() {
                         )}
                       </button>
                     )}
+                    <button
+                      onClick={() => handleBankConfigTabChange("webhooks")}
+                      className={`px-6 py-3 font-semibold text-sm transition-all relative ${
+                        bankConfigTab === "webhooks"
+                          ? "text-primary"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Webhooks
+                      {bankConfigTab === "webhooks" && (
+                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
@@ -270,6 +284,15 @@ export default function BankPage() {
                   {bankConfigTab === "configuration" && bankConfigEnabled && (
                     <div className="space-y-6">
                       <BankConfigView />
+                    </div>
+                  )}
+                  {bankConfigTab === "webhooks" && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Manage webhook endpoints to receive event notifications from this memory
+                        bank.
+                      </p>
+                      <WebhooksView />
                     </div>
                   )}
                 </div>

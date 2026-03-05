@@ -99,6 +99,11 @@ const sidebars: SidebarsConfig = {
           id: 'developer/api/operations',
           label: 'Operations',
         },
+        {
+          type: 'doc',
+          id: 'developer/api/webhooks',
+          label: 'Webhooks',
+        },
       ],
     },
     {

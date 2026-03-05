@@ -11,7 +11,6 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
-  Box,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";

@@ -26,6 +26,12 @@ Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., A
 See [Configuration](./configuration#llm-provider) for setup examples.
 :::
 
+### Benchmarks
+
+Not sure which model to use? The **[Model Leaderboard](https://benchmarks.hindsight.vectorize.io/)** benchmarks models across accuracy, speed, cost, and reliability for retain, reflect, and observation consolidation so you can pick the right trade-off for your use case.
+
+[![Model Leaderboard](/img/leaderboard.png)](https://benchmarks.hindsight.vectorize.io/)
+
 ### Tested Models
 
 The following models have been tested and verified to work correctly with Hindsight:

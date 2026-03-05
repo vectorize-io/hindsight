@@ -90,6 +90,12 @@ The same entity mentioned different ways gets unified:
 
 If "Alice" appears with "Google" and "Stanford" multiple times, a new "Alice" mentioning those is likely the same person. Hindsight uses co-occurrence patterns to disambiguate common names.
 
+### Entity Labels
+
+You can define a controlled vocabulary of `key:value` classification labels (e.g. `pedagogy:scaffolding`, `engagement:active`) that are extracted at retain time and stored as entities. Because labels become entities, they automatically link related memories in the knowledge graph and improve both semantic and keyword retrieval. Labels can optionally also write to the memory unit's tags, enabling standard tag-based filtering during recall and reflect.
+
+See [entity_labels in the bank config](/developer/api/memory-banks#entity-labels) for full configuration details.
+
 ---
 
 ## Building Connections

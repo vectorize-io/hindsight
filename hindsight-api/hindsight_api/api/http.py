@@ -1627,6 +1627,123 @@ class VersionResponse(BaseModel):
     features: FeaturesInfo = Field(description="Enabled feature flags")
 
 
+# =========================================================================
+# Webhook Models
+# =========================================================================
+
+
+from hindsight_api.webhooks.models import WebhookHttpConfig
+
+
+class CreateWebhookRequest(BaseModel):
+    """Request model for registering a webhook."""
+
+    url: str = Field(description="HTTP(S) endpoint URL to deliver events to")
+    secret: str | None = Field(default=None, description="HMAC-SHA256 signing secret (optional)")
+    event_types: list[str] = Field(
+        default=["consolidation.completed"],
+        description="List of event types to deliver. Currently supported: 'consolidation.completed'",
+    )
+    enabled: bool = Field(default=True, description="Whether this webhook is active")
+    http_config: WebhookHttpConfig = Field(
+        default_factory=WebhookHttpConfig,
+        description="HTTP delivery configuration (method, timeout, headers, params)",
+    )
+
+
+class WebhookResponse(BaseModel):
+    """Response model for a webhook."""
+
+    id: str
+    bank_id: str | None
+    url: str
+    secret: str | None = Field(default=None, description="Signing secret (redacted in responses)")
+    event_types: list[str]
+    enabled: bool
+    http_config: WebhookHttpConfig = Field(default_factory=WebhookHttpConfig)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class UpdateWebhookRequest(BaseModel):
+    """Request model for updating a webhook. Only provided fields are updated."""
+
+    url: str | None = Field(default=None, description="HTTP(S) endpoint URL")
+    secret: str | None = Field(
+        default=None, description="HMAC-SHA256 signing secret. Omit to keep existing; send null to clear."
+    )
+    event_types: list[str] | None = Field(default=None, description="List of event types")
+    enabled: bool | None = Field(default=None, description="Whether this webhook is active")
+    http_config: WebhookHttpConfig | None = Field(default=None, description="HTTP delivery configuration")
+
+
+class WebhookListResponse(BaseModel):
+    """Response model for listing webhooks."""
+
+    items: list[WebhookResponse]
+
+
+class WebhookDeliveryResponse(BaseModel):
+    """Response model for a webhook delivery record."""
+
+    id: str
+    webhook_id: str | None
+    url: str
+    event_type: str
+    status: str
+    attempts: int
+    next_retry_at: str | None = None
+    last_error: str | None = None
+    last_response_status: int | None = None
+    last_response_body: str | None = None
+    last_attempt_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_async_operation_row(cls, row: dict) -> "WebhookDeliveryResponse":
+        import json as _json
+
+        raw = row["task_payload"]
+        if isinstance(raw, str):
+            task_payload = _json.loads(raw)
+        elif isinstance(raw, dict):
+            task_payload = raw
+        else:
+            task_payload = {}
+
+        raw_meta = row.get("result_metadata")
+        if isinstance(raw_meta, str):
+            result_metadata = _json.loads(raw_meta) if raw_meta else {}
+        elif isinstance(raw_meta, dict):
+            result_metadata = raw_meta
+        else:
+            result_metadata = {}
+
+        return cls(
+            id=str(row["operation_id"]),
+            webhook_id=task_payload.get("webhook_id"),
+            url=task_payload.get("url", ""),
+            event_type=task_payload.get("event_type", ""),
+            status=row["status"],
+            attempts=row["retry_count"] + 1,
+            next_retry_at=row["next_retry_at"],
+            last_error=row["error_message"],
+            last_response_status=result_metadata.get("last_status_code"),
+            last_response_body=result_metadata.get("last_response_body"),
+            last_attempt_at=result_metadata.get("last_attempt_at"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+class WebhookDeliveryListResponse(BaseModel):
+    """Response model for listing webhook deliveries."""
+
+    items: list[WebhookDeliveryResponse]
+    next_cursor: str | None = None
+
+
 def create_app(
     memory: MemoryEngine,
     initialize_memory: bool = True,
@@ -1726,7 +1843,6 @@ def create_app(
                 worker_id=worker_id,
                 executor=memory.execute_task,
                 poll_interval_ms=config.worker_poll_interval_ms,
-                max_retries=config.worker_max_retries,
                 schema=schema,
                 tenant_extension=memory._tenant_extension,
                 max_slots=config.worker_max_slots,
@@ -3756,6 +3872,318 @@ def _register_routes(app: FastAPI):
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidate: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    # =========================================================================
+    # Webhook Endpoints
+    # =========================================================================
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/webhooks",
+        response_model=WebhookResponse,
+        summary="Register webhook",
+        description="Register a webhook endpoint to receive event notifications for this bank.",
+        operation_id="create_webhook",
+        tags=["Webhooks"],
+        status_code=201,
+    )
+    async def api_create_webhook(
+        bank_id: str,
+        request: CreateWebhookRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Register a webhook for a bank."""
+        try:
+            pool = await app.state.memory._get_pool()
+            from hindsight_api.engine.memory_engine import fq_table
+
+            webhook_id = uuid.uuid4()
+            now = datetime.utcnow().isoformat() + "Z"
+            row = await pool.fetchrow(
+                f"""
+                INSERT INTO {fq_table("webhooks")}
+                (id, bank_id, url, secret, event_types, enabled, http_config, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())
+                RETURNING id, bank_id, url, secret, event_types, enabled,
+                          http_config::text, created_at::text, updated_at::text
+                """,
+                webhook_id,
+                bank_id,
+                request.url,
+                request.secret,
+                request.event_types,
+                request.enabled,
+                request.http_config.model_dump_json(),
+            )
+            return WebhookResponse(
+                id=str(row["id"]),
+                bank_id=row["bank_id"],
+                url=row["url"],
+                secret=None,  # Never return secret in responses
+                event_types=list(row["event_types"]) if row["event_types"] else [],
+                enabled=row["enabled"],
+                http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
+                if row["http_config"]
+                else WebhookHttpConfig(),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/webhooks: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/webhooks",
+        response_model=WebhookListResponse,
+        summary="List webhooks",
+        description="List all webhooks registered for a bank.",
+        operation_id="list_webhooks",
+        tags=["Webhooks"],
+    )
+    async def api_list_webhooks(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List webhooks for a bank."""
+        try:
+            pool = await app.state.memory._get_pool()
+            from hindsight_api.engine.memory_engine import fq_table
+
+            rows = await pool.fetch(
+                f"""
+                SELECT id, bank_id, url, secret, event_types, enabled,
+                       http_config::text, created_at::text, updated_at::text
+                FROM {fq_table("webhooks")}
+                WHERE bank_id = $1
+                ORDER BY created_at
+                """,
+                bank_id,
+            )
+            return WebhookListResponse(
+                items=[
+                    WebhookResponse(
+                        id=str(row["id"]),
+                        bank_id=row["bank_id"],
+                        url=row["url"],
+                        secret=None,  # Never return secret in responses
+                        event_types=list(row["event_types"]) if row["event_types"] else [],
+                        enabled=row["enabled"],
+                        http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
+                        if row["http_config"]
+                        else WebhookHttpConfig(),
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                    )
+                    for row in rows
+                ]
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.delete(
+        "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
+        response_model=DeleteResponse,
+        summary="Delete webhook",
+        description="Remove a registered webhook.",
+        operation_id="delete_webhook",
+        tags=["Webhooks"],
+    )
+    async def api_delete_webhook(
+        bank_id: str,
+        webhook_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Delete a webhook."""
+        try:
+            pool = await app.state.memory._get_pool()
+            from hindsight_api.engine.memory_engine import fq_table
+
+            result = await pool.execute(
+                f"DELETE FROM {fq_table('webhooks')} WHERE id = $1 AND bank_id = $2",
+                uuid.UUID(webhook_id),
+                bank_id,
+            )
+            deleted = int(result.split()[-1]) if result else 0
+            if deleted == 0:
+                raise HTTPException(status_code=404, detail="Webhook not found")
+            return DeleteResponse(success=True)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in DELETE /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.patch(
+        "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
+        response_model=WebhookResponse,
+        summary="Update webhook",
+        description="Update one or more fields of a registered webhook. Only provided fields are changed.",
+        operation_id="update_webhook",
+        tags=["Webhooks"],
+    )
+    async def api_update_webhook(
+        bank_id: str,
+        webhook_id: str,
+        request: UpdateWebhookRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Update a webhook's fields (PATCH semantics — only sent fields are updated)."""
+        try:
+            pool = await app.state.memory._get_pool()
+            from hindsight_api.engine.memory_engine import fq_table
+
+            set_clauses: list[str] = []
+            params: list = [uuid.UUID(webhook_id), bank_id]
+
+            fields = request.model_fields_set
+            if "url" in fields:
+                params.append(request.url)
+                set_clauses.append(f"url = ${len(params)}")
+            if "secret" in fields:
+                params.append(request.secret)
+                set_clauses.append(f"secret = ${len(params)}")
+            if "event_types" in fields:
+                params.append(request.event_types)
+                set_clauses.append(f"event_types = ${len(params)}")
+            if "enabled" in fields:
+                params.append(request.enabled)
+                set_clauses.append(f"enabled = ${len(params)}")
+            if "http_config" in fields:
+                params.append(request.http_config.model_dump_json())
+                set_clauses.append(f"http_config = ${len(params)}::jsonb")
+
+            if not set_clauses:
+                raise HTTPException(status_code=422, detail="No fields provided to update")
+
+            set_clauses.append("updated_at = NOW()")
+            row = await pool.fetchrow(
+                f"""
+                UPDATE {fq_table("webhooks")}
+                SET {", ".join(set_clauses)}
+                WHERE id = $1 AND bank_id = $2
+                RETURNING id, bank_id, url, secret, event_types, enabled,
+                          http_config::text, created_at::text, updated_at::text
+                """,
+                *params,
+            )
+            if not row:
+                raise HTTPException(status_code=404, detail="Webhook not found")
+            return WebhookResponse(
+                id=str(row["id"]),
+                bank_id=row["bank_id"],
+                url=row["url"],
+                secret=None,
+                event_types=list(row["event_types"]) if row["event_types"] else [],
+                enabled=row["enabled"],
+                http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
+                if row["http_config"]
+                else WebhookHttpConfig(),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PATCH /v1/default/banks/{bank_id}/webhooks/{webhook_id}: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries",
+        response_model=WebhookDeliveryListResponse,
+        summary="List webhook deliveries",
+        description="Inspect delivery history for a webhook (useful for debugging).",
+        operation_id="list_webhook_deliveries",
+        tags=["Webhooks"],
+    )
+    async def api_list_webhook_deliveries(
+        bank_id: str,
+        webhook_id: str,
+        limit: int = Query(default=50, le=200, description="Maximum number of deliveries to return"),
+        cursor: str | None = Query(default=None, description="Pagination cursor (created_at of last item)"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """List deliveries for a specific webhook, newest first. Use next_cursor for pagination."""
+        try:
+            pool = await app.state.memory._get_pool()
+            from hindsight_api.engine.memory_engine import fq_table
+
+            # Verify webhook belongs to this bank
+            webhook_row = await pool.fetchrow(
+                f"SELECT id FROM {fq_table('webhooks')} WHERE id = $1 AND bank_id = $2",
+                uuid.UUID(webhook_id),
+                bank_id,
+            )
+            if not webhook_row:
+                raise HTTPException(status_code=404, detail="Webhook not found")
+
+            # Fetch limit+1 to detect if there's a next page
+            fetch_limit = limit + 1
+            if cursor:
+                rows = await pool.fetch(
+                    f"""
+                    SELECT operation_id, status, retry_count, next_retry_at::text,
+                           error_message, task_payload, result_metadata::text, created_at::text, updated_at::text
+                    FROM {fq_table("async_operations")}
+                    WHERE operation_type = 'webhook_delivery'
+                      AND bank_id = $1
+                      AND task_payload->>'webhook_id' = $2
+                      AND created_at < $3::timestamptz
+                    ORDER BY created_at DESC
+                    LIMIT $4
+                    """,
+                    bank_id,
+                    webhook_id,
+                    cursor,
+                    fetch_limit,
+                )
+            else:
+                rows = await pool.fetch(
+                    f"""
+                    SELECT operation_id, status, retry_count, next_retry_at::text,
+                           error_message, task_payload, result_metadata::text, created_at::text, updated_at::text
+                    FROM {fq_table("async_operations")}
+                    WHERE operation_type = 'webhook_delivery'
+                      AND bank_id = $1
+                      AND task_payload->>'webhook_id' = $2
+                    ORDER BY created_at DESC
+                    LIMIT $3
+                    """,
+                    bank_id,
+                    webhook_id,
+                    fetch_limit,
+                )
+
+            has_more = len(rows) > limit
+            page = rows[:limit]
+            next_cursor = page[-1]["created_at"] if has_more and page else None
+            return WebhookDeliveryListResponse(
+                items=[WebhookDeliveryResponse.from_async_operation_row(dict(row)) for row in page],
+                next_cursor=next_cursor,
+            )
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post(
         "/v1/default/banks/{bank_id}/memories",
         response_model=RetainResponse,
@@ -3848,6 +4276,12 @@ def _register_routes(app: FastAPI):
                         document_tags=request.document_tags,
                         request_context=request_context,
                         return_usage=True,
+                        outbox_callback=app.state.memory._build_retain_outbox_callback(
+                            bank_id=bank_id,
+                            contents=contents,
+                            operation_id=None,
+                            schema=request_context.tenant_id,
+                        ),
                     )
 
                 return RetainResponse.model_validate(

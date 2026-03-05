@@ -396,7 +396,7 @@ a.menu__link[href*="/sdks/python"]::before {
 
 /* Node.js logo */
 a.menu__link[href*="/sdks/nodejs"]::before {
-  background-image: url('/img/icons/nodejs.svg');
+  background-image: url('/img/icons/nodejs.png');
 }
 
 /* CLI - terminal icon */

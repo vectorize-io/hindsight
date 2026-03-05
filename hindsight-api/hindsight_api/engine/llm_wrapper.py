@@ -622,6 +622,23 @@ class LLMProvider:
         # SDK will automatically check for authentication when first used
         # No need to verify here - let it fail gracefully on first call with helpful error
 
+    def with_config(self, config: Any) -> "ConfiguredLLMProvider":
+        """
+        Return a configured wrapper for a specific bank operation.
+
+        The wrapper applies per-bank overrides (e.g. Gemini safety settings)
+        to every ``call()`` / ``call_with_tools()`` invocation without
+        changing the underlying provider or its long-lived client connection.
+
+        Args:
+            config: Resolved ``HindsightConfig`` for the current bank/request.
+
+        Returns:
+            A ``ConfiguredLLMProvider`` that delegates to this provider with
+            the supplied config applied.
+        """
+        return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings)
+
     async def cleanup(self) -> None:
         """Clean up resources."""
         pass
@@ -681,6 +698,59 @@ class LLMProvider:
         model = os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
 
         return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="high")
+
+
+class ConfiguredLLMProvider:
+    """
+    Thin wrapper around LLMProvider that applies bank-specific config to every call.
+
+    Obtained via ``LLMProvider.with_config(resolved_config)``.  The wrapper
+    sets any provider-specific overrides (currently Gemini safety settings)
+    immediately before each call using a ContextVar token, then resets it
+    afterwards — so nesting is safe and the configuration cannot leak across
+    operations.
+
+    All attribute access falls through to the underlying provider so callers
+    that read ``llm.provider``, ``llm.model``, etc. continue to work without
+    any changes.
+    """
+
+    def __init__(self, provider: "LLMProvider", gemini_safety_settings: list | None) -> None:
+        # Use object.__setattr__ to avoid triggering __getattr__
+        object.__setattr__(self, "_provider", provider)
+        object.__setattr__(self, "_gemini_safety_settings", gemini_safety_settings)
+
+    # ── attribute passthrough ──────────────────────────────────────────────────
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(object.__getattribute__(self, "_provider"), name)
+
+    # ── overridden call methods ────────────────────────────────────────────────
+
+    async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
+        from .providers.gemini_llm import _safety_settings_ctx
+
+        token = _safety_settings_ctx.set(object.__getattribute__(self, "_gemini_safety_settings"))
+        try:
+            return await object.__getattribute__(self, "_provider").call(messages=messages, **kwargs)
+        finally:
+            _safety_settings_ctx.reset(token)
+
+    async def call_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> "LLMToolCallResult":
+        from .providers.gemini_llm import _safety_settings_ctx
+
+        token = _safety_settings_ctx.set(object.__getattribute__(self, "_gemini_safety_settings"))
+        try:
+            return await object.__getattribute__(self, "_provider").call_with_tools(
+                messages=messages, tools=tools, **kwargs
+            )
+        finally:
+            _safety_settings_ctx.reset(token)
 
 
 # Backwards compatibility alias

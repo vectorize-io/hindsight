@@ -219,7 +219,6 @@ def main():
             worker_id=args.worker_id,
             executor=memory.execute_task,
             poll_interval_ms=args.poll_interval,
-            max_retries=args.max_retries,
             schema=schema,
             tenant_extension=tenant_extension,
             max_slots=config.worker_max_slots,

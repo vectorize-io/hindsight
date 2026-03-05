@@ -40,6 +40,10 @@ For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT
 
 Adds custom HTTP endpoints under the `/ext/` path prefix. Useful for adding domain-specific APIs that integrate with Hindsight's memory engine.
 
+Provides two router methods:
+- `get_router(memory)` — returns a FastAPI router mounted at `/ext/`
+- `get_root_router(memory)` — returns a FastAPI router mounted at the application root (for well-known endpoints or other paths that must be at specific locations). Returns `None` by default.
+
 **No built-in implementation** - implement your own to add custom endpoints.
 
 ```bash
@@ -117,6 +121,7 @@ class JwtTenantExtension(TenantExtension):
     async def authenticate(self, context: RequestContext) -> TenantContext:
         token = context.api_key
         if not token:
+            # Optional headers dict is forwarded in HTTP/MCP error responses
             raise AuthenticationError("Bearer token required")
 
         try:
@@ -127,6 +132,15 @@ class JwtTenantExtension(TenantExtension):
             return TenantContext(schema_name=f"tenant_{tenant_id}")
         except jwt.InvalidTokenError as e:
             raise AuthenticationError(str(e))
+```
+
+`AuthenticationError` accepts an optional `headers` dict that is forwarded in both HTTP and MCP error responses. This is useful for returning custom headers like `WWW-Authenticate`:
+
+```python
+raise AuthenticationError(
+    "Authorization required",
+    headers={"WWW-Authenticate": 'Bearer realm="example"'},
+)
 ```
 
 ### Example: Custom HttpExtension
@@ -151,9 +165,20 @@ class MyHttpExtension(HttpExtension):
             return {"status": "ok"}
 
         return router
+
+    def get_root_router(self, memory: MemoryEngine) -> APIRouter | None:
+        """Optional: mount routes at the application root (not under /ext/)."""
+        router = APIRouter()
+
+        @router.get("/.well-known/my-metadata")
+        async def metadata():
+            return {"version": "1.0"}
+
+        return router
 ```
 
-Routes are available at `/ext/hello`, `/ext/custom/{bank_id}/action`, etc.
+Routes from `get_router` are available at `/ext/hello`, `/ext/custom/{bank_id}/action`, etc.
+Routes from `get_root_router` are mounted at the app root (e.g., `/.well-known/my-metadata`).
 
 ### Example: Custom OperationValidatorExtension
 

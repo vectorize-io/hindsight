@@ -395,27 +395,28 @@ class LinkExpansionRetriever(GraphRetriever):
                 WHERE id = ANY($1::uuid[])
                   AND source_memory_ids IS NOT NULL
             ),
-            source_entities AS (
-                SELECT DISTINCT ue.entity_id
+            connected_sources AS (
+                -- Mirror the non-observation entity expansion: follow pre-bounded entity
+                -- links in memory_links (capped to MAX_LINKS_PER_ENTITY=50 at retain time).
+                -- Score = number of distinct shared entities, same as the non-obs path.
+                SELECT DISTINCT ml.to_unit_id AS source_id
                 FROM seed_sources ss
-                JOIN {fq_table("unit_entities")} ue ON ss.source_id = ue.unit_id
+                JOIN {fq_table("memory_links")} ml ON ml.from_unit_id = ss.source_id
+                WHERE ml.link_type = 'entity'
             ),
-            all_connected_sources AS (
-                SELECT DISTINCT other_ue.unit_id AS source_id
-                FROM source_entities se
-                JOIN {fq_table("unit_entities")} other_ue ON se.entity_id = other_ue.entity_id
+            connected_array AS (
+                SELECT array_agg(source_id) AS source_ids FROM connected_sources
             )
             SELECT
                 mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                 mu.occurred_end, mu.mentioned_at,
                 mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
-                COUNT(DISTINCT cs.source_id)::float AS score
-            FROM all_connected_sources cs
-            JOIN {fq_table("memory_units")} mu
-                ON mu.source_memory_ids @> ARRAY[cs.source_id]
+                (SELECT COUNT(DISTINCT s) FROM unnest(mu.source_memory_ids) s WHERE s = ANY(ca.source_ids))::float AS score
+            FROM {fq_table("memory_units")} mu, connected_array ca
             WHERE mu.fact_type = 'observation'
               AND mu.id != ALL($1::uuid[])
-            GROUP BY mu.id
+              AND ca.source_ids IS NOT NULL
+              AND mu.source_memory_ids && ca.source_ids
             ORDER BY score DESC
             LIMIT $2
             """,

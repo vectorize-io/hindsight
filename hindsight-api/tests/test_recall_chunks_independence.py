@@ -232,6 +232,61 @@ async def test_recall_chunks_ordering_by_relevance(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_recall_chunks_for_observations(memory, request_context):
+    """
+    Test that chunks are returned when recalling only observations.
+
+    Observations have no direct chunk_id (they are synthesized from source memories).
+    When include_chunks=True, chunks should be resolved via source_memory_ids.
+    """
+    bank_id = "test-chunks-observations"
+
+    try:
+        # Retain content that will generate observations via consolidation
+        test_content = """
+        Alice is a senior software engineer at a large technology company.
+        She specializes in distributed systems and has 10 years of experience.
+        Alice leads a team of 8 engineers working on cloud infrastructure.
+        She holds a PhD in computer science from Stanford University.
+        Alice has published several papers on fault-tolerant distributed systems.
+        """ * 8
+
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=test_content,
+            context="profile notes",
+            request_context=request_context,
+        )
+
+        # Trigger consolidation explicitly to ensure observations exist
+        await memory.run_consolidation(bank_id=bank_id, request_context=request_context)
+
+        # Recall observations only with chunks enabled
+        result = await memory.recall_async(
+            bank_id=bank_id,
+            query="Alice software engineer",
+            fact_type=["observation"],
+            max_tokens=4096,
+            include_chunks=True,
+            max_chunk_tokens=2000,
+            budget=Budget.MID,
+            request_context=request_context,
+        )
+
+        # If observations were created, chunks should be resolved from source memories
+        if len(result.results) > 0:
+            assert result.chunks is not None, "Should include chunks dict when observations are found"
+            assert len(result.chunks) > 0, "Should return chunks resolved from observation source memories"
+
+            for chunk_id, chunk_info in result.chunks.items():
+                assert len(chunk_info.chunk_text) > 0, "Chunks should contain text"
+                assert chunk_info.chunk_index >= 0, "Chunk should have valid index"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_recall_chunks_without_include_flag(memory, request_context):
     """
     Test that chunks are NOT returned when include_chunks=False (default).

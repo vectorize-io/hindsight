@@ -32,6 +32,9 @@ import type {
   CreateOrUpdateBankData,
   CreateOrUpdateBankErrors,
   CreateOrUpdateBankResponses,
+  CreateWebhookData,
+  CreateWebhookErrors,
+  CreateWebhookResponses,
   DeleteBankData,
   DeleteBankErrors,
   DeleteBankResponses,
@@ -44,6 +47,9 @@ import type {
   DeleteMentalModelData,
   DeleteMentalModelErrors,
   DeleteMentalModelResponses,
+  DeleteWebhookData,
+  DeleteWebhookErrors,
+  DeleteWebhookResponses,
   FileRetainData,
   FileRetainErrors,
   FileRetainResponses,
@@ -108,6 +114,12 @@ import type {
   ListTagsData,
   ListTagsErrors,
   ListTagsResponses,
+  ListWebhookDeliveriesData,
+  ListWebhookDeliveriesErrors,
+  ListWebhookDeliveriesResponses,
+  ListWebhooksData,
+  ListWebhooksErrors,
+  ListWebhooksResponses,
   MetricsEndpointMetricsGetData,
   MetricsEndpointMetricsGetResponses,
   RecallMemoriesData,
@@ -146,6 +158,9 @@ import type {
   UpdateMentalModelData,
   UpdateMentalModelErrors,
   UpdateMentalModelResponses,
+  UpdateWebhookData,
+  UpdateWebhookErrors,
+  UpdateWebhookResponses,
 } from "./types.gen";
 
 export type Options<
@@ -911,6 +926,93 @@ export const triggerConsolidation = <ThrowOnError extends boolean = false>(
     TriggerConsolidationErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/consolidate", ...options });
+
+/**
+ * List webhooks
+ *
+ * List all webhooks registered for a bank.
+ */
+export const listWebhooks = <ThrowOnError extends boolean = false>(
+  options: Options<ListWebhooksData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListWebhooksResponses,
+    ListWebhooksErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/webhooks", ...options });
+
+/**
+ * Register webhook
+ *
+ * Register a webhook endpoint to receive event notifications for this bank.
+ */
+export const createWebhook = <ThrowOnError extends boolean = false>(
+  options: Options<CreateWebhookData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    CreateWebhookResponses,
+    CreateWebhookErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/webhooks",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Delete webhook
+ *
+ * Remove a registered webhook.
+ */
+export const deleteWebhook = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteWebhookData, ThrowOnError>,
+) =>
+  (options.client ?? client).delete<
+    DeleteWebhookResponses,
+    DeleteWebhookErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/webhooks/{webhook_id}", ...options });
+
+/**
+ * Update webhook
+ *
+ * Update one or more fields of a registered webhook. Only provided fields are changed.
+ */
+export const updateWebhook = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateWebhookData, ThrowOnError>,
+) =>
+  (options.client ?? client).patch<
+    UpdateWebhookResponses,
+    UpdateWebhookErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/webhooks/{webhook_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * List webhook deliveries
+ *
+ * Inspect delivery history for a webhook (useful for debugging).
+ */
+export const listWebhookDeliveries = <ThrowOnError extends boolean = false>(
+  options: Options<ListWebhookDeliveriesData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ListWebhookDeliveriesResponses,
+    ListWebhookDeliveriesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/webhooks/{webhook_id}/deliveries",
+    ...options,
+  });
 
 /**
  * Clear memory bank memories

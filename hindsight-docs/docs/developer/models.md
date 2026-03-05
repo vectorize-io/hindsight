@@ -423,9 +423,11 @@ Reranks initial search results to improve precision.
 |----------|-------------|----------|
 | `local` | SentenceTransformers CrossEncoder (default) | Development, low latency |
 | `cohere` | Cohere rerank API | Production, high quality |
+| `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
+| `litellm-sdk` | LiteLLM SDK (direct API, no proxy) | Multi-provider, simpler setup |
 | `rrf` | RRF-only (no neural reranking) | Testing, minimal resources |
 
 ### Local Models
@@ -442,6 +444,13 @@ Reranks initial search results to improve precision.
 |-------|----------|
 | `rerank-english-v3.0` | English text |
 | `rerank-multilingual-v3.0` | 100+ languages |
+
+### ZeroEntropy Models
+
+| Model | Use Case |
+|-------|----------|
+| `zerank-2` | Flagship multilingual reranker (default) |
+| `zerank-2-small` | Faster, lighter variant |
 
 ### LiteLLM Supported Providers
 
@@ -466,6 +475,11 @@ export HINDSIGHT_API_RERANKER_LOCAL_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 export HINDSIGHT_API_RERANKER_PROVIDER=cohere
 export HINDSIGHT_API_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
+
+# ZeroEntropy (state-of-the-art accuracy)
+export HINDSIGHT_API_RERANKER_PROVIDER=zeroentropy
+export HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL=zerank-2  # default, can omit
 
 # TEI (self-hosted)
 export HINDSIGHT_API_RERANKER_PROVIDER=tei

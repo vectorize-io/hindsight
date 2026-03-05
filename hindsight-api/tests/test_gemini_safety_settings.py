@@ -216,79 +216,94 @@ async def test_call_with_tools_applies_safety_settings():
     assert "HARM_CATEGORY_HARASSMENT" in categories
 
 
-# ─── Context variable override ────────────────────────────────────────────────
+# ─── with_config() override ───────────────────────────────────────────────────
+
+
+def _make_llm_provider(safety_settings=None):
+    """Return an LLMProvider (wrapping GeminiLLM) with a mocked genai.Client."""
+    with patch("google.genai.Client") as mock_client_cls:
+        mock_client_cls.return_value = MagicMock()
+        from hindsight_api.engine.llm_wrapper import LLMProvider
+
+        provider = LLMProvider(
+            provider="gemini",
+            api_key="fake-api-key",
+            base_url="",
+            model="gemini-2.5-flash",
+            gemini_safety_settings=safety_settings,
+        )
+        # Replace the underlying Gemini client with a fresh mock
+        provider._provider_impl._client = MagicMock()
+        return provider
+
+
+def _fake_response():
+    r = MagicMock()
+    r.text = "hello"
+    r.candidates = [MagicMock(finish_reason="STOP")]
+    r.usage_metadata = MagicMock(prompt_token_count=5, candidates_token_count=2)
+    return r
+
+
+def _make_config(safety_settings):
+    """Return a minimal config-like object with llm_gemini_safety_settings."""
+    cfg = MagicMock()
+    cfg.llm_gemini_safety_settings = safety_settings
+    return cfg
 
 
 @pytest.mark.asyncio
-async def test_context_var_overrides_instance_settings():
-    """The context var safety settings take precedence over instance defaults."""
-    from hindsight_api.engine.providers.gemini_llm import set_gemini_safety_settings
-
-    # Instance has settings, but we'll override via context var with different settings
+async def test_with_config_overrides_instance_settings():
+    """with_config() settings take precedence over the provider instance defaults."""
     instance_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}]
-    ctx_settings = [{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"}]
+    override_settings = [{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"}]
 
-    provider = _make_gemini_provider(safety_settings=instance_settings)
+    provider = _make_llm_provider(safety_settings=instance_settings)
+    provider._provider_impl._client.aio.models.generate_content = AsyncMock(return_value=_fake_response())
 
-    fake_response = MagicMock()
-    fake_response.text = "hello"
-    fake_response.candidates = [MagicMock(finish_reason="STOP")]
-    fake_response.usage_metadata = MagicMock(prompt_token_count=5, candidates_token_count=2)
+    configured = provider.with_config(_make_config(override_settings))
+    await configured.call(messages=[{"role": "user", "content": "hi"}], scope="test")
 
-    provider._client.aio.models.generate_content = AsyncMock(return_value=fake_response)
-
-    # Set context var override
-    set_gemini_safety_settings(ctx_settings)
-    try:
-        await provider.call(
-            messages=[{"role": "user", "content": "hi"}],
-            scope="test",
-        )
-    finally:
-        set_gemini_safety_settings(None)  # Reset context
-
-    call_args = provider._client.aio.models.generate_content.call_args
-    config_arg = call_args.kwargs.get("config")
-
+    config_arg = provider._provider_impl._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert config_arg is not None
-    assert config_arg.safety_settings is not None
-
-    # Should use ctx_settings (HATE_SPEECH/BLOCK_NONE), not instance_settings (HARASSMENT/BLOCK_ONLY_HIGH)
     categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
+    # Should use override_settings (HATE_SPEECH), not instance_settings (HARASSMENT)
     assert "HARM_CATEGORY_HATE_SPEECH" in categories
     assert "HARM_CATEGORY_HARASSMENT" not in categories
 
 
 @pytest.mark.asyncio
-async def test_context_var_none_falls_back_to_instance():
-    """When context var is None (not set), instance settings are used."""
-    from hindsight_api.engine.providers.gemini_llm import set_gemini_safety_settings
-
+async def test_with_config_none_falls_back_to_instance():
+    """When with_config() supplies None, the instance default is used."""
     instance_settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]
-    provider = _make_gemini_provider(safety_settings=instance_settings)
 
-    fake_response = MagicMock()
-    fake_response.text = "hello"
-    fake_response.candidates = [MagicMock(finish_reason="STOP")]
-    fake_response.usage_metadata = MagicMock(prompt_token_count=5, candidates_token_count=2)
+    provider = _make_llm_provider(safety_settings=instance_settings)
+    provider._provider_impl._client.aio.models.generate_content = AsyncMock(return_value=_fake_response())
 
-    provider._client.aio.models.generate_content = AsyncMock(return_value=fake_response)
+    configured = provider.with_config(_make_config(None))
+    await configured.call(messages=[{"role": "user", "content": "hi"}], scope="test")
 
-    # Explicitly set context var to None (fallback)
-    set_gemini_safety_settings(None)
-
-    await provider.call(
-        messages=[{"role": "user", "content": "hi"}],
-        scope="test",
-    )
-
-    call_args = provider._client.aio.models.generate_content.call_args
-    config_arg = call_args.kwargs.get("config")
-
+    config_arg = provider._provider_impl._client.aio.models.generate_content.call_args.kwargs.get("config")
     assert config_arg is not None
-    assert config_arg.safety_settings is not None
     categories = [s.category.value if hasattr(s.category, "value") else str(s.category) for s in config_arg.safety_settings]
     assert "HARM_CATEGORY_HARASSMENT" in categories
+
+
+@pytest.mark.asyncio
+async def test_with_config_resets_after_call():
+    """The ContextVar is properly reset after a with_config() call (no leakage)."""
+    from hindsight_api.engine.providers.gemini_llm import _safety_settings_ctx
+
+    settings = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"}]
+    provider = _make_llm_provider(safety_settings=None)
+    provider._provider_impl._client.aio.models.generate_content = AsyncMock(return_value=_fake_response())
+
+    before = _safety_settings_ctx.get()
+    configured = provider.with_config(_make_config(settings))
+    await configured.call(messages=[{"role": "user", "content": "hi"}], scope="test")
+    after = _safety_settings_ctx.get()
+
+    assert after == before  # ContextVar restored to its original value
 
 
 # ─── LLMProvider reads safety settings from config ────────────────────────────

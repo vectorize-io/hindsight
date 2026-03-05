@@ -944,16 +944,15 @@ async def _extract_facts_from_chunk(
     user_message = _build_user_message(chunk, chunk_index, total_chunks, event_date, context, metadata)
 
     # Retry logic for JSON validation errors
-    max_retries = 2
-    last_error = None
+    # Use retain-specific overrides if set, otherwise fall back to global LLM config
+    llm_max_retries = (
+        config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
+    )
+    last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
-    for attempt in range(max_retries):
+    for attempt in range(llm_max_retries):
         try:
-            # Use retain-specific overrides if set, otherwise fall back to global LLM config
-            max_retries = (
-                config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
-            )
             initial_backoff = (
                 config.retain_llm_initial_backoff
                 if config.retain_llm_initial_backoff is not None
@@ -969,7 +968,7 @@ async def _extract_facts_from_chunk(
                 scope="retain_extract_facts",
                 temperature=0.1,
                 max_completion_tokens=config.retain_max_completion_tokens,
-                max_retries=max_retries,
+                max_retries=llm_max_retries,
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
@@ -983,14 +982,14 @@ async def _extract_facts_from_chunk(
 
             # Handle malformed LLM responses
             if not isinstance(extraction_response_json, dict):
-                if attempt < max_retries - 1:
+                if attempt < llm_max_retries - 1:
                     logger.warning(
-                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{max_retries}: {type(extraction_response_json).__name__}. Retrying..."
+                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{llm_max_retries}: {type(extraction_response_json).__name__}. Retrying..."
                     )
                     continue
                 else:
                     logger.warning(
-                        f"LLM returned non-dict JSON after {max_retries} attempts: {type(extraction_response_json).__name__}. "
+                        f"LLM returned non-dict JSON after {llm_max_retries} attempts: {type(extraction_response_json).__name__}. "
                         f"Raw: {str(extraction_response_json)[:500]}"
                     )
                     return [], usage
@@ -1206,9 +1205,9 @@ async def _extract_facts_from_chunk(
                     continue
 
             # If we got malformed facts and haven't exhausted retries, try again
-            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < max_retries - 1:
+            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < llm_max_retries - 1:
                 logger.warning(
-                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{max_retries}. Retrying..."
+                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_max_retries}. Retrying..."
                 )
                 continue
 
@@ -1241,16 +1240,18 @@ async def _extract_facts_from_chunk(
 
             if "json_validate_failed" in str(e):
                 logger.warning(
-                    f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{max_retries} failed with JSON validation error: {e}"
+                    f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{llm_max_retries} failed with JSON validation error: {e}"
                 )
-                if attempt < max_retries - 1:
+                if attempt < llm_max_retries - 1:
                     logger.info(f"          [1.3.{chunk_index + 1}] Retrying...")
                     continue
             # If it's not a JSON validation error or we're out of retries, re-raise
             raise
 
-    # If we exhausted all retries, raise the last error
-    raise last_error
+    # If we exhausted all retries, raise the last error or a descriptive fallback
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Fact extraction failed after {llm_max_retries} attempts: LLM did not return valid JSON")
 
 
 async def _extract_facts_with_auto_split(

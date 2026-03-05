@@ -61,6 +61,11 @@ const config: Config = {
         onload: "this.media='all'",
       },
     },
+    {
+      tagName: 'script',
+      attributes: {},
+      innerHTML: `window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'AW-16635605869');`,
+    },
   ],
 
   scripts: [
@@ -74,6 +79,10 @@ const config: Config = {
           },
         ]
       : []),
+    {
+      src: 'https://www.googletagmanager.com/gtag/js?id=AW-16635605869',
+      async: true,
+    },
   ],
 
   presets: [

@@ -29,16 +29,9 @@ IGNORE_DIRS = {".git", "notebooks", "node_modules", "__pycache__", ".venv", "ven
 
 
 def get_docs_dir() -> Path:
-    """Find the hindsight-docs directory relative to this script."""
-    # Navigate from hindsight-dev to hindsight-docs
+    """Find the hindsight-docs src/pages/cookbook directory relative to this script."""
     script_dir = Path(__file__).parent
-    docs_dir = script_dir.parent.parent / "hindsight-docs" / "docs" / "cookbook"
-    return docs_dir
-
-
-def get_sidebars_file() -> Path:
-    script_dir = Path(__file__).parent
-    return script_dir.parent.parent / "hindsight-docs" / "sidebars.ts"
+    return script_dir.parent.parent / "hindsight-docs" / "src" / "pages" / "cookbook"
 
 
 def slugify(filename: str) -> str:
@@ -82,30 +75,27 @@ def extract_description_from_notebook(notebook_path: Path) -> str | None:
     return None
 
 
-def extract_tags_from_notebook(notebook_path: Path) -> list[str]:
+def extract_tags_from_notebook(notebook_path: Path) -> dict[str, str]:
     """Extract tags from notebook metadata.
 
     Supports both array format and structured object format.
+    Returns a dict with keys like 'sdk', 'topic', 'language'.
     """
     try:
         content = json.loads(notebook_path.read_text())
         metadata = content.get("metadata", {})
         tags = metadata.get("tags", [])
 
-        # Array format: ["Python", "Client"]
-        if isinstance(tags, list):
-            return tags
-
-        # Object format: { "language": "Python", "sdk": "Client", "topic": "Learning" }
+        # Object format already has the right structure
         if isinstance(tags, dict):
-            result = []
-            for key in ["language", "sdk", "topic"]:
-                if key in tags and tags[key]:
-                    result.append(tags[key])
-            return result
+            return {k: v for k, v in tags.items() if v}
+
+        # Array format: fall back to heuristic conversion
+        if isinstance(tags, list):
+            return _infer_tags_from_list(tags)
     except Exception:
         pass
-    return []
+    return {}
 
 
 def extract_description_from_readme(readme_path: Path) -> str | None:
@@ -129,24 +119,24 @@ def extract_description_from_readme(readme_path: Path) -> str | None:
     return None
 
 
-def extract_tags_from_readme(readme_path: Path) -> list[str]:
+def extract_tags_from_readme(readme_path: Path) -> dict[str, str]:
     """Extract tags from frontmatter in README if present.
 
     Supports multiple formats:
     - Array: tags: ["Python", "Client"]
-    - Structured YAML: tags:\n  language: "Python"\n  sdk: "Client"
-    - Object literal: tags: { language: "Python", sdk: "Client" }
+    - Structured YAML: tags:\n  sdk: "hindsight-client"\n  topic: "Learning"
+    - Object literal: tags: { sdk: "hindsight-client", topic: "Learning" }
+
+    Returns a dict with keys like 'sdk', 'topic', 'language'.
     """
     try:
         content = readme_path.read_text()
-        # Check for frontmatter
         if content.startswith("---"):
             end_idx = content.find("---", 3)
             if end_idx > 0:
                 frontmatter = content[3:end_idx]
                 lines = frontmatter.split("\n")
 
-                # Look for tags: line
                 for i, line in enumerate(lines):
                     if line.strip().startswith("tags:"):
                         tags_str = line.split("tags:", 1)[1].strip()
@@ -154,51 +144,47 @@ def extract_tags_from_readme(readme_path: Path) -> list[str]:
                         # Inline array format: tags: ["Python", "Client"]
                         if tags_str.startswith("["):
                             tags_str = tags_str.strip("[]")
-                            return [t.strip().strip('"').strip("'") for t in tags_str.split(",")]
+                            values = [t.strip().strip('"').strip("'") for t in tags_str.split(",")]
+                            return _infer_tags_from_list(values)
 
-                        # JavaScript object literal format: tags: { language: "Python", sdk: "Client", topic: "Learning" }
+                        # Object literal: tags: { sdk: "hindsight-client", topic: "Learning" }
                         if tags_str.startswith("{"):
-                            tags = []
-                            # Extract the entire object literal (might span multiple lines)
                             obj_str = tags_str
                             if "}" not in obj_str:
-                                # Multi-line object - collect remaining lines
                                 for j in range(i + 1, len(lines)):
                                     obj_str += " " + lines[j].strip()
                                     if "}" in lines[j]:
                                         break
-
-                            # Parse the object literal
-                            obj_str = obj_str.strip("{}")
-                            # Split by comma and extract key-value pairs
-                            for pair in obj_str.split(","):
+                            result = {}
+                            for pair in obj_str.strip("{}").split(","):
                                 if ":" in pair:
-                                    key, value = pair.split(":", 1)
-                                    value = value.strip().strip('"').strip("'")
-                                    if value:
-                                        tags.append(value)
-                            return tags
+                                    k, v = pair.split(":", 1)
+                                    k = k.strip().strip('"').strip("'")
+                                    v = v.strip().strip('"').strip("'")
+                                    if k and v:
+                                        result[k] = v
+                            return result
 
-                        # Structured YAML format:
+                        # Structured YAML:
                         # tags:
-                        #   language: "Python"
-                        #   sdk: "Client"
-                        if not tags_str or tags_str == "":
-                            # Parse structured tags from following lines
-                            tags = []
+                        #   sdk: "hindsight-client"
+                        #   topic: "Learning"
+                        if not tags_str:
+                            result = {}
                             for j in range(i + 1, len(lines)):
                                 next_line = lines[j].strip()
                                 if not next_line or not next_line.startswith(("language:", "sdk:", "topic:")):
                                     break
-                                # Extract value
                                 if ":" in next_line:
-                                    value = next_line.split(":", 1)[1].strip().strip('"').strip("'")
-                                    if value:
-                                        tags.append(value)
-                            return tags
+                                    k, v = next_line.split(":", 1)
+                                    k = k.strip()
+                                    v = v.strip().strip('"').strip("'")
+                                    if k and v:
+                                        result[k] = v
+                            return result
     except Exception:
         pass
-    return []
+    return {}
 
 
 def extract_title_from_readme(readme_path: Path) -> str | None:
@@ -364,6 +350,17 @@ def process_applications(cookbook_dir: Path, apps_dir: Path) -> list[dict]:
         if not readme_path.exists():
             continue
 
+        # Validate that README has frontmatter
+        readme_raw = readme_path.read_text()
+        if not readme_raw.startswith("---"):
+            raise SystemExit(
+                f"Error: {readme_path} is missing frontmatter.\n"
+                f"Applications must have a frontmatter block (---) with 'description' and 'tags'."
+            )
+        closing = readme_raw.find("---", 3)
+        if closing <= 0:
+            raise SystemExit(f"Error: {readme_path} has malformed frontmatter (missing closing ---).")
+
         slug = entry.name
         title = extract_title_from_readme(readme_path) or " ".join(word.capitalize() for word in slug.split("-"))
         description = extract_description_from_readme(readme_path)
@@ -371,9 +368,10 @@ def process_applications(cookbook_dir: Path, apps_dir: Path) -> list[dict]:
 
         print(f"  Processing app: {entry.name} → {slug}.md")
 
-        # Read README content and strip existing frontmatter
+        # Read README content, strip existing frontmatter and local .md links
         readme_content = readme_path.read_text()
         readme_content = strip_frontmatter(readme_content)
+        readme_content = strip_local_md_links(readme_content)
 
         # Create application page with frontmatter
         app_url = f"https://github.com/vectorize-io/hindsight-cookbook/tree/main/applications/{entry.name}"
@@ -460,6 +458,14 @@ def update_sidebars(recipes: list[dict], apps: list[dict], sidebars_file: Path):
     print("\nUpdated sidebars.ts")
 
 
+def strip_local_md_links(content: str) -> str:
+    """Replace relative .md links with plain text to avoid broken links in Docusaurus.
+
+    e.g. [see article](article.md) → see article
+    """
+    return re.sub(r"\[([^\]]+)\]\((?!https?://)([^)]+\.md)\)", r"\1", content)
+
+
 def clean_description(desc: str) -> str:
     """Clean description for display in carousel cards."""
     if not desc:
@@ -482,34 +488,19 @@ def clean_description(desc: str) -> str:
     return desc
 
 
-def convert_tags_to_structured(tags: list[str]) -> dict[str, str]:
-    """Convert list of tags to structured format.
+def _infer_tags_from_list(tags: list[str]) -> dict[str, str]:
+    """Infer sdk/topic structure from a plain list of tag values (legacy array format).
 
-    New format has 2 tags:
-    - sdk: Package name (detected from tag values)
-    - topic: anything else (Learning, Quick Start, etc.)
-
-    Supported languages:
-    - Node.js: packages starting with '@vectorize-io'
-    - Go: packages ending with '-go' or containing 'go-'
-    - Python: everything else
+    Uses heuristics: package names contain '@' or '-' or start lowercase → sdk,
+    everything else → topic.
     """
-    structured = {}
-    topic_tags = {"Learning", "Quick Start", "Recommendation", "Chat"}
-
+    result: dict[str, str] = {}
     for tag in tags:
-        # Check if it's a topic tag
-        if tag in topic_tags:
-            structured["topic"] = tag
-        # Check if it's already a package name (contains @ or -)
-        elif "@" in tag or (tag and not tag[0].isupper()):
-            structured["sdk"] = tag
+        if "@" in tag or (tag and not tag[0].isupper()):
+            result["sdk"] = tag
         else:
-            # Legacy tag values - map to new format
-            # For now, treat everything else as SDK/package identifier
-            structured["sdk"] = tag
-
-    return structured
+            result["topic"] = tag
+    return result
 
 
 def update_cookbook_index(recipes: list[dict], apps: list[dict], docs_dir: Path):
@@ -521,21 +512,16 @@ def update_cookbook_index(recipes: list[dict], apps: list[dict], docs_dir: Path)
         description = r.get("description", "")
         if description:
             description = clean_description(description).replace('"', '\\"')
-        tags = r.get("tags", [])
+        tags: dict[str, str] = r.get("tags", {})
 
         item = f'    {{\n      title: "{title}",\n      href: "/cookbook/recipes/{r["slug"]}"'
         if description:
             item += f',\n      description: "{description}"'
         if tags:
-            # Convert tags list to structured format
-            structured_tags = convert_tags_to_structured(tags)
             tags_parts = []
-            if "language" in structured_tags:
-                tags_parts.append(f'language: "{structured_tags["language"]}"')
-            if "sdk" in structured_tags:
-                tags_parts.append(f'sdk: "{structured_tags["sdk"]}"')
-            if "topic" in structured_tags:
-                tags_parts.append(f'topic: "{structured_tags["topic"]}"')
+            for key in ("language", "sdk", "topic"):
+                if key in tags:
+                    tags_parts.append(f'{key}: "{tags[key]}"')
             if tags_parts:
                 item += f",\n      tags: {{ {', '.join(tags_parts)} }}"
         item += "\n    }"
@@ -550,21 +536,16 @@ def update_cookbook_index(recipes: list[dict], apps: list[dict], docs_dir: Path)
         description = a.get("description", "")
         if description:
             description = clean_description(description).replace('"', '\\"')
-        tags = a.get("tags", [])
+        tags = a.get("tags", {})
 
         item = f'    {{\n      title: "{title}",\n      href: "/cookbook/applications/{a["slug"]}"'
         if description:
             item += f',\n      description: "{description}"'
         if tags:
-            # Convert tags list to structured format
-            structured_tags = convert_tags_to_structured(tags)
             tags_parts = []
-            if "language" in structured_tags:
-                tags_parts.append(f'language: "{structured_tags["language"]}"')
-            if "sdk" in structured_tags:
-                tags_parts.append(f'sdk: "{structured_tags["sdk"]}"')
-            if "topic" in structured_tags:
-                tags_parts.append(f'topic: "{structured_tags["topic"]}"')
+            for key in ("language", "sdk", "topic"):
+                if key in tags:
+                    tags_parts.append(f'{key}: "{tags[key]}"')
             if tags_parts:
                 item += f",\n      tags: {{ {', '.join(tags_parts)} }}"
         item += "\n    }"
@@ -573,34 +554,42 @@ def update_cookbook_index(recipes: list[dict], apps: list[dict], docs_dir: Path)
     apps_json = ",\n".join(app_items)
 
     content = f"""---
-sidebar_position: 1
+title: Cookbook
 hide_table_of_contents: true
-pagination_next: null
-pagination_prev: null
-custom_edit_url: null
-sidebar_class_name: hidden-sidebar
 ---
 
-import RecipeCarousel from '@site/src/components/RecipeCarousel';
+import CookbookGrid from '@site/src/components/CookbookGrid';
 
-<div className="cookbook-page">
+<div>
 
-# Cookbook
+<div style={{{{textAlign: 'center', marginBottom: '3.5rem'}}}}>
+  <h1 style={{{{
+    fontSize: '3rem',
+    fontWeight: 800,
+    background: 'linear-gradient(135deg, #0074d9, #009296)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    backgroundClip: 'text',
+    letterSpacing: '-0.03em',
+    lineHeight: 1.15,
+    marginBottom: '0.75rem',
+  }}}}>Cookbook</h1>
+  <p style={{{{fontSize: '1.05rem', color: 'var(--ifm-color-emphasis-600)', maxWidth: 520, margin: '0 auto', lineHeight: 1.7}}}}>
+    Practical examples and complete applications built with Hindsight.
+  </p>
+</div>
 
-Learn how to build with Hindsight through practical examples:
+## Recipes
 
-- **[Recipes](#recipes)** - Step-by-step guides and patterns for common use cases
-- **[Applications](#applications)** - Complete, runnable applications demonstrating Hindsight integration
-
-<RecipeCarousel
-  title="Recipes"
+<CookbookGrid
   items={{[
 {recipes_json}
   ]}}
 />
 
-<RecipeCarousel
-  title="Applications"
+## Applications
+
+<CookbookGrid
   items={{[
 {apps_json}
   ]}}
@@ -682,7 +671,6 @@ def main():
     print("Syncing hindsight-cookbook...\n")
 
     docs_dir = get_docs_dir()
-    sidebars_file = get_sidebars_file()
     recipes_dir = docs_dir / "recipes"
     apps_dir = docs_dir / "applications"
 
@@ -758,9 +746,8 @@ def main():
         all_recipes = recipes + manual_recipes
         all_apps = apps + manual_apps
 
-        # Update sidebars.ts and index
+        # Update cookbook index
         if all_recipes or all_apps:
-            update_sidebars(all_recipes, all_apps, sidebars_file)
             update_cookbook_index(all_recipes, all_apps, docs_dir)
 
         print(

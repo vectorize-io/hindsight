@@ -413,6 +413,48 @@ describe('TestDeleteBank', () => {
     });
 });
 
+describe('TestRecallIncludeOptions', () => {
+    let bankId: string;
+
+    beforeAll(async () => {
+        bankId = randomBankId();
+        await client.retainBatch(bankId, [
+            { content: 'Alice works at Google as a software engineer' },
+            { content: 'Bob is a researcher at OpenAI' },
+        ]);
+    });
+
+    test('entities included by default', async () => {
+        const response = await client.recall(bankId, 'Where does Alice work?');
+
+        expect(response).not.toBeNull();
+        expect(response.results!.length).toBeGreaterThan(0);
+        // entities should be present when includeEntities is not specified (default: true)
+        expect(response.entities).toBeDefined();
+    });
+
+    test('entities excluded when includeEntities is false', async () => {
+        const response = await client.recall(bankId, 'Where does Alice work?', {
+            includeEntities: false,
+        });
+
+        expect(response).not.toBeNull();
+        expect(response.results!.length).toBeGreaterThan(0);
+        // entities should be absent when explicitly disabled
+        expect(response.entities).toBeFalsy();
+    });
+
+    test('entities included when includeEntities is true', async () => {
+        const response = await client.recall(bankId, 'Where does Alice work?', {
+            includeEntities: true,
+        });
+
+        expect(response).not.toBeNull();
+        expect(response.results!.length).toBeGreaterThan(0);
+        expect(response.entities).toBeDefined();
+    });
+});
+
 describe('TestMission', () => {
     test('set mission', async () => {
         const bankId = randomBankId();

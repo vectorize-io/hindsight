@@ -132,7 +132,6 @@ Retrieve a document's original text and metadata. This is useful for expanding d
 ### Python
 
 ```python
-import asyncio
 from hindsight_client_api import ApiClient, Configuration
 from hindsight_client_api.api import DocumentsApi
 
@@ -158,8 +157,6 @@ asyncio.run(get_document_example())
 ### Node.js
 
 ```javascript
-const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
-
 // Get document to expand context from recall results
 const { data: doc, error } = await sdk.getDocument({
     client: apiClient,
@@ -228,6 +225,124 @@ hindsight document delete my-bank meeting-2024-03-15
 
 :::warning
 Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
+## List Documents
+
+List documents in a bank with optional filtering by ID and tags.
+
+### Python
+
+```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+
+async def list_documents_example():
+    config = Configuration(host="http://localhost:8888")
+    api_client = ApiClient(config)
+    api = DocumentsApi(api_client)
+
+    # List all documents
+    result = await api.list_documents(bank_id="my-bank")
+    print(f"Total documents: {result.total}")
+
+    # Filter by document ID substring
+    result = await api.list_documents(bank_id="my-bank", q="report")
+
+    # Filter by tags — only docs tagged with "team-a" (untagged excluded)
+    result = await api.list_documents(
+        bank_id="my-bank",
+        tags=["team-a"],
+        tags_match="any_strict",
+    )
+
+    # Combine ID search and tags
+    result = await api.list_documents(
+        bank_id="my-bank",
+        q="meeting",
+        tags=["team-a", "team-b"],
+        tags_match="all_strict",  # must have both tags
+    )
+
+    # Paginate
+    result = await api.list_documents(bank_id="my-bank", limit=20, offset=40)
+    print(f"Page items: {len(result.items)}")
+
+import asyncio
+asyncio.run(list_documents_example())
+```
+
+### Node.js
+
+```javascript
+const apiClient = createClient(createConfig({ baseUrl: 'http://localhost:8888' }));
+
+// List all documents
+const { data: allDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' }
+});
+console.log(`Total documents: ${allDocs.total}`);
+
+// Filter by document ID substring
+const { data: reportDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { q: 'report' }
+});
+
+// Filter by tags — only docs tagged with "team-a" (untagged excluded)
+const { data: taggedDocs } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { tags: ['team-a'], tags_match: 'any_strict' }
+});
+
+// Combine ID search and tags
+const { data: filtered } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { q: 'meeting', tags: ['team-a', 'team-b'], tags_match: 'all_strict' }
+});
+
+// Paginate
+const { data: page } = await sdk.listDocuments({
+    client: apiClient,
+    path: { bank_id: 'my-bank' },
+    query: { limit: 20, offset: 40 }
+});
+console.log(`Page items: ${page.items.length}`);
+```
+
+### CLI
+
+```bash
+# List all documents
+hindsight document list my-bank
+
+# Filter by ID substring
+hindsight document list my-bank --q report
+
+# Filter by tags
+hindsight document list my-bank --tags team-a --tags team-b
+```
+
+### Filtering Options
+
+| Parameter | Description |
+|---|---|
+| `q` | Case-insensitive substring match on document ID. `report` matches `report-2024`, `annual-report`, etc. |
+| `tags` | Filter by document tags. Accepts multiple values. |
+| `tags_match` | How to match tags (default: `any_strict`). See below. |
+| `limit` / `offset` | Pagination. Default limit is 100. |
+
+**`tags_match` modes:**
+
+| Mode | Behaviour |
+|---|---|
+| `any_strict` *(default)* | Document must have **at least one** of the specified tags. Untagged docs excluded. |
+| `any` | Same as `any_strict` but also includes untagged documents. |
+| `all_strict` | Document must have **all** specified tags. Untagged docs excluded. |
+| `all` | Same as `all_strict` but also includes untagged documents. |
+
 ## Document Response Format
 
 ```json

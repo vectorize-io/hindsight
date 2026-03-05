@@ -131,6 +131,51 @@ hindsight document delete my-bank meeting-2024-03-15
 Deleting a document permanently removes all memories extracted from it. This action cannot be undone.
 :::
 
+## List Documents
+
+List documents in a bank with optional filtering by ID and tags.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-list" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-list" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+
+```bash
+# List all documents
+hindsight document list my-bank
+
+# Filter by ID substring
+hindsight document list my-bank --q report
+
+# Filter by tags
+hindsight document list my-bank --tags team-a --tags team-b
+```
+
+</TabItem>
+</Tabs>
+
+### Filtering Options
+
+| Parameter | Description |
+|---|---|
+| `q` | Case-insensitive substring match on document ID. `report` matches `report-2024`, `annual-report`, etc. |
+| `tags` | Filter by document tags. Accepts multiple values. |
+| `tags_match` | How to match tags (default: `any_strict`). See below. |
+| `limit` / `offset` | Pagination. Default limit is 100. |
+
+**`tags_match` modes:**
+
+| Mode | Behaviour |
+|---|---|
+| `any_strict` *(default)* | Document must have **at least one** of the specified tags. Untagged docs excluded. |
+| `any` | Same as `any_strict` but also includes untagged documents. |
+| `all_strict` | Document must have **all** specified tags. Untagged docs excluded. |
+| `all` | Same as `all_strict` but also includes untagged documents. |
+
 ## Document Response Format
 
 ```json

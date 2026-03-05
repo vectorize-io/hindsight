@@ -97,9 +97,15 @@ The raw text to store. This is the only required field. Hindsight chunks the con
 
 ### timestamp
 
-When the event described in the content actually occurred. Accepts any ISO 8601 string (e.g., `"2024-01-15T10:30:00Z"`). If omitted, defaults to the current time at ingestion.
+When the event described in the content actually occurred. Three forms are accepted:
 
-The timestamp is injected verbatim into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. It also enables temporal recall queries like "What happened last spring?" to work correctly.
+| Value | Behaviour |
+|-------|-----------|
+| Omitted / `null` | Defaults to the current time at ingestion. |
+| ISO 8601 string (e.g. `"2024-01-15T10:30:00Z"`) | Uses the provided datetime. |
+| `"unset"` | Stores the content **without any timestamp**. Use this for timeless material such as reference documents, books, or fictional content where no real event time exists. |
+
+The timestamp is injected into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. When `"unset"` is passed the prompt shows `Event Date: Unknown`, allowing the model to correctly return `N/A` for the `when` field of every extracted fact. Providing a real timestamp also enables temporal recall queries like "What happened last spring?" to work correctly.
 
 ### context
 
@@ -159,6 +165,64 @@ Tags control **visibility scoping** — which memories are visible during recall
 Use consistent naming patterns to keep tag filtering predictable. Common conventions: `user:<id>` for per-user scoping, `session:<id>` for session isolation, `room:<id>` for chat rooms, `topic:<name>` for category filtering. The bank also exposes a list-tags endpoint that returns all tags with their memory counts, useful for UI autocomplete or wildcard expansion.
 
 See [Recall API](./recall#tags) for filtering by tags during retrieval.
+
+### observation_scopes
+
+Controls which [observations](../observations) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
+
+:::info Scope isolation
+During consolidation, Hindsight uses `all_strict` matching to find existing observations to update — only observations whose tags exactly match the current scope are considered. This keeps scopes isolated: a memory consolidated under `["student:alice"]` will never bleed into an observation tagged `["student:alice", "teacher:bob"]`.
+The examples below use a lesson transcript retained with `tags: ["student:alice", "teacher:bob", "session-id:s1"]`.
+
+#### combined *(default)*
+
+One consolidation pass using all tags together. The resulting observation is tagged with the full set.
+
+- Observations created: `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✗ *"What does Alice struggle with across all her sessions?"* — no match, because no observation was ever built for `student:alice` alone
+- ✗ *"How does Bob teach?"* — no match for `teacher:bob` alone
+- ✓ *"What happened in session s1 with Alice and Bob?"* — exact match
+
+**Use when** the memory is meaningful only as a whole and you never need to query any single tag in isolation.
+
+#### per_tag
+
+One consolidation pass per individual tag. Each tag gets its own isolated observation that grows with every new memory sharing that tag.
+
+- Observations created: `["student:alice"]` · `["teacher:bob"]` · `["session-id:s1"]`
+- ✓ *"What does Alice struggle with across all her sessions?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"What happened in session s1?"*
+- ✗ *"How does Alice perform specifically with Bob?"* — no observation for the `["student:alice", "teacher:bob"]` combination
+- ✗ *"How does Bob teach in online sessions?"* — no observation for `["teacher:bob", "session-id:s1"]`
+
+**Use when** content involves multiple tags that each represent an independent subject — the most common choice for multi-party content like conversations, lessons, or support sessions.
+
+#### all_combinations
+
+One pass per subset of tags — singles, pairs, triples, and so on. For 3 tags that is 7 passes.
+
+- Observations created: all `"per_tag"` scopes above, plus `["student:alice", "teacher:bob"]` · `["student:alice", "session-id:s1"]` · `["teacher:bob", "session-id:s1"]` · `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✓ All questions from `"per_tag"` above
+- ✓ *"How does Alice perform specifically with Bob?"* — matched by `["student:alice", "teacher:bob"]`
+
+**Use when** you need observations at every granularity — per tag, per pair, per group.
+
+#### custom
+
+Pass an explicit list of tag sets. Each inner list is one scope.
+
+```json
+[["student:alice"], ["teacher:bob"], ["teacher:bob", "session-id:s1"]]
+```
+
+- Observations created: exactly those three scopes — nothing more
+- ✓ *"What does Alice struggle with?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"How does Bob teach in session s1 specifically?"*
+- ✗ *"What happened in session s1 regardless of teacher?"* — `["session-id:s1"]` alone was not included
+
+**Use when** you know exactly which combinations are meaningful and want to avoid unnecessary passes.
 
 ### Response
 

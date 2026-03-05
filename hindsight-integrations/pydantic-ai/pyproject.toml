@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-pydantic-ai"
-version = "0.1.0"
+version = "0.4.15"
 description = "Pydantic AI integration for Hindsight - persistent memory tools for AI agents"
 requires-python = ">=3.10"
 license = { text = "MIT" }
