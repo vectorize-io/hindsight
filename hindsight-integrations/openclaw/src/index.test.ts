@@ -140,4 +140,27 @@ describe('extractRecallQuery', () => {
     const result = extractRecallQuery('   What is my job?   ', undefined);
     expect(result).toBe('What is my job?');
   });
+
+  it('rejects "Continue where you left off" continuation wrapper', () => {
+    expect(
+      extractRecallQuery('Continue where you left off. The previous model attempt failed or timed out.', undefined),
+    ).toBeNull();
+  });
+
+  it('rejects case-insensitive continuation patterns', () => {
+    expect(extractRecallQuery('CONTINUE WHERE YOU LEFT OFF', undefined)).toBeNull();
+    expect(extractRecallQuery('The previous model attempt failed or timed out.', undefined)).toBeNull();
+    expect(extractRecallQuery('Pick up from where we were discussing recipes', undefined)).toBeNull();
+    expect(extractRecallQuery('Resume the previous conversation', undefined)).toBeNull();
+    expect(extractRecallQuery('Resume the last task', undefined)).toBeNull();
+  });
+
+  it('allows normal messages that happen to contain "continue"', () => {
+    expect(extractRecallQuery('Can you continue the recipe from yesterday?', undefined)).toBe(
+      'Can you continue the recipe from yesterday?',
+    );
+    expect(extractRecallQuery('How do I continue learning Python?', undefined)).toBe(
+      'How do I continue learning Python?',
+    );
+  });
 });

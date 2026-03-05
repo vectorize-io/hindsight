@@ -157,12 +157,25 @@ export function stripMemoryTags(content: string): string {
 }
 
 /**
+ * Known continuation/retry wrapper patterns that are meta-operational noise
+ * and should not be used as recall queries (they match on stored system events
+ * rather than topically relevant memories).
+ */
+const CONTINUATION_PATTERNS = [
+  /^continue where you left off/i,
+  /^the previous model attempt failed/i,
+  /^pick up from where/i,
+  /^resume the (?:previous |last )?(?:conversation|session|task)/i,
+];
+
+/**
  * Extract a recall query from a hook event's rawMessage or prompt.
  *
  * Prefers rawMessage (clean user text). Falls back to prompt, stripping
  * envelope formatting (System: lines, [Channel ...] headers, [from: X] footers).
  *
- * Returns null when no usable query (< 5 chars) can be extracted.
+ * Returns null when no usable query (< 5 chars) can be extracted, or when the
+ * query is a known continuation/retry wrapper (meta-operational noise).
  */
 export function extractRecallQuery(
   rawMessage: string | undefined,
@@ -203,6 +216,13 @@ export function extractRecallQuery(
 
   const trimmed = recallQuery.trim();
   if (trimmed.length < 5) return null;
+
+  // Reject known continuation/retry wrappers — these match on meta-operational
+  // memories (e.g. "model timed out") rather than topically relevant content.
+  if (CONTINUATION_PATTERNS.some((re) => re.test(trimmed))) {
+    return null;
+  }
+
   return trimmed;
 }
 
@@ -802,8 +822,29 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
+        // Deduplicate by text content and cap total injected memories.
+        // The Hindsight API can return near-identical memories across types
+        // (world, experience, observation) — keep the first occurrence only.
+        const MAX_RECALL_RESULTS = 8;
+        const seen = new Set<string>();
+        const deduped = response.results.filter((m) => {
+          const key = m.text.trim().toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, MAX_RECALL_RESULTS);
+
+        if (deduped.length === 0) {
+          debug('[Hindsight] All recall results were duplicates, skipping');
+          return;
+        }
+
+        if (deduped.length < response.results.length) {
+          debug(`[Hindsight] Deduped recall: ${response.results.length} → ${deduped.length} memories`);
+        }
+
         // Format memories as JSON with all fields from recall
-        const memoriesJson = JSON.stringify(response.results, null, 2);
+        const memoriesJson = JSON.stringify(deduped, null, 2);
 
         const contextMessage = `<hindsight_memories>
 Relevant memories from past conversations (prioritize recent when conflicting):
@@ -812,7 +853,7 @@ ${memoriesJson}
 User message: ${prompt}
 </hindsight_memories>`;
 
-        debug(`[Hindsight] Auto-recall: Injecting ${response.results.length} memories from bank ${bankId}`);
+        debug(`[Hindsight] Auto-recall: Injecting ${deduped.length} memories from bank ${bankId}`);
 
         // Inject context before the user message
         return { prependContext: contextMessage };
