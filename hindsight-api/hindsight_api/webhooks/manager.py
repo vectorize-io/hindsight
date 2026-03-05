@@ -235,4 +235,8 @@ class WebhookManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to queue webhook deliveries (in-transaction) for event {event.event}: {e}")
+            logger.error(
+                f"Failed to queue webhook deliveries (in-transaction) for event {event.event}: {e}. "
+                "CRITICAL: The enclosing database transaction is now aborted and will roll back all changes."
+            )
+            raise

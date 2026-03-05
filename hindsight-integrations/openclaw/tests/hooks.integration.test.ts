@@ -141,6 +141,9 @@ beforeAll(async () => {
     dynamicBankId: true,
     excludeProviders: ['slack'],
     retainEveryNTurns: 1, // retain every turn so individual tests aren't affected by chunking
+    recallContextTurns: 3,
+    recallMaxQueryChars: 180,
+    recallRoles: ['user'],
     // No bankMission — keeps init lean
   });
   triggerHook = handle.trigger;
@@ -240,7 +243,7 @@ describe('before_agent_start hook', () => {
     expect(result.prependContext).toContain('</hindsight_memories>');
   });
 
-  it('injects all memory result fields in the prependContext JSON', async () => {
+  it('injects all memory result fields in the prependContext', async () => {
     if (!apiReachable) return;
     const mem = makeMemoryResult('User prefers dark mode');
     mem.tags = ['preference'];
@@ -258,17 +261,10 @@ describe('before_agent_start hook', () => {
       { messageProvider: 'telegram', senderId: 'U004' },
     )) as { prependContext: string };
 
-    // The prependContext should be valid JSON containing all MemoryResult fields
-    const jsonStart = result.prependContext.indexOf('[');
-    const jsonEnd = result.prependContext.lastIndexOf(']') + 1;
-    const parsed = JSON.parse(result.prependContext.slice(jsonStart, jsonEnd)) as unknown[];
-    expect(parsed).toHaveLength(1);
-    const first = parsed[0] as Record<string, unknown>;
-    expect(first.id).toBe(mem.id);
-    expect(first.text).toBe('User prefers dark mode');
-    expect(first.type).toBe('fact');
-    expect(first.tags).toEqual(['preference']);
-    expect(first.entities).toEqual(['dark_mode']);
+    // formatMemories returns a bullet list, not JSON
+    expect(result.prependContext).toContain('- User prefers dark mode');
+    expect(result.prependContext).toContain('<hindsight_memories>');
+    expect(result.prependContext).toContain('</hindsight_memories>');
   });
 
   it('extracts the inner query from an envelope-formatted prompt when rawMessage is absent', async () => {
@@ -288,6 +284,32 @@ describe('before_agent_start hook', () => {
     expect(callArgs.query).not.toContain('[Telegram');
     expect(callArgs.query).not.toContain('[from: Alice]');
     expect(callArgs.query).toContain('What is my favorite food?');
+  });
+
+  it('passes a latest-priority contextual recall query and respects max query chars', async () => {
+    if (!apiReachable) return;
+    recallSpy.mockResolvedValue(EMPTY_RECALL);
+
+    await triggerHook(
+      'before_prompt_build',
+      {
+        rawMessage: 'Do I still prefer dark mode?',
+        prompt: '',
+        messages: [
+          { role: 'user', content: 'I prefer dark mode in IDEs.' },
+          { role: 'assistant', content: 'Noted: dark mode preference.' },
+          { role: 'user', content: 'Do I still prefer dark mode?' },
+        ],
+      },
+      { messageProvider: 'telegram', senderId: 'U006A' },
+    );
+
+    expect(recallSpy).toHaveBeenCalledOnce();
+    const [callArgs] = recallSpy.mock.calls[0];
+    expect(callArgs.query).toContain('Do I still prefer dark mode?');
+    expect(callArgs.query).toContain('user: I prefer dark mode in IDEs.');
+    expect(callArgs.query).not.toContain('assistant: Noted: dark mode preference.');
+    expect(callArgs.query.length).toBeLessThanOrEqual(180);
   });
 
   it('passes max_tokens to recall', async () => {
@@ -534,10 +556,11 @@ describe('agent_end hook', () => {
     expect(retainSpy).toHaveBeenCalledOnce();
     const [req] = retainSpy.mock.calls[0];
 
-    // Each message should appear in the correct envelope format
-    expect(req.content).toContain('[role: user]\nMy name is Carol.\n[user:end]');
-    expect(req.content).toContain('[role: assistant]\nNice to meet you, Carol!\n[assistant:end]');
+    // Only the last turn (from last user message onwards) is retained
     expect(req.content).toContain('[role: user]\nI work as a data scientist.\n[user:end]');
-    expect(req.metadata?.message_count).toBe('4');
+    expect(req.content).toContain("[role: assistant]\nThat's a fascinating career!\n[assistant:end]");
+    // Earlier turns are excluded by turn boundary detection
+    expect(req.content).not.toContain('My name is Carol.');
+    expect(req.metadata?.message_count).toBe('2');
   });
 });

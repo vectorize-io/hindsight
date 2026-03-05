@@ -17,7 +17,7 @@
       },
       "bankMission": {
         "type": "string",
-        "description": "Custom mission/context for the memory bank",
+        "description": "Agent identity/purpose stored on the memory bank. Helps the memory engine understand context for better fact extraction during retain. Set once per bank on first use — this is not a recall prompt.",
         "default": "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
       },
       "embedVersion": {
@@ -28,7 +28,15 @@
       "llmProvider": {
         "type": "string",
         "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code'). Takes priority over auto-detection but not over HINDSIGHT_API_LLM_PROVIDER env var.",
-        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
+        "enum": [
+          "openai",
+          "anthropic",
+          "gemini",
+          "groq",
+          "ollama",
+          "openai-codex",
+          "claude-code"
+        ]
       },
       "llmModel": {
         "type": "string",
@@ -71,8 +79,119 @@
       },
       "excludeProviders": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Message providers to exclude from recall and retain (e.g. ['telegram', 'discord'])"
+      },
+      "dynamicBankGranularity": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "channel",
+            "user",
+            "provider"
+          ]
+        },
+        "description": "Fields used to derive bank ID. Controls memory isolation granularity. Default: ['agent', 'channel', 'user'].",
+        "default": [
+          "agent",
+          "channel",
+          "user"
+        ]
+      },
+      "autoRetain": {
+        "type": "boolean",
+        "description": "Automatically retain conversation as memories after each interaction. Set to false to disable.",
+        "default": true
+      },
+      "retainRoles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool"
+          ]
+        },
+        "description": "Message roles to include in retained transcript. Default: ['user', 'assistant'].",
+        "default": [
+          "user",
+          "assistant"
+        ]
+      },
+      "retainEveryNTurns": {
+        "type": "integer",
+        "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
+        "minimum": 1,
+        "default": 1
+      },
+      "retainOverlapTurns": {
+        "type": "integer",
+        "description": "Extra prior turns to include when chunked retention fires. Window = retainEveryNTurns + retainOverlapTurns. Only applies when retainEveryNTurns > 1.",
+        "minimum": 0,
+        "default": 0
+      },
+      "recallBudget": {
+        "type": "string",
+        "description": "Recall effort level. Higher budgets use more retrieval strategies for better results but take longer.",
+        "enum": ["low", "mid", "high"],
+        "default": "mid"
+      },
+      "recallMaxTokens": {
+        "type": "integer",
+        "description": "Maximum tokens for recall response. Controls how much memory context is injected per turn.",
+        "minimum": 1,
+        "default": 1024
+      },
+      "recallTypes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["world", "experience", "observation"]
+        },
+        "description": "Memory types to recall. Defaults to ['world', 'experience'] — excludes verbose observation entries.",
+        "default": ["world", "experience"]
+      },
+      "recallRoles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["user", "assistant", "system", "tool"]
+        },
+        "description": "Roles to include when composing contextual recall query. Default: ['user', 'assistant'].",
+        "default": ["user", "assistant"]
+      },
+      "recallContextTurns": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Number of user turns to include in recall query context. 1 keeps latest-message-only behavior.",
+        "default": 1
+      },
+      "recallMaxQueryChars": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum character length for composed recall query before calling recall.",
+        "default": 800
+      },
+      "recallTopK": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum number of memories to inject per turn. Applied after API response as a hard cap."
+      },
+      "recallPromptPreamble": {
+        "type": "string",
+        "description": "Text shown above recalled memories in the injected context block.",
+        "default": "Relevant memories from past conversations (prioritize recent when conflicting). Only use memories that are directly useful to continue this conversation; ignore the rest:"
+      },
+      "debug": {
+        "type": "boolean",
+        "description": "Enable debug logging for Hindsight plugin operations.",
+        "default": false
       }
     },
     "additionalProperties": false
@@ -137,6 +256,61 @@
     "excludeProviders": {
       "label": "Excluded Providers",
       "placeholder": "e.g. telegram, discord"
+    },
+    "dynamicBankGranularity": {
+      "label": "Bank Granularity",
+      "placeholder": "e.g. ['agent', 'channel', 'user']"
+    },
+    "autoRetain": {
+      "label": "Auto-Retain",
+      "placeholder": "true (enable auto-retention)"
+    },
+    "retainRoles": {
+      "label": "Retain Roles",
+      "placeholder": "e.g. ['user', 'assistant']"
+    },
+    "retainEveryNTurns": {
+      "label": "Retain Every N Turns",
+      "placeholder": "1 (every turn, default)"
+    },
+    "retainOverlapTurns": {
+      "label": "Retain Overlap Turns",
+      "placeholder": "0 (no overlap, default)"
+    },
+    "recallBudget": {
+      "label": "Recall Budget",
+      "placeholder": "low, mid, or high"
+    },
+    "recallMaxTokens": {
+      "label": "Recall Max Tokens",
+      "placeholder": "1024 (default)"
+    },
+    "recallTypes": {
+      "label": "Recall Types",
+      "placeholder": "e.g. ['world', 'experience']"
+    },
+    "recallRoles": {
+      "label": "Recall Roles",
+      "placeholder": "e.g. ['user', 'assistant']"
+    },
+    "recallContextTurns": {
+      "label": "Recall Context Turns",
+      "placeholder": "1 (latest only, default)"
+    },
+    "recallMaxQueryChars": {
+      "label": "Recall Max Query Chars",
+      "placeholder": "800 (default)"
+    },
+    "recallTopK": {
+      "label": "Recall Top K",
+      "placeholder": "e.g. 5 (no limit by default)"
+    },
+    "recallPromptPreamble": {
+      "label": "Recall Prompt Preamble",
+      "placeholder": "Instruction shown above recalled memories in injected context"
+    },
+    "debug": {
+      "label": "Debug"
     }
   }
 }

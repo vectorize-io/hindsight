@@ -594,7 +594,7 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id,
                 contents=contents,
                 operation_id=operation_id,
-                schema=context.tenant_id,
+                schema=_current_schema.get(),
             ),
         )
 

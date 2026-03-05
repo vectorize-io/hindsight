@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { stripMemoryTags, extractRecallQuery } from './index.js';
+import {
+  stripMemoryTags,
+  extractRecallQuery,
+  formatMemories,
+  prepareRetentionTranscript,
+  sliceLastTurnsByUserBoundary,
+  composeRecallQuery,
+  truncateRecallQuery,
+} from './index.js';
+import type { PluginConfig, MemoryResult } from './types.js';
 
 // ---------------------------------------------------------------------------
 // stripMemoryTags
@@ -82,6 +91,19 @@ describe('extractRecallQuery', () => {
     expect(result).toBe('What programming language do I prefer?');
   });
 
+  it('returns null when rawMessage is absent and prompt is bare metadata', () => {
+    const metadataPrompt = 'Conversation info (untrusted metadata):\n```json\n{"message_id": "abc123"}\n```';
+    expect(extractRecallQuery(undefined, metadataPrompt)).toBeNull();
+  });
+
+  it('falls back to prompt when rawMessage is metadata but prompt has real content', () => {
+    const result = extractRecallQuery(
+      'Conversation info (untrusted metadata):',
+      'System: You are c0der.\n\nhow many cats do i have?',
+    );
+    expect(result).toBe('how many cats do i have?');
+  });
+
   it('strips leading System: lines from prompt', () => {
     const prompt = 'System: You are an agent.\nSystem: Use tools wisely.\n\nWhat is my name?';
     const result = extractRecallQuery(undefined, prompt);
@@ -139,5 +161,267 @@ describe('extractRecallQuery', () => {
   it('trims whitespace from result', () => {
     const result = extractRecallQuery('   What is my job?   ', undefined);
     expect(result).toBe('What is my job?');
+  });
+
+  it('rejects OpenClaw untrusted metadata messages as rawMessage', () => {
+    const result = extractRecallQuery('Conversation info (untrusted metadata):', undefined);
+    expect(result).toBeNull();
+  });
+
+  it('rejects untrusted metadata even when prompt is also metadata', () => {
+    const result = extractRecallQuery(
+      'Conversation info (untrusted metadata):',
+      'Conversation info (untrusted metadata): some details',
+    );
+    expect(result).toBeNull();
+  });
+
+  it('falls back to prompt when rawMessage is metadata', () => {
+    const result = extractRecallQuery(
+      'Conversation info (untrusted metadata):',
+      'How many cats do I have?',
+    );
+    expect(result).toBe('How many cats do I have?');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// formatMemories
+// ---------------------------------------------------------------------------
+
+describe('formatMemories', () => {
+  const makeMemoryResult = (overrides: Partial<MemoryResult>): MemoryResult => ({
+    id: 'mem-1',
+    text: 'default text',
+    type: 'world',
+    entities: [],
+    context: '',
+    occurred_start: null,
+    occurred_end: null,
+    mentioned_at: null,
+    document_id: null,
+    metadata: null,
+    chunk_id: null,
+    tags: [],
+    ...overrides,
+  });
+
+  it('formats memories as a bulleted list', () => {
+    const memories: MemoryResult[] = [
+      makeMemoryResult({ id: '1', text: 'User prefers dark mode', type: 'world', mentioned_at: '2023-01-01T12:00:00Z' }),
+      makeMemoryResult({ id: '2', text: 'User is learning Rust', type: 'experience', mentioned_at: null }),
+    ];
+    const output = formatMemories(memories);
+    expect(output).toBe('- User prefers dark mode [world] (2023-01-01T12:00:00Z)\n\n- User is learning Rust [experience]');
+  });
+
+  it('returns empty string for empty memories', () => {
+    expect(formatMemories([])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareRetentionTranscript
+// ---------------------------------------------------------------------------
+
+describe('prepareRetentionTranscript', () => {
+  const baseConfig: PluginConfig = {
+    dynamicBankId: true,
+    retainRoles: ['user', 'assistant'],
+  };
+
+  it('returns null if no user message found (turn boundary)', () => {
+    const messages = [
+      { role: 'assistant', content: 'Hello' },
+      { role: 'system', content: 'Context' }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).toBeNull();
+  });
+
+  it('retains from last user message onwards', () => {
+    const messages = [
+      { role: 'user', content: 'Old user' },
+      { role: 'assistant', content: 'Old assistant' },
+      { role: 'user', content: 'New user' },
+      { role: 'assistant', content: 'New assistant' }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    expect(result?.transcript).toContain('New user');
+    expect(result?.transcript).toContain('New assistant');
+    expect(result?.transcript).not.toContain('Old user');
+  });
+
+  it('filters out excluded roles', () => {
+    const config: PluginConfig = { ...baseConfig, retainRoles: ['user'] };
+    const messages = [
+      { role: 'user', content: 'User msg' },
+      { role: 'assistant', content: 'Assistant msg' }
+    ];
+    const result = prepareRetentionTranscript(messages, config);
+    expect(result).not.toBeNull();
+    expect(result?.transcript).toContain('User msg');
+    expect(result?.transcript).not.toContain('Assistant msg');
+  });
+
+  it('handles array content', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'Hello array' }] }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result?.transcript).toContain('Hello array');
+  });
+
+  it('strips memory tags from retained content (feedback loop prevention)', () => {
+    const messages = [
+      { role: 'user', content: 'What is dark mode?' },
+      { role: 'assistant', content: '<hindsight_memories>\nUser prefers dark mode\n</hindsight_memories>\nHere is how to enable dark mode.' }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    expect(result?.transcript).not.toContain('<hindsight_memories>');
+    expect(result?.transcript).not.toContain('User prefers dark mode');
+    expect(result?.transcript).toContain('Here is how to enable dark mode.');
+  });
+
+  it('strips memory tags from user message when prependContext is prepended to it', () => {
+    // Simulates the host prepending prependContext to the user message content
+    const userContent = `<hindsight_memories>\nRelevant memories:\n- User prefers dark mode [world]\n\nUser message: What is dark mode?\n</hindsight_memories>\nWhat is dark mode?`;
+    const messages = [
+      { role: 'user', content: userContent },
+      { role: 'assistant', content: 'Dark mode is a display setting.' }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    expect(result?.transcript).not.toContain('<hindsight_memories>');
+    expect(result?.transcript).not.toContain('User prefers dark mode');
+    expect(result?.transcript).toContain('What is dark mode?');
+    expect(result?.transcript).toContain('Dark mode is a display setting.');
+  });
+
+  it('reports accurate messageCount excluding empty messages', () => {
+    const messages = [
+      { role: 'user', content: 'Real message' },
+      { role: 'assistant', content: '<hindsight_memories>\nonly tags\n</hindsight_memories>' },
+      { role: 'assistant', content: 'Actual response' }
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    // The middle message becomes empty after tag stripping, so messageCount should be 2
+    expect(result?.messageCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sliceLastTurnsByUserBoundary
+// ---------------------------------------------------------------------------
+
+describe('sliceLastTurnsByUserBoundary', () => {
+  it('returns the whole message list when requested turns exceed available user turns', () => {
+    const messages = [
+      { role: 'system', content: 'System preface' },
+      { role: 'user', content: 'Turn 1 user' },
+      { role: 'assistant', content: 'Turn 1 assistant' },
+      { role: 'user', content: 'Turn 2 user' },
+      { role: 'assistant', content: 'Turn 2 assistant' },
+    ];
+
+    const result = sliceLastTurnsByUserBoundary(messages, 3);
+    expect(result).toEqual(messages);
+  });
+
+  it('slices by real user-turn boundaries with system/tool messages present', () => {
+    const messages = [
+      { role: 'system', content: 'System preface' },
+      { role: 'user', content: 'Turn 1 user' },
+      { role: 'assistant', content: 'Turn 1 assistant' },
+      { role: 'tool', content: 'Tool output in turn 1' },
+      { role: 'user', content: 'Turn 2 user' },
+      { role: 'assistant', content: 'Turn 2 assistant' },
+      { role: 'system', content: 'System note in turn 2' },
+      { role: 'user', content: 'Turn 3 user' },
+      { role: 'assistant', content: 'Turn 3 assistant' },
+    ];
+
+    const result = sliceLastTurnsByUserBoundary(messages, 2);
+    expect(result).toEqual(messages.slice(4));
+  });
+
+  it('returns empty list for invalid turn counts', () => {
+    const messages = [{ role: 'user', content: 'Hello' }];
+    expect(sliceLastTurnsByUserBoundary(messages, 0)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeRecallQuery + truncateRecallQuery
+// ---------------------------------------------------------------------------
+
+describe('composeRecallQuery', () => {
+  it('returns latest query unchanged when recallContextTurns is 1', () => {
+    const query = composeRecallQuery('What is my preference?', [{ role: 'user', content: 'Old message' }], 1);
+    expect(query).toBe('What is my preference?');
+  });
+
+  it('includes prior user/assistant context when recallContextTurns > 1', () => {
+    const messages = [
+      { role: 'user', content: 'I like dark mode.' },
+      { role: 'assistant', content: 'Got it, dark mode noted.' },
+      { role: 'user', content: 'What theme do I prefer?' },
+    ];
+
+    const query = composeRecallQuery('What theme do I prefer?', messages, 2);
+    expect(query).toContain('What theme do I prefer?');
+    expect(query).toContain('user: I like dark mode.');
+    expect(query).toContain('assistant: Got it, dark mode noted.');
+    // latest message should appear after prior context
+    expect(query.indexOf('Prior context:')).toBeLessThan(query.indexOf('What theme do I prefer?'));
+  });
+
+  it('respects recallRoles when building prior context', () => {
+    const messages = [
+      { role: 'system', content: 'System context' },
+      { role: 'assistant', content: 'Assistant context' },
+      { role: 'user', content: 'What theme do I prefer?' },
+    ];
+
+    const query = composeRecallQuery('What theme do I prefer?', messages, 2, ['user']);
+    expect(query).toBe('What theme do I prefer?');
+  });
+
+  it('falls back to latest query when context has no usable text', () => {
+    const messages = [{ role: 'tool', content: 'binary blob' }];
+    const query = composeRecallQuery('Summarize my preference', messages, 3);
+    expect(query).toBe('Summarize my preference');
+  });
+});
+
+describe('truncateRecallQuery', () => {
+  it('keeps query unchanged when under max', () => {
+    const query = 'short query';
+    expect(truncateRecallQuery(query, query, 100)).toBe(query);
+  });
+
+  it('falls back to latest query when non-context query is over max', () => {
+    const latest = 'What foods do I like?';
+    const long = `${latest} ${'x'.repeat(300)}`;
+    expect(truncateRecallQuery(long, latest, 20)).toBe(latest.slice(0, 20));
+  });
+
+  it('trims prior context first and preserves latest section', () => {
+    const latest = 'What foods do I like?';
+    const composed = [
+      'Prior context:',
+      'user: I like sushi.',
+      'assistant: You like sushi and ramen.',
+      'user: Also pizza.',
+      latest,
+    ].join('\n\n');
+
+    const truncated = truncateRecallQuery(composed, latest, 180);
+    expect(truncated).toContain(latest);
+    expect(truncated.length).toBeLessThanOrEqual(180);
   });
 });

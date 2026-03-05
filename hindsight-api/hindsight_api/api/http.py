@@ -72,7 +72,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.db_utils import acquire_with_retry
-from hindsight_api.engine.memory_engine import Budget, _get_tiktoken_encoding, fq_table
+from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.reflect.observations import Observation
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
 from hindsight_api.engine.search.tags import TagsMatch
@@ -4280,7 +4280,7 @@ def _register_routes(app: FastAPI):
                             bank_id=bank_id,
                             contents=contents,
                             operation_id=None,
-                            schema=request_context.tenant_id,
+                            schema=_current_schema.get(),
                         ),
                     )
 
