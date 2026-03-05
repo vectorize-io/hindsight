@@ -146,7 +146,7 @@
         "type": "integer",
         "description": "Maximum tokens for recall response. Controls how much memory context is injected per turn.",
         "minimum": 1,
-        "default": 2048
+        "default": 1024
       },
       "recallTypes": {
         "type": "array",
@@ -283,7 +283,7 @@
     },
     "recallMaxTokens": {
       "label": "Recall Max Tokens",
-      "placeholder": "2048 (default)"
+      "placeholder": "1024 (default)"
     },
     "recallTypes": {
       "label": "Recall Types",

@@ -55,7 +55,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `retainEveryNTurns` | `1` | Retain every Nth turn. `1` = every turn (default). Values > 1 enable chunked retention with a sliding window. |
 | `retainOverlapTurns` | `0` | Extra prior turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns`. Only applies when `retainEveryNTurns > 1`. |
 | `recallBudget` | `"mid"` | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies. |
-| `recallMaxTokens` | `2048` | Max tokens for recall response. Controls how much memory context is injected per turn. |
+| `recallMaxTokens` | `1024` | Max tokens for recall response. Controls how much memory context is injected per turn. |
 | `recallTypes` | `["world", "experience"]` | Memory types to recall. Options: `world`, `experience`, `observation`. Excludes verbose `observation` entries by default. |
 | `recallRoles` | `["user", "assistant"]` | Roles included when building prior context for recall query composition. Options: `user`, `assistant`, `system`, `tool`. |
 | `recallTopK` | — | Max number of memories to inject per turn. Applied after API response as a hard cap. |

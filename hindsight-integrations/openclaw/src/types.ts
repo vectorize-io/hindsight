@@ -57,7 +57,7 @@ export interface PluginConfig {
   autoRetain?: boolean; // Default: true
   retainRoles?: Array<'user' | 'assistant' | 'system' | 'tool'>; // Roles to include in retained transcript. Default: ['user', 'assistant']
   recallBudget?: 'low' | 'mid' | 'high'; // Recall effort. Default: 'mid'
-  recallMaxTokens?: number; // Max tokens for recall response. Default: 2048
+  recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
   recallTypes?: Array<'world' | 'experience' | 'observation'>; // Memory types to recall. Default: ['world', 'experience']
   recallRoles?: Array<'user' | 'assistant' | 'system' | 'tool'>; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.

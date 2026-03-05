@@ -99,7 +99,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `autoRetain` - Auto-retain conversations after each turn (default: `true`)
 - `retainRoles` - Which message roles to retain (default: `["user", "assistant"]`). Options: `user`, `assistant`, `system`, `tool`
 - `recallBudget` - Recall effort: `"low"`, `"mid"`, or `"high"` (default: `"mid"`). Higher budgets use more retrieval strategies for better results.
-- `recallMaxTokens` - Max tokens for recall response (default: `2048`). Controls how much memory context is injected per turn.
+- `recallMaxTokens` - Max tokens for recall response (default: `1024`). Controls how much memory context is injected per turn.
 
 ### Memory Isolation
 
