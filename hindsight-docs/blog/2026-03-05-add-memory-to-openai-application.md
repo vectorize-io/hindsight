@@ -174,7 +174,7 @@ hindsight = Hindsight(base_url="http://localhost:8888")
 hindsight.create_bank(
     bank_id="chatbot",
     name="Chatbot Memory",
-    mission="Remember user preferences and important facts.",
+    reflect_mission="Remember user preferences and important facts.",
 )
 ```
 
@@ -267,7 +267,7 @@ hindsight = Hindsight(base_url="http://localhost:8888")
 hindsight.create_bank(
     bank_id="chatbot",
     name="Chatbot Memory",
-    mission="Remember user preferences and key facts.",
+    reflect_mission="Remember user preferences and key facts.",
 )
 
 SYSTEM_PROMPT = "You are a helpful assistant with long-term memory."
