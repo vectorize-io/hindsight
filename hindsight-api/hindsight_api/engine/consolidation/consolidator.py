@@ -9,6 +9,10 @@ Observations are stored in memory_units with fact_type='observation' and include
 - proof_count: Number of supporting memories
 - source_memory_ids: Array of memory UUIDs that contribute to this observation
 - history: JSONB tracking changes over time
+
+NOTE: Observations are distinct from mental models (pinned reflections).
+- Observations: auto-generated bottom-up by this engine from raw facts (memory_units table, fact_type='observation')
+- Mental models: user-defined queries stored in the mental_models table, refreshed on demand via reflect
 """
 
 import json

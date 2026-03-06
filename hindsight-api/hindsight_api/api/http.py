@@ -71,9 +71,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 
 from hindsight_api.config import get_config
-from hindsight_api.engine.db_utils import acquire_with_retry
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding, fq_table
-from hindsight_api.engine.reflect.observations import Observation
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
 from hindsight_api.engine.search.tags import TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
@@ -759,13 +757,6 @@ class ReflectResponse(BaseModel):
     )
 
 
-class BanksResponse(BaseModel):
-    """Response model for banks list endpoint."""
-
-    model_config = ConfigDict(json_schema_extra={"example": {"banks": ["user123", "bank_alice", "bank_bob"]}})
-
-    banks: list[str]
-
 
 class DispositionTraits(BaseModel):
     """Disposition traits that influence how memories are formed and interpreted."""
@@ -1303,15 +1294,6 @@ class BankStatsResponse(BaseModel):
 
 
 # Mental Model models
-
-
-class ObservationEvidenceResponse(BaseModel):
-    """A single piece of evidence supporting an observation."""
-
-    memory_id: str = Field(description="ID of the memory unit this evidence comes from")
-    quote: str = Field(description="Exact quote from the memory supporting the observation")
-    relevance: str = Field(description="Brief explanation of how this quote supports the observation")
-    timestamp: str = Field(description="When the source memory was created (ISO format)")
 
 
 # =========================================================================
