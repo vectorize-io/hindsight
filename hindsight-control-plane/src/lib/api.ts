@@ -340,19 +340,14 @@ export class ControlPlaneClient {
    * Update tags on a document and its associated memory units
    */
   async updateDocumentTags(documentId: string, bankId: string, tags: string[]) {
-    return this.fetchApi<{
-      id: string;
-      bank_id: string;
-      content_hash: string | null;
-      created_at: string | null;
-      updated_at: string | null;
-      memory_unit_count: number;
-      tags: string[];
-    }>(`/api/documents/${encodeURIComponent(documentId)}?bank_id=${bankId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags }),
-    });
+    return this.fetchApi<{ success: boolean }>(
+      `/api/documents/${encodeURIComponent(documentId)}?bank_id=${bankId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      }
+    );
   }
 
   /**

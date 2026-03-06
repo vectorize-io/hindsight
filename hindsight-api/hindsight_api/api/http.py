@@ -1215,13 +1215,7 @@ class UpdateDocumentTagsRequest(BaseModel):
 class UpdateDocumentTagsResponse(BaseModel):
     """Response model for update document tags endpoint."""
 
-    id: str
-    bank_id: str
-    content_hash: str | None
-    created_at: str | None
-    updated_at: str | None
-    memory_unit_count: int
-    tags: list[str] = FieldWithDefault(list, description="Updated tags")
+    success: bool = True
 
 
 class DeleteDocumentResponse(BaseModel):
@@ -3318,9 +3312,9 @@ def _register_routes(app: FastAPI):
                 tags=body.tags,
                 request_context=request_context,
             )
-            if result is None:
+            if not result:
                 raise HTTPException(status_code=404, detail="Document not found")
-            return UpdateDocumentTagsResponse(**result)
+            return UpdateDocumentTagsResponse(success=True)
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

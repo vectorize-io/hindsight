@@ -7533,70 +7533,13 @@
       },
       "UpdateDocumentTagsResponse": {
         "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "bank_id": {
-            "type": "string",
-            "title": "Bank Id"
-          },
-          "content_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content Hash"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          },
-          "memory_unit_count": {
-            "type": "integer",
-            "title": "Memory Unit Count"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags",
-            "description": "Updated tags",
-            "default": []
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "bank_id",
-          "content_hash",
-          "created_at",
-          "updated_at",
-          "memory_unit_count"
-        ],
         "title": "UpdateDocumentTagsResponse",
         "description": "Response model for update document tags endpoint."
       },

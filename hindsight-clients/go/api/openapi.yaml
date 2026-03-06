@@ -4816,47 +4816,12 @@ components:
     UpdateDocumentTagsResponse:
       description: Response model for update document tags endpoint.
       example:
-        updated_at: updated_at
-        bank_id: bank_id
-        created_at: created_at
-        id: id
-        content_hash: content_hash
-        memory_unit_count: 0
-        tags:
-        - tags
-        - tags
+        success: true
       properties:
-        id:
-          title: Id
-          type: string
-        bank_id:
-          title: Bank Id
-          type: string
-        content_hash:
-          nullable: true
-          type: string
-        created_at:
-          nullable: true
-          type: string
-        updated_at:
-          nullable: true
-          type: string
-        memory_unit_count:
-          title: Memory Unit Count
-          type: integer
-        tags:
-          default: []
-          description: Updated tags
-          items:
-            type: string
-          type: array
-      required:
-      - bank_id
-      - content_hash
-      - created_at
-      - id
-      - memory_unit_count
-      - updated_at
+        success:
+          default: true
+          title: Success
+          type: boolean
       title: UpdateDocumentTagsResponse
     UpdateMentalModelRequest:
       description: Request model for updating a mental model.

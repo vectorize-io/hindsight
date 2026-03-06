@@ -511,9 +511,7 @@ class TestUpdateDocumentTagsObservationCleanup:
             doc_id, bank_id, tags=["new-tag"], request_context=request_context
         )
 
-        assert result is not None
-        assert result["id"] == doc_id
-        assert result["tags"] == ["new-tag"]
+        assert result is True
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -521,7 +519,7 @@ class TestUpdateDocumentTagsObservationCleanup:
     async def test_update_tags_returns_none_for_missing_document(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """update_document_tags returns None when document does not exist."""
+        """update_document_tags returns False when document does not exist."""
         bank_id = f"test-tag-update-missing-{uuid.uuid4().hex[:8]}"
         await _ensure_bank(memory, bank_id, request_context)
 
@@ -529,7 +527,7 @@ class TestUpdateDocumentTagsObservationCleanup:
             "nonexistent-doc", bank_id, tags=["tag"], request_context=request_context
         )
 
-        assert result is None
+        assert result is False
 
         await memory.delete_bank(bank_id, request_context=request_context)
 

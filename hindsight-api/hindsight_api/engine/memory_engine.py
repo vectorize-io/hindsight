@@ -3447,7 +3447,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         tags: list[str],
         request_context: "RequestContext",
-    ) -> dict[str, Any] | None:
+    ) -> bool:
         """
         Update tags on a document and all its associated memory units.
 
@@ -3461,7 +3461,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context: Request context for authentication.
 
         Returns:
-            Updated document dict, or None if not found
+            True if the document was found and updated, False if not found
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -3480,20 +3480,20 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 unit_ids = [str(row["id"]) for row in unit_rows]
 
-                # Update document tags
-                doc = await conn.fetchrow(
+                # Update document tags (fetchval returns the id if found, else None)
+                doc_id_found = await conn.fetchval(
                     f"""
                     UPDATE {fq_table("documents")}
                     SET tags = $1, updated_at = now()
                     WHERE id = $2 AND bank_id = $3
-                    RETURNING id, bank_id, content_hash, created_at, updated_at, tags
+                    RETURNING id
                     """,
                     tags,
                     document_id,
                     bank_id,
                 )
-                if not doc:
-                    return None
+                if not doc_id_found:
+                    return False
 
                 # Update memory_units tags for all units belonging to this document
                 memory_units_updated = await conn.fetchval(
@@ -3570,23 +3570,10 @@ class MemoryEngine(MemoryEngineInterface):
                             f"after tag update on document '{document_id}' in bank {bank_id}"
                         )
 
-                unit_count = await conn.fetchval(
-                    f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1",
-                    document_id,
-                )
-
         if invalidated_obs > 0:
             await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
 
-        return {
-            "id": doc["id"],
-            "bank_id": doc["bank_id"],
-            "content_hash": doc["content_hash"],
-            "memory_unit_count": unit_count or 0,
-            "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
-            "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
-            "tags": list(doc["tags"]) if doc["tags"] else [],
-        }
+        return True
 
     async def delete_memory_unit(
         self,

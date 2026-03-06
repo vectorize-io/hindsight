@@ -136,10 +136,7 @@ async def update_document_tags_example():
         document_id="meeting-2024-03-15",
         update_document_tags_request=UpdateDocumentTagsRequest(tags=["team-a", "team-b"]),
     )
-
-    print(f"Document: {result.id}")
-    print(f"New tags: {result.tags}")
-    print(f"Memory units updated: {result.memory_unit_count}")
+    print(f"Updated: {result.success}")
 
     # Remove all tags (make document visible everywhere)
     await api.update_document_tags(

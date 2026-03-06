@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictBool
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -26,14 +26,8 @@ class UpdateDocumentTagsResponse(BaseModel):
     """
     Response model for update document tags endpoint.
     """ # noqa: E501
-    id: StrictStr
-    bank_id: StrictStr
-    content_hash: Optional[StrictStr]
-    created_at: Optional[StrictStr]
-    updated_at: Optional[StrictStr]
-    memory_unit_count: StrictInt
-    tags: Optional[List[StrictStr]] = Field(default=None, description="Updated tags")
-    __properties: ClassVar[List[str]] = ["id", "bank_id", "content_hash", "created_at", "updated_at", "memory_unit_count", "tags"]
+    success: Optional[StrictBool] = True
+    __properties: ClassVar[List[str]] = ["success"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -74,21 +68,6 @@ class UpdateDocumentTagsResponse(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # set to None if content_hash (nullable) is None
-        # and model_fields_set contains the field
-        if self.content_hash is None and "content_hash" in self.model_fields_set:
-            _dict['content_hash'] = None
-
-        # set to None if created_at (nullable) is None
-        # and model_fields_set contains the field
-        if self.created_at is None and "created_at" in self.model_fields_set:
-            _dict['created_at'] = None
-
-        # set to None if updated_at (nullable) is None
-        # and model_fields_set contains the field
-        if self.updated_at is None and "updated_at" in self.model_fields_set:
-            _dict['updated_at'] = None
-
         return _dict
 
     @classmethod
@@ -101,13 +80,7 @@ class UpdateDocumentTagsResponse(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "id": obj.get("id"),
-            "bank_id": obj.get("bank_id"),
-            "content_hash": obj.get("content_hash"),
-            "created_at": obj.get("created_at"),
-            "updated_at": obj.get("updated_at"),
-            "memory_unit_count": obj.get("memory_unit_count"),
-            "tags": obj.get("tags")
+            "success": obj.get("success") if obj.get("success") is not None else True
         })
         return _obj
 

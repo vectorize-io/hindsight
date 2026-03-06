@@ -12,8 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"bytes"
-	"fmt"
 )
 
 // checks if the UpdateDocumentTagsResponse type satisfies the MappedNullable interface at compile time
@@ -21,30 +19,17 @@ var _ MappedNullable = &UpdateDocumentTagsResponse{}
 
 // UpdateDocumentTagsResponse Response model for update document tags endpoint.
 type UpdateDocumentTagsResponse struct {
-	Id string `json:"id"`
-	BankId string `json:"bank_id"`
-	ContentHash NullableString `json:"content_hash"`
-	CreatedAt NullableString `json:"created_at"`
-	UpdatedAt NullableString `json:"updated_at"`
-	MemoryUnitCount int32 `json:"memory_unit_count"`
-	// Updated tags
-	Tags []string `json:"tags,omitempty"`
+	Success *bool `json:"success,omitempty"`
 }
-
-type _UpdateDocumentTagsResponse UpdateDocumentTagsResponse
 
 // NewUpdateDocumentTagsResponse instantiates a new UpdateDocumentTagsResponse object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewUpdateDocumentTagsResponse(id string, bankId string, contentHash NullableString, createdAt NullableString, updatedAt NullableString, memoryUnitCount int32) *UpdateDocumentTagsResponse {
+func NewUpdateDocumentTagsResponse() *UpdateDocumentTagsResponse {
 	this := UpdateDocumentTagsResponse{}
-	this.Id = id
-	this.BankId = bankId
-	this.ContentHash = contentHash
-	this.CreatedAt = createdAt
-	this.UpdatedAt = updatedAt
-	this.MemoryUnitCount = memoryUnitCount
+	var success bool = true
+	this.Success = &success
 	return &this
 }
 
@@ -53,189 +38,41 @@ func NewUpdateDocumentTagsResponse(id string, bankId string, contentHash Nullabl
 // but it doesn't guarantee that properties required by API are set
 func NewUpdateDocumentTagsResponseWithDefaults() *UpdateDocumentTagsResponse {
 	this := UpdateDocumentTagsResponse{}
+	var success bool = true
+	this.Success = &success
 	return &this
 }
 
-// GetId returns the Id field value
-func (o *UpdateDocumentTagsResponse) GetId() string {
-	if o == nil {
-		var ret string
+// GetSuccess returns the Success field value if set, zero value otherwise.
+func (o *UpdateDocumentTagsResponse) GetSuccess() bool {
+	if o == nil || IsNil(o.Success) {
+		var ret bool
 		return ret
 	}
-
-	return o.Id
+	return *o.Success
 }
 
-// GetIdOk returns a tuple with the Id field value
+// GetSuccessOk returns a tuple with the Success field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *UpdateDocumentTagsResponse) GetIdOk() (*string, bool) {
-	if o == nil {
+func (o *UpdateDocumentTagsResponse) GetSuccessOk() (*bool, bool) {
+	if o == nil || IsNil(o.Success) {
 		return nil, false
 	}
-	return &o.Id, true
+	return o.Success, true
 }
 
-// SetId sets field value
-func (o *UpdateDocumentTagsResponse) SetId(v string) {
-	o.Id = v
-}
-
-// GetBankId returns the BankId field value
-func (o *UpdateDocumentTagsResponse) GetBankId() string {
-	if o == nil {
-		var ret string
-		return ret
-	}
-
-	return o.BankId
-}
-
-// GetBankIdOk returns a tuple with the BankId field value
-// and a boolean to check if the value has been set.
-func (o *UpdateDocumentTagsResponse) GetBankIdOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return &o.BankId, true
-}
-
-// SetBankId sets field value
-func (o *UpdateDocumentTagsResponse) SetBankId(v string) {
-	o.BankId = v
-}
-
-// GetContentHash returns the ContentHash field value
-// If the value is explicit nil, the zero value for string will be returned
-func (o *UpdateDocumentTagsResponse) GetContentHash() string {
-	if o == nil || o.ContentHash.Get() == nil {
-		var ret string
-		return ret
-	}
-
-	return *o.ContentHash.Get()
-}
-
-// GetContentHashOk returns a tuple with the ContentHash field value
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *UpdateDocumentTagsResponse) GetContentHashOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.ContentHash.Get(), o.ContentHash.IsSet()
-}
-
-// SetContentHash sets field value
-func (o *UpdateDocumentTagsResponse) SetContentHash(v string) {
-	o.ContentHash.Set(&v)
-}
-
-// GetCreatedAt returns the CreatedAt field value
-// If the value is explicit nil, the zero value for string will be returned
-func (o *UpdateDocumentTagsResponse) GetCreatedAt() string {
-	if o == nil || o.CreatedAt.Get() == nil {
-		var ret string
-		return ret
-	}
-
-	return *o.CreatedAt.Get()
-}
-
-// GetCreatedAtOk returns a tuple with the CreatedAt field value
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *UpdateDocumentTagsResponse) GetCreatedAtOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.CreatedAt.Get(), o.CreatedAt.IsSet()
-}
-
-// SetCreatedAt sets field value
-func (o *UpdateDocumentTagsResponse) SetCreatedAt(v string) {
-	o.CreatedAt.Set(&v)
-}
-
-// GetUpdatedAt returns the UpdatedAt field value
-// If the value is explicit nil, the zero value for string will be returned
-func (o *UpdateDocumentTagsResponse) GetUpdatedAt() string {
-	if o == nil || o.UpdatedAt.Get() == nil {
-		var ret string
-		return ret
-	}
-
-	return *o.UpdatedAt.Get()
-}
-
-// GetUpdatedAtOk returns a tuple with the UpdatedAt field value
-// and a boolean to check if the value has been set.
-// NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *UpdateDocumentTagsResponse) GetUpdatedAtOk() (*string, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return o.UpdatedAt.Get(), o.UpdatedAt.IsSet()
-}
-
-// SetUpdatedAt sets field value
-func (o *UpdateDocumentTagsResponse) SetUpdatedAt(v string) {
-	o.UpdatedAt.Set(&v)
-}
-
-// GetMemoryUnitCount returns the MemoryUnitCount field value
-func (o *UpdateDocumentTagsResponse) GetMemoryUnitCount() int32 {
-	if o == nil {
-		var ret int32
-		return ret
-	}
-
-	return o.MemoryUnitCount
-}
-
-// GetMemoryUnitCountOk returns a tuple with the MemoryUnitCount field value
-// and a boolean to check if the value has been set.
-func (o *UpdateDocumentTagsResponse) GetMemoryUnitCountOk() (*int32, bool) {
-	if o == nil {
-		return nil, false
-	}
-	return &o.MemoryUnitCount, true
-}
-
-// SetMemoryUnitCount sets field value
-func (o *UpdateDocumentTagsResponse) SetMemoryUnitCount(v int32) {
-	o.MemoryUnitCount = v
-}
-
-// GetTags returns the Tags field value if set, zero value otherwise.
-func (o *UpdateDocumentTagsResponse) GetTags() []string {
-	if o == nil || IsNil(o.Tags) {
-		var ret []string
-		return ret
-	}
-	return o.Tags
-}
-
-// GetTagsOk returns a tuple with the Tags field value if set, nil otherwise
-// and a boolean to check if the value has been set.
-func (o *UpdateDocumentTagsResponse) GetTagsOk() ([]string, bool) {
-	if o == nil || IsNil(o.Tags) {
-		return nil, false
-	}
-	return o.Tags, true
-}
-
-// HasTags returns a boolean if a field has been set.
-func (o *UpdateDocumentTagsResponse) HasTags() bool {
-	if o != nil && !IsNil(o.Tags) {
+// HasSuccess returns a boolean if a field has been set.
+func (o *UpdateDocumentTagsResponse) HasSuccess() bool {
+	if o != nil && !IsNil(o.Success) {
 		return true
 	}
 
 	return false
 }
 
-// SetTags gets a reference to the given []string and assigns it to the Tags field.
-func (o *UpdateDocumentTagsResponse) SetTags(v []string) {
-	o.Tags = v
+// SetSuccess gets a reference to the given bool and assigns it to the Success field.
+func (o *UpdateDocumentTagsResponse) SetSuccess(v bool) {
+	o.Success = &v
 }
 
 func (o UpdateDocumentTagsResponse) MarshalJSON() ([]byte, error) {
@@ -248,58 +85,10 @@ func (o UpdateDocumentTagsResponse) MarshalJSON() ([]byte, error) {
 
 func (o UpdateDocumentTagsResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
-	toSerialize["id"] = o.Id
-	toSerialize["bank_id"] = o.BankId
-	toSerialize["content_hash"] = o.ContentHash.Get()
-	toSerialize["created_at"] = o.CreatedAt.Get()
-	toSerialize["updated_at"] = o.UpdatedAt.Get()
-	toSerialize["memory_unit_count"] = o.MemoryUnitCount
-	if !IsNil(o.Tags) {
-		toSerialize["tags"] = o.Tags
+	if !IsNil(o.Success) {
+		toSerialize["success"] = o.Success
 	}
 	return toSerialize, nil
-}
-
-func (o *UpdateDocumentTagsResponse) UnmarshalJSON(data []byte) (err error) {
-	// This validates that all required properties are included in the JSON object
-	// by unmarshalling the object into a generic map with string keys and checking
-	// that every required field exists as a key in the generic map.
-	requiredProperties := []string{
-		"id",
-		"bank_id",
-		"content_hash",
-		"created_at",
-		"updated_at",
-		"memory_unit_count",
-	}
-
-	allProperties := make(map[string]interface{})
-
-	err = json.Unmarshal(data, &allProperties)
-
-	if err != nil {
-		return err;
-	}
-
-	for _, requiredProperty := range(requiredProperties) {
-		if _, exists := allProperties[requiredProperty]; !exists {
-			return fmt.Errorf("no value given for required property %v", requiredProperty)
-		}
-	}
-
-	varUpdateDocumentTagsResponse := _UpdateDocumentTagsResponse{}
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&varUpdateDocumentTagsResponse)
-
-	if err != nil {
-		return err
-	}
-
-	*o = UpdateDocumentTagsResponse(varUpdateDocumentTagsResponse)
-
-	return err
 }
 
 type NullableUpdateDocumentTagsResponse struct {

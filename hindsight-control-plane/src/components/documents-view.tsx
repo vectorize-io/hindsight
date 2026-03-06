@@ -169,11 +169,11 @@ export function DocumentsView() {
 
     setSavingTags(true);
     try {
-      const result = await client.updateDocumentTags(selectedDocument.id, currentBank, newTags);
-      setSelectedDocument({ ...selectedDocument, tags: result.tags });
+      await client.updateDocumentTags(selectedDocument.id, currentBank, newTags);
+      setSelectedDocument({ ...selectedDocument, tags: newTags });
       // Update tags in the documents list too
       setDocuments((prev) =>
-        prev.map((d) => (d.id === selectedDocument.id ? { ...d, tags: result.tags } : d))
+        prev.map((d) => (d.id === selectedDocument.id ? { ...d, tags: newTags } : d))
       );
       setEditingTags(false);
       setTagInput("");

@@ -2102,35 +2102,9 @@ export type UpdateDocumentTagsRequest = {
  */
 export type UpdateDocumentTagsResponse = {
   /**
-   * Id
+   * Success
    */
-  id: string;
-  /**
-   * Bank Id
-   */
-  bank_id: string;
-  /**
-   * Content Hash
-   */
-  content_hash: string | null;
-  /**
-   * Created At
-   */
-  created_at: string | null;
-  /**
-   * Updated At
-   */
-  updated_at: string | null;
-  /**
-   * Memory Unit Count
-   */
-  memory_unit_count: number;
-  /**
-   * Tags
-   *
-   * Updated tags
-   */
-  tags?: Array<string>;
+  success?: boolean;
 };
 
 /**
