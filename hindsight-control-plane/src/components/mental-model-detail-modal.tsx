@@ -104,65 +104,114 @@ export function MentalModelDetailContent({ mentalModel }: MentalModelDetailConte
 
 type HistoryEntry = { previous_content: string | null; changed_at: string };
 
-function diffWords(a: string, b: string): { type: "same" | "removed" | "added"; text: string }[] {
-  const aWords = a.split(/(\s+)/);
-  const bWords = b.split(/(\s+)/);
-  const m = aWords.length;
-  const n = bWords.length;
+type LineDiff = { type: "same" | "removed" | "added"; text: string };
+
+function diffLines(a: string, b: string): { left: LineDiff[]; right: LineDiff[] } {
+  const aLines = a.split("\n");
+  const bLines = b.split("\n");
+  const m = aLines.length;
+  const n = bLines.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
       dp[i][j] =
-        aWords[i - 1] === bWords[j - 1]
+        aLines[i - 1] === bLines[j - 1]
           ? dp[i - 1][j - 1] + 1
           : Math.max(dp[i - 1][j], dp[i][j - 1]);
-    }
-  }
+
+  const ops: LineDiff[] = [];
   let i = m,
     j = n;
-  const ops: { type: "same" | "removed" | "added"; text: string }[] = [];
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && aWords[i - 1] === bWords[j - 1]) {
-      ops.push({ type: "same", text: aWords[i - 1] });
+    if (i > 0 && j > 0 && aLines[i - 1] === bLines[j - 1]) {
+      ops.push({ type: "same", text: aLines[i - 1] });
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      ops.push({ type: "added", text: bWords[j - 1] });
+      ops.push({ type: "added", text: bLines[j - 1] });
       j--;
     } else {
-      ops.push({ type: "removed", text: aWords[i - 1] });
+      ops.push({ type: "removed", text: aLines[i - 1] });
       i--;
     }
   }
-  return ops.reverse();
+  ops.reverse();
+
+  // Pair removed/added lines side-by-side; same lines appear on both sides
+  const left: LineDiff[] = [];
+  const right: LineDiff[] = [];
+  let k = 0;
+  while (k < ops.length) {
+    const op = ops[k];
+    if (op.type === "same") {
+      left.push(op);
+      right.push(op);
+      k++;
+    } else {
+      // collect a block of removed/added and align them
+      const removed: string[] = [];
+      const added: string[] = [];
+      while (k < ops.length && ops[k].type !== "same") {
+        if (ops[k].type === "removed") removed.push(ops[k].text);
+        else added.push(ops[k].text);
+        k++;
+      }
+      const maxLen = Math.max(removed.length, added.length);
+      for (let r = 0; r < maxLen; r++) {
+        left.push(
+          r < removed.length ? { type: "removed", text: removed[r] } : { type: "same", text: "" }
+        );
+        right.push(
+          r < added.length ? { type: "added", text: added[r] } : { type: "same", text: "" }
+        );
+      }
+    }
+  }
+  return { left, right };
 }
 
-function ContentDiff({ before, after }: { before: string; after: string }) {
-  const parts = diffWords(before, after);
-  const hasChanges = parts.some((p) => p.type !== "same");
+function SideBySideDiff({ before, after }: { before: string; after: string }) {
+  const { left, right } = diffLines(before, after);
+  const hasChanges = left.some((l) => l.type !== "same") || right.some((r) => r.type !== "same");
   if (!hasChanges) return <span className="text-sm text-muted-foreground italic">unchanged</span>;
+
   return (
-    <span className="text-sm leading-relaxed whitespace-pre-wrap">
-      {parts.map((part, idx) =>
-        part.type === "same" ? (
-          <span key={idx}>{part.text}</span>
-        ) : part.type === "removed" ? (
-          <span
+    <div className="grid grid-cols-2 divide-x divide-border border border-border rounded-md overflow-hidden text-xs font-mono">
+      <div>
+        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          Before
+        </div>
+        {left.map((line, idx) => (
+          <div
             key={idx}
-            className="bg-red-500/15 text-red-700 dark:text-red-400 line-through rounded-sm px-0.5"
+            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
+              line.type === "removed"
+                ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                : "text-foreground"
+            }`}
           >
-            {part.text}
-          </span>
-        ) : (
-          <span
+            {line.text}
+          </div>
+        ))}
+      </div>
+      <div>
+        <div className="px-3 py-1.5 bg-muted text-muted-foreground font-sans font-semibold text-xs uppercase tracking-wide border-b border-border">
+          After
+        </div>
+        {right.map((line, idx) => (
+          <div
             key={idx}
-            className="bg-green-500/15 text-green-700 dark:text-green-400 rounded-sm px-0.5"
+            className={`px-3 py-0.5 whitespace-pre-wrap leading-5 min-h-[1.25rem] ${
+              line.type === "added"
+                ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                : "text-foreground"
+            }`}
           >
-            {part.text}
-          </span>
-        )
-      )}
-    </span>
+            {line.text}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -208,16 +257,15 @@ function MentalModelHistoryView({
       </div>
 
       {/* Change card */}
-      <div className="border border-border rounded-lg p-3">
-        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Content</div>
-        {entry.previous_content !== null ? (
-          <ContentDiff before={entry.previous_content} after={afterContent} />
-        ) : (
+      {entry.previous_content !== null ? (
+        <SideBySideDiff before={entry.previous_content} after={afterContent} />
+      ) : (
+        <div className="border border-border rounded-lg p-3">
           <span className="text-sm text-muted-foreground italic">
             Previous content not available
           </span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

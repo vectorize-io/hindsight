@@ -656,6 +656,113 @@ class TestDirectivesPromptInjection:
         assert directives_pos < critical_rules_pos
 
 
+class TestMentalModelHistory:
+    """Test mental model history persistence."""
+
+    async def test_history_recorded_on_content_update(self, memory: MemoryEngine, request_context):
+        """Test that updating content records a history entry."""
+        bank_id = f"test-mm-history-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="Original content",
+            request_context=request_context,
+        )
+
+        # No history yet
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert history == []
+
+        # Update content
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="Updated content",
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert len(history) == 1
+        assert history[0]["previous_content"] == "Original content"
+        assert "changed_at" in history[0]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_ordered_most_recent_first(self, memory: MemoryEngine, request_context):
+        """Test that history is returned most recent first."""
+        bank_id = f"test-mm-history-order-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v2",
+            request_context=request_context,
+        )
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            content="v3",
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert len(history) == 2
+        # Most recent first: second update recorded "v2" as previous, first recorded "v1"
+        assert history[0]["previous_content"] == "v2"
+        assert history[1]["previous_content"] == "v1"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_not_recorded_on_name_only_update(self, memory: MemoryEngine, request_context):
+        """Test that updating only name does not record history."""
+        bank_id = f"test-mm-history-name-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Original Name",
+            source_query="What is the test?",
+            content="Content",
+            request_context=request_context,
+        )
+
+        await memory.update_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            name="Updated Name",
+            request_context=request_context,
+        )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        assert history == []
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_history_returns_none_for_missing_model(self, memory: MemoryEngine, request_context):
+        """Test that history returns None when mental model doesn't exist."""
+        bank_id = f"test-mm-history-missing-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        result = await memory.get_mental_model_history(
+            bank_id, "nonexistent-id", request_context=request_context
+        )
+        assert result is None
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
 class TestMentalModelRefreshTagSecurity:
     """Test that mental model refresh respects tag-based security boundaries."""
 

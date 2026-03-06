@@ -16,7 +16,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import asyncpg
@@ -6279,12 +6279,13 @@ class MemoryEngine(MemoryEngineInterface):
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
                 # Record history entry with the previous content
-                history_entry = json.dumps(
-                    [{"previous_content": previous_content, "changed_at": datetime.now(timezone.utc).isoformat()}]
-                )
-                updates.append(f"history = COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb")
-                params.append(history_entry)
-                param_idx += 1
+                if get_config().enable_mental_model_history:
+                    history_entry = json.dumps(
+                        [{"previous_content": previous_content, "changed_at": datetime.now(timezone.utc).isoformat()}]
+                    )
+                    updates.append(f"history = COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb")
+                    params.append(history_entry)
+                    param_idx += 1
                 # Also update embedding (convert to string for asyncpg vector type)
                 embedding_text = f"{name or ''} {content}"
                 embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [embedding_text])

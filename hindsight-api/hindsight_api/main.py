@@ -277,6 +277,7 @@ def main():
             file_delete_after_retain=config.file_delete_after_retain,
             enable_observations=config.enable_observations,
             enable_observation_history=config.enable_observation_history,
+            enable_mental_model_history=config.enable_mental_model_history,
             consolidation_batch_size=config.consolidation_batch_size,
             consolidation_llm_batch_size=config.consolidation_llm_batch_size,
             consolidation_max_tokens=config.consolidation_max_tokens,

@@ -272,6 +272,33 @@ For more details on tag matching modes (`any`, `any_strict`, `all`, `all_strict`
 
 ---
 
+## History
+
+Every time a mental model's content changes (via refresh or manual update), the previous version is saved with a timestamp. You can retrieve the full change log with the history endpoint:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="get-mental-model-history" language="python" />
+</TabItem>
+</Tabs>
+
+### Response
+
+The endpoint returns a list of history entries, most recent first:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `previous_content` | string \| null | The content before this change (`null` if not available) |
+| `changed_at` | string | ISO 8601 timestamp of when the change occurred |
+
+Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
+
+:::note
+History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it.
+:::
+
+---
+
 ## Use Cases
 
 | Use Case | Example |

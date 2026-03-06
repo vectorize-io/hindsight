@@ -50,9 +50,19 @@ import {
   Pencil,
   LayoutGrid,
   List,
+  History,
+  MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { DirectiveDetailModal } from "./directive-detail-modal";
+import { MentalModelDetailModal } from "./mental-model-detail-modal";
 
 interface ReflectResponseBasedOnFact {
   id: string;
@@ -927,6 +937,7 @@ function MentalModelDetailPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [viewMemoryId, setViewMemoryId] = useState<string | null>(null);
   const [viewDirectiveId, setViewDirectiveId] = useState<string | null>(null);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   const handleRefresh = async () => {
     if (!currentBank) return;
@@ -1031,27 +1042,44 @@ function MentalModelDetailPanel({
           <div className="flex-1 mr-4">
             <div className="flex items-center gap-2">
               <h3 className="text-xl font-bold text-foreground">{mentalModel.name}</h3>
-              <Button variant="ghost" size="sm" onClick={onEdit} className="h-7 w-7 p-0">
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
             </div>
             <p className="text-sm text-muted-foreground mt-1">{mentalModel.source_query}</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="h-8"
-            >
-              {refreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-1" />
-              )}
-              Refresh
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 px-2 gap-1" disabled={refreshing}>
+                  {refreshing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <MoreVertical className="h-4 w-4" />
+                  )}
+                  <span className="text-xs">Actions</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onEdit}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleRefresh}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Refresh
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowHistoryModal(true)}>
+                  <History className="h-4 w-4 mr-2" />
+                  View History
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={onDelete}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
               <X className="h-4 w-4" />
             </Button>
@@ -1222,18 +1250,6 @@ function MentalModelDetailPanel({
               </p>
             </div>
           )}
-
-          <div className="pt-4 border-t border-border">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onDelete}
-              className="text-muted-foreground hover:text-destructive hover:border-destructive"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </Button>
-          </div>
         </div>
       </div>
 
@@ -1249,6 +1265,13 @@ function MentalModelDetailPanel({
           onClose={() => setViewDirectiveId(null)}
         />
       )}
+
+      {/* Mental Model History Modal */}
+      <MentalModelDetailModal
+        mentalModelId={showHistoryModal ? mentalModel.id : null}
+        onClose={() => setShowHistoryModal(false)}
+        initialTab="history"
+      />
     </div>
   );
 }

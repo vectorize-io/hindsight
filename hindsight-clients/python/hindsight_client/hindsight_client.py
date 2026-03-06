@@ -913,6 +913,19 @@ class Hindsight:
         """
         return _run_async(self._mental_models_api.delete_mental_model(bank_id, mental_model_id, _request_timeout=self._timeout))
 
+    def get_mental_model_history(self, bank_id: str, mental_model_id: str):
+        """
+        Get the content change history of a mental model.
+
+        Returns a list of history entries (most recent first), each with
+        ``previous_content`` and ``changed_at`` fields.
+
+        Args:
+            bank_id: The memory bank ID
+            mental_model_id: The mental model ID
+        """
+        return _run_async(self._mental_models_api.get_mental_model_history(bank_id, mental_model_id, _request_timeout=self._timeout))
+
     # Directives methods
 
     def create_directive(
