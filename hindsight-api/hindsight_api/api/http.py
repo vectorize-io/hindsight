@@ -486,7 +486,6 @@ class FileRetainRequest(BaseModel):
                     {"document_id": "report_2024", "tags": ["quarterly"]},
                     {"context": "meeting notes"},
                 ],
-                "parser": "markitdown",
             }
         }
     )
@@ -494,10 +493,6 @@ class FileRetainRequest(BaseModel):
     files_metadata: list[FileRetainMetadata] | None = Field(
         default=None,
         description="Metadata for each file (optional, must match number of files if provided)",
-    )
-    parser: str | None = Field(
-        default=None,
-        description="Parser to use for file conversion (e.g., 'markitdown', 'iris'). Uses server default if not specified.",
     )
 
 
@@ -4337,8 +4332,7 @@ def _register_routes(app: FastAPI):
         "**Request format:** multipart/form-data with:\n"
         "- `files`: One or more files to upload\n"
         "- `request`: JSON string with FileRetainRequest model (files_metadata)\n\n"
-        "**Note:** File parser can be specified per-request via the `parser` field, "
-        "or defaults to server config `HINDSIGHT_API_FILE_PARSER` (default: markitdown).",
+        "**Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).",
         operation_id="file_retain",
         tags=["Files"],
     )
@@ -4437,7 +4431,7 @@ def _register_routes(app: FastAPI):
             result = await app.state.memory.submit_async_file_retain(
                 bank_id=bank_id,
                 file_items=file_items,
-                parser=request_data.parser or config.file_parser,
+                parser=config.file_parser,
                 document_tags=None,
                 request_context=request_context,
             )
