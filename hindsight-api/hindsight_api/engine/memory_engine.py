@@ -4262,7 +4262,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, text, context, event_date, occurred_start, occurred_end,
                        mentioned_at, fact_type, document_id, chunk_id, tags, source_memory_ids,
-                       observation_scopes
+                       observation_scopes, history
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
@@ -4314,7 +4314,13 @@ class MemoryEngine(MemoryEngineInterface):
                 "observation_scopes": row["observation_scopes"] if row["observation_scopes"] else None,
             }
 
-            # For observations, include source_memory_ids and fetch source_memories
+            # For observations, include history and source_memory_ids
+            if row["fact_type"] == "observation":
+                raw_history = row["history"]
+                if isinstance(raw_history, str):
+                    raw_history = json.loads(raw_history)
+                result["history"] = raw_history if raw_history else []
+
             if row["fact_type"] == "observation" and row["source_memory_ids"]:
                 source_ids = row["source_memory_ids"]
                 result["source_memory_ids"] = [str(sid) for sid in source_ids]

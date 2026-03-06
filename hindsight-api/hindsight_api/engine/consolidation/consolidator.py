@@ -762,13 +762,17 @@ async def _execute_update_action(
         logger.debug(f"Update skipped: observation {observation_id} not found in recall results")
         return
 
-    history = [
-        {
-            "previous_text": model.text,
-            "changed_at": datetime.now(timezone.utc).isoformat(),
-            "source_memory_ids": [str(mid) for mid in source_memory_ids],
-        }
-    ]
+    from ...config import get_config
+
+    history_entry = {
+        "previous_text": model.text,
+        "previous_tags": list(model.tags or []),
+        "previous_occurred_start": model.occurred_start,
+        "previous_occurred_end": model.occurred_end,
+        "previous_mentioned_at": model.mentioned_at,
+        "changed_at": datetime.now(timezone.utc).isoformat(),
+        "new_source_memory_ids": [str(mid) for mid in source_memory_ids],
+    }
 
     source_ids = list(model.source_fact_ids or []) + source_memory_ids
 
@@ -783,13 +787,18 @@ async def _execute_update_action(
     if perf:
         perf.record_timing("embedding", time.time() - t0)
 
+    config = get_config()
+    history_clause = (
+        "history = COALESCE(history, '[]'::jsonb) || $3::jsonb," if config.enable_observation_history else ""
+    )
+
     t0 = time.time()
     await conn.execute(
         f"""
         UPDATE {fq_table("memory_units")}
         SET text = $1,
             embedding = $2::vector,
-            history = $3,
+            {history_clause}
             source_memory_ids = $4,
             proof_count = $5,
             tags = $10,
@@ -801,7 +810,7 @@ async def _execute_update_action(
         """,
         new_text,
         embedding_str,
-        json.dumps(history),
+        json.dumps([history_entry]),
         source_ids,
         len(source_ids),
         uuid.UUID(observation_id),

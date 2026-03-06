@@ -3,6 +3,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Parse --random-port flag
+RANDOM_PORT=false
+for arg in "$@"; do
+    if [ "$arg" = "--random-port" ]; then
+        RANDOM_PORT=true
+    fi
+done
+
 # Load .env to pick up HINDSIGHT_API_PORT if set
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 if [ -f "$ROOT_DIR/.env" ]; then
@@ -10,8 +18,19 @@ if [ -f "$ROOT_DIR/.env" ]; then
     source "$ROOT_DIR/.env"
     set +a
 fi
-API_PORT="${HINDSIGHT_API_PORT:-8888}"
-CP_PORT="${HINDSIGHT_CP_PORT:-9999}"
+
+get_free_port() {
+    python3 -c "import socket; s=socket.socket(); s.bind(('', 0)); print(s.getsockname()[1]); s.close()"
+}
+
+if [ "$RANDOM_PORT" = true ]; then
+    API_PORT="$(get_free_port)"
+    CP_PORT="$(get_free_port)"
+    echo "Using random ports — API: $API_PORT, Control Plane: $CP_PORT"
+else
+    API_PORT="${HINDSIGHT_API_PORT:-8888}"
+    CP_PORT="${HINDSIGHT_CP_PORT:-9999}"
+fi
 
 PIDS=()
 
@@ -37,7 +56,7 @@ trap cleanup EXIT INT TERM
 
 # Start API
 echo "Starting API server..."
-"$SCRIPT_DIR/start-api.sh" &
+"$SCRIPT_DIR/start-api.sh" --port "$API_PORT" &
 API_PID=$!
 PIDS+=($API_PID)
 
@@ -63,7 +82,7 @@ fi
 
 # Start Control Plane
 echo ""
-"$SCRIPT_DIR/start-control-plane.sh" &
+PORT="$CP_PORT" "$SCRIPT_DIR/start-control-plane.sh" &
 CP_PID=$!
 PIDS+=($CP_PID)
 

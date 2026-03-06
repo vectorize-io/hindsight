@@ -13,17 +13,14 @@ export async function GET(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models/${modelId}`,
+      `${DATAPLANE_URL}/v1/default/banks/${bankId}/memories/${modelId}`,
       { method: "GET", headers: getDataplaneHeaders() }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("API error getting mental model:", errorText);
-      return NextResponse.json(
-        { error: "Failed to get mental model" },
-        { status: response.status }
-      );
+      console.error("API error getting observation:", errorText);
+      return NextResponse.json({ error: "Failed to get observation" }, { status: response.status });
     }
 
     const data = await response.json();

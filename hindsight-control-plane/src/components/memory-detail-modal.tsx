@@ -5,9 +5,10 @@ import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Calendar, Users, FileText, Layers, Tag } from "lucide-react";
+import { Loader2, Calendar, Users, FileText, Layers, Tag, History } from "lucide-react";
 import { TagList } from "@/components/ui/tag-list";
 import { Button } from "@/components/ui/button";
+import { ObservationHistoryView, type HistoryEntry } from "@/components/observation-history-view";
 
 interface SourceMemory {
   id: string;
@@ -33,6 +34,7 @@ interface MemoryDetail {
   tags: string[];
   observation_scopes: string | string[][] | null;
   source_memories?: SourceMemory[];
+  history?: HistoryEntry[];
 }
 
 interface MemoryDetailModalProps {
@@ -152,162 +154,206 @@ export function MemoryDetailModal({ memoryId, onClose }: MemoryDetailModalProps)
             </div>
           ) : memory ? (
             isObservation ? (
-              /* Observation view - no tabs since chunk/document don't apply */
-              <div className="flex-1 overflow-y-auto space-y-4">
-                {/* Text */}
-                <div>
-                  <div className="text-xs font-bold text-muted-foreground uppercase mb-2">Text</div>
-                  <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
-                </div>
+              /* Observation view - tabs for Info and History */
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="flex-1 flex flex-col overflow-hidden"
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="memory" className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" />
+                    Observation
+                  </TabsTrigger>
+                  <TabsTrigger value="history" className="flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5" />
+                    History
+                    {memory.history && memory.history.length > 0
+                      ? ` (${memory.history.length})`
+                      : ""}
+                  </TabsTrigger>
+                </TabsList>
 
-                {/* Dates */}
-                {memory.occurred_start && (
-                  <div>
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                      Occurred
+                <div className="flex-1 overflow-y-auto mt-4">
+                  <TabsContent value="memory" className="mt-0 space-y-4">
+                    {/* Text */}
+                    <div>
+                      <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                        Text
+                      </div>
+                      <p className="text-sm text-foreground leading-relaxed">{memory.text}</p>
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-foreground">
-                      <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span>
-                        {new Date(memory.occurred_start).toLocaleString()}
-                        {memory.occurred_end && memory.occurred_end !== memory.occurred_start && (
-                          <>
-                            <span className="text-muted-foreground mx-1">→</span>
-                            {new Date(memory.occurred_end).toLocaleString()}
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                )}
 
-                {memory.mentioned_at && (
-                  <div>
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                      Mentioned
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-foreground">
-                      <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span>{new Date(memory.mentioned_at).toLocaleString()}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Entities */}
-                {memory.entities && memory.entities.length > 0 && (
-                  <div>
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
-                      <Users className="w-3 h-3" />
-                      Entities
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {memory.entities.map((entity, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
-                        >
-                          {entity}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Tags */}
-                <TagList tags={memory.tags} showLabel />
-
-                {/* Observation Scopes */}
-                {memory.observation_scopes && (
-                  <div>
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
-                      <Tag className="w-3 h-3" />
-                      Observation Scopes
-                    </div>
-                    {typeof memory.observation_scopes === "string" ? (
-                      <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
-                        {memory.observation_scopes}
-                      </span>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {(memory.observation_scopes as string[][]).map((scope, i) => (
-                          <TagList key={i} tags={scope} />
-                        ))}
+                    {/* Dates */}
+                    {memory.occurred_start && (
+                      <div>
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                          Occurred
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-foreground">
+                          <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          <span>
+                            {new Date(memory.occurred_start).toLocaleString()}
+                            {memory.occurred_end &&
+                              memory.occurred_end !== memory.occurred_start && (
+                                <>
+                                  <span className="text-muted-foreground mx-1">→</span>
+                                  {new Date(memory.occurred_end).toLocaleString()}
+                                </>
+                              )}
+                          </span>
+                        </div>
                       </div>
                     )}
-                  </div>
-                )}
 
-                {/* Source Memories */}
-                {memory.source_memories && memory.source_memories.length > 0 && (
-                  <div className="border-t border-border pt-4">
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
-                      Source Memories ({memory.source_memories.length})
-                    </div>
-                    <div className="space-y-3">
-                      {memory.source_memories.map((source, i) => (
-                        <div
-                          key={source.id || i}
-                          className="p-3 bg-muted/50 rounded-lg border border-border/50"
-                        >
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <span
-                              className={`px-2 py-0.5 rounded text-xs flex-shrink-0 ${
-                                source.type === "experience"
-                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                  : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                              }`}
-                            >
-                              {source.type}
-                            </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-6 text-xs"
-                              onClick={() => setSourceMemoryModalId(source.id)}
-                            >
-                              View
-                            </Button>
-                          </div>
-                          <p className="text-sm text-foreground mb-2">{source.text}</p>
-                          {source.context && (
-                            <p className="text-xs text-muted-foreground mb-2 italic">
-                              Context: {source.context}
-                            </p>
-                          )}
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            {source.occurred_start && (
-                              <div className="p-2 bg-background/50 rounded">
-                                <div className="text-muted-foreground mb-0.5">Occurred</div>
-                                <div className="font-medium">
-                                  {new Date(source.occurred_start).toLocaleString()}
-                                </div>
-                              </div>
-                            )}
-                            {source.mentioned_at && (
-                              <div className="p-2 bg-background/50 rounded">
-                                <div className="text-muted-foreground mb-0.5">Mentioned</div>
-                                <div className="font-medium">
-                                  {new Date(source.mentioned_at).toLocaleString()}
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                    {memory.mentioned_at && (
+                      <div>
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                          Mentioned
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                        <div className="flex items-center gap-2 text-sm text-foreground">
+                          <Calendar className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          <span>{new Date(memory.mentioned_at).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    )}
 
-                {/* ID */}
-                <div>
-                  <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
-                    Memory ID
-                  </div>
-                  <code className="text-xs font-mono text-muted-foreground break-all">
-                    {memory.id}
-                  </code>
+                    {/* Entities */}
+                    {memory.entities && memory.entities.length > 0 && (
+                      <div>
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          Entities
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {memory.entities.map((entity, idx) => (
+                            <span
+                              key={idx}
+                              className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs"
+                            >
+                              {entity}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tags */}
+                    <TagList tags={memory.tags} showLabel />
+
+                    {/* Observation Scopes */}
+                    {memory.observation_scopes && (
+                      <div>
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                          <Tag className="w-3 h-3" />
+                          Observation Scopes
+                        </div>
+                        {typeof memory.observation_scopes === "string" ? (
+                          <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
+                            {memory.observation_scopes}
+                          </span>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {(memory.observation_scopes as string[][]).map((scope, i) => (
+                              <TagList key={i} tags={scope} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Source Memories */}
+                    {memory.source_memories && memory.source_memories.length > 0 && (
+                      <div className="border-t border-border pt-4">
+                        <div className="text-xs font-bold text-muted-foreground uppercase mb-3">
+                          Source Memories ({memory.source_memories.length})
+                        </div>
+                        <div className="space-y-3">
+                          {memory.source_memories.map((source, i) => (
+                            <div
+                              key={source.id || i}
+                              className="p-3 bg-muted/50 rounded-lg border border-border/50"
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-xs flex-shrink-0 ${
+                                    source.type === "experience"
+                                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                      : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                  }`}
+                                >
+                                  {source.type}
+                                </span>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 text-xs"
+                                  onClick={() => setSourceMemoryModalId(source.id)}
+                                >
+                                  View
+                                </Button>
+                              </div>
+                              <p className="text-sm text-foreground mb-2">{source.text}</p>
+                              {source.context && (
+                                <p className="text-xs text-muted-foreground mb-2 italic">
+                                  Context: {source.context}
+                                </p>
+                              )}
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                {source.occurred_start && (
+                                  <div className="p-2 bg-background/50 rounded">
+                                    <div className="text-muted-foreground mb-0.5">Occurred</div>
+                                    <div className="font-medium">
+                                      {new Date(source.occurred_start).toLocaleString()}
+                                    </div>
+                                  </div>
+                                )}
+                                {source.mentioned_at && (
+                                  <div className="p-2 bg-background/50 rounded">
+                                    <div className="text-muted-foreground mb-0.5">Mentioned</div>
+                                    <div className="font-medium">
+                                      {new Date(source.mentioned_at).toLocaleString()}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ID */}
+                    <div>
+                      <div className="text-xs font-bold text-muted-foreground uppercase mb-1">
+                        Memory ID
+                      </div>
+                      <code className="text-xs font-mono text-muted-foreground break-all">
+                        {memory.id}
+                      </code>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="history" className="mt-0">
+                    {memory.history && memory.history.length > 0 ? (
+                      <ObservationHistoryView
+                        history={memory.history}
+                        current={{
+                          text: memory.text,
+                          tags: memory.tags,
+                          occurred_start: memory.occurred_start,
+                          occurred_end: memory.occurred_end,
+                          mentioned_at: memory.mentioned_at,
+                        }}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">
+                        No history recorded yet.
+                      </p>
+                    )}
+                  </TabsContent>
                 </div>
-              </div>
+              </Tabs>
             ) : (
               /* World/Experience view - with tabs */
               <Tabs

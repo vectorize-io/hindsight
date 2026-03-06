@@ -280,7 +280,7 @@ export function DataView({ factType }: DataViewProps) {
 
   return (
     <div>
-      {loading ? (
+      {loading && !data ? (
         <div className="text-center py-12">
           <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
           <p className="text-muted-foreground">Loading memories...</p>
@@ -370,11 +370,11 @@ export function DataView({ factType }: DataViewProps) {
 
               {/* Consolidation status for observations */}
               {factType === "observation" && consolidationStatus && (
-                <div
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border ${
                     consolidationStatus.pending_consolidation === 0
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                      ? "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20"
+                      : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
                   }`}
                   title={
                     consolidationStatus.pending_consolidation === 0
@@ -391,9 +391,23 @@ export function DataView({ factType }: DataViewProps) {
                     <>
                       <Clock className="w-3 h-3" />
                       {consolidationStatus.pending_consolidation} Pending
+                      <button
+                        onClick={() =>
+                          loadData(
+                            fetchLimit,
+                            searchQuery || undefined,
+                            tagFilters.length > 0 ? tagFilters : undefined
+                          )
+                        }
+                        disabled={loading}
+                        className="ml-0.5 opacity-70 hover:opacity-100 disabled:opacity-40 transition-opacity"
+                        title="Refresh observations"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+                      </button>
                     </>
                   )}
-                </div>
+                </span>
               )}
             </div>
             <div className="flex items-center gap-2 bg-muted rounded-lg p-1">

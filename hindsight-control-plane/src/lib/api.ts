@@ -413,6 +413,15 @@ export class ControlPlaneClient {
       chunk_id: string | null;
       tags: string[];
       observation_scopes: string | string[][] | null;
+      history?: {
+        previous_text: string;
+        previous_tags: string[];
+        previous_occurred_start: string | null;
+        previous_occurred_end: string | null;
+        previous_mentioned_at: string | null;
+        changed_at: string;
+        new_source_memory_ids: string[];
+      }[];
     }>(`/api/memories/${memoryId}?bank_id=${bankId}`);
   }
 
