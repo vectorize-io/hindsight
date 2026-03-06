@@ -757,7 +757,6 @@ class ReflectResponse(BaseModel):
     )
 
 
-
 class DispositionTraits(BaseModel):
     """Disposition traits that influence how memories are formed and interpreted."""
 
