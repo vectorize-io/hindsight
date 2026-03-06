@@ -1,8 +1,8 @@
 """Google Cloud Storage backend using obstore."""
 
 import logging
-from datetime import datetime, timezone
-from datetime import timedelta
+import os
+from datetime import datetime, timedelta, timezone
 
 import obstore as obs
 from obstore.store import GCSStore
@@ -59,9 +59,22 @@ class GCSFileStorage(FileStorage):
                 kwargs["credential_provider"] = _make_google_auth_credential_provider()
                 logger.info("Using google.auth credential provider for GCS")
             except Exception as e:
-                logger.warning(f"Failed to create google.auth credential provider, falling back to obstore defaults: {e}")
+                logger.warning(
+                    f"Failed to create google.auth credential provider, falling back to obstore defaults: {e}"
+                )
 
-        self._store = GCSStore(bucket, **kwargs)
+        # When using a custom credential_provider, temporarily hide
+        # GOOGLE_APPLICATION_CREDENTIALS so GCSStore doesn't try to parse
+        # credential types it doesn't understand (e.g. external_account).
+        saved_creds = None
+        if "credential_provider" in kwargs and "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+            saved_creds = os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS")
+
+        try:
+            self._store = GCSStore(bucket, **kwargs)
+        finally:
+            if saved_creds is not None:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = saved_creds
         logger.info(f"Initialized GCS file storage: bucket={bucket}")
 
     async def store(self, file_data: bytes, key: str, metadata: dict[str, str] | None = None) -> str:
