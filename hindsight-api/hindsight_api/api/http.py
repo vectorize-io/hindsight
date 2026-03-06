@@ -477,6 +477,11 @@ class FileRetainMetadata(BaseModel):
     metadata: dict[str, Any] | None = Field(default=None, description="Additional metadata")
     tags: list[str] | None = Field(default=None, description="Tags for this file")
     timestamp: str | None = Field(default=None, description="ISO timestamp")
+    parser: str | list[str] | None = Field(
+        default=None,
+        description="Parser or ordered fallback chain for this file (overrides request-level parser). "
+        "E.g. 'iris' or ['iris', 'markitdown'].",
+    )
 
 
 class FileRetainRequest(BaseModel):
@@ -485,14 +490,21 @@ class FileRetainRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "parser": "iris",
                 "files_metadata": [
                     {"document_id": "report_2024", "tags": ["quarterly"]},
-                    {"context": "meeting notes"},
+                    {"context": "meeting notes", "parser": ["iris", "markitdown"]},
                 ],
             }
         }
     )
 
+    parser: str | list[str] | None = Field(
+        default=None,
+        description="Default parser or ordered fallback chain for all files in this request. "
+        "E.g. 'markitdown' or ['iris', 'markitdown']. Falls back to server default if not set. "
+        "Per-file 'parser' in files_metadata takes precedence over this value.",
+    )
     files_metadata: list[FileRetainMetadata] | None = Field(
         default=None,
         description="Metadata for each file (optional, must match number of files if provided)",
@@ -4321,8 +4333,14 @@ def _register_routes(app: FastAPI):
         "Use the operations endpoint to monitor progress.\n\n"
         "**Request format:** multipart/form-data with:\n"
         "- `files`: One or more files to upload\n"
-        "- `request`: JSON string with FileRetainRequest model (files_metadata)\n\n"
-        "**Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).",
+        "- `request`: JSON string with FileRetainRequest model\n\n"
+        "**Parser selection:**\n"
+        "- Set `parser` in the request body to override the server default for all files.\n"
+        "- Set `parser` inside a `files_metadata` entry for per-file control.\n"
+        "- Pass a list (e.g. `['iris', 'markitdown']`) to define an ordered fallback chain — "
+        "each parser is tried in sequence until one succeeds.\n"
+        "- Falls back to the server default (`HINDSIGHT_API_FILE_PARSER`) if not specified.\n"
+        "- Only parsers enabled on the server may be requested; others return HTTP 400.",
         operation_id="file_retain",
         tags=["Files"],
     )
@@ -4368,20 +4386,39 @@ def _register_routes(app: FastAPI):
                     detail=f"files_metadata count ({len(request_data.files_metadata)}) must match files count ({len(files)})",
                 )
 
+            # Resolve the registered parser names for allowlist validation
+            registered_parsers = app.state.memory._parser_registry.list_parsers()
+            allowlist = config.file_parser_allowlist if config.file_parser_allowlist is not None else registered_parsers
+
+            def _resolve_parser(raw: str | list[str] | None) -> list[str]:
+                """Normalize parser value to a non-empty list of names."""
+                if raw is None:
+                    return config.file_parser
+                return [raw] if isinstance(raw, str) else list(raw)
+
+            def _validate_parsers(parsers: list[str], context: str) -> None:
+                """Raise HTTP 400 if any parser name is not in the allowlist."""
+                disallowed = [p for p in parsers if p not in allowlist]
+                if disallowed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Parser(s) not available ({context}): {disallowed}. Available: {allowlist}",
+                    )
+
+            # Validate request-level parser early (before reading files)
+            if request_data.parser is not None:
+                _validate_parsers(_resolve_parser(request_data.parser), "request-level parser")
+
             # Prepare file items and calculate total batch size
+            import io
+
             file_items = []
             total_batch_size = 0
 
             for i, file in enumerate(files):
                 # Read file content to check size
                 file_content = await file.read()
-                size = len(file_content)
-                total_batch_size += size
-
-                # Create a temporary file-like object from the bytes
-                import io
-
-                file_obj = io.BytesIO(file_content)
+                total_batch_size += len(file_content)
 
                 # Create a mock UploadFile with the necessary attributes
                 class FileWrapper:
@@ -4389,7 +4426,6 @@ def _register_routes(app: FastAPI):
                         self._content = content
                         self.filename = filename
                         self.content_type = content_type
-                        self._buffer = io.BytesIO(content)
 
                     async def read(self):
                         return self._content
@@ -4400,6 +4436,12 @@ def _register_routes(app: FastAPI):
                 file_meta = request_data.files_metadata[i] if request_data.files_metadata else FileRetainMetadata()
                 doc_id = file_meta.document_id or f"file_{uuid.uuid4()}"
 
+                # Resolve and validate per-file parser chain
+                # Priority: per-file > request-level > server default
+                raw_parser = file_meta.parser if file_meta.parser is not None else request_data.parser
+                parser_chain = _resolve_parser(raw_parser)
+                _validate_parsers(parser_chain, f"file '{file.filename}'")
+
                 item = {
                     "file": wrapped_file,
                     "document_id": doc_id,
@@ -4407,6 +4449,7 @@ def _register_routes(app: FastAPI):
                     "metadata": file_meta.metadata or {},
                     "tags": file_meta.tags or [],
                     "timestamp": file_meta.timestamp,
+                    "parser": parser_chain,
                 }
                 file_items.append(item)
 
@@ -4421,7 +4464,6 @@ def _register_routes(app: FastAPI):
             result = await app.state.memory.submit_async_file_retain(
                 bank_id=bank_id,
                 file_items=file_items,
-                parser=config.file_parser,
                 document_tags=None,
                 request_context=request_context,
             )

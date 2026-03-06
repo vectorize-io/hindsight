@@ -1,10 +1,14 @@
 """File parser implementations."""
 
+import logging
+
 from .base import FileParser, UnsupportedFileTypeError
 from .iris import IrisParser
 from .markitdown import MarkitdownParser
 
 __all__ = ["FileParser", "UnsupportedFileTypeError", "IrisParser", "MarkitdownParser", "FileParserRegistry"]
+
+logger = logging.getLogger(__name__)
 
 
 class FileParserRegistry:
@@ -56,6 +60,51 @@ class FileParserRegistry:
                 return parser
 
         raise ValueError(f"No parser found for {filename}. Available parsers: {list(self._parsers.keys())}")
+
+    async def convert_with_fallback(
+        self,
+        parsers: list[str],
+        file_data: bytes,
+        filename: str,
+        content_type: str | None = None,
+    ) -> str:
+        """
+        Try each parser in order, falling back on failure or empty content.
+
+        Moves to the next parser if the current one raises UnsupportedFileTypeError
+        or returns empty content. Any other exception (RuntimeError, network error,
+        etc.) also triggers a fallback so the chain is exhausted before failing.
+
+        Args:
+            parsers: Ordered list of parser names to try
+            file_data: Raw file bytes
+            filename: Original filename
+            content_type: MIME type (optional)
+
+        Returns:
+            Parsed markdown content from the first successful parser
+
+        Raises:
+            ValueError: If a parser name is not registered
+            RuntimeError: If all parsers fail or return empty content
+        """
+        last_error: Exception | None = None
+        for name in parsers:
+            parser = self.get_parser(name, filename, content_type)
+            try:
+                result = await parser.convert(file_data, filename)
+                if result and result.strip():
+                    return result
+                logger.warning(f"Parser '{name}' returned empty content for '{filename}', trying next")
+                last_error = RuntimeError(f"Parser '{name}' returned no content for '{filename}'")
+            except UnsupportedFileTypeError as e:
+                logger.warning(f"Parser '{name}' does not support '{filename}', trying next: {e}")
+                last_error = e
+            except Exception as e:
+                logger.warning(f"Parser '{name}' failed for '{filename}', trying next: {e}")
+                last_error = e
+
+        raise last_error or RuntimeError(f"No parsers available for '{filename}'")
 
     def list_parsers(self) -> list[str]:
         """Get list of registered parser names."""

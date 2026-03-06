@@ -403,13 +403,13 @@ async def test_file_conversion_creates_separate_retain_operation(memory_no_llm_v
             "metadata": {"source": "test"},
             "tags": ["test_tag"],
             "timestamp": None,
+            "parser": ["markitdown"],
         }
     ]
 
     result = await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        parser="markitdown",
         document_tags=["two_phase_test"],
         request_context=context,
     )
@@ -521,6 +521,7 @@ async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verif
             "metadata": {},
             "tags": [],
             "timestamp": None,
+            "parser": ["failing_converter"],
         }
     ]
 
@@ -528,7 +529,6 @@ async def test_file_conversion_failure_sets_status_to_failed(memory_no_llm_verif
     result = await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        parser="failing_converter",
         document_tags=None,
         request_context=context,
     )

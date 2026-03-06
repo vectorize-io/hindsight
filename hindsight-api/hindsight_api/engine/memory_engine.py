@@ -653,13 +653,17 @@ class MemoryEngine(MemoryEngineInterface):
             # Retrieve file from storage
             file_data = await self._file_storage.retrieve(storage_key)
 
-            # Convert to markdown
-            parser = self._parser_registry.get_parser(
-                name=task_dict.get("parser"),
+            # Convert to markdown using the ordered fallback chain stored in the task payload.
+            # task_dict["parser"] is always a list[str] set at submission time.
+            parser_chain: list[str] = task_dict.get("parser") or []
+            if not parser_chain:
+                raise ValueError("No parser chain defined for file_convert_retain task")
+            markdown_content = await self._parser_registry.convert_with_fallback(
+                parsers=parser_chain,
+                file_data=file_data,
                 filename=filename,
                 content_type=task_dict.get("content_type"),
             )
-            markdown_content = await parser.convert(file_data, filename)
         except Exception as e:
             # Re-raise with filename context for better error reporting
             error_msg = f"Failed to parse file '{filename}': {str(e)}"
@@ -7093,7 +7097,6 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         bank_id: str,
         file_items: list[dict[str, Any]],
-        parser: str,
         document_tags: list[str] | None,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
@@ -7112,7 +7115,7 @@ class MemoryEngine(MemoryEngineInterface):
                 - metadata: Optional metadata dict
                 - tags: Optional tags list
                 - timestamp: Optional timestamp
-            parser: Parser name (e.g., "markitdown")
+                - parser: Ordered list of parser names to try (fallback chain)
             document_tags: Tags applied to all documents
             request_context: Request context for authentication
 
@@ -7168,7 +7171,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "storage_key": storage_key,
                 "original_filename": file.filename,
                 "content_type": file.content_type or "application/octet-stream",
-                "parser": parser,
+                "parser": item["parser"],
                 "context": item.get("context"),
                 "metadata": item.get("metadata", {}),
                 "tags": item.get("tags", []),

@@ -1096,9 +1096,14 @@ export const retainMemories = <ThrowOnError extends boolean = false>(
  *
  * **Request format:** multipart/form-data with:
  * - `files`: One or more files to upload
- * - `request`: JSON string with FileRetainRequest model (files_metadata)
+ * - `request`: JSON string with FileRetainRequest model
  *
- * **Note:** File parser is configured server-side via `HINDSIGHT_API_FILE_PARSER` (default: markitdown).
+ * **Parser selection:**
+ * - Set `parser` in the request body to override the server default for all files.
+ * - Set `parser` inside a `files_metadata` entry for per-file control.
+ * - Pass a list (e.g. `['iris', 'markitdown']`) to define an ordered fallback chain — each parser is tried in sequence until one succeeds.
+ * - Falls back to the server default (`HINDSIGHT_API_FILE_PARSER`) if not specified.
+ * - Only parsers enabled on the server may be requested; others return HTTP 400.
  */
 export const fileRetain = <ThrowOnError extends boolean = false>(
   options: Options<FileRetainData, ThrowOnError>,
