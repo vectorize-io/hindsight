@@ -1,12 +1,29 @@
 """File parser implementations."""
 
 import logging
+from dataclasses import dataclass
 
 from .base import FileParser, UnsupportedFileTypeError
 from .iris import IrisParser
 from .markitdown import MarkitdownParser
 
-__all__ = ["FileParser", "UnsupportedFileTypeError", "IrisParser", "MarkitdownParser", "FileParserRegistry"]
+__all__ = [
+    "FileParser",
+    "UnsupportedFileTypeError",
+    "IrisParser",
+    "MarkitdownParser",
+    "FileParserRegistry",
+    "ConvertResult",
+]
+
+
+@dataclass
+class ConvertResult:
+    """Result of a successful file conversion."""
+
+    content: str
+    parser_name: str
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +84,7 @@ class FileParserRegistry:
         file_data: bytes,
         filename: str,
         content_type: str | None = None,
-    ) -> str:
+    ) -> ConvertResult:
         """
         Try each parser in order, falling back on failure or empty content.
 
@@ -82,7 +99,7 @@ class FileParserRegistry:
             content_type: MIME type (optional)
 
         Returns:
-            Parsed markdown content from the first successful parser
+            ConvertResult with the parsed content and the name of the parser that succeeded
 
         Raises:
             ValueError: If a parser name is not registered
@@ -92,9 +109,9 @@ class FileParserRegistry:
         for name in parsers:
             parser = self.get_parser(name, filename, content_type)
             try:
-                result = await parser.convert(file_data, filename)
-                if result and result.strip():
-                    return result
+                content = await parser.convert(file_data, filename)
+                if content and content.strip():
+                    return ConvertResult(content=content, parser_name=name)
                 logger.warning(f"Parser '{name}' returned empty content for '{filename}', trying next")
                 last_error = RuntimeError(f"Parser '{name}' returned no content for '{filename}'")
             except UnsupportedFileTypeError as e:

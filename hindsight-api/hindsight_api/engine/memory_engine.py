@@ -658,12 +658,14 @@ class MemoryEngine(MemoryEngineInterface):
             parser_chain: list[str] = task_dict.get("parser") or []
             if not parser_chain:
                 raise ValueError("No parser chain defined for file_convert_retain task")
-            markdown_content = await self._parser_registry.convert_with_fallback(
+            convert_result = await self._parser_registry.convert_with_fallback(
                 parsers=parser_chain,
                 file_data=file_data,
                 filename=filename,
                 content_type=task_dict.get("content_type"),
             )
+            markdown_content = convert_result.content
+            winning_parser = convert_result.parser_name
         except Exception as e:
             # Re-raise with filename context for better error reporting
             error_msg = f"Failed to parse file '{filename}': {str(e)}"
@@ -690,7 +692,7 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._operation_validator.on_file_convert_complete(
                     FileConvertResult(
                         bank_id=bank_id,
-                        parser_name=task_dict.get("parser", "unknown"),
+                        parser_name=winning_parser,
                         filename=filename,
                         output_chars=len(markdown_content),
                         output_text=markdown_content,

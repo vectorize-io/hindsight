@@ -620,13 +620,13 @@ async def test_on_file_convert_complete_hook_called(memory_no_llm_verify, sample
             "metadata": {},
             "tags": [],
             "timestamp": None,
+            "parser": ["markitdown"],
         }
     ]
 
     await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        parser="markitdown",
         document_tags=None,
         request_context=context,
     )
@@ -677,6 +677,7 @@ async def test_on_file_convert_complete_hook_called_for_each_file(memory_no_llm_
             "metadata": {},
             "tags": [],
             "timestamp": None,
+            "parser": ["markitdown"],
         },
         {
             "file": MockFile(b"Second document content", "second.txt", "text/plain"),
@@ -685,13 +686,13 @@ async def test_on_file_convert_complete_hook_called_for_each_file(memory_no_llm_
             "metadata": {},
             "tags": [],
             "timestamp": None,
+            "parser": ["markitdown"],
         },
     ]
 
     await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        parser="markitdown",
         document_tags=None,
         request_context=context,
     )
@@ -750,13 +751,13 @@ async def test_on_file_convert_complete_hook_not_called_on_conversion_failure(me
             "metadata": {},
             "tags": [],
             "timestamp": None,
+            "parser": ["hookfail_parser"],
         }
     ]
 
     await memory_no_llm_verify.submit_async_file_retain(
         bank_id=bank_id,
         file_items=file_items,
-        parser="hookfail_parser",
         document_tags=None,
         request_context=context,
     )
