@@ -184,6 +184,8 @@ In this mode, no local daemon starts. The plugin performs a health check against
 
 > **Note:** Environment variables take precedence over plugin config. If you have both set, the env var wins.
 
+> **Want to skip self-hosting entirely?** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) works as the external API endpoint — just use your Cloud URL and API token above. This does mean your memory data leaves your machine, which breaks the fully-local setup. For personal use where privacy is paramount, stick with the local daemon. But for teams or multi-instance setups where shared memory matters more, Cloud is the fastest path.
+
 ## Memory Isolation
 
 By default, the plugin creates separate memory banks based on the agent, channel, and user context -- so each unique combination gets its own isolated memory store. The bank ID is derived from configurable fields via `dynamicBankGranularity`:
