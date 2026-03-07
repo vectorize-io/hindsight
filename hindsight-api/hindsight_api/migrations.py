@@ -18,6 +18,7 @@ No alembic.ini required - all configuration is done programmatically.
 import hashlib
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -32,6 +33,13 @@ logger = logging.getLogger(__name__)
 
 # Advisory lock ID for migrations (arbitrary unique number)
 MIGRATION_LOCK_ID = 123456789
+
+# Alembic's command.upgrade() is NOT thread-safe: it uses module-level global
+# proxies (context._proxy, script) that get overwritten when two threads call
+# upgrade() concurrently.  This causes migrations to target the wrong schema
+# and crash with "relation already exists" or KeyError: 'script'.
+# Serialize all Alembic invocations with a process-level lock.
+_alembic_lock = threading.Lock()
 
 
 def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
@@ -144,9 +152,12 @@ def _run_migrations_internal(database_url: str, script_location: str, schema: st
     if schema:
         alembic_cfg.set_main_option("target_schema", schema)
 
-    # Run migrations
+    # Run migrations under a process-level lock.  Alembic uses module-level
+    # global proxies that are not thread-safe, so concurrent command.upgrade()
+    # calls from different threads corrupt each other's context.
     try:
-        command.upgrade(alembic_cfg, "head")
+        with _alembic_lock:
+            command.upgrade(alembic_cfg, "head")
     except ResolutionError as e:
         # This happens during rolling deployments when a newer version of the code
         # has already run migrations, and this older replica doesn't have the new
