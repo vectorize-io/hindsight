@@ -280,6 +280,7 @@ type ApiListOperationsRequest struct {
 	ApiService *OperationsAPIService
 	bankId string
 	status *string
+	type_ *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -288,6 +289,12 @@ type ApiListOperationsRequest struct {
 // Filter by status: pending, completed, or failed
 func (r ApiListOperationsRequest) Status(status string) ApiListOperationsRequest {
 	r.status = &status
+	return r
+}
+
+// Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
+func (r ApiListOperationsRequest) Type_(type_ string) ApiListOperationsRequest {
+	r.type_ = &type_
 	return r
 }
 
@@ -315,7 +322,7 @@ func (r ApiListOperationsRequest) Execute() (*OperationsListResponse, *http.Resp
 /*
 ListOperations List async operations
 
-Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
+Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -353,6 +360,9 @@ func (a *OperationsAPIService) ListOperationsExecute(r ApiListOperationsRequest)
 
 	if r.status != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "status", r.status, "form", "")
+	}
+	if r.type_ != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "type", r.type_, "form", "")
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

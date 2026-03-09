@@ -6840,6 +6840,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         status: str | None = None,
+        task_type: str | None = None,
         limit: int = 20,
         offset: int = 0,
         request_context: "RequestContext",
@@ -6849,6 +6850,7 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank identifier
             status: Optional status filter (pending, completed, failed)
+            task_type: Optional operation type filter (retain, consolidation, etc.)
             limit: Maximum number of operations to return (default 20)
             offset: Number of operations to skip (default 0)
             request_context: Request context for authentication
@@ -6876,6 +6878,10 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     where_conditions.append(f"status = ${len(params) + 1}")
                     params.append(status)
+
+            if task_type:
+                where_conditions.append(f"operation_type = ${len(params) + 1}")
+                params.append(task_type)
 
             where_clause = " AND ".join(where_conditions)
 

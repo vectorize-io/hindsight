@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useBank } from "@/lib/bank-context";
 import { client } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { RefreshCw, Clock, AlertCircle, CheckCircle, Loader2, X } from "lucide-react";
 
 interface Operation {
@@ -71,11 +78,21 @@ type OperationDetails =
       child_operations?: never;
     };
 
+const OPERATION_TYPE_OPTIONS = [
+  { value: "all", label: "All types" },
+  { value: "retain", label: "Retain" },
+  { value: "consolidation", label: "Consolidation" },
+  { value: "refresh_mental_model", label: "Mental Model Refresh" },
+  { value: "file_convert_retain", label: "File Convert & Retain" },
+  { value: "webhook_delivery", label: "Webhook Delivery" },
+];
+
 export function BankOperationsView() {
   const { currentBank } = useBank();
   const [operations, setOperations] = useState<Operation[]>([]);
   const [totalOperations, setTotalOperations] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [taskTypeFilter, setTaskTypeFilter] = useState<string | null>(null);
   const [limit] = useState(10);
   const [offset, setOffset] = useState(0);
   const [cancellingOpId, setCancellingOpId] = useState<string | null>(null);
@@ -84,37 +101,48 @@ export function BankOperationsView() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
 
-  const loadOperations = async (
-    newStatusFilter: string | null = statusFilter,
-    newOffset: number = offset
-  ) => {
-    if (!currentBank) return;
+  const loadOperations = useCallback(
+    async (
+      newStatusFilter: string | null = statusFilter,
+      newOffset: number = offset,
+      newTaskTypeFilter: string | null = taskTypeFilter
+    ) => {
+      if (!currentBank) return;
 
-    setLoading(true);
-    try {
-      const opsData = await client.listOperations(currentBank, {
-        status: newStatusFilter || undefined,
-        limit,
-        offset: newOffset,
-      });
-      setOperations(opsData.operations || []);
-      setTotalOperations(opsData.total || 0);
-    } catch (error) {
-      console.error("Error loading operations:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      setLoading(true);
+      try {
+        const opsData = await client.listOperations(currentBank, {
+          status: newStatusFilter || undefined,
+          type: newTaskTypeFilter || undefined,
+          limit,
+          offset: newOffset,
+        });
+        setOperations(opsData.operations || []);
+        setTotalOperations(opsData.total || 0);
+      } catch (error) {
+        console.error("Error loading operations:", error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentBank, statusFilter, offset, taskTypeFilter, limit]
+  );
 
   const handleFilterChange = (newFilter: string | null) => {
     setStatusFilter(newFilter);
     setOffset(0);
-    loadOperations(newFilter, 0);
+    loadOperations(newFilter, 0, taskTypeFilter);
+  };
+
+  const handleTaskTypeFilterChange = (newTaskType: string | null) => {
+    setTaskTypeFilter(newTaskType);
+    setOffset(0);
+    loadOperations(statusFilter, 0, newTaskType);
   };
 
   const handlePageChange = (newOffset: number) => {
     setOffset(newOffset);
-    loadOperations(statusFilter, newOffset);
+    loadOperations(statusFilter, newOffset, taskTypeFilter);
   };
 
   const handleCancelOperation = async (operationId: string) => {
@@ -149,12 +177,14 @@ export function BankOperationsView() {
 
   useEffect(() => {
     if (currentBank) {
-      loadOperations();
-      // Refresh operations every 5 seconds
-      const interval = setInterval(() => loadOperations(), 5000);
+      loadOperations(statusFilter, offset, taskTypeFilter);
+      const interval = setInterval(
+        () => loadOperations(statusFilter, offset, taskTypeFilter),
+        5000
+      );
       return () => clearInterval(interval);
     }
-  }, [currentBank]);
+  }, [currentBank, statusFilter, offset, taskTypeFilter]);
 
   if (!currentBank) return null;
 
@@ -180,25 +210,47 @@ export function BankOperationsView() {
             {statusFilter ? ` (${statusFilter})` : ""}
           </p>
         </div>
-        <div className="flex gap-1 bg-muted p-1 rounded-lg">
-          {[
-            { value: null, label: "All" },
-            { value: "pending", label: "Pending" },
-            { value: "completed", label: "Completed" },
-            { value: "failed", label: "Failed" },
-          ].map((filter) => (
-            <button
-              key={filter.value ?? "all"}
-              onClick={() => handleFilterChange(filter.value)}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                statusFilter === filter.value
-                  ? "bg-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <Select
+            value={taskTypeFilter ?? "all"}
+            onValueChange={(val) => handleTaskTypeFilterChange(val === "all" ? null : val)}
+          >
+            <SelectTrigger className="h-9 w-[180px] text-sm">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              {OPERATION_TYPE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  <div>
+                    <div>{opt.label}</div>
+                    {opt.value !== "all" && (
+                      <div className="text-xs text-muted-foreground font-mono">{opt.value}</div>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+            {[
+              { value: null, label: "All" },
+              { value: "pending", label: "Pending" },
+              { value: "completed", label: "Completed" },
+              { value: "failed", label: "Failed" },
+            ].map((filter) => (
+              <button
+                key={filter.value ?? "all"}
+                onClick={() => handleFilterChange(filter.value)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  statusFilter === filter.value
+                    ? "bg-background shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div>

@@ -738,7 +738,7 @@ export const getChunk = <ThrowOnError extends boolean = false>(
 /**
  * List async operations
  *
- * Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
+ * Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.
  */
 export const listOperations = <ThrowOnError extends boolean = false>(
   options: Options<ListOperationsData, ThrowOnError>,

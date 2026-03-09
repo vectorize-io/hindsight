@@ -3427,13 +3427,17 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/operations",
         response_model=OperationsListResponse,
         summary="List async operations",
-        description="Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.",
+        description="Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.",
         operation_id="list_operations",
         tags=["Operations"],
     )
     async def api_list_operations(
         bank_id: str,
         status: str | None = Query(default=None, description="Filter by status: pending, completed, or failed"),
+        type: str | None = Query(
+            default=None,
+            description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery",
+        ),
         limit: int = Query(default=20, ge=1, le=100, description="Maximum number of operations to return"),
         offset: int = Query(default=0, ge=0, description="Number of operations to skip"),
         request_context: RequestContext = Depends(get_request_context),
@@ -3441,7 +3445,7 @@ def _register_routes(app: FastAPI):
         """List async operations for a memory bank with optional filtering and pagination."""
         try:
             result = await app.state.memory.list_operations(
-                bank_id, status=status, limit=limit, offset=offset, request_context=request_context
+                bank_id, status=status, task_type=type, limit=limit, offset=offset, request_context=request_context
             )
             return OperationsListResponse(
                 bank_id=bank_id,

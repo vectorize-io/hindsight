@@ -2357,7 +2357,7 @@
           "Operations"
         ],
         "summary": "List async operations",
-        "description": "Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.",
+        "description": "Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.",
         "operationId": "list_operations",
         "parameters": [
           {
@@ -2386,6 +2386,24 @@
               "title": "Status"
             },
             "description": "Filter by status: pending, completed, or failed"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery",
+              "title": "Type"
+            },
+            "description": "Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery"
           },
           {
             "name": "limit",

@@ -248,10 +248,11 @@ export class ControlPlaneClient {
    */
   async listOperations(
     bankId: string,
-    options?: { status?: string; limit?: number; offset?: number }
+    options?: { status?: string; type?: string; limit?: number; offset?: number }
   ) {
     const params = new URLSearchParams();
     if (options?.status) params.append("status", options.status);
+    if (options?.type) params.append("type", options.type);
     if (options?.limit) params.append("limit", options.limit.toString());
     if (options?.offset) params.append("offset", options.offset.toString());
     const query = params.toString();

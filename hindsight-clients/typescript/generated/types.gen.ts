@@ -3716,6 +3716,12 @@ export type ListOperationsData = {
      */
     status?: string | null;
     /**
+     * Type
+     *
+     * Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
+     */
+    type?: string | null;
+    /**
      * Limit
      *
      * Maximum number of operations to return

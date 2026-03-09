@@ -1600,7 +1600,8 @@ paths:
   /v1/default/banks/{bank_id}/operations:
     get:
       description: "Get a list of async operations for a specific agent, with optional\
-        \ filtering by status. Results are sorted by most recent first."
+        \ filtering by status and operation type. Results are sorted by most recent\
+        \ first."
       operationId: list_operations
       parameters:
       - explode: false
@@ -1615,6 +1616,16 @@ paths:
         explode: true
         in: query
         name: status
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: "Filter by operation type: retain, consolidation, refresh_mental_model,\
+          \ file_convert_retain, webhook_delivery"
+        explode: true
+        in: query
+        name: type
         required: false
         schema:
           nullable: true

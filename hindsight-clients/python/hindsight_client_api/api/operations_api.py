@@ -632,6 +632,7 @@ class OperationsApi:
         self,
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
@@ -650,12 +651,14 @@ class OperationsApi:
     ) -> OperationsListResponse:
         """List async operations
 
-        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
+        Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
         :param status: Filter by status: pending, completed, or failed
         :type status: str
+        :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
+        :type type: str
         :param limit: Maximum number of operations to return
         :type limit: int
         :param offset: Number of operations to skip
@@ -687,6 +690,7 @@ class OperationsApi:
         _param = self._list_operations_serialize(
             bank_id=bank_id,
             status=status,
+            type=type,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -716,6 +720,7 @@ class OperationsApi:
         self,
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
@@ -734,12 +739,14 @@ class OperationsApi:
     ) -> ApiResponse[OperationsListResponse]:
         """List async operations
 
-        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
+        Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
         :param status: Filter by status: pending, completed, or failed
         :type status: str
+        :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
+        :type type: str
         :param limit: Maximum number of operations to return
         :type limit: int
         :param offset: Number of operations to skip
@@ -771,6 +778,7 @@ class OperationsApi:
         _param = self._list_operations_serialize(
             bank_id=bank_id,
             status=status,
+            type=type,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -800,6 +808,7 @@ class OperationsApi:
         self,
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, completed, or failed")] = None,
+        type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
         limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         authorization: Optional[StrictStr] = None,
@@ -818,12 +827,14 @@ class OperationsApi:
     ) -> RESTResponseType:
         """List async operations
 
-        Get a list of async operations for a specific agent, with optional filtering by status. Results are sorted by most recent first.
+        Get a list of async operations for a specific agent, with optional filtering by status and operation type. Results are sorted by most recent first.
 
         :param bank_id: (required)
         :type bank_id: str
         :param status: Filter by status: pending, completed, or failed
         :type status: str
+        :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
+        :type type: str
         :param limit: Maximum number of operations to return
         :type limit: int
         :param offset: Number of operations to skip
@@ -855,6 +866,7 @@ class OperationsApi:
         _param = self._list_operations_serialize(
             bank_id=bank_id,
             status=status,
+            type=type,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -879,6 +891,7 @@ class OperationsApi:
         self,
         bank_id,
         status,
+        type,
         limit,
         offset,
         authorization,
@@ -909,6 +922,10 @@ class OperationsApi:
         if status is not None:
             
             _query_params.append(('status', status))
+            
+        if type is not None:
+            
+            _query_params.append(('type', type))
             
         if limit is not None:
             
