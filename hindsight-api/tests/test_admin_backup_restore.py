@@ -15,7 +15,9 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+import hindsight_api.admin.cli as admin_cli
 from hindsight_api.admin.cli import _backup, _restore, BACKUP_TABLES
+from hindsight_api.extensions import Tenant
 from hindsight_api.migrations import run_migrations
 
 
@@ -290,3 +292,145 @@ async def test_backup_restore_preserves_all_column_types(backup_test_schema):
     finally:
         if backup_path.exists():
             backup_path.unlink()
+
+
+@pytest.mark.asyncio
+async def test_run_all_migrations_discovers_and_deduplicates_schemas(monkeypatch):
+    """run-all-db-migrations should include the base schema and deduplicate tenant schemas."""
+    calls: dict[str, list] = {
+        "run_migrations": [],
+        "ensure_vector_extension": [],
+        "ensure_text_search_extension": [],
+    }
+
+    class MockTenantExtension:
+        async def list_tenants(self):
+            return [
+                Tenant(schema="public"),
+                Tenant(schema="tenant_demo"),
+                Tenant(schema="tenant_demo"),
+            ]
+
+    async def fake_resolve_database_url(db_url: str) -> str:
+        return f"resolved::{db_url}"
+
+    def fake_run_migrations(database_url: str, schema: str | None = None) -> None:
+        calls["run_migrations"].append((database_url, schema))
+
+    def fake_ensure_vector_extension(
+        database_url: str,
+        vector_extension: str = "pgvector",
+        schema: str | None = None,
+    ) -> None:
+        calls["ensure_vector_extension"].append((database_url, vector_extension, schema))
+
+    def fake_ensure_text_search_extension(
+        database_url: str,
+        text_search_extension: str = "native",
+        schema: str | None = None,
+    ) -> None:
+        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
+    monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
+
+    from hindsight_api import migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "run_migrations", fake_run_migrations)
+    monkeypatch.setattr(migrations_module, "ensure_vector_extension", fake_ensure_vector_extension)
+    monkeypatch.setattr(migrations_module, "ensure_text_search_extension", fake_ensure_text_search_extension)
+
+    schemas = await admin_cli._run_all_migrations("postgresql://test")
+
+    assert schemas == ["public", "tenant_demo"]
+    assert calls["run_migrations"] == [
+        ("resolved::postgresql://test", "public"),
+        ("resolved::postgresql://test", "tenant_demo"),
+    ]
+    assert calls["ensure_vector_extension"] == [
+        ("resolved::postgresql://test", "pgvector", "public"),
+        ("resolved::postgresql://test", "pgvector", "tenant_demo"),
+    ]
+    assert calls["ensure_text_search_extension"] == [
+        ("resolved::postgresql://test", "native", "public"),
+        ("resolved::postgresql://test", "native", "tenant_demo"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_all_migrations_runs_optional_post_migration_hooks(monkeypatch):
+    """Embedding dimension sync should be optional, while vector/text checks always run."""
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://test")
+    calls: dict[str, list] = {
+        "run_migrations": [],
+        "ensure_embedding_dimension": [],
+        "ensure_vector_extension": [],
+        "ensure_text_search_extension": [],
+    }
+
+    class MockTenantExtension:
+        async def list_tenants(self):
+            return [Tenant(schema="tenant_demo")]
+
+    async def fake_resolve_database_url(db_url: str) -> str:
+        return f"resolved::{db_url}"
+
+    def fake_run_migrations(database_url: str, schema: str | None = None) -> None:
+        calls["run_migrations"].append((database_url, schema))
+
+    def fake_ensure_embedding_dimension(
+        database_url: str,
+        dimension: int,
+        schema: str | None = None,
+        vector_extension: str = "pgvector",
+    ) -> None:
+        calls["ensure_embedding_dimension"].append((database_url, dimension, schema, vector_extension))
+
+    def fake_ensure_vector_extension(
+        database_url: str,
+        vector_extension: str = "pgvector",
+        schema: str | None = None,
+    ) -> None:
+        calls["ensure_vector_extension"].append((database_url, vector_extension, schema))
+
+    def fake_ensure_text_search_extension(
+        database_url: str,
+        text_search_extension: str = "native",
+        schema: str | None = None,
+    ) -> None:
+        calls["ensure_text_search_extension"].append((database_url, text_search_extension, schema))
+
+    monkeypatch.setattr(admin_cli, "load_extension", lambda *args, **kwargs: MockTenantExtension())
+    monkeypatch.setattr(admin_cli, "resolve_database_url", fake_resolve_database_url)
+
+    from hindsight_api import migrations as migrations_module
+
+    monkeypatch.setattr(migrations_module, "run_migrations", fake_run_migrations)
+    monkeypatch.setattr(migrations_module, "ensure_embedding_dimension", fake_ensure_embedding_dimension)
+    monkeypatch.setattr(migrations_module, "ensure_vector_extension", fake_ensure_vector_extension)
+    monkeypatch.setattr(migrations_module, "ensure_text_search_extension", fake_ensure_text_search_extension)
+
+    schemas = await admin_cli._run_all_migrations(
+        "postgresql://test",
+        base_schema="public",
+        embedding_dimension=384,
+    )
+
+    assert schemas == ["public", "tenant_demo"]
+    assert calls["run_migrations"] == [
+        ("resolved::postgresql://test", "public"),
+        ("resolved::postgresql://test", "tenant_demo"),
+    ]
+    assert calls["ensure_embedding_dimension"] == [
+        ("resolved::postgresql://test", 384, "public", "pgvector"),
+        ("resolved::postgresql://test", 384, "tenant_demo", "pgvector"),
+    ]
+    assert calls["ensure_vector_extension"] == [
+        ("resolved::postgresql://test", "pgvector", "public"),
+        ("resolved::postgresql://test", "pgvector", "tenant_demo"),
+    ]
+    assert calls["ensure_text_search_extension"] == [
+        ("resolved::postgresql://test", "native", "public"),
+        ("resolved::postgresql://test", "native", "tenant_demo"),
+    ]

@@ -15,6 +15,8 @@ import asyncpg
 import typer
 
 from ..config import HindsightConfig
+from ..config import DEFAULT_DATABASE_SCHEMA
+from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 
 
@@ -225,6 +227,64 @@ async def _run_migration(db_url: str, schema: str = "public") -> None:
     run_migrations(resolved_url, schema=schema)
 
 
+async def _run_all_migrations(
+    db_url: str,
+    base_schema: str = DEFAULT_DATABASE_SCHEMA,
+    embedding_dimension: int | None = None,
+) -> list[str]:
+    """Resolve the database URL and run migrations for the base schema plus all tenant schemas."""
+    from ..migrations import (
+        ensure_embedding_dimension,
+        ensure_text_search_extension,
+        ensure_vector_extension,
+        run_migrations,
+    )
+
+    is_pg0, instance_name, _ = parse_pg0_url(db_url)
+    if is_pg0:
+        typer.echo(f"Starting embedded PostgreSQL (instance: {instance_name})...")
+    resolved_url = await resolve_database_url(db_url)
+
+    config = HindsightConfig.from_env()
+    tenant_extension = load_extension("TENANT", TenantExtension)
+
+    schemas = [base_schema or DEFAULT_DATABASE_SCHEMA]
+    if tenant_extension:
+        tenants = await tenant_extension.list_tenants()
+        schemas.extend(tenant.schema for tenant in tenants if tenant.schema)
+
+    # Preserve order while removing duplicates.
+    schemas = list(dict.fromkeys(schemas))
+
+    for schema in schemas:
+        run_migrations(resolved_url, schema=schema)
+
+    if embedding_dimension is not None:
+        for schema in schemas:
+            ensure_embedding_dimension(
+                resolved_url,
+                embedding_dimension,
+                schema=schema,
+                vector_extension=config.vector_extension,
+            )
+
+    for schema in schemas:
+        ensure_vector_extension(
+            resolved_url,
+            vector_extension=config.vector_extension,
+            schema=schema,
+        )
+
+    for schema in schemas:
+        ensure_text_search_extension(
+            resolved_url,
+            text_search_extension=config.text_search_extension,
+            schema=schema,
+        )
+
+    return schemas
+
+
 @app.command(name="run-db-migration")
 def run_db_migration(
     schema: str = typer.Option("public", "--schema", "-s", help="Database schema to run migrations on"),
@@ -242,6 +302,35 @@ def run_db_migration(
     asyncio.run(_run_migration(config.database_url, schema))
 
     typer.echo("Database migrations completed successfully")
+
+
+@app.command(name="run-all-db-migrations")
+def run_all_db_migrations(
+    embedding_dimension: int | None = typer.Option(
+        None,
+        "--embedding-dimension",
+        help="Expected embedding dimension to enforce after migrations. Omit to skip dimension sync.",
+    ),
+):
+    """Run database migrations for the base schema and all schemas discovered by the tenant extension."""
+    config = HindsightConfig.from_env()
+
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo("Running database migrations for base schema and all discovered tenant schemas...")
+
+    schemas = asyncio.run(
+        _run_all_migrations(
+            config.database_url,
+            base_schema=config.database_schema,
+            embedding_dimension=embedding_dimension,
+        )
+    )
+
+    typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
 
 
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:

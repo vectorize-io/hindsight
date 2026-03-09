@@ -77,18 +77,32 @@ PIDS=()
 # Start API if enabled
 if [ "$ENABLE_API" = "true" ]; then
     cd /app/api
+    API_HEALTH_URL="${HINDSIGHT_API_HEALTH_URL:-http://localhost:8888/health}"
+    API_STARTUP_WAIT_SECONDS="${HINDSIGHT_API_STARTUP_WAIT_SECONDS:-300}"
+
     # Run API directly - Python's PYTHONUNBUFFERED=1 handles output buffering
     hindsight-api &
     API_PID=$!
     PIDS+=($API_PID)
 
     # Wait for API to be ready
-    for i in {1..60}; do
-        if curl -sf http://localhost:8888/health &>/dev/null; then
+    api_ready=false
+    for ((i=1; i<=API_STARTUP_WAIT_SECONDS; i++)); do
+        if ! kill -0 "$API_PID" 2>/dev/null; then
+            wait "$API_PID"
+            exit $?
+        fi
+        if curl -sf "$API_HEALTH_URL" &>/dev/null; then
+            api_ready=true
             break
         fi
         sleep 1
     done
+
+    if [ "$api_ready" != "true" ]; then
+        echo "❌ API did not become healthy within ${API_STARTUP_WAIT_SECONDS}s"
+        exit 1
+    fi
 else
     echo "API disabled (HINDSIGHT_ENABLE_API=false)"
 fi
