@@ -242,7 +242,7 @@ impl ApiClient {
     pub fn poll_operation(&self, agent_id: &str, operation_id: &str, verbose: bool) -> Result<(bool, Option<String>)> {
         self.runtime.block_on(async {
             loop {
-                let response = self.client.list_operations(agent_id, None, None, None, None).await?;
+                let response = self.client.list_operations(agent_id, None, None, None, None, None).await?;
                 let ops = response.into_inner();
 
                 // Find our operation
@@ -329,7 +329,7 @@ impl ApiClient {
 
     pub fn list_operations(&self, agent_id: &str, _verbose: bool) -> Result<OperationsResponse> {
         self.runtime.block_on(async {
-            let response = self.client.list_operations(agent_id, None, None, None, None).await?;
+            let response = self.client.list_operations(agent_id, None, None, None, None, None).await?;
             let value = response.into_inner();
             // Convert to JSON Value first, then parse into our type
             let json_value = serde_json::to_value(&value)?;
