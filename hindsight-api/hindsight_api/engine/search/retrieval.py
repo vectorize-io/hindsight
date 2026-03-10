@@ -94,160 +94,154 @@ async def retrieve_semantic_bm25_combined(
     limit: int,
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
+    pool=None,
 ) -> dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]]:
     """
-    Combined semantic + BM25 retrieval for multiple fact types in a single query.
+    Combined semantic + BM25 retrieval for multiple fact types.
 
-    Uses CTEs with window functions to get top-N results per fact type per method,
-    all in one database round-trip.
+    Uses per-fact_type queries with ORDER BY ... LIMIT to enable the HNSW
+    index for semantic search, replacing the previous window-function approach
+    that forced full sequential scans of all embeddings.
+
+    Requires partial HNSW indexes per fact_type (idx_mu_emb_world,
+    idx_mu_emb_observation, idx_mu_emb_experience), created automatically
+    by Alembic migration a3b4c5d6e7f8_add_partial_hnsw_indexes.py.
+
+    HNSW is approximate — we over-fetch by 5x (min 100) and trim in Python
+    to compensate.
+
+    If `pool` is provided, semantic queries run in parallel via asyncio.gather()
+    with separate connections (one per fact_type). Otherwise, all queries run
+    sequentially on `conn`.
 
     Args:
-        conn: Database connection
+        conn: Database connection (used for BM25 queries and as fallback for semantic)
         query_emb_str: Query embedding as string
         query_text: Query text for BM25
         bank_id: Bank ID
         fact_types: List of fact types to retrieve
         limit: Maximum results per method per fact type
+        tags: Optional tags to filter by
+        tags_match: Tag matching mode
+        pool: Optional connection pool for parallel semantic queries
 
     Returns:
         Dict mapping fact_type -> (semantic_results, bm25_results)
     """
     import re
 
-    # Sanitize query text for BM25 (same as retrieve_bm25)
+    result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {
+        ft: ([], []) for ft in fact_types
+    }
+
+    # Over-fetch to compensate for HNSW approximate recall + WHERE post-filtering.
+    # pgvector's HNSW scans the index first, then applies WHERE conditions (bank_id,
+    # fact_type, similarity >= 0.3) as post-filters. Some index candidates get
+    # filtered out, so we request 3x more and trim in Python.
+    hnsw_fetch_limit = max(limit * 5, 100)
+
+    # --- SEMANTIC: per-fact_type queries (ORDER BY ... LIMIT enables HNSW index) ---
+    # Parameters: $1=embedding, $2=bank_id, $3=fact_type, $4=hnsw_fetch_limit, $5=tags (optional)
+    sem_tags_clause = build_tags_where_clause_simple(tags, 5, match=tags_match)
+
+    sem_query = f"""
+        SELECT id, text, context, event_date, occurred_start, occurred_end,
+               mentioned_at, fact_type, document_id, chunk_id, tags,
+               1 - (embedding <=> $1::vector) AS similarity
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $2
+          AND embedding IS NOT NULL
+          AND fact_type = $3
+          AND (1 - (embedding <=> $1::vector)) >= 0.3
+          {sem_tags_clause}
+        ORDER BY embedding <=> $1::vector
+        LIMIT $4
+    """
+
+    async def _run_semantic_for_ft(ft: str, use_conn=None):
+        """Run a single semantic query. Uses provided connection or acquires from pool."""
+        sem_params: list = [query_emb_str, bank_id, ft, hnsw_fetch_limit]
+        if tags:
+            sem_params.append(tags)
+        c = use_conn
+        acquired = False
+        if c is None and pool is not None:
+            c = await pool.acquire()
+            acquired = True
+        try:
+            await c.execute("SET hnsw.ef_search = 200")
+            rows = await c.fetch(sem_query, *sem_params)
+        finally:
+            await c.execute("RESET hnsw.ef_search")
+            if acquired:
+                await pool.release(c)
+        return ft, rows
+
+    if pool is not None and len(fact_types) > 1:
+        # Parallel: each fact_type gets its own connection from the pool
+        sem_tasks = [_run_semantic_for_ft(ft) for ft in fact_types]
+        sem_results = await asyncio.gather(*sem_tasks)
+    else:
+        # Sequential: all queries on the same connection
+        sem_results = []
+        for ft in fact_types:
+            sem_results.append(await _run_semantic_for_ft(ft, use_conn=conn))
+
+    # Collect semantic results, trimming to `limit` per fact_type
+    for ft, sem_rows in sem_results:
+        for r in sem_rows[:limit]:
+            result_dict[ft][0].append(RetrievalResult.from_db_row(dict(r)))
+
+    # --- BM25: per-fact_type queries (sequential on conn — not the bottleneck) ---
     sanitized_text = re.sub(r"[^\w\s]", " ", query_text.lower())
     tokens = [token for token in sanitized_text.split() if token]
 
-    # If no valid tokens for BM25, just run semantic
     if not tokens:
-        tags_clause = build_tags_where_clause_simple(tags, 5, match=tags_match)
-        params = [query_emb_str, bank_id, fact_types, limit]
-        if tags:
-            params.append(tags)
-        results = await conn.fetch(
-            f"""
-            WITH semantic_ranked AS (
-                SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                       1 - (embedding <=> $1::vector) AS similarity,
-                       NULL::float AS bm25_score,
-                       'semantic' AS source,
-                       ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> $1::vector) AS rn
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $2
-                  AND embedding IS NOT NULL
-                  AND fact_type = ANY($3)
-                  AND (1 - (embedding <=> $1::vector)) >= 0.3
-                  {tags_clause}
-            )
-            SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                   similarity, bm25_score, source
-            FROM semantic_ranked
-            WHERE rn <= $4
-            """,
-            *params,
-        )
-        # Group by fact_type
-        result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {
-            ft: ([], []) for ft in fact_types
-        }
-        for r in results:
-            row = dict(r)
-            ft = row.get("fact_type")
-            row.pop("source", None)
-            if ft in result_dict:
-                result_dict[ft][0].append(RetrievalResult.from_db_row(row))
         return result_dict
 
-    # Build BM25 query based on text search backend
     config = get_config()
 
-    # Build tags clause - param 6 if tags provided
-    tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+    # Parameters: $1=bank_id, $2=fact_type, $3=limit, $4=query_text/tsquery, $5=tags (optional)
+    bm25_tags_clause = build_tags_where_clause_simple(tags, 5, match=tags_match)
 
-    # Build backend-specific BM25 parts
-    if config.text_search_extension == "vchord":
-        # VectorChord BM25: use <&> operator with to_bm25query and tokenize
-        # Note: VectorChord scores are negative (higher = better, so -1 > -10)
-        bm25_score_expr = "search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($5, 'llmlingua2'))"
-        bm25_order_by = f"{bm25_score_expr} DESC"
-        bm25_where_filter = ""  # No additional WHERE filter for vchord
-        params = [query_emb_str, bank_id, fact_types, limit, query_text]  # Pass raw query_text for tokenization
-    elif config.text_search_extension == "pg_textsearch":
-        # Timescale pg_textsearch: use <@> operator with to_bm25query
-        # Note: pg_textsearch scores are negative (lower/more negative = better, so -10 > -1)
-        # We negate the score to maintain API consistency (higher = better)
-        bm25_score_expr = "-(text <@> to_bm25query($5, 'idx_memory_units_text_search'))"
-        bm25_order_by = "text <@> to_bm25query($5, 'idx_memory_units_text_search') ASC"
-        bm25_where_filter = ""  # No additional WHERE filter for pg_textsearch
-        params = [query_emb_str, bank_id, fact_types, limit, query_text]
-    else:  # native
-        # Native PostgreSQL: use ts_rank_cd with to_tsquery
-        query_tsquery = " | ".join(tokens)
-        bm25_score_expr = "ts_rank_cd(search_vector, to_tsquery('english', $5))"
-        bm25_order_by = f"{bm25_score_expr} DESC"
-        bm25_where_filter = "AND search_vector @@ to_tsquery('english', $5)"
-        params = [query_emb_str, bank_id, fact_types, limit, query_tsquery]
+    for ft in fact_types:
+        if config.text_search_extension == "vchord":
+            bm25_score_expr = "search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))"
+            bm25_order_by = f"{bm25_score_expr} DESC"
+            bm25_where_filter = ""
+            bm25_params: list = [bank_id, ft, limit, query_text]
+        elif config.text_search_extension == "pg_textsearch":
+            bm25_score_expr = "-(text <@> to_bm25query($4, 'idx_memory_units_text_search'))"
+            bm25_order_by = "text <@> to_bm25query($4, 'idx_memory_units_text_search') ASC"
+            bm25_where_filter = ""
+            bm25_params = [bank_id, ft, limit, query_text]
+        else:  # native
+            query_tsquery = " | ".join(tokens)
+            bm25_score_expr = "ts_rank_cd(search_vector, to_tsquery('english', $4))"
+            bm25_order_by = f"{bm25_score_expr} DESC"
+            bm25_where_filter = "AND search_vector @@ to_tsquery('english', $4)"
+            bm25_params = [bank_id, ft, limit, query_tsquery]
 
-    if tags:
-        params.append(tags)
+        if tags:
+            bm25_params.append(tags)
 
-    # Single query template with backend-specific parts injected
-    query = f"""
-        WITH semantic_ranked AS (
-            SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                   1 - (embedding <=> $1::vector) AS similarity,
-                   NULL::float AS bm25_score,
-                   'semantic' AS source,
-                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY embedding <=> $1::vector) AS rn
+        bm25_rows = await conn.fetch(
+            f"""
+            SELECT id, text, context, event_date, occurred_start, occurred_end,
+                   mentioned_at, fact_type, document_id, chunk_id, tags,
+                   {bm25_score_expr} AS bm25_score
             FROM {fq_table("memory_units")}
-            WHERE bank_id = $2
-              AND embedding IS NOT NULL
-              AND fact_type = ANY($3)
-              AND (1 - (embedding <=> $1::vector)) >= 0.3
-              {tags_clause}
-        ),
-        bm25_ranked AS (
-            SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                   NULL::float AS similarity,
-                   {bm25_score_expr} AS bm25_score,
-                   'bm25' AS source,
-                   ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY {bm25_order_by}) AS rn
-            FROM {fq_table("memory_units")}
-            WHERE bank_id = $2
-              AND fact_type = ANY($3)
+            WHERE bank_id = $1
+              AND fact_type = $2
               {bm25_where_filter}
-              {tags_clause}
-        ),
-        semantic AS (
-            SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                   similarity, bm25_score, source
-            FROM semantic_ranked WHERE rn <= $4
-        ),
-        bm25 AS (
-            SELECT id, text, context, event_date, occurred_start, occurred_end, mentioned_at, fact_type, document_id, chunk_id, tags,
-                   similarity, bm25_score, source
-            FROM bm25_ranked WHERE rn <= $4
+              {bm25_tags_clause}
+            ORDER BY {bm25_order_by}
+            LIMIT $3
+            """,
+            *bm25_params,
         )
-        SELECT * FROM semantic
-        UNION ALL
-        SELECT * FROM bm25
-    """
-
-    # Combined CTE query for both semantic and BM25 across all fact types
-    # Uses window functions to limit per fact_type per method
-    results = await conn.fetch(query, *params)
-
-    # Group results by fact_type and source
-    result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {ft: ([], []) for ft in fact_types}
-    for r in results:
-        row = dict(r)
-        source = row.pop("source", None)
-        ft = row.get("fact_type")
-        if ft in result_dict:
-            if source == "semantic":
-                result_dict[ft][0].append(RetrievalResult.from_db_row(row))
-            else:
-                result_dict[ft][1].append(RetrievalResult.from_db_row(row))
+        for r in bm25_rows:
+            result_dict[ft][1].append(RetrievalResult.from_db_row(dict(r)))
 
     return result_dict
 
@@ -578,6 +572,7 @@ async def retrieve_all_fact_types_parallel(
             thinking_budget,
             tags=tags,
             tags_match=tags_match,
+            pool=pool,
         )
         semantic_bm25_time = time.time() - semantic_bm25_start
 
