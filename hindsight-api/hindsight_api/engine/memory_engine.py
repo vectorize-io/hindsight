@@ -168,7 +168,7 @@ from enum import Enum
 from ..metrics import get_metrics_collector
 from ..pg0 import EmbeddedPostgres, parse_pg0_url
 from .entity_resolver import EntityResolver
-from .llm_wrapper import LLMConfig, requires_api_key
+from .llm_wrapper import LLMConfig, requires_api_key, sanitize_llm_output
 from .query_analyzer import QueryAnalyzer
 from .reflect import run_reflect_agent
 from .reflect.tools import tool_expand, tool_recall, tool_search_mental_models, tool_search_observations
@@ -664,7 +664,7 @@ class MemoryEngine(MemoryEngineInterface):
                 filename=filename,
                 content_type=task_dict.get("content_type"),
             )
-            markdown_content = convert_result.content
+            markdown_content = sanitize_llm_output(convert_result.content) or ""
             winning_parser = convert_result.parser_name
         except Exception as e:
             # Re-raise with filename context for better error reporting
