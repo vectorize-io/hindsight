@@ -1139,8 +1139,13 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         async def _callback(conn: asyncpg.Connection) -> None:
+            # Resolve schema at call time (not at callback creation time) because
+            # _current_schema contextvar may not yet be set when the callback is built
+            # from the HTTP path (http.py calls _build_retain_outbox_callback before
+            # retain_batch_async which is where _authenticate_tenant sets the schema).
+            resolved_schema = schema or _current_schema.get()
             for event in events:
-                await webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+                await webhook_manager.fire_event_with_conn(event, conn, schema=resolved_schema)
 
         return _callback
 
@@ -2182,7 +2187,7 @@ class MemoryEngine(MemoryEngineInterface):
                     document_tags=document_tags,
                     config=resolved_config,
                     operation_id=operation_id,
-                    schema=request_context.tenant_id if request_context else None,
+                    schema=_current_schema.get(),
                     outbox_callback=outbox_callback,
                 )
 
