@@ -130,9 +130,7 @@ async def retrieve_semantic_bm25_combined(
     """
     import re
 
-    result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {
-        ft: ([], []) for ft in fact_types
-    }
+    result_dict: dict[str, tuple[list[RetrievalResult], list[RetrievalResult]]] = {ft: ([], []) for ft in fact_types}
 
     # Over-fetch to compensate for HNSW approximate recall + WHERE post-filtering.
     # pgvector's HNSW scans the index first, then applies WHERE conditions (bank_id,
@@ -206,7 +204,9 @@ async def retrieve_semantic_bm25_combined(
 
     for ft in fact_types:
         if config.text_search_extension == "vchord":
-            bm25_score_expr = "search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))"
+            bm25_score_expr = (
+                "search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))"
+            )
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = ""
             bm25_params: list = [bank_id, ft, limit, query_text]
