@@ -80,8 +80,6 @@ from hindsight_api.models import RequestContext
 
 logger = logging.getLogger(__name__)
 
-MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
-
 
 class EntityIncludeOptions(BaseModel):
     """Options for including entity observations in recall results."""
@@ -2263,12 +2261,13 @@ def _register_routes(app: FastAPI):
         metrics = get_metrics_collector()
 
         # Validate query length to prevent expensive operations on oversized queries
+        max_query_tokens = get_config().recall_max_query_tokens
         encoding = _get_tiktoken_encoding()
         query_tokens = len(encoding.encode(request.query))
-        if query_tokens > MAX_QUERY_TOKENS:
+        if query_tokens > max_query_tokens:
             raise HTTPException(
                 status_code=400,
-                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {MAX_QUERY_TOKENS}. Please shorten your query.",
+                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {max_query_tokens}. Please shorten your query.",
             )
 
         try:

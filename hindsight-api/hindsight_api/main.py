@@ -246,6 +246,7 @@ def main():
             mpfp_top_k_neighbors=config.mpfp_top_k_neighbors,
             recall_max_concurrent=config.recall_max_concurrent,
             recall_connection_budget=config.recall_connection_budget,
+            recall_max_query_tokens=config.recall_max_query_tokens,
             retain_max_completion_tokens=config.retain_max_completion_tokens,
             retain_chunk_size=config.retain_chunk_size,
             retain_extract_causal_links=config.retain_extract_causal_links,
