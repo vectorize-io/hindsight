@@ -241,6 +241,9 @@ class DaemonEmbedManager(EmbedManager):
                             live.update(panel)
                             live.refresh()
                             console.print()
+                            # Register profile in metadata so CLI can discover it
+                            if profile:
+                                self._register_profile(profile, port, config)
                             return True
                         else:
                             log_lines.append("")
@@ -307,6 +310,18 @@ class DaemonEmbedManager(EmbedManager):
             console.print()
             return False
 
+    def _register_profile(self, profile: str, port: int, config: dict) -> None:
+        """Register a named profile in metadata so it's discoverable by the CLI.
+
+        Only saves HINDSIGHT_API_* config keys (not internal daemon keys).
+        Silently ignores errors to avoid blocking daemon startup.
+        """
+        try:
+            api_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_API_")}
+            self._profile_manager.create_profile(profile, port, api_config)
+        except Exception as e:
+            logger.debug(f"Failed to register profile '{profile}' in metadata: {e}")
+
     def ensure_running(self, config: dict, profile: str) -> bool:
         """
         Ensure daemon is running, starting it if needed.
@@ -320,6 +335,9 @@ class DaemonEmbedManager(EmbedManager):
         """
         if self.is_running(profile):
             logger.debug(f"Daemon already running for profile '{profile}'")
+            if profile:
+                paths = self._profile_manager.resolve_profile_paths(profile)
+                self._register_profile(profile, paths.port, config)
             return True
         return self._start_daemon(config, profile)
 
