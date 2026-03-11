@@ -6,9 +6,8 @@ Create Date: 2026-03-11
 
 This migration:
 1. Adds internal_id UUID column to banks (stable identifier for index naming)
-2. Drops the old fact_type-only partial HNSW indexes (bank_id B-tree always wins over them)
-3. Drops the global HNSW index (competes with per-bank partial indexes)
-4. Creates per-(bank_id, fact_type) partial HNSW indexes for all existing banks
+2. Drops the global HNSW index (competes with per-bank partial indexes)
+3. Creates per-(bank_id, fact_type) partial HNSW indexes for all existing banks
    (new banks get indexes created at bank-creation time via bank_utils.create_bank_hnsw_indexes)
 
 Why per-(bank, fact_type) indexes:
@@ -31,7 +30,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 revision: str = "d5e6f7a8b9c0"
-down_revision: str | Sequence[str] | None = "a3b4c5d6e7f8"
+down_revision: str | Sequence[str] | None = "c3d4e5f6g7h8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -56,15 +55,10 @@ def upgrade() -> None:
     )
     op.execute(f"ALTER TABLE {schema}banks ADD CONSTRAINT banks_internal_id_unique UNIQUE (internal_id)")
 
-    # 2. Drop old fact_type-only partial HNSW indexes (from migration a3b4c5d6e7f8)
-    op.execute(f"DROP INDEX IF EXISTS {schema}idx_mu_emb_world")
-    op.execute(f"DROP INDEX IF EXISTS {schema}idx_mu_emb_observation")
-    op.execute(f"DROP INDEX IF EXISTS {schema}idx_mu_emb_experience")
-
-    # 3. Drop global HNSW index (competes with per-bank partial indexes)
+    # 2. Drop global HNSW index (competes with per-bank partial indexes)
     op.execute(f"DROP INDEX IF EXISTS {schema}idx_memory_units_embedding")
 
-    # 4. Create per-(bank, fact_type) partial HNSW indexes for all existing banks
+    # 3. Create per-(bank, fact_type) partial HNSW indexes for all existing banks
     bind = op.get_bind()
     schema_name = context.config.get_main_option("target_schema")
     table_ref = f'"{schema_name}".memory_units' if schema_name else "memory_units"
