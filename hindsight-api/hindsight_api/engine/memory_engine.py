@@ -3686,6 +3686,7 @@ class MemoryEngine(MemoryEngineInterface):
         pool = await self._get_pool()
         invalidated_obs = 0
         result: dict[str, int] = {}
+        bank_internal_id: str | None = None
         async with acquire_with_retry(pool) as conn:
             # Ensure connection is not in read-only mode (can happen with connection poolers)
             await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
@@ -3745,10 +3746,8 @@ class MemoryEngine(MemoryEngineInterface):
                         internal_id = await conn.fetchval(
                             f"DELETE FROM {fq_table('banks')} WHERE bank_id = $1 RETURNING internal_id", bank_id
                         )
-
-                        # Drop per-bank HNSW indexes now that the bank row is gone
                         if internal_id:
-                            await bank_utils.drop_bank_hnsw_indexes(conn, str(internal_id))
+                            bank_internal_id = str(internal_id)
 
                         result = {
                             "memory_units_deleted": units_count,
@@ -3759,6 +3758,12 @@ class MemoryEngine(MemoryEngineInterface):
 
                 except Exception as e:
                     raise Exception(f"Failed to delete agent data: {str(e)}")
+
+            # Drop per-bank HNSW indexes AFTER the transaction commits to avoid
+            # AccessExclusiveLock deadlocks with concurrent bank deletions.
+            # (DROP INDEX on memory_units conflicts with RowExclusiveLock from DELETE inside tx)
+            if bank_internal_id:
+                await bank_utils.drop_bank_hnsw_indexes(conn, bank_internal_id)
 
         if invalidated_obs > 0:
             await self.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
