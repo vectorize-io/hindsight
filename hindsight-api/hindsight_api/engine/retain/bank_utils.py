@@ -5,6 +5,7 @@ bank profile utilities for disposition and mission management.
 import json
 import logging
 import re
+import uuid
 from typing import TypedDict
 
 from pydantic import BaseModel, Field
@@ -118,23 +119,27 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
                 mission=row["mission"] or "",
             )
 
-        # Bank doesn't exist, create with defaults
-        row = await conn.fetchrow(
+        # Bank doesn't exist, create with defaults.
+        # Generate internal_id here so we control the value and can use it
+        # immediately for HNSW index creation without a RETURNING round-trip.
+        internal_id = uuid.uuid4()
+        inserted = await conn.fetchval(
             f"""
-            INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission)
-            VALUES ($1, $2, $3::jsonb, $4)
+            INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id)
+            VALUES ($1, $2, $3::jsonb, $4, $5)
             ON CONFLICT (bank_id) DO NOTHING
-            RETURNING internal_id
+            RETURNING bank_id
             """,
             bank_id,
             bank_id,  # Default name is the bank_id
             json.dumps(DEFAULT_DISPOSITION),
             "",
+            internal_id,
         )
 
-        if row:
+        if inserted:
             # Fresh insert — create per-bank HNSW indexes (instant on empty bank)
-            await create_bank_hnsw_indexes(conn, bank_id, str(row["internal_id"]))
+            await create_bank_hnsw_indexes(conn, bank_id, str(internal_id))
 
         return BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission="")
 
