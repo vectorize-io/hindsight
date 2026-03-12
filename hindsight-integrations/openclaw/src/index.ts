@@ -1143,8 +1143,9 @@ ${memoriesFormatted}
 
         debug(`[Hindsight] Auto-recall: Injecting ${results.length} memories from bank ${bankId}`);
 
-        // Inject context before the user message
-        return { prependContext: contextMessage };
+        // Inject recalled memories into system prompt space so they stay hidden from
+        // the end-user transcript/UI while still being available to the model.
+        return { prependSystemContext: contextMessage };
       } catch (error) {
         if (error instanceof DOMException && error.name === 'TimeoutError') {
           console.warn(`[Hindsight] Auto-recall timed out after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);

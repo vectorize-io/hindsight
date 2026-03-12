@@ -1,10 +1,15 @@
 // Moltbot plugin API types (minimal subset needed for this plugin)
 
+export interface PluginPromptHookResult {
+  prependContext?: string;
+  prependSystemContext?: string;
+}
+
 export interface MoltbotPluginAPI {
   config: MoltbotConfig;
   registerService(config: ServiceConfig): void;
   // OpenClaw hook handler signature: (event, ctx?) where ctx contains channel/sender info
-  on(event: string, handler: (event: any, ctx?: any) => void | Promise<void | { prependContext?: string }>): void;
+  on(event: string, handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>): void;
   // Add more as needed
 }
 
