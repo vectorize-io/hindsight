@@ -351,6 +351,7 @@ PROVIDER_DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
     "gemini": "gemini-2.5-flash",
     "groq": "openai/gpt-oss-120b",
+    "minimax": "MiniMax-M2.5",
     "ollama": "gemma3:12b",
     "lmstudio": "local-model",
     "vertexai": "google/gemini-2.5-flash-lite",

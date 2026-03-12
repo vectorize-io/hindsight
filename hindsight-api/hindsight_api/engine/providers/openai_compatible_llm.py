@@ -1,11 +1,12 @@
 """
-OpenAI-compatible LLM provider supporting OpenAI, Groq, Ollama, and LMStudio.
+OpenAI-compatible LLM provider supporting OpenAI, Groq, Ollama, LMStudio, and MiniMax.
 
 This provider handles all OpenAI API-compatible models including:
 - OpenAI: GPT-4, GPT-4o, GPT-5, o1, o3 (reasoning models)
 - Groq: Fast inference with seed control and service tiers
 - Ollama: Local models with native streaming API support
 - LMStudio: Local models with OpenAI-compatible API
+- MiniMax: MiniMax-M2.5 models with 204K context window
 
 Features:
 - Reasoning models with extended thinking (o1, o3, GPT-5 families)
@@ -47,6 +48,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - Groq: Fast inference with seed control and service tiers
     - Ollama: Local models with native streaming API for better structured output
     - LMStudio: Local models with OpenAI-compatible API
+    - MiniMax: MiniMax-M2.5 models via OpenAI-compatible API (https://api.minimax.io/v1)
     """
 
     def __init__(
@@ -76,7 +78,7 @@ class OpenAICompatibleLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
         # Validate provider
-        valid_providers = ["openai", "groq", "ollama", "lmstudio"]
+        valid_providers = ["openai", "groq", "ollama", "lmstudio", "minimax"]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
 
@@ -88,13 +90,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "http://localhost:11434/v1"
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
+            elif self.provider == "minimax":
+                self.base_url = "https://api.minimax.io/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in ("openai", "groq") and not self.api_key:
+        if self.provider in ("openai", "groq", "minimax") and not self.api_key:
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)
@@ -231,6 +235,9 @@ class OpenAICompatibleLLM(LLMInterface):
 
         # Temperature - reasoning models don't support custom temperature
         if temperature is not None and not is_reasoning_model:
+            # MiniMax requires temperature in (0.0, 1.0] — clamp accordingly
+            if self.provider == "minimax":
+                temperature = max(0.01, min(temperature, 1.0))
             call_params["temperature"] = temperature
 
         # Set reasoning_effort for reasoning models
@@ -546,6 +553,9 @@ class OpenAICompatibleLLM(LLMInterface):
         if max_completion_tokens is not None:
             call_params["max_completion_tokens"] = max_completion_tokens
         if temperature is not None:
+            # MiniMax requires temperature in (0.0, 1.0] — clamp accordingly
+            if self.provider == "minimax":
+                temperature = max(0.01, min(temperature, 1.0))
             call_params["temperature"] = temperature
 
         # Provider-specific parameters

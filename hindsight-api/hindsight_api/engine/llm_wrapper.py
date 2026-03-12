@@ -227,7 +227,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
         )
 
-    elif provider_lower in ("openai", "groq", "ollama", "lmstudio"):
+    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax"):
         return OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -296,6 +296,7 @@ class LLMProvider:
             "openai-codex",
             "claude-code",
             "mock",
+            "minimax",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -308,6 +309,8 @@ class LLMProvider:
                 self.base_url = "http://localhost:11434/v1"
             elif self.provider == "lmstudio":
                 self.base_url = "http://localhost:1234/v1"
+            elif self.provider == "minimax":
+                self.base_url = "https://api.minimax.io/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None

@@ -160,7 +160,7 @@ To switch between backends:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `ollama`, `lmstudio`, `vertexai` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama`, `lmstudio`, `vertexai` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |

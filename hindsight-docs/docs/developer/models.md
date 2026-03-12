@@ -18,7 +18,7 @@ All local models (embedding, cross-encoder) are automatically downloaded from Hu
 
 Used for fact extraction, entity resolution, mental model consolidation, and answer synthesis.
 
-**Supported providers:** OpenAI, Anthropic, Gemini, Groq, Ollama, LM Studio, and **any OpenAI-compatible API**
+**Supported providers:** OpenAI, Anthropic, Gemini, Groq, MiniMax, Ollama, LM Studio, and **any OpenAI-compatible API**
 
 :::tip OpenAI-Compatible Providers
 Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., Azure OpenAI). Simply set `HINDSIGHT_API_LLM_PROVIDER=openai` and configure `HINDSIGHT_API_LLM_BASE_URL` to point to your provider's endpoint.
@@ -63,6 +63,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `anthropic` | `claude-haiku-4-5-20251001` |
 | `gemini` | `gemini-2.5-flash` |
 | `groq` | `openai/gpt-oss-120b` |
+| `minimax` | `MiniMax-M2.5` |
 | `ollama` | `gemma3:12b` |
 | `lmstudio` | `local-model` |
 | `vertexai` | `gemini-2.0-flash-001` |
@@ -143,6 +144,11 @@ export HINDSIGHT_API_LLM_MODEL=llama3
 export HINDSIGHT_API_LLM_PROVIDER=lmstudio
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:1234/v1
 export HINDSIGHT_API_LLM_MODEL=your-local-model
+
+# MiniMax (204K context window)
+export HINDSIGHT_API_LLM_PROVIDER=minimax
+export HINDSIGHT_API_LLM_API_KEY=your-minimax-api-key
+export HINDSIGHT_API_LLM_MODEL=MiniMax-M2.5
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai

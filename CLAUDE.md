@@ -83,7 +83,7 @@ cd hindsight-control-plane && npm run dev
 
 ### Core Engine (hindsight-api/hindsight_api/engine/)
 - `memory_engine.py`: Main orchestrator (~170KB) for retain/recall/reflect operations
-- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, Groq, Ollama, LM Studio
+- `llm_wrapper.py`: LLM abstraction supporting OpenAI, Anthropic, Gemini, Groq, MiniMax, Ollama, LM Studio
 - `embeddings.py`: Embedding generation (local sentence-transformers or TEI)
 - `cross_encoder.py`: Reranking (local or TEI)
 - `entity_resolver.py`: Entity extraction and normalization
@@ -315,7 +315,7 @@ npm install
 ```
 
 Required env vars:
-- `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, groq, ollama, lmstudio
+- `HINDSIGHT_API_LLM_PROVIDER`: openai, anthropic, gemini, groq, minimax, ollama, lmstudio
 - `HINDSIGHT_API_LLM_API_KEY`: Your API key
 - `HINDSIGHT_API_LLM_MODEL`: Model name (e.g., gpt-4o-mini, claude-sonnet-4-20250514)
 
