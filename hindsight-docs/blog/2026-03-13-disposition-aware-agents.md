@@ -6,6 +6,8 @@ tags: [disposition, personality, skepticism, empathy, reflect, agents]
 image: /img/blog/disposition-aware-agents.png
 ---
 
+![Hindsight — Disposition-Aware Agents](/img/blog/disposition-aware-agents.png)
+
 When we started giving [Hindsight](https://ui.hindsight.vectorize.io/signup)-powered agents "personality," we weren't trying to invent another layer of prompt cosplay. The standard approach to AI agent personality — long blocks of "be skeptical," "be empathetic," "interpret literally" — is fragile, hard to maintain, and doesn't survive contact with real workloads. We wanted something smaller and architectural: a few traits baked into the system that quietly change how the agent thinks, not just how it phrases answers.
 
 <!-- truncate -->
