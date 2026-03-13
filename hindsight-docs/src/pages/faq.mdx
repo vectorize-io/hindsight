@@ -4,6 +4,8 @@ description: Common questions and answers about Hindsight
 hide_table_of_contents: false
 ---
 
+import {ClientsGrid, IntegrationsGrid, LLMProvidersGrid} from '@site/src/components/SupportedGrids';
+
 # Frequently Asked Questions
 
 ### What is Hindsight and how does it differ from RAG?
@@ -37,17 +39,25 @@ Unlike vector databases (just search) or RAG systems (document retrieval), Hinds
 
 ---
 
+### Which clients and languages are supported?
+
+<ClientsGrid />
+
+Any language can also use the [HTTP API](/developer/api/quickstart) directly.
+
+---
+
+### Which integrations are supported?
+
+<IntegrationsGrid />
+
+---
+
 ### Which LLM providers are supported?
 
-Hindsight supports:
-- **OpenAI**
-- **Anthropic**
-- **Google Gemini**
-- **Groq**
-- **Ollama** (local models)
-- **LM Studio** (local models)
-- **Any OpenAI-compatible provider** (Together AI, Fireworks, DeepInfra, etc.)
-- **Any Anthropic-compatible provider**
+<LLMProvidersGrid />
+
+See [Models](/developer/models) for the full list of supported providers, recommended models, and configuration examples.
 
 **Using local models with Ollama:**
 ```bash

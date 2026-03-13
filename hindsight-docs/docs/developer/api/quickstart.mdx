@@ -9,11 +9,16 @@ Get up and running with Hindsight in 60 seconds.
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeSnippet from '@site/src/components/CodeSnippet';
+import {ClientsGrid, IntegrationsGrid} from '@site/src/components/SupportedGrids';
 
 {/* Import raw source files */}
 import quickstartPy from '!!raw-loader!@site/examples/api/quickstart.py';
 import quickstartMjs from '!!raw-loader!@site/examples/api/quickstart.mjs';
 import quickstartSh from '!!raw-loader!@site/examples/api/quickstart.sh';
+
+## Clients
+
+<ClientsGrid />
 
 ## Start the API Server
 
@@ -99,6 +104,10 @@ curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 | **Reflect** | Retrieved memories are used to generate a disposition-aware response |
 
 ---
+
+## Integrations
+
+<IntegrationsGrid />
 
 ## Next Steps
 

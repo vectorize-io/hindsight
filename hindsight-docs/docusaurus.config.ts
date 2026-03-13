@@ -212,17 +212,10 @@ const config: Config = {
       items: [
         {
           type: 'doc',
-          docId: 'developer/installation',
+          docId: 'developer/index',
           position: 'left',
           label: 'Developer',
           className: 'navbar-item-developer',
-        },
-        {
-          type: 'doc',
-          docId: 'sdks/python',
-          position: 'left',
-          label: 'SDKs',
-          className: 'navbar-item-sdks',
         },
         {
           to: '/faq',
@@ -294,7 +287,7 @@ const config: Config = {
               to: '/developer/installation',
             },
             {
-              label: 'SDKs',
+              label: 'Clients & Integrations',
               to: '/sdks/python',
             },
             {

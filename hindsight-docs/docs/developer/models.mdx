@@ -1,16 +1,16 @@
+import {LLMProvidersGrid} from '@site/src/components/SupportedGrids';
+
 # Models
 
 Hindsight uses several machine learning models for different tasks.
 
 ## Overview
 
-| Model Type | Purpose | Default | Configurable |
-|------------|---------|---------|--------------|
-| **LLM** | Fact extraction, reasoning, generation | Provider-specific | Yes |
-| **Embedding** | Vector representations for semantic search | `BAAI/bge-small-en-v1.5` | Yes |
-| **Cross-Encoder** | Reranking search results | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Yes |
+- **LLM** — Fact extraction, reasoning, and generation. Provider-specific, fully configurable.
+- **Embedding** — Vector representations for semantic search. Default: `BAAI/bge-small-en-v1.5`.
+- **Cross-Encoder** — Reranking search results. Default: `cross-encoder/ms-marco-MiniLM-L-6-v2`.
 
-All local models (embedding, cross-encoder) are automatically downloaded from HuggingFace on first run.
+Embedding and cross-encoder models are downloaded automatically from HuggingFace on first run.
 
 ---
 
@@ -18,7 +18,11 @@ All local models (embedding, cross-encoder) are automatically downloaded from Hu
 
 Used for fact extraction, entity resolution, mental model consolidation, and answer synthesis.
 
-**Supported providers:** OpenAI, Anthropic, Gemini, Groq, MiniMax, Ollama, LM Studio, and **any OpenAI-compatible API**
+**Supported providers:**
+
+<LLMProvidersGrid />
+
+Also supports **any OpenAI-compatible API** (e.g., Azure OpenAI, Together AI, Fireworks).
 
 :::tip OpenAI-Compatible Providers
 Hindsight works with any provider that exposes an OpenAI-compatible API (e.g., Azure OpenAI). Simply set `HINDSIGHT_API_LLM_PROVIDER=openai` and configure `HINDSIGHT_API_LLM_BASE_URL` to point to your provider's endpoint.

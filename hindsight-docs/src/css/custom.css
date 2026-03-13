@@ -348,17 +348,12 @@
 
 /* Non-collapsible category styling */
 .menu__list-item-collapsible {
-  font-weight: 600;
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 700;
   font-size: 0.6875rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ifm-color-emphasis-600);
-  margin-top: 1rem;
-  margin-bottom: 0.25rem;
-}
-
-.menu__list-item-collapsible:first-child {
-  margin-top: 0;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-emphasis-700);
 }
 
 .menu__list-item-collapsible .menu__link {
@@ -373,82 +368,18 @@
   color: var(--ifm-color-emphasis-500);
 }
 
-/* Client sidebar icons */
-a.menu__link[href*="/sdks/python"]::before,
-a.menu__link[href*="/sdks/nodejs"]::before,
-a.menu__link[href*="/sdks/cli"]::before,
-a.menu__link[href*="/sdks/embed"]::before {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  margin-right: 8px;
-  vertical-align: middle;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  content: '';
+/* Space between sections */
+li.theme-doc-sidebar-item-category-level-1 {
+  margin-top: 1.75rem;
 }
 
-/* Python logo */
-a.menu__link[href*="/sdks/python"]::before {
-  background-image: url('/img/icons/python.svg');
+li.theme-doc-sidebar-item-category-level-1:first-child {
+  margin-top: 0;
 }
 
-/* Node.js logo */
-a.menu__link[href*="/sdks/nodejs"]::before {
-  background-image: url('/img/icons/nodejs.png');
-}
-
-/* CLI - terminal icon */
-a.menu__link[href*="/sdks/cli"]::before {
-  background-image: url('/img/icons/terminal.svg');
-}
-
-/* Embedded SDK - package icon */
-a.menu__link[href*="/sdks/embed"]::before {
-  background-image: url('/img/icons/package.svg');
-}
-
-/* Integration sidebar icons */
-a.menu__link[href*="/sdks/integrations/local-mcp"]::before,
-a.menu__link[href*="/sdks/integrations/litellm"]::before,
-a.menu__link[href*="/sdks/integrations/openclaw"]::before,
-a.menu__link[href*="/sdks/integrations/ai-sdk"]::before,
-a.menu__link[href*="/sdks/integrations/skills"]::before {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  margin-right: 8px;
-  vertical-align: middle;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  content: '';
-}
-
-/* Local MCP Server */
-a.menu__link[href*="/sdks/integrations/local-mcp"]::before {
-  background-image: url('/img/icons/mcp.png');
-}
-
-/* LiteLLM */
-a.menu__link[href*="/sdks/integrations/litellm"]::before {
-  background-image: url('/img/icons/litellm.png');
-}
-
-/* OpenClaw */
-a.menu__link[href*="/sdks/integrations/openclaw"]::before {
-  background-image: url('/img/icons/openclaw.png');
-}
-
-/* Vercel AI SDK */
-a.menu__link[href*="/sdks/integrations/ai-sdk"]::before {
-  background-image: url('/img/icons/vercel.png');
-}
-
-/* Skills */
-a.menu__link[href*="/sdks/integrations/skills"]::before {
-  background-image: url('/img/icons/skills.png');
+/* Reduce item indentation */
+.menu__list .menu__list {
+  padding-left: 0.5rem;
 }
 
 /* Code blocks */
