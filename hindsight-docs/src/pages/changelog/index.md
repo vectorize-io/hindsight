@@ -8,6 +8,17 @@ This changelog highlights user-facing changes only. Internal maintenance, CI/CD,
 
 For full release details, see [GitHub Releases](https://github.com/vectorize-io/hindsight/releases).
 
+## Integration Changelogs
+
+| Integration | Package | Description |
+|---|---|---|
+| [LiteLLM](./integrations/litellm) | `hindsight-litellm` | Universal LLM memory via LiteLLM (100+ providers) |
+| [Pydantic AI](./integrations/pydantic-ai) | `hindsight-pydantic-ai` | Persistent memory tools for Pydantic AI agents |
+| [CrewAI](./integrations/crewai) | `hindsight-crewai` | Persistent memory for CrewAI agents |
+| [AI SDK](./integrations/ai-sdk) | `@vectorize-io/hindsight-ai-sdk` | Memory integration for Vercel AI SDK |
+| [Chat SDK](./integrations/chat) | `@vectorize-io/hindsight-chat` | Memory integration for Vercel Chat SDK |
+| [OpenClaw](./integrations/openclaw) | `@vectorize-io/hindsight-openclaw` | Hindsight memory plugin for OpenClaw |
+
 ## [0.4.17](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.17)
 
 **Features**

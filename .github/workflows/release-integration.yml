@@ -1,0 +1,99 @@
+name: Release Integration
+
+on:
+  push:
+    tags:
+      - 'integrations/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # for PyPI trusted publishing
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Extract integration info
+      id: info
+      run: |
+        # refs/tags/integrations/litellm/v0.1.0 → integration=litellm, version=0.1.0
+        TAG="${GITHUB_REF#refs/tags/}"
+        INTEGRATION=$(echo "$TAG" | cut -d'/' -f2)
+        VERSION=$(echo "$TAG" | cut -d'/' -f3 | sed 's/^v//')
+        echo "integration=$INTEGRATION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "Integration: $INTEGRATION, Version: $VERSION"
+
+    - name: Detect integration type
+      id: type
+      run: |
+        if [ -f "hindsight-integrations/${{ steps.info.outputs.integration }}/pyproject.toml" ]; then
+          echo "type=python" >> $GITHUB_OUTPUT
+        else
+          echo "type=typescript" >> $GITHUB_OUTPUT
+        fi
+
+    # ── Python integrations (litellm, pydantic-ai, crewai) ──────────────────
+
+    - name: Install uv
+      if: steps.type.outputs.type == 'python'
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Set up Python
+      if: steps.type.outputs.type == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build Python package
+      if: steps.type.outputs.type == 'python'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: uv build --out-dir dist
+
+    - name: Publish Python package to PyPI
+      if: steps.type.outputs.type == 'python'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ./hindsight-integrations/${{ steps.info.outputs.integration }}/dist
+        skip-existing: true
+
+    # ── TypeScript integrations (ai-sdk, chat, openclaw) ────────────────────
+
+    - name: Set up Node.js
+      if: steps.type.outputs.type == 'typescript'
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Install dependencies
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: npm ci
+
+    - name: Build TypeScript package
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: npm run build
+
+    - name: Publish TypeScript package to npm
+      if: steps.type.outputs.type == 'typescript'
+      working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
