@@ -13,7 +13,7 @@ jobs:
       id-token: write
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
@@ -117,7 +117,7 @@ jobs:
     environment: npm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -166,7 +166,7 @@ jobs:
     environment: npm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -215,7 +215,7 @@ jobs:
     environment: npm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -264,7 +264,7 @@ jobs:
     environment: npm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -313,7 +313,7 @@ jobs:
     environment: npm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -393,7 +393,7 @@ jobs:
             asset_name: hindsight-linux-arm64
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -452,7 +452,7 @@ jobs:
               PRELOAD_ML_MODELS=false
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
@@ -537,7 +537,7 @@ jobs:
       packages: write
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install Helm
       uses: azure/setup-helm@v4
@@ -570,7 +570,7 @@ jobs:
       contents: write
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Extract version from tag
       id: get_version
