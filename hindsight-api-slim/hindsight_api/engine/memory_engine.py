@@ -184,7 +184,7 @@ from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
 from .search import think_utils
 from .search.reranking import CrossEncoderReranker, apply_combined_scoring
-from .search.tags import TagsMatch, build_tags_where_clause
+from .search.tags import TagGroup, TagsMatch, build_tags_where_clause
 from .task_backend import BrokerTaskBackend, SyncTaskBackend, TaskBackend
 
 
@@ -2300,6 +2300,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
         _connection_budget: int | None = None,
         _quiet: bool = False,
     ) -> RecallResultModel:
@@ -2434,6 +2435,7 @@ class MemoryEngine(MemoryEngineInterface):
                             semaphore_wait=semaphore_wait,
                             tags=tags,
                             tags_match=tags_match,
+                            tag_groups=tag_groups,
                             connection_budget=_connection_budget,
                             quiet=_quiet,
                             include_source_facts=include_source_facts,
@@ -2561,6 +2563,7 @@ class MemoryEngine(MemoryEngineInterface):
         semaphore_wait: float = 0.0,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
         connection_budget: int | None = None,
         quiet: bool = False,
         include_source_facts: bool = False,
@@ -2680,6 +2683,7 @@ class MemoryEngine(MemoryEngineInterface):
                         self.query_analyzer,
                         tags=tags,
                         tags_match=tags_match,
+                        tag_groups=tag_groups,
                     )
                     parallel_duration = time.time() - parallel_start
             finally:
@@ -5040,6 +5044,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
         exclude_mental_model_ids: list[str] | None = None,
         _skip_span: bool = False,
     ) -> ReflectResult:
@@ -5142,6 +5147,7 @@ class MemoryEngine(MemoryEngineInterface):
                     max_results=max_results,
                     tags=tags,
                     tags_match=tags_match,
+                    tag_groups=tag_groups,
                     exclude_ids=exclude_mental_model_ids,
                     pending_consolidation=pending_consolidation,
                 )
@@ -5155,6 +5161,7 @@ class MemoryEngine(MemoryEngineInterface):
                 max_tokens=max_tokens,
                 tags=tags,
                 tags_match=tags_match,
+                tag_groups=tag_groups,
                 last_consolidated_at=last_consolidated_at,
                 pending_consolidation=pending_consolidation,
             )
@@ -5168,6 +5175,7 @@ class MemoryEngine(MemoryEngineInterface):
                 max_tokens=max_tokens,
                 tags=tags,
                 tags_match=tags_match,
+                tag_groups=tag_groups,
                 max_chunk_tokens=max_chunk_tokens,
             )
 

@@ -4314,6 +4314,11 @@ components:
           - all_strict
           title: Tags Match
           type: string
+        tag_groups:
+          items:
+            $ref: '#/components/schemas/RecallRequest_tag_groups_inner'
+          nullable: true
+          type: array
       required:
       - query
       title: RecallRequest
@@ -4620,6 +4625,11 @@ components:
           - all_strict
           title: Tags Match
           type: string
+        tag_groups:
+          items:
+            $ref: '#/components/schemas/RecallRequest_tag_groups_inner'
+          nullable: true
+          type: array
       required:
       - query
       title: ReflectRequest
@@ -4829,6 +4839,53 @@ components:
           title: Max Tokens Per Observation
           type: integer
       title: SourceFactsIncludeOptions
+    TagGroupAnd:
+      description: "Compound AND group: all child filters must match."
+      properties:
+        and:
+          items:
+            $ref: '#/components/schemas/RecallRequest_tag_groups_inner'
+          type: array
+      required:
+      - and
+      title: TagGroupAnd
+    TagGroupLeaf:
+      description: "A leaf tag filter: matches memories by tag list and match mode."
+      properties:
+        tags:
+          items:
+            type: string
+          type: array
+        match:
+          default: any_strict
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          title: Match
+          type: string
+      required:
+      - tags
+      title: TagGroupLeaf
+    TagGroupNot:
+      description: "Compound NOT group: child filter must NOT match."
+      properties:
+        not:
+          $ref: '#/components/schemas/Not'
+      required:
+      - not
+      title: TagGroupNot
+    TagGroupOr:
+      description: "Compound OR group: at least one child filter must match."
+      properties:
+        or:
+          items:
+            $ref: '#/components/schemas/RecallRequest_tag_groups_inner'
+          type: array
+      required:
+      - or
+      title: TagGroupOr
     TagItem:
       description: Single tag with usage count.
       properties:
@@ -5324,6 +5381,19 @@ components:
         \ which combinations to use."
       nullable: true
       title: ObservationScopes
+    RecallRequest_tag_groups_inner:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd'
+      - $ref: '#/components/schemas/TagGroupOr'
+      - $ref: '#/components/schemas/TagGroupNot'
+    Not:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd'
+      - $ref: '#/components/schemas/TagGroupOr'
+      - $ref: '#/components/schemas/TagGroupNot'
+      title: Not
     ValidationError_loc_inner:
       anyOf:
       - type: string

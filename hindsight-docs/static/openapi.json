@@ -6543,6 +6543,34 @@
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
             "default": "any"
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
           }
         },
         "type": "object",
@@ -7155,6 +7183,34 @@
             "title": "Tags Match",
             "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).",
             "default": "any"
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}."
           }
         },
         "type": "object",
@@ -7546,6 +7602,121 @@
         "type": "object",
         "title": "SourceFactsIncludeOptions",
         "description": "Options for including source facts for observation-type results."
+      },
+      "TagGroupAnd": {
+        "properties": {
+          "and": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TagGroupLeaf"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupAnd"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupOr"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupNot"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "And"
+          }
+        },
+        "type": "object",
+        "required": [
+          "and"
+        ],
+        "title": "TagGroupAnd",
+        "description": "Compound AND group: all child filters must match."
+      },
+      "TagGroupLeaf": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict"
+            ],
+            "title": "Match",
+            "default": "any_strict"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "title": "TagGroupLeaf",
+        "description": "A leaf tag filter: matches memories by tag list and match mode."
+      },
+      "TagGroupNot": {
+        "properties": {
+          "not": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagGroupLeaf"
+              },
+              {
+                "$ref": "#/components/schemas/TagGroupAnd"
+              },
+              {
+                "$ref": "#/components/schemas/TagGroupOr"
+              },
+              {
+                "$ref": "#/components/schemas/TagGroupNot"
+              }
+            ],
+            "title": "Not"
+          }
+        },
+        "type": "object",
+        "required": [
+          "not"
+        ],
+        "title": "TagGroupNot",
+        "description": "Compound NOT group: child filter must NOT match."
+      },
+      "TagGroupOr": {
+        "properties": {
+          "or": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TagGroupLeaf"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupAnd"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupOr"
+                },
+                {
+                  "$ref": "#/components/schemas/TagGroupNot"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Or"
+          }
+        },
+        "type": "object",
+        "required": [
+          "or"
+        ],
+        "title": "TagGroupOr",
+        "description": "Compound OR group: at least one child filter must match."
       },
       "TagItem": {
         "properties": {

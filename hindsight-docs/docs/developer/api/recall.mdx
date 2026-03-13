@@ -184,6 +184,66 @@ Use this for strict scope enforcement where a memory must explicitly belong to *
 A memory with tags `["user:alice", "team", "project:x"]` will still match a filter of `["user:alice", "team"]` under `all_strict` — extra tags on the memory are not a problem. The filter only requires the memory to contain **at least** the specified tags.
 :::
 
+### tag_groups
+
+`tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.
+
+`tag_groups` and `tags` / `tags_match` can be used simultaneously — they are AND-ed together.
+
+#### Leaf node
+
+```json
+{ "tags": ["step:5", "step:8"], "match": "any_strict" }
+```
+
+`match` accepts the same values as `tags_match`: `any`, `all`, `any_strict`, `all_strict`. Defaults to `any_strict`.
+
+#### Compound nodes
+
+```json
+{ "and": [ <TagGroup>, <TagGroup>, ... ] }
+{ "or":  [ <TagGroup>, <TagGroup>, ... ] }
+{ "not": <TagGroup> }
+```
+
+#### Examples
+
+**Step filter AND user scope** — two top-level groups AND-ed:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["step:5", "step:8", "step:12"], "match": "any_strict" },
+    { "tags": ["user:ep_42"], "match": "all_strict" }
+  ]
+}
+```
+
+**Nested OR inside AND** — user must match, plus either step OR priority:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["user:alice"], "match": "all_strict" },
+    { "or": [
+        { "tags": ["step:5"], "match": "any_strict" },
+        { "tags": ["priority:high"], "match": "all_strict" }
+    ]}
+  ]
+}
+```
+
+**Exclusion** — user must match, but archived memories are excluded:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["user:alice"], "match": "all_strict" },
+    { "not": { "tags": ["archived"], "match": "any_strict" } }
+  ]
+}
+```
+
 ### trace
 
 When set to `true`, the response includes a detailed debug trace covering the query embedding, entry points, per-strategy retrieval results, RRF fusion candidates, reranked results, temporal constraints detected, and per-phase timings. Has no effect on the retrieval logic itself. Useful for understanding why specific memories were or were not returned.

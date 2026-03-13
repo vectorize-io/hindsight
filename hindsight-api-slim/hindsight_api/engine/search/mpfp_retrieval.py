@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
-from .tags import TagsMatch
+from .tags import TagGroup, TagsMatch
 from .types import MPFPTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -506,6 +506,7 @@ class MPFPGraphRetriever(GraphRetriever):
         adjacency=None,  # Ignored - kept for interface compatibility
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
     ) -> tuple[list[RetrievalResult], MPFPTimings | None]:
         """
         Retrieve facts using MPFP algorithm with lazy edge loading.
@@ -537,7 +538,13 @@ class MPFPGraphRetriever(GraphRetriever):
         if not semantic_seed_nodes:
             seeds_start = time.time()
             semantic_seed_nodes = await self._find_semantic_seeds(
-                pool, query_embedding_str, bank_id, fact_type, tags=tags, tags_match=tags_match
+                pool,
+                query_embedding_str,
+                bank_id,
+                fact_type,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
             )
             timings.seeds_time = time.time() - seeds_start
             logger.debug(
@@ -616,6 +623,12 @@ class MPFPGraphRetriever(GraphRetriever):
 
             results = filter_results_by_tags(results, tags, match=tags_match)
 
+        # Apply compound tag group filtering (post-traversal)
+        if tag_groups:
+            from .tags import filter_results_by_tag_groups
+
+            results = filter_results_by_tag_groups(results, tag_groups)
+
         timings.result_count = len(results)
 
         # Add activation scores from fusion
@@ -656,14 +669,18 @@ class MPFPGraphRetriever(GraphRetriever):
         threshold: float = 0.3,
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
     ) -> list[SeedNode]:
         """Fallback: find semantic seeds via embedding search."""
-        from .tags import build_tags_where_clause_simple
+        from .tags import build_tag_groups_where_clause, build_tags_where_clause_simple
 
         tags_clause = build_tags_where_clause_simple(tags, 6, match=tags_match)
+        tag_groups_param_start = 6 + (1 if tags else 0)
+        groups_clause, groups_params, _ = build_tag_groups_where_clause(tag_groups, tag_groups_param_start)
         params = [query_embedding_str, bank_id, fact_type, threshold, limit]
         if tags:
             params.append(tags)
+        params.extend(groups_params)
 
         async with acquire_with_retry(pool) as conn:
             rows = await conn.fetch(
@@ -675,6 +692,7 @@ class MPFPGraphRetriever(GraphRetriever):
                   AND fact_type = $3
                   AND (1 - (embedding <=> $1::vector)) >= $4
                   {tags_clause}
+                  {groups_clause}
                 ORDER BY embedding <=> $1::vector
                 LIMIT $5
                 """,

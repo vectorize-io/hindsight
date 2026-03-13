@@ -20,6 +20,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
+from hindsight_client_api.models.recall_request_tag_groups_inner import RecallRequestTagGroupsInner
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from typing import Optional, Set
 from typing_extensions import Self
@@ -36,7 +37,8 @@ class ReflectRequest(BaseModel):
     response_schema: Optional[Dict[str, Any]] = None
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).")
-    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match"]
+    tag_groups: Optional[List[RecallRequestTagGroupsInner]] = None
+    __properties: ClassVar[List[str]] = ["query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups"]
 
     @field_validator('tags_match')
     def tags_match_validate_enum(cls, value):
@@ -90,6 +92,13 @@ class ReflectRequest(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of include
         if self.include:
             _dict['include'] = self.include.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in tag_groups (list)
+        _items = []
+        if self.tag_groups:
+            for _item_tag_groups in self.tag_groups:
+                if _item_tag_groups:
+                    _items.append(_item_tag_groups.to_dict())
+            _dict['tag_groups'] = _items
         # set to None if context (nullable) is None
         # and model_fields_set contains the field
         if self.context is None and "context" in self.model_fields_set:
@@ -104,6 +113,11 @@ class ReflectRequest(BaseModel):
         # and model_fields_set contains the field
         if self.tags is None and "tags" in self.model_fields_set:
             _dict['tags'] = None
+
+        # set to None if tag_groups (nullable) is None
+        # and model_fields_set contains the field
+        if self.tag_groups is None and "tag_groups" in self.model_fields_set:
+            _dict['tag_groups'] = None
 
         return _dict
 
@@ -124,7 +138,8 @@ class ReflectRequest(BaseModel):
             "include": ReflectIncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None,
             "response_schema": obj.get("response_schema"),
             "tags": obj.get("tags"),
-            "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any'
+            "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
+            "tag_groups": [RecallRequestTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None
         })
         return _obj
 

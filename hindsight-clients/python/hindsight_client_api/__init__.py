@@ -87,11 +87,13 @@ from hindsight_client_api.models.memory_item import MemoryItem
 from hindsight_client_api.models.mental_model_list_response import MentalModelListResponse
 from hindsight_client_api.models.mental_model_response import MentalModelResponse
 from hindsight_client_api.models.mental_model_trigger import MentalModelTrigger
+from hindsight_client_api.models.model_not import ModelNot
 from hindsight_client_api.models.observation_scopes import ObservationScopes
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
 from hindsight_client_api.models.recall_request import RecallRequest
+from hindsight_client_api.models.recall_request_tag_groups_inner import RecallRequestTagGroupsInner
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.recall_result import RecallResult
 from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
@@ -108,6 +110,10 @@ from hindsight_client_api.models.retain_request import RetainRequest
 from hindsight_client_api.models.retain_response import RetainResponse
 from hindsight_client_api.models.retry_operation_response import RetryOperationResponse
 from hindsight_client_api.models.source_facts_include_options import SourceFactsIncludeOptions
+from hindsight_client_api.models.tag_group_and import TagGroupAnd
+from hindsight_client_api.models.tag_group_leaf import TagGroupLeaf
+from hindsight_client_api.models.tag_group_not import TagGroupNot
+from hindsight_client_api.models.tag_group_or import TagGroupOr
 from hindsight_client_api.models.tag_item import TagItem
 from hindsight_client_api.models.timestamp import Timestamp
 from hindsight_client_api.models.token_usage import TokenUsage

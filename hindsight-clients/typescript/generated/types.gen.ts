@@ -1488,6 +1488,14 @@ export type RecallRequest = {
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  /**
+   * Tag Groups
+   *
+   * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
+   */
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot
+  > | null;
 };
 
 /**
@@ -1791,6 +1799,14 @@ export type ReflectRequest = {
    * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
    */
   tags_match?: "any" | "all" | "any_strict" | "all_strict";
+  /**
+   * Tag Groups
+   *
+   * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
+   */
+  tag_groups?: Array<
+    TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot
+  > | null;
 };
 
 /**
@@ -1989,6 +2005,58 @@ export type SourceFactsIncludeOptions = {
    * Maximum tokens of source facts per observation (-1 = unlimited)
    */
   max_tokens_per_observation?: number;
+};
+
+/**
+ * TagGroupAnd
+ *
+ * Compound AND group: all child filters must match.
+ */
+export type TagGroupAnd = {
+  /**
+   * And
+   */
+  and: Array<TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot>;
+};
+
+/**
+ * TagGroupLeaf
+ *
+ * A leaf tag filter: matches memories by tag list and match mode.
+ */
+export type TagGroupLeaf = {
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+  /**
+   * Match
+   */
+  match?: "any" | "all" | "any_strict" | "all_strict";
+};
+
+/**
+ * TagGroupNot
+ *
+ * Compound NOT group: child filter must NOT match.
+ */
+export type TagGroupNot = {
+  /**
+   * Not
+   */
+  not: TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot;
+};
+
+/**
+ * TagGroupOr
+ *
+ * Compound OR group: at least one child filter must match.
+ */
+export type TagGroupOr = {
+  /**
+   * Or
+   */
+  or: Array<TagGroupLeaf | TagGroupAnd | TagGroupOr | TagGroupNot>;
 };
 
 /**

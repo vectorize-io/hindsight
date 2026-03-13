@@ -62,11 +62,13 @@ hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/mental_model_list_response.py
 hindsight_client_api/models/mental_model_response.py
 hindsight_client_api/models/mental_model_trigger.py
+hindsight_client_api/models/model_not.py
 hindsight_client_api/models/observation_scopes.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py
 hindsight_client_api/models/operations_list_response.py
 hindsight_client_api/models/recall_request.py
+hindsight_client_api/models/recall_request_tag_groups_inner.py
 hindsight_client_api/models/recall_response.py
 hindsight_client_api/models/recall_result.py
 hindsight_client_api/models/reflect_based_on.py
@@ -83,6 +85,10 @@ hindsight_client_api/models/retain_request.py
 hindsight_client_api/models/retain_response.py
 hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/source_facts_include_options.py
+hindsight_client_api/models/tag_group_and.py
+hindsight_client_api/models/tag_group_leaf.py
+hindsight_client_api/models/tag_group_not.py
+hindsight_client_api/models/tag_group_or.py
 hindsight_client_api/models/tag_item.py
 hindsight_client_api/models/timestamp.py
 hindsight_client_api/models/token_usage.py

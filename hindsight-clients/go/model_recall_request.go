@@ -32,6 +32,7 @@ type RecallRequest struct {
 	Tags []string `json:"tags,omitempty"`
 	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged).
 	TagsMatch *string `json:"tags_match,omitempty"`
+	TagGroups []RecallRequestTagGroupsInner `json:"tag_groups,omitempty"`
 }
 
 type _RecallRequest RecallRequest
@@ -358,6 +359,39 @@ func (o *RecallRequest) SetTagsMatch(v string) {
 	o.TagsMatch = &v
 }
 
+// GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallRequest) GetTagGroups() []RecallRequestTagGroupsInner {
+	if o == nil {
+		var ret []RecallRequestTagGroupsInner
+		return ret
+	}
+	return o.TagGroups
+}
+
+// GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallRequest) GetTagGroupsOk() ([]RecallRequestTagGroupsInner, bool) {
+	if o == nil || IsNil(o.TagGroups) {
+		return nil, false
+	}
+	return o.TagGroups, true
+}
+
+// HasTagGroups returns a boolean if a field has been set.
+func (o *RecallRequest) HasTagGroups() bool {
+	if o != nil && !IsNil(o.TagGroups) {
+		return true
+	}
+
+	return false
+}
+
+// SetTagGroups gets a reference to the given []RecallRequestTagGroupsInner and assigns it to the TagGroups field.
+func (o *RecallRequest) SetTagGroups(v []RecallRequestTagGroupsInner) {
+	o.TagGroups = v
+}
+
 func (o RecallRequest) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -392,6 +426,9 @@ func (o RecallRequest) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.TagsMatch) {
 		toSerialize["tags_match"] = o.TagsMatch
+	}
+	if o.TagGroups != nil {
+		toSerialize["tag_groups"] = o.TagGroups
 	}
 	return toSerialize, nil
 }
