@@ -849,7 +849,7 @@ jobs:
         python-version-file: ".python-version"
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.23'
         cache-dependency-path: hindsight-clients/go/go.sum
