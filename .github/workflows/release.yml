@@ -99,7 +99,7 @@ jobs:
 
     # Upload artifacts for GitHub release
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: python-packages
         path: |
@@ -155,7 +155,7 @@ jobs:
       run: npm pack
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: typescript-client
         path: hindsight-clients/typescript/*.tgz
@@ -204,7 +204,7 @@ jobs:
       run: npm pack
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: openclaw-integration
         path: hindsight-integrations/openclaw/*.tgz
@@ -253,7 +253,7 @@ jobs:
       run: npm pack
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ai-sdk-integration
         path: hindsight-integrations/ai-sdk/*.tgz
@@ -302,7 +302,7 @@ jobs:
       run: npm pack
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: chat-integration
         path: hindsight-integrations/chat/*.tgz
@@ -364,7 +364,7 @@ jobs:
       run: npm pack
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: control-plane
         path: hindsight-control-plane/*.tgz
@@ -411,7 +411,7 @@ jobs:
         chmod +x artifacts/${{ matrix.asset_name }}
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rust-cli-${{ matrix.asset_name }}
         path: artifacts/${{ matrix.asset_name }}
@@ -557,7 +557,7 @@ jobs:
       run: helm push helm-packages/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: helm-chart
         path: helm-packages/*.tgz

@@ -231,7 +231,7 @@ jobs:
       run: cargo build --release
 
     - name: Upload CLI artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: hindsight-cli
         path: hindsight-cli/target/release/hindsight
