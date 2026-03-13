@@ -38,7 +38,7 @@
       "collapsible": false,
       "items": [
         { "type": "doc", "id": "sdks/python", "label": "Python", "customProps": { "icon": "si-python" } },
-        { "type": "doc", "id": "sdks/nodejs", "label": "JavaScript / TypeScript", "customProps": { "icon": "/img/icons/typescript.png" } },
+        { "type": "doc", "id": "sdks/nodejs", "label": "TypeScript", "customProps": { "icon": "/img/icons/typescript.png" } },
         { "type": "doc", "id": "sdks/go", "label": "Go", "customProps": { "icon": "si-go" } },
         { "type": "doc", "id": "sdks/cli", "label": "CLI", "customProps": { "icon": "lu-terminal" } },
         { "type": "doc", "id": "sdks/embed", "label": "Embedded Python", "customProps": { "icon": "/img/icons/package.svg" } }

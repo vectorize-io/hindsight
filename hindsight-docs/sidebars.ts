@@ -138,7 +138,7 @@ const sidebars: SidebarsConfig = {
         {
           type: 'doc',
           id: 'sdks/nodejs',
-          label: 'JavaScript / TypeScript',
+          label: 'TypeScript',
           customProps: { icon: '/img/icons/typescript.png' },
         },
         {

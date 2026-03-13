@@ -36,7 +36,7 @@
       "collapsible": false,
       "items": [
         { "type": "doc", "id": "sdks/python", "label": "Python", "customProps": { "icon": "si-python" } },
-        { "type": "doc", "id": "sdks/nodejs", "label": "JavaScript / TypeScript", "customProps": { "icon": "/img/icons/typescript.png" } },
+        { "type": "doc", "id": "sdks/nodejs", "label": "TypeScript", "customProps": { "icon": "/img/icons/typescript.png" } },
         { "type": "doc", "id": "sdks/cli", "label": "CLI", "customProps": { "icon": "lu-terminal" } }
       ]
     },

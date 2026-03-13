@@ -7,7 +7,7 @@ export function ClientsGrid() {
   return (
     <IconGrid items={[
       { label: 'Python',                icon: SiPython,  href: '/sdks/python' },
-      { label: 'JavaScript/TypeScript', imgSrc: '/img/icons/typescript.png', href: '/sdks/nodejs' },
+      { label: 'TypeScript', imgSrc: '/img/icons/typescript.png', href: '/sdks/nodejs' },
       { label: 'Go',                    icon: SiGo,      href: '/sdks/go' },
       { label: 'CLI',                   icon: LuTerminal, href: '/sdks/cli' },
     ]} />

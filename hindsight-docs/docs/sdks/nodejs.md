@@ -2,7 +2,7 @@
 sidebar_position: 2
 ---
 
-# JavaScript / TypeScript Client
+# TypeScript Client
 
 Official TypeScript/JavaScript client for the Hindsight API.
 

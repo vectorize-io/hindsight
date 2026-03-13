@@ -19,7 +19,7 @@ export function IconGrid({items}: {items: IconGridItem[]}) {
               {Icon && <Icon size={28} />}
               {imgSrc && <img src={imgSrc} alt={label} style={{width: 28, height: 28, objectFit: 'contain'}} />}
             </div>
-            <span className={styles.label} style={{color: 'var(--ifm-font-color-base)'}}>{label}</span>
+            <span className={styles.label} style={{color: 'var(--ifm-font-color-base)', WebkitTextFillColor: 'var(--ifm-font-color-base)'}}>{label}</span>
           </div>
         );
         return href
