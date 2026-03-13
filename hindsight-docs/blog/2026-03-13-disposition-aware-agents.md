@@ -47,7 +47,7 @@ We ended up with three traits, each on a 1-5 scale:
 
 - **1 – Trusting**: takes information at face value, assumes good faith.
 - **3 – Balanced**: normal critical thinking.
-- **5 – Highly skeptical**: looks for inconsistencies, prefers multiple sources, slow to accept claims.
+- **5 – Highly skeptical**: looks for inconsistencies, prefers multiple sources, slow to accept claims. (Related: [how Hindsight resolves memory conflicts](/blog/resolving-memory-conflicts).)
 
 ### Literalism (1-5)
 
@@ -204,7 +204,7 @@ Once disposition is first-class, it becomes easy to wire up agent ensembles:
 - A **high-empathy agent** can handle user-facing interaction while a low-empathy, high-literalism agent handles internal reasoning.
 - You can **fan a query out** to multiple dispositions and show their perspectives side by side.
 
-You don't need separate prompts or models for each; you just vary the disposition and reuse the same infrastructure.
+You don't need separate prompts or models for each; you just vary the disposition and reuse the same infrastructure. (For a concrete example, see how we wired this up in [our CrewAI integration](/blog/crewai).)
 
 ## Tuning guidance: picking the right disposition
 
@@ -214,7 +214,7 @@ If you're setting up a new memory bank agent, here are starting points:
 - **Research assistant**: skepticism=4, literalism=3, empathy=2 — verify claims, allow some inference, prioritize accuracy over feelings.
 - **Executive briefing**: skepticism=3, literalism=4, empathy=3 — balanced verification, stick close to facts, moderate awareness of organizational dynamics.
 
-Start at the midpoint (3, 3, 3) and adjust one trait at a time. You'll feel the difference within a few queries.
+Start at the midpoint (3, 3, 3) and adjust one trait at a time. You'll feel the difference within a few queries. If you want to try it locally, [here's how to run Hindsight with Ollama](/blog/run-hindsight-with-ollama).
 
 ## Why trait-based AI agent personality works
 
