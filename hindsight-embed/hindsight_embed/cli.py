@@ -657,19 +657,52 @@ def do_daemon(args, config: dict, logger):
             print(f"  Expected at: {daemon_log_path}")
             return 1
 
-        if args.follow:
-            # Follow mode - like tail -f
-            import subprocess
+        # Validate path to prevent path traversal attacks
+        try:
+            # Resolve to canonical absolute path
+            resolved_log_path = daemon_log_path.resolve()
+            
+            # Ensure the resolved path matches the original intent
+            # This prevents symlink attacks and path traversal
+            if not resolved_log_path.is_file():
+                print("Invalid log path: not a regular file", file=sys.stderr)
+                return 1
+                
+            # Additional validation: ensure no path traversal sequences in original path
+            path_str = str(daemon_log_path)
+            if ".." in path_str or path_str.startswith("/") and not str(resolved_log_path).startswith(str(daemon_log_path.parent.resolve())):
+                print("Invalid log path: potential path traversal detected", file=sys.stderr)
+                return 1
+        except (OSError, RuntimeError) as e:
+            print(f"Invalid log path: {e}", file=sys.stderr)
+            return 1
 
+        if args.follow:
+            # Follow mode - implemented in pure Python for security
+            # Avoids subprocess execution with user-controlled paths
+            import time
+            
             try:
-                subprocess.run(["tail", "-f", str(daemon_log_path)])
+                with open(resolved_log_path) as f:
+                    # Seek to end of file
+                    f.seek(0, 2)
+                    
+                    while True:
+                        line = f.readline()
+                        if line:
+                            print(line, end="")
+                        else:
+                            time.sleep(0.1)
             except KeyboardInterrupt:
                 pass
+            except Exception as e:
+                print(f"Error following logs: {e}", file=sys.stderr)
+                return 1
             return 0
         else:
             # Show last N lines
             try:
-                with open(daemon_log_path) as f:
+                with open(resolved_log_path) as f:
                     lines = f.readlines()
                     for line in lines[-args.lines :]:
                         print(line, end="")
