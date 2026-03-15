@@ -304,6 +304,10 @@ class ReflectResult(BaseModel):
         default_factory=list,
         description="Directive mental models that were applied during this reflection.",
     )
+    reasoning_chain: dict[str, Any] | None = Field(
+        default=None,
+        description="Serialized ReasoningChain from multi-step reflection. Only present when include_reasoning_chain=true and budget >= mid.",
+    )
 
 
 class EntityObservation(BaseModel):

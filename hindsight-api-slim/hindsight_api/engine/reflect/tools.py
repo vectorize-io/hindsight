@@ -386,3 +386,37 @@ async def tool_expand(
         results.append(item)
 
     return {"results": results, "count": len(results)}
+
+
+async def tool_decompose(
+    sub_questions: list[str],
+    rationale: str,
+) -> dict[str, Any]:
+    """
+    Process a query decomposition.
+
+    Unlike other tools that call the database, this one simply validates
+    and returns the sub-questions in a structured format for the agent
+    to work through sequentially.
+
+    Args:
+        sub_questions: List of 2-4 focused sub-questions to investigate
+        rationale: Brief explanation of why this decomposition makes sense
+
+    Returns:
+        Dict with structured sub-questions and investigation instructions
+    """
+    return {
+        "status": "decomposed",
+        "sub_questions": [
+            {"index": i + 1, "question": q, "status": "pending"}
+            for i, q in enumerate(sub_questions)
+        ],
+        "rationale": rationale,
+        "instructions": (
+            "Now investigate each sub-question using recall, search_mental_models, "
+            "and search_observations. After gathering evidence for all sub-questions, "
+            "call done() with your synthesized answer and include reasoning_steps "
+            "to document your chain of reasoning."
+        ),
+    }

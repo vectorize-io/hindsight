@@ -134,6 +134,57 @@ TOOL_EXPAND = {
     },
 }
 
+TOOL_DECOMPOSE = {
+    "type": "function",
+    "function": {
+        "name": "decompose",
+        "description": (
+            "Break a complex query into 2-4 focused sub-questions that can each be answered "
+            "independently. Use this when the query spans multiple topics, requires comparing "
+            "different domains, or needs step-by-step reasoning.\n\n"
+            "After decomposing, use recall/search tools to gather evidence for EACH sub-question "
+            "before calling done with your synthesized answer.\n\n"
+            "ONLY available for MID and HIGH budget queries. Do NOT use for simple factual lookups."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sub_questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "2-4 sub-questions to investigate. Each should be self-contained and answerable via recall/search tools.",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "Brief explanation of why this decomposition makes sense and what each sub-question contributes to answering the original query.",
+                },
+            },
+            "required": ["sub_questions", "rationale"],
+        },
+    },
+}
+
+_REASONING_STEPS_PROPERTY = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "sub_question": {"type": "string"},
+            "conclusion": {"type": "string"},
+            "source_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Memory IDs that support this step's conclusion",
+            },
+        },
+        "required": ["sub_question", "conclusion"],
+    },
+    "description": (
+        "Optional reasoning chain. Include when you used decompose() to break the query into "
+        "sub-questions. Each step should summarize what you found for that sub-question."
+    ),
+}
+
 TOOL_DONE_ANSWER = {
     "type": "function",
     "function": {
@@ -161,6 +212,7 @@ TOOL_DONE_ANSWER = {
                     "items": {"type": "string"},
                     "description": "Array of observation IDs that support your answer",
                 },
+                "reasoning_steps": _REASONING_STEPS_PROPERTY,
             },
             "required": ["answer"],
         },
@@ -216,6 +268,7 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
                         "items": {"type": "string"},
                         "description": "Array of observation IDs that support your answer",
                     },
+                    "reasoning_steps": _REASONING_STEPS_PROPERTY,
                     "directive_compliance": {
                         "type": "string",
                         "description": f"REQUIRED: Confirm your answer complies with ALL directives. List each directive and how your answer follows it:\n{rules_list}\n\nFormat: 'Directive 1: [how answer complies]. Directive 2: [how answer complies]...'",
@@ -227,7 +280,10 @@ def _build_done_tool_with_directives(directive_rules: list[str]) -> dict:
     }
 
 
-def get_reflect_tools(directive_rules: list[str] | None = None) -> list[dict]:
+def get_reflect_tools(
+    directive_rules: list[str] | None = None,
+    budget: str | None = None,
+) -> list[dict]:
     """
     Get the list of tools for the reflect agent.
 
@@ -239,16 +295,22 @@ def get_reflect_tools(directive_rules: list[str] | None = None) -> list[dict]:
     Args:
         directive_rules: Optional list of directive rule strings. If provided,
                         the done() tool will require directive compliance confirmation.
+        budget: Optional budget level string ("low", "mid", "high"). When "mid" or "high",
+                the decompose() tool is included to enable multi-step reasoning.
 
     Returns:
         List of tool definitions in OpenAI format
     """
-    tools = [
+    tools: list[dict] = [
         TOOL_SEARCH_MENTAL_MODELS,
         TOOL_SEARCH_OBSERVATIONS,
         TOOL_RECALL,
         TOOL_EXPAND,
     ]
+
+    # Include decompose tool for MID and HIGH budgets only
+    if budget is not None and budget.lower() in ("mid", "high"):
+        tools.append(TOOL_DECOMPOSE)
 
     # Use directive-aware done tool if directives are present
     if directive_rules:

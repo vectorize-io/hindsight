@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import tiktoken
 
-from .models import DirectiveInfo, LLMCall, ReflectAgentResult, TokenUsageSummary, ToolCall
+from .models import DirectiveInfo, LLMCall, ReasoningChain, ReasoningStep, ReflectAgentResult, TokenUsageSummary, ToolCall
 from .prompts import FINAL_SYSTEM_PROMPT, _extract_directive_rules, build_final_prompt, build_system_prompt_for_tools
+from .tools import tool_decompose
 from .tools_schema import get_reflect_tools
 
 
@@ -355,7 +356,7 @@ async def run_reflect_agent(
     directive_rules = _extract_directive_rules(directives) if directives else None
 
     # Get tools for this agent (with directive compliance field if directives exist)
-    tools = get_reflect_tools(directive_rules=directive_rules)
+    tools = get_reflect_tools(directive_rules=directive_rules, budget=budget)
 
     # Build initial messages (directives are injected into system prompt at START and END)
     system_prompt = build_system_prompt_for_tools(
@@ -764,6 +765,7 @@ async def run_reflect_agent(
                     directives_applied=directives_applied,
                     llm_config=llm_config,
                     response_schema=response_schema,
+                    query=query,
                 )
 
         # Execute other tools in parallel (exclude done tool in all its format variants)
@@ -923,6 +925,7 @@ async def _process_done_tool(
     directives_applied: list[DirectiveInfo],
     llm_config: "LLMProvider | None" = None,
     response_schema: dict | None = None,
+    query: str = "",
 ) -> ReflectAgentResult:
     """Process the done tool call and return the result."""
     args = done_call.arguments
@@ -937,6 +940,27 @@ async def _process_done_tool(
     used_memory_ids = [mid for mid in (args.get("memory_ids") or []) if mid in available_memory_ids]
     used_mental_model_ids = [mid for mid in (args.get("mental_model_ids") or []) if mid in available_mental_model_ids]
     used_observation_ids = [oid for oid in (args.get("observation_ids") or []) if oid in available_observation_ids]
+
+    # Build reasoning chain from done() arguments if the agent provided reasoning_steps
+    reasoning_steps_raw = args.get("reasoning_steps")
+    reasoning_chain: ReasoningChain | None = None
+    if reasoning_steps_raw and isinstance(reasoning_steps_raw, list):
+        steps = []
+        for i, step in enumerate(reasoning_steps_raw):
+            steps.append(
+                ReasoningStep(
+                    step_number=i + 1,
+                    sub_question=step.get("sub_question", ""),
+                    evidence_summary="",  # Agent doesn't provide this separately
+                    conclusion=step.get("conclusion", ""),
+                    sources_used=step.get("source_ids", []),
+                )
+            )
+        reasoning_chain = ReasoningChain(
+            original_query=query,
+            steps=steps,
+            decomposition_rationale="",
+        )
 
     # Generate structured output if schema provided
     structured_output = None
@@ -965,6 +989,7 @@ async def _process_done_tool(
         used_mental_model_ids=used_mental_model_ids,
         used_observation_ids=used_observation_ids,
         directives_applied=directives_applied,
+        reasoning_chain=reasoning_chain,
     )
 
 
@@ -1080,6 +1105,12 @@ async def _execute_tool(
         depth = args.get("depth", "chunk")
         return await expand_fn(memory_ids, depth)
 
+    elif tool_name == "decompose":
+        return await tool_decompose(
+            sub_questions=args.get("sub_questions", []),
+            rationale=args.get("rationale", ""),
+        )
+
     else:
         return {"error": f"Unknown tool: {tool_name}"}
 
@@ -1106,6 +1137,11 @@ def _summarize_input(tool_name: str, args: dict[str, Any]) -> str:
         memory_ids = args.get("memory_ids", [])
         depth = args.get("depth", "chunk")
         return f"(memory_ids=[{len(memory_ids)} ids], depth={depth})"
+    elif tool_name == "decompose":
+        sub_questions = args.get("sub_questions", [])
+        rationale = args.get("rationale", "")
+        rationale_preview = f"'{rationale[:30]}...'" if len(rationale) > 30 else f"'{rationale}'"
+        return f"(sub_questions={len(sub_questions)}, rationale={rationale_preview})"
     elif tool_name == "done":
         answer = args.get("answer", "")
         answer_preview = f"'{answer[:30]}...'" if len(answer) > 30 else f"'{answer}'"

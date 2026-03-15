@@ -219,6 +219,10 @@ def build_system_prompt_for_tools(
             "",
             "Think: What ENTITIES and CONCEPTS does this question involve? Search for each separately.",
             "",
+            "For multi-faceted queries at MID or HIGH budget, consider using decompose() instead of",
+            "manually splitting searches. decompose() generates focused sub-questions and lets you",
+            "investigate each with the full retrieval hierarchy before synthesizing a final answer.",
+            "",
         ]
     )
 
@@ -245,6 +249,11 @@ def build_system_prompt_for_tools(
                     "- Check multiple sources when the question warrants it",
                     "- Verify stale data if it's central to the answer",
                     "- Don't over-explore, but ensure reasonable coverage",
+                    "- For complex queries that span multiple topics or require comparing different knowledge",
+                    "  areas, use the decompose() tool to break the query into 2 focused sub-questions.",
+                    "  Investigate each sub-question separately using recall and search tools, then synthesize",
+                    "  your findings in the final answer. Include reasoning_steps in your done() call to",
+                    "  document your chain of reasoning.",
                     "",
                 ]
             )
@@ -258,6 +267,11 @@ def build_system_prompt_for_tools(
                     "- Verify information across different retrieval levels",
                     "- Use expand() to get full context on important memories",
                     "- Take time to synthesize a complete, well-researched answer",
+                    "- For complex queries, use the decompose() tool to break the query into up to 4",
+                    "  sub-questions. Investigate each sub-question thoroughly using multiple search",
+                    "  strategies (mental models, observations, and raw facts). Use expand() to get full",
+                    "  context for critical evidence. Include detailed reasoning_steps in your done() call",
+                    "  showing how each sub-question's findings contribute to the final answer.",
                     "",
                 ]
             )
@@ -271,7 +285,10 @@ def build_system_prompt_for_tools(
                 "2. If no mental model or it's stale, try search_observations() for consolidated knowledge",
                 "3. If observations are stale OR you need specific details, use recall() for raw facts",
                 "4. Use expand() if you need more context on specific memories",
-                "5. When ready, call done() with your answer and supporting IDs",
+                "5. (Optional, MID/HIGH budget) If the query is complex or multi-faceted, use decompose()",
+                "   to break it into sub-questions, then investigate each sub-question systematically",
+                "   using the retrieval hierarchy above.",
+                "6. When ready, call done() with your answer and supporting IDs",
             ]
         )
     else:
@@ -280,7 +297,10 @@ def build_system_prompt_for_tools(
                 "1. First, try search_observations() - check for consolidated knowledge",
                 "2. If search_observations returns 0 results OR observations are stale, you MUST call recall() for raw facts",
                 "3. Use expand() if you need more context on specific memories",
-                "4. When ready, call done() with your answer and supporting IDs",
+                "4. (Optional, MID/HIGH budget) If the query is complex or multi-faceted, use decompose()",
+                "   to break it into sub-questions, then investigate each sub-question systematically",
+                "   using the retrieval hierarchy above.",
+                "5. When ready, call done() with your answer and supporting IDs",
             ]
         )
 

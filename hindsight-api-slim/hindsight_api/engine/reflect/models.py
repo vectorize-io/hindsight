@@ -2,9 +2,32 @@
 Pydantic models for the reflect agent.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class ReasoningStep:
+    """A single reasoning step in a multi-step reflection."""
+
+    step_number: int
+    sub_question: str
+    evidence_summary: str
+    conclusion: str
+    sources_used: list[str]  # memory IDs referenced
+
+
+@dataclass
+class ReasoningChain:
+    """Complete reasoning chain for multi-step reflection."""
+
+    original_query: str
+    steps: list[ReasoningStep] = field(default_factory=list)
+    decomposition_rationale: str = ""
 
 
 class ObservationSection(BaseModel):
@@ -106,4 +129,7 @@ class ReflectAgentResult(BaseModel):
     )
     directives_applied: list[DirectiveInfo] = Field(
         default_factory=list, description="Directive mental models that affected this reflection"
+    )
+    reasoning_chain: ReasoningChain | None = Field(
+        default=None, description="Multi-step reasoning chain when decompose() was used"
     )

@@ -656,6 +656,11 @@ class ReflectRequest(BaseModel):
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
     )
 
+    include_reasoning_chain: bool = Field(
+        default=False,
+        description="If true and budget is 'mid' or 'high', the response may include a reasoning_chain "
+        "showing how the query was decomposed into sub-questions and what was found for each.",
+    )
     @model_validator(mode="after")
     def validate_tags_exclusive(self) -> "ReflectRequest":
         if self.tags is not None and self.tag_groups is not None:
@@ -791,6 +796,11 @@ class ReflectResponse(BaseModel):
     trace: ReflectTrace | None = Field(
         default=None,
         description="Execution trace of tool and LLM calls. Only present when include.tool_calls is set.",
+    )
+    reasoning_chain: dict | None = Field(
+        default=None,
+        description="Reasoning chain showing query decomposition and intermediate conclusions. "
+        "Only present when include_reasoning_chain=true and budget >= mid.",
     )
 
 
@@ -2546,12 +2556,31 @@ def _register_routes(app: FastAPI):
                     llm_calls=llm_calls,
                 )
 
+            # Serialize reasoning chain if requested and present
+            reasoning_chain_data: dict | None = None
+            if request.include_reasoning_chain and core_result.reasoning_chain is not None:
+                rc = core_result.reasoning_chain
+                reasoning_chain_data = {
+                    "original_query": rc["original_query"],
+                    "decomposition_rationale": rc.get("decomposition_rationale", ""),
+                    "steps": [
+                        {
+                            "step_number": step["step_number"],
+                            "sub_question": step["sub_question"],
+                            "conclusion": step["conclusion"],
+                            "sources_used": step.get("sources_used", []),
+                        }
+                        for step in rc.get("steps", [])
+                    ],
+                }
+
             return ReflectResponse(
                 text=core_result.text,
                 based_on=based_on_result,
                 structured_output=core_result.structured_output,
                 usage=core_result.usage,
                 trace=trace_result,
+                reasoning_chain=reasoning_chain_data,
             )
 
         except OperationValidationError as e:
