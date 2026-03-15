@@ -170,6 +170,9 @@ def register_mcp_tools(
         "update_bank",
         "delete_bank",
         "clear_memories",
+        "cross_bank_recall",
+        "cross_bank_reflect",
+        "create_documents",
     }
 
     if "retain" in tools_to_register:
@@ -264,6 +267,16 @@ def register_mcp_tools(
 
     if "clear_memories" in tools_to_register:
         _register_clear_memories(mcp, memory, config)
+
+    # Cross-bank tools (multi-bank only)
+    if "cross_bank_recall" in tools_to_register:
+        _register_cross_bank_recall(mcp, memory, config)
+
+    if "cross_bank_reflect" in tools_to_register:
+        _register_cross_bank_reflect(mcp, memory, config)
+
+    if "create_documents" in tools_to_register:
+        _register_create_documents(mcp, memory, config)
 
     _apply_bank_tool_filtering(mcp, memory, config)
 
@@ -2725,3 +2738,254 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
             except Exception as e:
                 logger.error(f"Error clearing memories: {e}", exc_info=True)
                 return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cross-Bank Tools (multi-bank only)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _register_cross_bank_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the cross_bank_recall tool (multi-bank only)."""
+
+    # Cross-bank tools only make sense in multi-bank mode
+    @mcp.tool()
+    async def cross_bank_recall(
+        query: str,
+        bank_ids: list[str] | None = None,
+        bank_tags: list[str] | None = None,
+        max_results: int = 20,
+        budget: str = "mid",
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+    ) -> str:
+        """
+        Recall memories from multiple banks simultaneously with fused ranking.
+
+        Use this tool when you need to search across multiple memory banks at once.
+        Results are merged using Reciprocal Rank Fusion and deduplicated.
+
+        WHEN TO USE:
+        - Searching across work and personal notes together
+        - Finding connections between different knowledge domains
+        - Getting a comprehensive view from all banks
+
+        Args:
+            query: The search query to execute across banks
+            bank_ids: Optional list of specific bank IDs to query. If None, queries all accessible banks.
+            bank_tags: Optional tags to filter which banks to query (e.g., ['work', 'project'])
+            max_results: Maximum total results to return (default: 20)
+            budget: Search budget - 'low' (100), 'mid' (300), or 'high' (1000). Default: 'mid'
+            tags: Optional tags to filter memories within each bank
+            tags_match: How to match tags - 'any' (OR) or 'all' (AND). Default: 'any'
+        """
+        try:
+            budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
+            budget_enum = budget_map.get(budget.lower(), Budget.MID)
+
+            result = await memory._cross_bank_orchestrator.cross_bank_recall(
+                query=query,
+                bank_ids=bank_ids,
+                bank_tags=bank_tags,
+                max_results=max_results,
+                budget=budget_enum,
+                request_context=_get_request_context(config),
+            )
+
+            # Return as JSON string for MCP
+            return result.model_dump_json()
+
+        except OperationValidationError as e:
+            logger.warning(f"Cross-bank recall rejected: {e}")
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.error(f"Error in cross-bank recall: {e}", exc_info=True)
+            return json.dumps({"error": str(e)})
+
+
+def _register_cross_bank_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the cross_bank_reflect tool (multi-bank only)."""
+
+    @mcp.tool()
+    async def cross_bank_reflect(
+        query: str,
+        bank_ids: list[str] | None = None,
+        bank_tags: list[str] | None = None,
+        budget: str = "low",
+        context: str | None = None,
+        include_mental_models: bool = True,
+        response_schema: dict | None = None,
+        tags: list[str] | None = None,
+        tags_match: str = "any",
+    ) -> str:
+        """
+        Reflect across multiple banks with disposition-aware synthesis.
+
+        This tool gathers evidence from multiple memory banks, fuses findings,
+        and synthesizes a response that considers each bank's personality traits.
+
+        WHEN TO USE:
+        - Getting perspectives from different knowledge domains
+        - Synthesizing insights across work and personal contexts
+        - Comprehensive analysis using all available knowledge
+
+        Args:
+            query: The question to reflect on across banks
+            bank_ids: Optional list of specific bank IDs to query. If None, queries all accessible banks.
+            bank_tags: Optional tags to filter which banks to query
+            budget: Search budget - 'low' (100), 'mid' (300), or 'high' (1000). Default: 'low'
+            context: Optional additional context for the reflection
+            include_mental_models: Whether to consult mental models (default: True)
+            response_schema: Optional JSON schema for structured output
+            tags: Optional tags to filter memories within each bank
+            tags_match: How to match tags - 'any' (OR) or 'all' (AND). Default: 'any'
+        """
+        try:
+            budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
+            budget_enum = budget_map.get(budget.lower(), Budget.LOW)
+
+            # Handle context similar to regular reflect
+            full_query = query
+            if context:
+                full_query = f"{query}\n\nAdditional context: {context}"
+
+            result = await memory._cross_bank_orchestrator.cross_bank_reflect(
+                query=full_query,
+                bank_ids=bank_ids,
+                bank_tags=bank_tags,
+                budget=budget_enum,
+                context=None,  # Already merged into query
+                include_mental_models=include_mental_models,
+                response_schema=response_schema,
+                request_context=_get_request_context(config),
+            )
+
+            # Return as JSON string for MCP
+            return result.model_dump_json()
+
+        except OperationValidationError as e:
+            logger.warning(f"Cross-bank reflect rejected: {e}")
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.error(f"Error in cross-bank reflect: {e}", exc_info=True)
+            return json.dumps({"error": str(e)})
+
+
+def _register_create_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the create_documents tool."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def create_documents(
+            contents: list[dict],
+            document_name: str | None = None,
+            tags: list[str] | None = None,
+            bank_id: str | None = None,
+        ) -> dict:
+            """
+            Retain one or multiple text documents as a named document group.
+
+            Use this tool when you have text content (not files) that you want to store
+            as memories. Each content item gets fact extraction and knowledge graph building.
+
+            WHEN TO USE:
+            - Storing meeting notes, research notes, or journal entries
+            - Creating multiple related documents at once
+            - Batch retaining text content with automatic document grouping
+
+            Args:
+                contents: List of content items, each with:
+                    - content (str): The document text
+                    - context (str): Category (e.g., 'meeting-notes', 'research', 'journal')
+                    - tags (list, optional): Tags for this content item
+                    - metadata (dict, optional): Key-value metadata
+                    - document_id (str, optional): Custom document ID
+                document_name: Human-readable name for the document group (optional)
+                tags: Tags applied to all documents in this batch
+                bank_id: Target bank (defaults to session bank)
+            """
+            try:
+                target_bank = bank_id or config.bank_id_resolver()
+                if target_bank is None:
+                    return {"status": "error", "message": "No bank_id configured"}
+
+                request_context = _get_request_context(config)
+
+                result = await memory.submit_async_retain(
+                    bank_id=target_bank,
+                    contents=contents,
+                    document_tags=tags,
+                    request_context=request_context,
+                )
+
+                return {
+                    "status": "accepted",
+                    "message": "Document batch submitted for processing",
+                    "operation_id": result.get("operation_id"),
+                    "documents_submitted": len(contents),
+                }
+
+            except OperationValidationError as e:
+                logger.warning(f"Create documents rejected: {e}")
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                logger.error(f"Error creating documents: {e}", exc_info=True)
+                return {"status": "error", "message": str(e)}
+
+    else:
+
+        @mcp.tool()
+        async def create_documents(
+            contents: list[dict],
+            document_name: str | None = None,
+            tags: list[str] | None = None,
+        ) -> dict:
+            """
+            Retain one or multiple text documents as a named document group.
+
+            Use this tool when you have text content (not files) that you want to store
+            as memories. Each content item gets fact extraction and knowledge graph building.
+
+            WHEN TO USE:
+            - Storing meeting notes, research notes, or journal entries
+            - Creating multiple related documents at once
+            - Batch retaining text content with automatic document grouping
+
+            Args:
+                contents: List of content items, each with:
+                    - content (str): The document text
+                    - context (str): Category (e.g., 'meeting-notes', 'research', 'journal')
+                    - tags (list, optional): Tags for this content item
+                    - metadata (dict, optional): Key-value metadata
+                    - document_id (str, optional): Custom document ID
+                document_name: Human-readable name for the document group (optional)
+                tags: Tags applied to all documents in this batch
+            """
+            try:
+                target_bank = config.bank_id_resolver()
+                if target_bank is None:
+                    return {"status": "error", "message": "No bank_id configured"}
+
+                request_context = _get_request_context(config)
+
+                result = await memory.submit_async_retain(
+                    bank_id=target_bank,
+                    contents=contents,
+                    document_tags=tags,
+                    request_context=request_context,
+                )
+
+                return {
+                    "status": "accepted",
+                    "message": "Document batch submitted for processing",
+                    "operation_id": result.get("operation_id"),
+                    "documents_submitted": len(contents),
+                }
+
+            except OperationValidationError as e:
+                logger.warning(f"Create documents rejected: {e}")
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                logger.error(f"Error creating documents: {e}", exc_info=True)
+                return {"status": "error", "message": str(e)}

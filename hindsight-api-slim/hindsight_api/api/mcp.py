@@ -47,6 +47,8 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "update_bank",
         "delete_bank",
         "clear_memories",
+        "cross_bank_recall",
+        "cross_bank_reflect",
     }
 )
 

@@ -70,6 +70,12 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
     return Field(default_factory=default_factory, json_schema_extra=json_extra, **kwargs)
 
 
+from hindsight_api.api.cross_bank_models import (
+    CrossBankRecallRequest,
+    CrossBankRecallResult,
+    CrossBankReflectRequest,
+    CrossBankReflectResult,
+)
 from hindsight_api.config import get_config
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding, fq_table
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
@@ -1842,7 +1848,13 @@ def create_app(
         import asyncio
         import socket
 
-        from hindsight_api.config import get_config
+        from hindsight_api.api.cross_bank_models import (
+    CrossBankRecallRequest,
+    CrossBankRecallResult,
+    CrossBankReflectRequest,
+    CrossBankReflectResult,
+)
+from hindsight_api.config import get_config
         from hindsight_api.worker import WorkerPoller
 
         config = get_config()
@@ -1950,7 +1962,13 @@ def create_app(
         logging.info("Memory system closed")
 
     from hindsight_api import __version__
-    from hindsight_api.config import get_config
+    from hindsight_api.api.cross_bank_models import (
+    CrossBankRecallRequest,
+    CrossBankRecallResult,
+    CrossBankReflectRequest,
+    CrossBankReflectResult,
+)
+from hindsight_api.config import get_config
 
     config = get_config()
 
@@ -2563,6 +2581,153 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in /v1/default/banks/{bank_id}/reflect: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Cross-Bank Operations
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @app.post(
+        "/v1/default/cross-bank/recall",
+        response_model=CrossBankRecallResult,
+        summary="Cross-bank recall",
+        description="Recall memories from multiple banks with fused ranking.\n\n"
+        "This endpoint queries multiple memory banks in parallel and fuses results "
+        "using Reciprocal Rank Fusion (RRF). Results are deduplicated and ranked "
+        "by combined relevance across all specified banks.\n\n"
+        "Specify banks by ID using bank_ids, or by tag using bank_tags. "
+        "If neither is provided, all accessible banks will be queried.",
+        operation_id="cross_bank_recall",
+        tags=["Cross-Bank"],
+    )
+    async def api_cross_bank_recall(
+        request: CrossBankRecallRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Run cross-bank recall with fused ranking."""
+        import time
+
+        handler_start = time.time()
+        metrics = get_metrics_collector()
+
+        # Validate query length
+        encoding = _get_tiktoken_encoding()
+        query_tokens = len(encoding.encode(request.query))
+        if query_tokens > MAX_QUERY_TOKENS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query too long: {query_tokens} tokens exceeds maximum of {MAX_QUERY_TOKENS}.",
+            )
+
+        try:
+            # Parse budget from string
+            budget = Budget(request.budget.lower())
+
+            with metrics.record_operation(
+                "cross_bank_recall",
+                bank_id="multi",
+                source="api",
+                budget=budget.value,
+            ):
+                result = await app.state.memory._cross_bank_orchestrator.cross_bank_recall(
+                    query=request.query,
+                    bank_ids=request.bank_ids,
+                    bank_tags=request.bank_tags,
+                    max_results=request.max_results,
+                    budget=budget,
+                    request_context=request_context,
+                )
+
+            handler_duration = time.time() - handler_start
+            if handler_duration > 1.0:
+                logging.info(
+                    f"[CROSS_BANK_RECALL] handler_total={handler_duration:.3f}s "
+                    f"banks={len(result.bank_stats)} results={result.total_results}"
+                )
+
+            return result
+
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid budget value: {request.budget}. Use 'low', 'mid', or 'high'.",
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/cross-bank/recall: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/cross-bank/reflect",
+        response_model=CrossBankReflectResult,
+        summary="Cross-bank reflect",
+        description="Reflect across multiple banks with disposition-aware synthesis.\n\n"
+        "This endpoint gathers evidence from multiple memory banks, fuses findings "
+        "using Reciprocal Rank Fusion, and synthesizes a response that considers "
+        "each bank's disposition traits (skepticism, literalism, empathy).\n\n"
+        "The response reflects the combined knowledge and perspectives from all "
+        "specified banks, weighted by their contribution to the answer.\n\n"
+        "Specify banks by ID using bank_ids, or by tag using bank_tags. "
+        "If neither is provided, all accessible banks will be queried.",
+        operation_id="cross_bank_reflect",
+        tags=["Cross-Bank"],
+    )
+    async def api_cross_bank_reflect(
+        request: CrossBankReflectRequest,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Run cross-bank reflect with disposition-aware synthesis."""
+        metrics = get_metrics_collector()
+
+        try:
+            # Parse budget from string
+            budget = Budget(request.budget.lower())
+
+            # Handle deprecated context field
+            query = request.query
+            if request.context:
+                query = f"{request.query}\n\nAdditional context: {request.context}"
+
+            with metrics.record_operation(
+                "cross_bank_reflect",
+                bank_id="multi",
+                source="api",
+                budget=budget.value,
+            ):
+                result = await app.state.memory._cross_bank_orchestrator.cross_bank_reflect(
+                    query=query,
+                    bank_ids=request.bank_ids,
+                    bank_tags=request.bank_tags,
+                    budget=budget,
+                    context=None,  # Already merged into query
+                    include_mental_models=request.include_mental_models,
+                    include_reasoning_chain=request.include_reasoning_chain,
+                    response_schema=request.response_schema,
+                    request_context=request_context,
+                )
+
+            return result
+
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in /v1/default/cross-bank/reflect: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get(
@@ -4479,7 +4644,13 @@ def _register_routes(app: FastAPI):
                 )
             else:
                 # Check if batch API is enabled - if so, require async mode
-                from hindsight_api.config import get_config
+                from hindsight_api.api.cross_bank_models import (
+    CrossBankRecallRequest,
+    CrossBankRecallResult,
+    CrossBankReflectRequest,
+    CrossBankReflectResult,
+)
+from hindsight_api.config import get_config
 
                 config = get_config()
                 if config.retain_batch_enabled:
@@ -4574,7 +4745,13 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Upload and convert files to memories."""
-        from hindsight_api.config import get_config
+        from hindsight_api.api.cross_bank_models import (
+    CrossBankRecallRequest,
+    CrossBankRecallResult,
+    CrossBankReflectRequest,
+    CrossBankReflectResult,
+)
+from hindsight_api.config import get_config
 
         config = get_config()
 

@@ -480,6 +480,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Store operation validator extension (optional)
         self._operation_validator = operation_validator
 
+        # Cross-bank orchestrator (initialized in initialize())
+        self._cross_bank_orchestrator = None
+
         # Store tenant extension (always set, use default if none provided)
         if tenant_extension is None:
             from ..extensions.builtin.tenant import DefaultTenantExtension
@@ -491,6 +494,11 @@ class MemoryEngine(MemoryEngineInterface):
     def tenant_extension(self) -> "TenantExtension | None":
         """The configured tenant extension, if any."""
         return self._tenant_extension
+
+    @property
+    def cross_bank_orchestrator(self) -> "CrossBankOrchestrator | None":
+        """The cross-bank orchestrator for multi-bank operations."""
+        return self._cross_bank_orchestrator
 
     async def _validate_operation(self, validation_coro) -> None:
         """
@@ -1693,6 +1701,15 @@ class MemoryEngine(MemoryEngineInterface):
 
         self._config_resolver = ConfigResolver(pool=self._pool, tenant_extension=self._tenant_extension)
         logger.debug("Config resolver initialized for hierarchical configuration")
+
+        # Initialize cross-bank orchestrator for multi-bank operations
+        from .cross_bank import CrossBankOrchestrator
+
+        self._cross_bank_orchestrator = CrossBankOrchestrator(
+            engine=self,
+            config_resolver=self._config_resolver,
+        )
+        logger.debug("Cross-bank orchestrator initialized")
 
         # Initialize file storage
         from .storage import create_file_storage

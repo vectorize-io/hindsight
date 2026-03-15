@@ -1357,3 +1357,346 @@ class TestBankToolFiltering:
         # Filter bypassed — config resolver was never consulted, all tools visible
         assert "recall" in visible
         mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()
+        assert "recall" in visible
+        mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()
+
+
+# =============================================================================
+# Cross-Bank MCP Tool Tests
+# =============================================================================
+
+
+@pytest.fixture
+def mock_memory_for_cross_bank():
+    """Create a mock MemoryEngine with cross-bank capabilities."""
+    memory = MagicMock()
+    memory.list_banks = AsyncMock(return_value=[
+        {
+            "bank_id": "bank-a",
+            "name": "Bank A",
+            "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
+            "mission": "Test bank A",
+            "tags": ["personal"],
+        },
+        {
+            "bank_id": "bank-b",
+            "name": "Bank B",
+            "disposition": {"skepticism": 5, "literalism": 2, "empathy": 4},
+            "mission": "Test bank B",
+            "tags": ["work"],
+        },
+    ])
+    memory.get_bank_profile = AsyncMock(side_effect=lambda bank_id, **kwargs: {
+        "bank_id": bank_id,
+        "name": f"Bank {bank_id[-1].upper()}",
+        "disposition": {"skepticism": 3, "literalism": 3, "empathy": 3},
+        "mission": f"Test bank {bank_id}",
+    })
+    # Mock cross_bank_orchestrator
+    memory._cross_bank_orchestrator = MagicMock()
+    memory._cross_bank_orchestrator.cross_bank_recall = AsyncMock(
+        return_value=MagicMock(
+            results=[],
+            bank_stats={},
+            total_results=0,
+            fusion_metadata={"strategy": "reciprocal_rank_fusion"},
+            model_dump=lambda: {"results": [], "bank_stats": {}, "total_results": 0},
+        )
+    )
+    memory._cross_bank_orchestrator.cross_bank_reflect = AsyncMock(
+        return_value=MagicMock(
+            text="Test reflection",
+            based_on=[],
+            mental_models_used=[],
+            bank_dispositions={},
+            structured_output=None,
+            reasoning_chain=None,
+            new_opinions=[],
+            model_dump=lambda: {"text": "Test reflection", "based_on": []},
+        )
+    )
+    # Mock create_documents
+    memory.create_documents = AsyncMock(return_value=[
+        {"document_id": "doc-1", "status": "created", "memory_count": 5}
+    ])
+    return memory
+
+
+@pytest.mark.asyncio
+class TestCrossBankRecallMCPTool:
+    """Tests for cross_bank_recall MCP tool."""
+
+    async def test_cross_bank_recall_registered_multi_bank_only(self, mock_memory_for_cross_bank):
+        """cross_bank_recall should only be registered in multi-bank mode."""
+        from fastmcp import FastMCP
+
+        # Multi-bank mode (include_bank_id_param=True)
+        mcp_multi = FastMCP("test", stateless_http=True)
+        config_multi = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp_multi, mock_memory_for_cross_bank, config_multi)
+        assert "cross_bank_recall" in mcp_multi._tool_manager._tools
+
+        # Single-bank mode (include_bank_id_param=False)
+        mcp_single = FastMCP("test", stateless_http=True)
+        config_single = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=False,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp_single, mock_memory_for_cross_bank, config_single)
+        # Tool should not be registered in single-bank mode
+        assert "cross_bank_recall" not in mcp_single._tool_manager._tools
+
+    async def test_cross_bank_recall_basic(self, mock_memory_for_cross_bank):
+        """Test basic cross_bank_recall tool invocation."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_recall"].fn(
+            query="What does Alice do?",
+        )
+
+        # Verify orchestrator was called
+        mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_recall.assert_called_once()
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_recall.call_args.kwargs
+        assert call_kwargs["query"] == "What does Alice do?"
+
+    async def test_cross_bank_recall_with_bank_ids(self, mock_memory_for_cross_bank):
+        """Test cross_bank_recall with explicit bank_ids."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_recall"].fn(
+            query="Test query",
+            bank_ids=["bank-a", "bank-b"],
+        )
+
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_recall.call_args.kwargs
+        assert call_kwargs["bank_ids"] == ["bank-a", "bank-b"]
+
+    async def test_cross_bank_recall_with_bank_tags(self, mock_memory_for_cross_bank):
+        """Test cross_bank_recall with bank_tags filter."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_recall"].fn(
+            query="Test query",
+            bank_tags=["work"],
+        )
+
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_recall.call_args.kwargs
+        assert call_kwargs["bank_tags"] == ["work"]
+
+    async def test_cross_bank_recall_budget_parameter(self, mock_memory_for_cross_bank):
+        """Test cross_bank_recall passes budget parameter correctly."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_recall"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_recall"].fn(
+            query="Test query",
+            budget="high",
+        )
+
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_recall.call_args.kwargs
+        assert call_kwargs["budget"] == "high"
+
+
+@pytest.mark.asyncio
+class TestCrossBankReflectMCPTool:
+    """Tests for cross_bank_reflect MCP tool."""
+
+    async def test_cross_bank_reflect_registered_multi_bank_only(self, mock_memory_for_cross_bank):
+        """cross_bank_reflect should only be registered in multi-bank mode."""
+        from fastmcp import FastMCP
+
+        # Multi-bank mode
+        mcp_multi = FastMCP("test", stateless_http=True)
+        config_multi = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_reflect"},
+        )
+        register_mcp_tools(mcp_multi, mock_memory_for_cross_bank, config_multi)
+        assert "cross_bank_reflect" in mcp_multi._tool_manager._tools
+
+        # Single-bank mode
+        mcp_single = FastMCP("test", stateless_http=True)
+        config_single = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=False,
+            tools={"cross_bank_reflect"},
+        )
+        register_mcp_tools(mcp_single, mock_memory_for_cross_bank, config_single)
+        assert "cross_bank_reflect" not in mcp_single._tool_manager._tools
+
+    async def test_cross_bank_reflect_basic(self, mock_memory_for_cross_bank):
+        """Test basic cross_bank_reflect tool invocation."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_reflect"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_reflect"].fn(
+            query="What are user preferences?",
+        )
+
+        mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_reflect.assert_called_once()
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_reflect.call_args.kwargs
+        assert call_kwargs["query"] == "What are user preferences?"
+
+    async def test_cross_bank_reflect_with_context(self, mock_memory_for_cross_bank):
+        """Test cross_bank_reflect passes context parameter."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_reflect"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_reflect"].fn(
+            query="Test question",
+            context="Additional context for reflection",
+        )
+
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_reflect.call_args.kwargs
+        assert call_kwargs["context"] == "Additional context for reflection"
+
+    async def test_cross_bank_reflect_include_mental_models(self, mock_memory_for_cross_bank):
+        """Test cross_bank_reflect include_mental_models parameter."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"cross_bank_reflect"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["cross_bank_reflect"].fn(
+            query="Test question",
+            include_mental_models=False,
+        )
+
+        call_kwargs = mock_memory_for_cross_bank._cross_bank_orchestrator.cross_bank_reflect.call_args.kwargs
+        assert call_kwargs["include_mental_models"] is False
+
+
+@pytest.mark.asyncio
+class TestCreateDocumentsMCPTool:
+    """Tests for create_documents MCP tool."""
+
+    async def test_create_documents_registered(self, mock_memory_for_cross_bank):
+        """create_documents should be registered in multi-bank mode."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"create_documents"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+        assert "create_documents" in mcp._tool_manager._tools
+
+    async def test_create_documents_basic(self, mock_memory_for_cross_bank):
+        """Test basic create_documents tool invocation."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"create_documents"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["create_documents"].fn(
+            documents=[{"content": "Test document 1", "context": "test"}],
+        )
+
+        mock_memory_for_cross_bank.create_documents.assert_called_once()
+        call_kwargs = mock_memory_for_cross_bank.create_documents.call_args.kwargs
+        assert len(call_kwargs["documents"]) == 1
+
+    async def test_create_documents_multiple(self, mock_memory_for_cross_bank):
+        """Test create_documents with multiple documents."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"create_documents"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["create_documents"].fn(
+            documents=[
+                {"content": "Document 1", "context": "test"},
+                {"content": "Document 2", "context": "test"},
+            ],
+        )
+
+        call_kwargs = mock_memory_for_cross_bank.create_documents.call_args.kwargs
+        assert len(call_kwargs["documents"]) == 2
+
+    async def test_create_documents_with_bank_id(self, mock_memory_for_cross_bank):
+        """Test create_documents with explicit bank_id."""
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("test", stateless_http=True)
+        config = MCPToolsConfig(
+            bank_id_resolver=lambda: "test-bank",
+            include_bank_id_param=True,
+            tools={"create_documents"},
+        )
+        register_mcp_tools(mcp, mock_memory_for_cross_bank, config)
+
+        result = await mcp._tool_manager._tools["create_documents"].fn(
+            documents=[{"content": "Test", "context": "test"}],
+            bank_id="custom-bank",
+        )
+
+        call_kwargs = mock_memory_for_cross_bank.create_documents.call_args.kwargs
+        assert call_kwargs["bank_id"] == "custom-bank"
