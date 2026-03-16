@@ -1226,7 +1226,7 @@ jobs:
       HINDSIGHT_API_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Setup GCP credentials
       run: |
