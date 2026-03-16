@@ -599,61 +599,61 @@ jobs:
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
     - name: Download Python packages
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: python-packages
         path: ./artifacts/python-packages
 
     - name: Download TypeScript client
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: typescript-client
         path: ./artifacts/typescript-client
 
     - name: Download OpenClaw Integration
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: openclaw-integration
         path: ./artifacts/openclaw-integration
 
     - name: Download AI SDK Integration
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ai-sdk-integration
         path: ./artifacts/ai-sdk-integration
 
     - name: Download Chat Integration
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: chat-integration
         path: ./artifacts/chat-integration
 
     - name: Download Control Plane
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: control-plane
         path: ./artifacts/control-plane
 
     - name: Download Rust CLI (Linux)
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: rust-cli-hindsight-linux-amd64
         path: ./artifacts/rust-cli-linux
 
     - name: Download Rust CLI (macOS Intel)
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: rust-cli-hindsight-darwin-amd64
         path: ./artifacts/rust-cli-darwin-amd64
 
     - name: Download Rust CLI (macOS ARM)
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: rust-cli-hindsight-darwin-arm64
         path: ./artifacts/rust-cli-darwin-arm64
 
     - name: Download Helm chart
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: helm-chart
         path: ./artifacts/helm-chart
