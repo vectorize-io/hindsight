@@ -6,7 +6,7 @@ This provider handles all OpenAI API-compatible models including:
 - Groq: Fast inference with seed control and service tiers
 - Ollama: Local models with native streaming API support
 - LMStudio: Local models with OpenAI-compatible API
-- MiniMax: MiniMax-M2.5 models with 204K context window
+- MiniMax: MiniMax-M2.7 models with 1M context window
 
 Features:
 - Reasoning models with extended thinking (o1, o3, GPT-5 families)
@@ -48,7 +48,7 @@ class OpenAICompatibleLLM(LLMInterface):
     - Groq: Fast inference with seed control and service tiers
     - Ollama: Local models with native streaming API for better structured output
     - LMStudio: Local models with OpenAI-compatible API
-    - MiniMax: MiniMax-M2.5 models via OpenAI-compatible API (https://api.minimax.io/v1)
+    - MiniMax: MiniMax-M2.7 models via OpenAI-compatible API (https://api.minimax.io/v1)
     """
 
     def __init__(
