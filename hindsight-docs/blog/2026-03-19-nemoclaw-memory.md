@@ -1,7 +1,7 @@
 ---
 slug: sandboxed-agent-persistent-memory-nemoclaw
-title: "Persistent Memory Inside a Sandboxed AI Agent"
-description: Add persistent memory to a NemoClaw sandboxed AI agent without changing code. One command, one network policy — memories survive across sessions.
+title: "Give NemoClaw the Best Agent Memory Available In One Command"
+description: Add persistent memory to a NemoClaw sandboxed AI agent without changing code. One command, one network policy, memories survive across sessions.
 authors: [hindsight]
 date: 2026-03-19
 hide_table_of_contents: true
