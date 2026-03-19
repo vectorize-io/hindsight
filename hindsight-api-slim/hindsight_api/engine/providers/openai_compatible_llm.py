@@ -24,6 +24,7 @@ import os
 import re
 import time
 from typing import Any
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, LengthFinishReasonError
@@ -108,10 +109,18 @@ class OpenAICompatibleLLM(LLMInterface):
         # Get timeout config
         self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
 
-        # Create OpenAI client
+        # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
         client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
         if self.base_url:
-            client_kwargs["base_url"] = self.base_url
+            parsed = urlparse(self.base_url)
+            if parsed.query:
+                clean_url = urlunparse(parsed._replace(query=""))
+                client_kwargs["base_url"] = clean_url
+                default_query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                client_kwargs["default_query"] = default_query
+                self.base_url = clean_url
+            else:
+                client_kwargs["base_url"] = self.base_url
         if self.timeout:
             client_kwargs["timeout"] = self.timeout
 
