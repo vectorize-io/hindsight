@@ -4,6 +4,7 @@ title: "Give NemoClaw the Best Agent Memory Available In One Command"
 description: Add persistent memory to a NemoClaw sandboxed AI agent without changing code. One command, one network policy, memories survive across sessions.
 authors: [hindsight]
 date: 2026-03-19
+image: /img/blog/2026-03-19/nemoclaw-memory.png
 hide_table_of_contents: true
 ---
 
