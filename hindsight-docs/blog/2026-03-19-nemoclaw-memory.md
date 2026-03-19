@@ -1,7 +1,7 @@
 ---
 slug: sandboxed-agent-persistent-memory-nemoclaw
 title: "Persistent Memory Inside a Sandboxed AI Agent"
-description: Add persistent memory to a NemoClaw sandboxed AI agent without changing code. One config block, one network policy — memories survive across sessions.
+description: Add persistent memory to a NemoClaw sandboxed AI agent without changing code. One command, one network policy — memories survive across sessions.
 authors: [hindsight]
 date: 2026-03-19
 hide_table_of_contents: true
@@ -10,7 +10,7 @@ hide_table_of_contents: true
 ## TL;DR
 
 - [NemoClaw](https://nemoclaw.ai) sandboxes isolate AI agents — controlled filesystem, processes, and network. That isolation makes persistent memory harder.
-- We connected the `hindsight-openclaw` plugin to a live NemoClaw sandbox using [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). No code changes — just config and a network policy.
+- We connected the `hindsight-openclaw` plugin to a live NemoClaw sandbox using [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup). No code changes — one command.
 - External API mode is the natural fit: the plugin becomes a thin HTTP client, and the sandbox only needs one egress rule.
 - Memories captured in one session are recalled in the next. The sandbox didn't interfere.
 - The pattern generalizes: sandbox controls what the agent can *do*, memory controls what it *knows*. They compose cleanly.
@@ -61,11 +61,96 @@ Inside a sandbox, local daemon mode is awkward. The sandbox controls which proce
 
 For background on the OpenClaw plugin itself — how it hooks into the gateway lifecycle, auto-injects memory into context, and prevents feedback loops — see [The Memory Upgrade Every OpenClaw User Needs](https://hindsight.vectorize.io/blog/2026/03/06/adding-memory-to-openclaw-with-hindsight).
 
-## Implementation: Persistent Memory in Four Steps
+## Implementation: One Command
 
-### Step 1: Configure the Plugin
+The `hindsight-nemoclaw` package automates the entire setup — installing the plugin, configuring external API mode, reading your current sandbox policy, merging the Hindsight egress rule, and restarting the gateway:
 
-To enable external API mode, set two config fields in `~/.openclaw/openclaw.json`:
+```bash
+npx @vectorize-io/hindsight-nemoclaw setup \
+  --sandbox my-assistant \
+  --api-url https://api.hindsight.vectorize.io \
+  --api-token <your-api-key> \
+  --bank-prefix my-sandbox
+```
+
+That's it. You'll see output like:
+
+```
+[0] Preflight checks...
+  ✓ openshell found
+  ✓ openclaw found
+
+[1] Installing @vectorize-io/hindsight-openclaw plugin...
+  ✓ Plugin installed
+
+[2] Configuring plugin in ~/.openclaw/openclaw.json...
+  ✓ Plugin config written (bank: my-sandbox-openclaw)
+
+[3] Applying Hindsight network policy to sandbox "my-assistant"...
+  ✓ Policy version 2 submitted
+  ✓ Policy version 2 loaded (active version: 2)
+
+[4] Restarting OpenClaw gateway...
+  ✓ Gateway restarted
+
+✓ Setup complete!
+```
+
+Use `--dry-run` to preview all changes before applying. Use `--skip-policy` if you manage sandbox policies manually.
+
+## Verifying It Works
+
+After setup, the gateway logs confirm the plugin is running:
+
+```
+[Hindsight] Plugin loaded successfully
+[Hindsight] ✓ Using external API: https://api.hindsight.vectorize.io
+[Hindsight] External API health: {"status":"healthy","database":"connected"}
+[Hindsight] Default bank: my-sandbox-openclaw
+[Hindsight] ✓ Ready (external API mode)
+```
+
+Send a message to the agent:
+
+```bash
+openclaw agent --agent main --session-id session-1 \
+  -m "My name is Ben and I work on Hindsight. I prefer detailed commit messages."
+```
+
+The gateway logs show the hooks firing:
+
+```
+[Hindsight] before_agent_start - bank: my-sandbox-openclaw, channel: undefined/webchat
+[Hindsight Hook] agent_end triggered - bank: my-sandbox-openclaw
+[Hindsight] Retained 6 messages to bank my-sandbox-openclaw for session agent:main:...
+```
+
+Open a fresh session and ask what the agent remembers:
+
+```bash
+openclaw agent --agent main --session-id session-2 \
+  -m "What do you remember about me?"
+```
+
+```
+Right now I've just got the basics: your name is Ben, you're working on
+Hindsight, and you like commit messages to be detailed. If there's anything
+else you want me to keep in mind, let me know.
+```
+
+The memory survived the session boundary. The sandbox didn't interfere with it.
+
+## What the Setup Command Does (Manual Alternative)
+
+If you prefer to apply the steps yourself, here's what `hindsight-nemoclaw setup` does under the hood.
+
+**Install the plugin:**
+
+```bash
+openclaw plugins install @vectorize-io/hindsight-openclaw
+```
+
+**Configure `~/.openclaw/openclaw.json`:**
 
 ```json
 {
@@ -86,11 +171,7 @@ To enable external API mode, set two config fields in `~/.openclaw/openclaw.json
 }
 ```
 
-`hindsightApiUrl` + `hindsightApiToken` switches the plugin to HTTP mode. `llmProvider: "claude-code"` satisfies the LLM detection check using the Claude Code process already present in the sandbox — no additional API key needed. `dynamicBankId: false` writes all sessions to a single bank, which makes it easy to verify things are working.
-
-### Step 2: Add the Network Policy
-
-[OpenShell](https://openshell.ai) policy is a YAML document that gets applied to the sandbox. It defines exactly what the agent is allowed to do. Adding Hindsight means adding one block to `network_policies`:
+**Add the Hindsight block to your sandbox network policy** (note: `openshell policy set` replaces the full document — include all existing policies):
 
 ```yaml
 network_policies:
@@ -116,86 +197,24 @@ network_policies:
       - path: /usr/local/bin/openclaw
 ```
 
-The `binaries` field ties the network rule to a specific executable. Only the OpenClaw process can make calls to `api.hindsight.vectorize.io`. If a different process tried, the egress policy would block it.
-
-Apply the policy:
-
 ```bash
 openshell policy set my-sandbox --policy /path/to/full-policy.yaml --wait
-# ✓ Policy version 2 submitted (hash: 3f3d742e7bc6)
-# ✓ Policy version 2 loaded (active version: 2)
-```
-
-### Step 3: Install and Restart
-
-```bash
-# Install as a copy (not --link — see pitfalls below)
-openclaw plugins install @vectorize-io/hindsight-openclaw
-
-# Restart the gateway
 openclaw gateway restart
 ```
-
-### Step 4: Verify It Works
-
-After restarting, the logs confirm the plugin initialized:
-
-```
-[Hindsight] Plugin loaded successfully
-[Hindsight] ✓ Using external API: https://api.hindsight.vectorize.io
-[Hindsight] External API health: {"status":"healthy","database":"connected"}
-[Hindsight] Default bank: my-sandbox-openclaw
-[Hindsight] ✓ Ready (external API mode)
-```
-
-Send a message to the agent:
-
-```bash
-openclaw agent --agent main --session-id session-1 \
-  -m "My name is Ben and I work on Hindsight. I prefer detailed commit messages."
-```
-
-The gateway logs show the hooks firing:
-
-```
-[Hindsight] before_agent_start - bank: my-sandbox-openclaw, channel: undefined/webchat
-[Hindsight Hook] agent_end triggered - bank: my-sandbox-openclaw
-[Hindsight] Retained 6 messages to bank my-sandbox-openclaw for session agent:main:...
-```
-
-Now open a fresh session and ask what the agent remembers:
-
-```bash
-openclaw agent --agent main --session-id session-2 \
-  -m "What do you remember about me?"
-```
-
-```
-Right now I've just got the basics: your name is Ben, you're working on
-Hindsight, and you like commit messages to be detailed. If there's anything
-else you want me to keep in mind, let me know.
-```
-
-The memory survived the session boundary. The sandbox didn't interfere with it.
 
 ## Pitfalls & Edge Cases
 
 ### 1. Policy replacement is full-document
 
-`openshell policy set` replaces the entire policy document, not just the section you're adding. Make sure your YAML includes all the existing network policies or they get removed. Always export the current policy first, add your block, and re-apply.
+`openshell policy set` replaces the entire policy document, not just the section you're adding. The `hindsight-nemoclaw setup` command handles this automatically — it reads the current policy, merges the Hindsight block, and re-applies the full document. If you're applying manually, make sure your YAML includes all existing network policies.
 
 ### 2. LaunchAgent can't follow symlinks on macOS
 
-On macOS, the OpenClaw gateway runs as a LaunchAgent. LaunchAgents run under a restricted security context that can't access `~/Documents` or other user directories, even though your shell can. This matters because `openclaw plugins install --link` creates a symlink into the source directory — and the LaunchAgent can't follow it.
-
-The fix: install as a copy instead of a link.
+On macOS, the OpenClaw gateway runs as a LaunchAgent with a restricted security context that can't access `~/Documents` or other user directories. `openclaw plugins install --link` creates a symlink that the LaunchAgent can't follow — install as a copy instead:
 
 ```bash
-# This will fail — LaunchAgent can't scan ~/Documents/...
-openclaw plugins install --link /path/to/hindsight-integrations/openclaw
-
 # This works — copies files to ~/.openclaw/extensions/
-openclaw plugins install /path/to/hindsight-integrations/openclaw
+openclaw plugins install @vectorize-io/hindsight-openclaw
 ```
 
 If you see `EPERM: operation not permitted, scandir` in your gateway logs, this is what's happening.
@@ -212,7 +231,7 @@ The `binaries` field in the network policy means *only* the specified executable
 
 | | **External API mode** | **Local daemon mode** |
 |---|---|---|
-| **Setup** | Config + network policy | Process spawning permissions |
+| **Setup** | One command | Process spawning permissions |
 | **Dependencies** | HTTPS egress only | `uvx`, Python, local PostgreSQL |
 | **Data location** | Hindsight Cloud | Local to sandbox |
 | **Multi-sandbox sharing** | Same bank from anywhere | Per-sandbox only |
@@ -240,17 +259,17 @@ There's also an interesting property of `dynamicBankId`:
 - **Enabled** (`true`): each user gets an isolated memory bank. Memories from one user's sessions can't bleed into another's. Use this for multi-tenant deployments.
 - **Disabled** (`false`): a shared bank accumulates context from all sessions. Use this for single-user sandboxes like a personal coding assistant.
 
-> **Want to skip self-hosting?** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) is what we used in this walkthrough — no Docker, no infrastructure. Sign up, grab an API key, and add one network policy to your sandbox.
+> **Want to skip self-hosting?** [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) is what we used in this walkthrough — no Docker, no infrastructure. Sign up, grab an API key, and run `npx @vectorize-io/hindsight-nemoclaw setup`.
 
 ## Recap
 
-Persistent memory in a sandboxed AI agent requires zero code changes — just configuration and a network policy. The `hindsight-openclaw` plugin's external API mode makes it a thin HTTP client that fits cleanly within OpenShell's egress controls.
+Persistent memory in a sandboxed AI agent is one command: `npx @vectorize-io/hindsight-nemoclaw setup`. It installs the plugin, applies the network egress rule, and configures external API mode — everything the sandbox needs to let Hindsight through.
 
 The key insight: sandbox isolation and persistent memory are orthogonal concerns. The sandbox controls what the agent can affect; memory controls what the agent knows. One network policy rule bridges them without compromising either.
 
 ## Next Steps
 
-- **Read the full setup guide**: [NEMOCLAW.md](https://github.com/vectorize-io/hindsight/blob/openclaw/hindsight-integrations/openclaw/NEMOCLAW.md) in the repository has step-by-step instructions.
+- **Run the setup**: `npx @vectorize-io/hindsight-nemoclaw setup --help` to get started.
 - **Try per-user memory banks**: Enable `dynamicBankId: true` to give each user isolated memory in multi-tenant deployments.
 - **Explore the OpenClaw plugin in depth**: See [The Memory Upgrade Every OpenClaw User Needs](https://hindsight.vectorize.io/blog/2026/03/06/adding-memory-to-openclaw-with-hindsight) for how the plugin hooks into gateway lifecycle events.
 - **Connect other agents to the same memory**: Hindsight works with [Hermes Agent](https://hindsight.vectorize.io/blog/2026/03/17/hermes-agent-memory), [Streamlit chatbots](https://hindsight.vectorize.io/blog/2026/03/17/python-chatbot-memory-streamlit), and [any MCP client](https://hindsight.vectorize.io/blog/2026/03/04/mcp-agent-memory).
@@ -259,7 +278,7 @@ The key insight: sandbox isolation and persistent memory are orthogonal concerns
 ---
 
 **Resources:**
+- [hindsight-nemoclaw on npm](https://www.npmjs.com/package/@vectorize-io/hindsight-nemoclaw)
 - [hindsight-openclaw on npm](https://www.npmjs.com/package/@vectorize-io/hindsight-openclaw)
-- [NemoClaw setup guide](https://github.com/vectorize-io/hindsight/blob/openclaw/hindsight-integrations/openclaw/NEMOCLAW.md)
 - [OpenClaw plugin documentation](https://vectorize.io/hindsight/sdks/integrations/openclaw)
 - [Hindsight Cloud](https://ui.hindsight.vectorize.io)
