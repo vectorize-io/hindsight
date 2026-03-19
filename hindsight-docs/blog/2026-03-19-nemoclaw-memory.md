@@ -248,7 +248,7 @@ The key insight: sandbox isolation and persistent memory are orthogonal concerns
 
 - **Read the full setup guide**: [NEMOCLAW.md](https://github.com/vectorize-io/hindsight/blob/openclaw/hindsight-integrations/openclaw/NEMOCLAW.md) in the repository has step-by-step instructions.
 - **Try per-user memory banks**: Enable `dynamicBankId: true` to give each user isolated memory in multi-tenant deployments.
-- **Check out the docs**: Full API reference and SDK guides at [docs.hindsight.vectorize.io](https://docs.hindsight.vectorize.io).
+- **Check out the docs**: Full API reference and SDK guides at [docs.hindsight.vectorize.io](https://docs.hindsight.vectorize.io/recall/).
 
 ---
 
