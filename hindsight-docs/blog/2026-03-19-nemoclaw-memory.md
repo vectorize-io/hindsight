@@ -31,7 +31,7 @@ We didn't need to change a line.
 
 By default, the sandbox ships with policies for the services it needs: the LLM provider, GitHub, npm, the OpenClaw API. Everything else is blocked. That's a good default — an agent that can call arbitrary endpoints is harder to trust.
 
-[Hindsight](https://hindsight.vectorize.io) operates as an external API. The plugin makes HTTPS calls to `api.hindsight.vectorize.io` to retain and recall memories. From the sandbox's perspective, that's just another outbound endpoint — one that needs to be explicitly permitted.
+[Hindsight](https://hindsight.vectorize.io) operates as an external API. The plugin makes HTTPS calls to `api.hindsight.vectorize.io` to [retain and recall memories](https://hindsight.vectorize.io/blog/2026/03/04/mcp-agent-memory). From the sandbox's perspective, that's just another outbound endpoint — one that needs to be explicitly permitted.
 
 The full stack looks like this:
 
@@ -53,11 +53,13 @@ The full stack looks like this:
 └─────────────────────────────────────────────┘
 ```
 
-When the plugin retains a conversation, Hindsight doesn't just store raw text. It extracts structured facts, resolves entities, builds a knowledge graph, and indexes everything for multi-strategy retrieval — semantic search, BM25 keyword matching, graph traversal, and temporal filtering with cross-encoder reranking. That's what makes recall useful even when the agent's question doesn't match the exact wording of what was stored.
+When the plugin retains a conversation, Hindsight doesn't just store raw text. It extracts structured facts, resolves entities, builds a [knowledge graph](https://hindsight.vectorize.io/blog/2026/03/12/spreading-activation-memory-graphs), and indexes everything for multi-strategy retrieval — semantic search, BM25 keyword matching, graph traversal, and temporal filtering with [cross-encoder reranking](https://hindsight.vectorize.io/blog/2026/03/04/mcp-agent-memory). That's what makes recall useful even when the agent's question doesn't match the exact wording of what was stored.
 
 The plugin has two modes. In **local daemon mode**, it spawns a local `hindsight-embed` process and communicates with it over a local port. In **external API mode**, it skips the daemon entirely and makes HTTP calls directly to a Hindsight Cloud endpoint.
 
 Inside a sandbox, local daemon mode is awkward. The sandbox controls which processes can be spawned, and a background daemon that launches `uvx` subprocesses is friction we don't need. External API mode is the natural fit: the plugin becomes a thin HTTP client, and the only infrastructure requirement is a network egress rule.
+
+For background on the OpenClaw plugin itself — how it hooks into the gateway lifecycle, auto-injects memory into context, and prevents feedback loops — see [The Memory Upgrade Every OpenClaw User Needs](https://hindsight.vectorize.io/blog/2026/03/06/adding-memory-to-openclaw-with-hindsight).
 
 ## Implementation: Persistent Memory in Four Steps
 
@@ -200,7 +202,7 @@ If you see `EPERM: operation not permitted, scandir` in your gateway logs, this 
 
 ### 3. Memory retention is asynchronous
 
-When the plugin calls `retain` at the end of a session, fact extraction and entity resolution happen in the background on Hindsight's side. If you open a new session immediately, the most recent memories may not be indexed yet. In practice this is a few seconds — but it's worth knowing if you're testing back-to-back.
+When the plugin calls `retain` at the end of a session, [fact extraction and entity resolution](https://hindsight.vectorize.io/blog/2026/03/12/spreading-activation-memory-graphs) happen in the background on Hindsight's side. If you open a new session immediately, the most recent memories may not be indexed yet. In practice this is a few seconds — but it's worth knowing if you're testing back-to-back.
 
 ### 4. Binary-scoped egress is strict
 
@@ -219,6 +221,8 @@ The `binaries` field in the network policy means *only* the specified executable
 **Use external API mode** when you're in a sandbox, want shared memory across instances, or don't want to manage a local database.
 
 **Use local daemon mode** when data must stay on the machine, network egress is completely locked down, or you're running outside a sandbox where process spawning is unrestricted.
+
+For background on the local daemon approach, see [The Memory Upgrade Every OpenClaw User Needs](https://hindsight.vectorize.io/blog/2026/03/06/adding-memory-to-openclaw-with-hindsight).
 
 ## What This Pattern Means for Sandboxed Agent Memory
 
@@ -248,6 +252,8 @@ The key insight: sandbox isolation and persistent memory are orthogonal concerns
 
 - **Read the full setup guide**: [NEMOCLAW.md](https://github.com/vectorize-io/hindsight/blob/openclaw/hindsight-integrations/openclaw/NEMOCLAW.md) in the repository has step-by-step instructions.
 - **Try per-user memory banks**: Enable `dynamicBankId: true` to give each user isolated memory in multi-tenant deployments.
+- **Explore the OpenClaw plugin in depth**: See [The Memory Upgrade Every OpenClaw User Needs](https://hindsight.vectorize.io/blog/2026/03/06/adding-memory-to-openclaw-with-hindsight) for how the plugin hooks into gateway lifecycle events.
+- **Connect other agents to the same memory**: Hindsight works with [Hermes Agent](https://hindsight.vectorize.io/blog/2026/03/17/hermes-agent-memory), [Streamlit chatbots](https://hindsight.vectorize.io/blog/2026/03/17/python-chatbot-memory-streamlit), and [any MCP client](https://hindsight.vectorize.io/blog/2026/03/04/mcp-agent-memory).
 - **Check out the docs**: Full API reference and SDK guides at [docs.hindsight.vectorize.io](https://docs.hindsight.vectorize.io/recall/).
 
 ---
