@@ -701,6 +701,73 @@ class TestWorkerRecovery:
         recovered_count = await poller.recover_own_tasks()
         assert recovered_count == 0
 
+    @pytest.mark.asyncio
+    async def test_recover_reclaims_stale_tasks_from_dead_workers(self, pool, clean_operations):
+        """Test that tasks stuck on dead workers for >30min are reclaimed on startup."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # Create a task claimed by a dead worker 60 minutes ago
+        stale_op_id = uuid.uuid4()
+        payload = json.dumps({"type": "consolidation", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb,
+                    'dead-worker-abc123', now() - interval '60 minutes')
+            """,
+            stale_op_id,
+            bank_id,
+            payload,
+        )
+
+        # Create a task claimed by a dead worker only 5 minutes ago (not stale yet)
+        recent_op_id = uuid.uuid4()
+        payload2 = json.dumps({"type": "retain", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+                (operation_id, bank_id, operation_type, status, task_payload,
+                 worker_id, claimed_at)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb,
+                    'dead-worker-abc123', now() - interval '5 minutes')
+            """,
+            recent_op_id,
+            bank_id,
+            payload2,
+        )
+
+        # New worker starts up and recovers
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="new-worker",
+            executor=lambda x: None,
+        )
+
+        recovered_count = await poller.recover_own_tasks()
+        # Only the stale task (60 min old) should be recovered
+        assert recovered_count == 1
+
+        # Verify the stale task was reset to pending
+        stale_row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            stale_op_id,
+        )
+        assert stale_row["status"] == "pending"
+        assert stale_row["worker_id"] is None
+
+        # Verify the recent task is still processing (not reclaimed)
+        recent_row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            recent_op_id,
+        )
+        assert recent_row["status"] == "processing"
+        assert recent_row["worker_id"] == "dead-worker-abc123"
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""

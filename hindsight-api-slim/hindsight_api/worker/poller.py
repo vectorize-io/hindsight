@@ -475,6 +475,11 @@ class WorkerPoller:
             traceback.print_exc()
             await self._mark_failed(task.operation_id, str(e), task.schema)
 
+    # Tasks claimed longer than this are considered abandoned by a dead worker.
+    # The longest observed legitimate task is ~7 minutes (large PDF extraction).
+    # 30 minutes provides a safe margin.
+    _STALE_TASK_THRESHOLD_MINUTES = 30
+
     async def recover_own_tasks(self) -> int:
         """
         Recover tasks that were assigned to this worker but not completed.
@@ -483,7 +488,9 @@ class WorkerPoller:
         On startup, we reset any tasks stuck in 'processing' for this worker_id
         back to 'pending' so they can be picked up again.
 
-        Also recovers batch API operations that were in-flight.
+        Also recovers batch API operations that were in-flight, and reclaims
+        stale tasks from dead workers (other worker_ids whose tasks have been
+        stuck in 'processing' beyond the stale threshold).
 
         If tenant_extension is configured, recovers across all tenant schemas.
 
@@ -501,7 +508,7 @@ class WorkerPoller:
                 batch_count = await self._recover_batch_operations(schema)
                 total_count += batch_count
 
-                # Then reset normal worker tasks
+                # Then reset normal worker tasks (own worker_id)
                 result = await self._pool.execute(
                     f"""
                     UPDATE {table}
@@ -514,6 +521,32 @@ class WorkerPoller:
                 # Parse "UPDATE N" to get count
                 count = int(result.split()[-1]) if result else 0
                 total_count += count
+
+                # Reclaim stale tasks from dead workers.
+                # When a worker pod is terminated (restart, deploy, OOM, node
+                # eviction), it may not release its claimed tasks. The new pod
+                # gets a different worker_id, so the above query won't match
+                # the old pod's tasks. Any task stuck in 'processing' with a
+                # claimed_at older than the threshold is assumed abandoned.
+                stale_result = await self._pool.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                    WHERE status = 'processing'
+                      AND worker_id != $1
+                      AND claimed_at < now() - make_interval(mins => $2)
+                      AND result_metadata->>'batch_id' IS NULL
+                    """,
+                    self._worker_id,
+                    self._STALE_TASK_THRESHOLD_MINUTES,
+                )
+                stale_count = int(stale_result.split()[-1]) if stale_result else 0
+                if stale_count > 0:
+                    logger.warning(
+                        f"Worker {self._worker_id} reclaimed {stale_count} stale tasks "
+                        f"from dead workers (claimed_at > {self._STALE_TASK_THRESHOLD_MINUTES}m ago)"
+                    )
+                total_count += stale_count
             except Exception as e:
                 # Format schema for logging: custom schemas in quotes, None as-is
                 schema_display = f'"{schema}"' if schema else str(schema)
