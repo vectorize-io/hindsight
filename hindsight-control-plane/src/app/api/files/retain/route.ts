@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DATAPLANE_URL } from "@/lib/hindsight-client";
+import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
     // Forward the form data to the dataplane
     const response = await fetch(url, {
       method: "POST",
+      headers: getDataplaneHeaders(),
       body: formData,
       // Don't set Content-Type - let fetch handle multipart boundary
     });
