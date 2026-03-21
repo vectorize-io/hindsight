@@ -58,7 +58,7 @@ dependencies = [
     "orjson>=3.11.6", # Unbounded recursion DoS fix
     "tornado>=6.5.5", # DoS multipart/incomplete cookie validation fix
     "aiohttp>=3.13.3", # Multiple DoS vulnerabilities
-    "claude-agent-sdk>=0.1.27; sys_platform == 'darwin'",
+    "claude-agent-sdk>=0.1.27",
 ]
 
 [project.optional-dependencies]
