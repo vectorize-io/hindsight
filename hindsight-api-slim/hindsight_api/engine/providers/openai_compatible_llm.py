@@ -40,6 +40,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_SEED = 4242
 
 
+def _strip_code_fences(content: str) -> str:
+    """Strip markdown code fences from LLM response if present.
+
+    Many LLM providers (MiniMax, some Ollama models, Claude via proxies)
+    wrap JSON responses in ```json ... ``` fences even when json_object
+    response format is requested. This strips the fences while preserving
+    the JSON content inside. Returns the original content unchanged if
+    no fences are detected.
+    """
+    if "```" not in content:
+        return content
+    try:
+        if "```json" in content:
+            return content.split("```json")[1].split("```")[0].strip()
+        return content.split("```")[1].split("```")[0].strip()
+    except (IndexError, ValueError):
+        return content
+
+
 class OpenAICompatibleLLM(LLMInterface):
     """
     LLM provider for OpenAI-compatible APIs.
@@ -322,20 +341,14 @@ class OpenAICompatibleLLM(LLMInterface):
                         if len(content) < original_len:
                             logger.debug(f"Stripped {original_len - len(content)} chars of reasoning tokens")
 
-                    # For local models, they may wrap JSON in markdown code blocks
-                    if self.provider in ("lmstudio", "ollama"):
-                        clean_content = content
-                        if "```json" in content:
-                            clean_content = content.split("```json")[1].split("```")[0].strip()
-                        elif "```" in content:
-                            clean_content = content.split("```")[1].split("```")[0].strip()
-                        try:
-                            json_data = json.loads(clean_content)
-                        except json.JSONDecodeError:
-                            # Fallback to parsing raw content
-                            json_data = json.loads(content)
-                    else:
-                        # Log raw LLM response for debugging JSON parse issues
+                    # Strip markdown code fences if present — any provider may
+                    # produce these (confirmed with MiniMax, some Ollama models,
+                    # Claude via proxies). No-op when content is already bare JSON.
+                    clean_content = _strip_code_fences(content)
+                    try:
+                        json_data = json.loads(clean_content)
+                    except json.JSONDecodeError:
+                        # Fallback to parsing raw content in case stripping was wrong
                         try:
                             json_data = json.loads(content)
                         except json.JSONDecodeError as json_err:
@@ -730,26 +743,33 @@ class OpenAICompatibleLLM(LLMInterface):
                     result = response.json()
                     content = result.get("message", {}).get("content", "")
 
-                    # Parse JSON response
+                    # Strip markdown code fences if present (safety net —
+                    # Ollama with schema enforcement usually returns bare JSON,
+                    # but some models may still wrap in fences)
+                    clean_content = _strip_code_fences(content)
                     try:
-                        json_data = json.loads(content)
-                    except json.JSONDecodeError as json_err:
-                        content_preview = content[:500] if content else "<empty>"
-                        if content and len(content) > 700:
-                            content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
-                        logger.warning(
-                            f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
-                            f"  Model: ollama/{self.model}\n"
-                            f"  Content length: {len(content) if content else 0} chars\n"
-                            f"  Content preview: {content_preview!r}"
-                        )
-                        if attempt < max_retries:
-                            backoff = min(initial_backoff * (2**attempt), max_backoff)
-                            await asyncio.sleep(backoff)
-                            last_exception = json_err
-                            continue
-                        else:
-                            raise
+                        json_data = json.loads(clean_content)
+                    except json.JSONDecodeError:
+                        # Fallback to raw content
+                        try:
+                            json_data = json.loads(content)
+                        except json.JSONDecodeError as json_err:
+                            content_preview = content[:500] if content else "<empty>"
+                            if content and len(content) > 700:
+                                content_preview = f"{content[:500]}...TRUNCATED...{content[-200:]}"
+                            logger.warning(
+                                f"Ollama JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {json_err}\n"
+                                f"  Model: ollama/{self.model}\n"
+                                f"  Content length: {len(content) if content else 0} chars\n"
+                                f"  Content preview: {content_preview!r}"
+                            )
+                            if attempt < max_retries:
+                                backoff = min(initial_backoff * (2**attempt), max_backoff)
+                                await asyncio.sleep(backoff)
+                                last_exception = json_err
+                                continue
+                            else:
+                                raise
 
                     # Extract token usage from Ollama response
                     duration = time.time() - start_time
