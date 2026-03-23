@@ -1,0 +1,8 @@
+{
+  "name": "hindsight-memory",
+  "description": "Automatic long-term memory for Claude Code via Hindsight. Recalls relevant memories before each prompt and retains conversation transcripts after each response.",
+  "version": "0.1.0",
+  "author": "Fabio Scarsi",
+  "license": "MIT",
+  "keywords": ["memory", "hindsight", "recall", "retain"]
+}
