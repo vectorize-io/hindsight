@@ -123,7 +123,7 @@ All settings are in `settings.json` at the plugin root. Every setting can also b
 | `hindsightApiUrl` | `""` | `HINDSIGHT_API_URL` | External Hindsight API URL. Empty = use local daemon. |
 | `hindsightApiToken` | `null` | `HINDSIGHT_API_TOKEN` | Auth token for external API |
 | `apiPort` | `9077` | `HINDSIGHT_API_PORT` | Port for local Hindsight daemon |
-| `daemonIdleTimeout` | `300` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | Seconds before idle daemon shuts down (0 = never) |
+| `daemonIdleTimeout` | `0` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | Seconds before idle daemon shuts down (0 = never) |
 | `embedVersion` | `"latest"` | `HINDSIGHT_EMBED_VERSION` | `hindsight-embed` version for `uvx` |
 | `embedPackagePath` | `null` | `HINDSIGHT_EMBED_PACKAGE_PATH` | Local path to `hindsight-embed` for development |
 
@@ -154,7 +154,7 @@ Auto-detection checks these env vars in order: `OPENAI_API_KEY`, `ANTHROPIC_API_
 | Setting | Default | Env Var | Description |
 |---------|---------|---------|-------------|
 | `autoRecall` | `true` | `HINDSIGHT_AUTO_RECALL` | Enable automatic memory recall |
-| `recallBudget` | `"low"` | `HINDSIGHT_RECALL_BUDGET` | Recall effort: `low`, `mid`, `high` |
+| `recallBudget` | `"mid"` | `HINDSIGHT_RECALL_BUDGET` | Recall effort: `low`, `mid`, `high` |
 | `recallMaxTokens` | `1024` | `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens in recall response |
 | `recallTypes` | `["world", "experience"]` | — | Memory types: `world`, `experience`, `observation` |
 | `recallContextTurns` | `1` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | Prior turns for query composition (1 = latest only) |

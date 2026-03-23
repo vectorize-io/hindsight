@@ -11,7 +11,7 @@ import sys
 DEFAULTS = {
     # Recall
     "autoRecall": True,
-    "recallBudget": "low",
+    "recallBudget": "mid",
     "recallMaxTokens": 1024,
     "recallTypes": ["world", "experience"],
     "recallContextTurns": 1,
@@ -33,7 +33,7 @@ DEFAULTS = {
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
     "apiPort": 9077,
-    "daemonIdleTimeout": 300,
+    "daemonIdleTimeout": 0,
     "embedVersion": "latest",
     "embedPackagePath": None,
     # Bank
