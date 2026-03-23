@@ -26,8 +26,8 @@ DEFAULTS = {
     # Retain
     "autoRetain": True,
     "retainRoles": ["user", "assistant"],
-    "retainEveryNTurns": 1,
-    "retainOverlapTurns": 0,
+    "retainEveryNTurns": 10,
+    "retainOverlapTurns": 2,
     "retainContext": "claude-code",
     # Connection
     "hindsightApiUrl": None,

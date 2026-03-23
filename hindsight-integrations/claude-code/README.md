@@ -169,8 +169,8 @@ Auto-detection checks these env vars in order: `OPENAI_API_KEY`, `ANTHROPIC_API_
 |---------|---------|---------|-------------|
 | `autoRetain` | `true` | `HINDSIGHT_AUTO_RETAIN` | Enable automatic retention |
 | `retainRoles` | `["user", "assistant"]` | — | Which roles to retain |
-| `retainEveryNTurns` | `1` | — | Retain every Nth turn (>1 = chunked retention) |
-| `retainOverlapTurns` | `0` | — | Extra overlap turns in chunked mode |
+| `retainEveryNTurns` | `10` | — | Retain every Nth turn. Values >1 enable chunked retention with a sliding window. |
+| `retainOverlapTurns` | `2` | — | Extra overlap turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns` (default: 12 turns). |
 | `retainContext` | `"claude-code"` | — | Context label for retained memories |
 
 ### Miscellaneous
