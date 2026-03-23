@@ -7,6 +7,8 @@ image: /img/blog/claude-code-telegram.png
 hide\_table\_of\_contents: true
 ---
 
+![OpenClaude: Build a Claude Code Agent with Long-Term Memory — and Take It Everywhere](/img/blog/claude-code-telegram.png)
+
 Anthropic just launched **Channels** for Claude Code: Claude Code sessions connected to messaging platforms. This means Claude Code can now operate as a fully autonomous agent, reachable also from your phone, always running against your codebase (and not just it).
 
 Claude Code has a built-in memory system based on markdown files (`CLAUDE.md`, auto-memory), and it works very well for static preferences and project instructions. But it wasn't designed for conversational memory — it doesn't extract facts from your discussions, doesn't recall relevant context by semantic similarity, and doesn't build up structured knowledge over time. Close the session, and some richness and depth of what you discussed is gone.
