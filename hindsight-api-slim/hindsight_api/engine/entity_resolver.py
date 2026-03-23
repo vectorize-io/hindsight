@@ -75,6 +75,7 @@ class EntityResolver:
         """
         self.pool = pool
         self.entity_lookup = entity_lookup
+        self._pg_trgm_checked = False
         # Keyed by asyncio task id so concurrent retain batches never mix their
         # pending updates.  flush_pending_stats() pops only the calling task's items.
         self._pending_stats: dict[int, list[_EntityStat]] = {}
@@ -202,6 +203,24 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
     ) -> list[str]:
         if self.entity_lookup == "trigram":
+            # Auto-detect pg_trgm availability on first call and fall back to
+            # "full" strategy if the extension is not installed.  See #626.
+            if not self._pg_trgm_checked:
+                self._pg_trgm_checked = True
+                has_trgm = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')"
+                )
+                if not has_trgm:
+                    logger.warning(
+                        "pg_trgm extension is not available — falling back to 'full' "
+                        "entity lookup strategy. Install pg_trgm for faster entity "
+                        "resolution on large banks. See: "
+                        "https://github.com/vectorize-io/hindsight/issues/626"
+                    )
+                    self.entity_lookup = "full"
+                    return await self._resolve_entities_batch_full(
+                        conn, bank_id, entities_data, unit_event_date
+                    )
             return await self._resolve_entities_batch_trigram(conn, bank_id, entities_data, unit_event_date)
         return await self._resolve_entities_batch_full(conn, bank_id, entities_data, unit_event_date)
 

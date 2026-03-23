@@ -11,6 +11,7 @@ block; see migrations.py for how this is handled safely.
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "c1a2b3d4e5f6"
@@ -25,9 +26,21 @@ def _get_schema_prefix() -> str:
 
 
 def upgrade() -> None:
-    # pg_trgm ships with every standard PostgreSQL installation as a contrib module.
+    # pg_trgm ships with most PostgreSQL installations as a contrib module.
     # It enables fast similarity lookups via GIN indexes, used for entity name matching.
-    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    # On managed services (e.g. Azure Flexible Server), the extension may not be
+    # available or may require manual enablement.  We gracefully skip the index
+    # creation if the extension cannot be loaded — the entity resolver will
+    # auto-detect and fall back to the "full" lookup strategy at runtime.  See #626.
+    conn = op.get_bind()
+    try:
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    except Exception:
+        # Extension not available (managed Postgres, insufficient privileges, etc.)
+        # Roll back the failed statement and skip index creation.
+        conn.execute(sa.text("ROLLBACK"))
+        conn.execute(sa.text("BEGIN"))
+        return
 
     schema = _get_schema_prefix()
     # GIN index on canonical_name enables sub-millisecond trigram similarity queries
