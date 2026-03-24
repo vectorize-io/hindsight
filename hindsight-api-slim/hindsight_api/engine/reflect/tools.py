@@ -136,7 +136,7 @@ async def tool_search_observations(
     pending_consolidation: int = 0,
 ) -> dict[str, Any]:
     """
-    Search consolidated observations using recall with include_source_facts.
+    Search consolidated observations using recall.
 
     Observations are auto-generated from memories. Returns freshness info
     so the agent knows if it should also verify with recall().
@@ -165,8 +165,7 @@ async def tool_search_observations(
         tags=tags,
         tags_match=tags_match,
         tag_groups=tag_groups,
-        include_source_facts=True,
-        max_source_facts_tokens=-1,  # No token limit — include all source facts
+        include_source_facts=False,
         _connection_budget=1,
         _quiet=True,
     )
