@@ -30,7 +30,26 @@ from hindsight_client_api.models.retain_response import RetainResponse
 
 
 def _run_async(coro):
-    """Run an async coroutine synchronously."""
+    """Run an async coroutine synchronously.
+
+    Handles both sync and async calling contexts:
+    - Sync context: uses the current (or new) event loop directly
+    - Async context: runs the coroutine in a separate thread to avoid
+      'event loop already running' deadlocks (fixes #677)
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # We're inside an async context (e.g., Discord/Telegram gateway).
+        # Run in a new thread with its own event loop to avoid deadlock.
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+
+    # Sync context: safe to use run_until_complete
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
