@@ -115,6 +115,19 @@ def build_content_dict(
     Returns:
         Tuple of (content_dict, error_message). error_message is None if successful.
     """
+    # Coerce tags from JSON string to list if needed.
+    # MCP tool bridges sometimes serialize JSON arrays as strings during
+    # transport, e.g. '["a", "b"]' instead of ["a", "b"].
+    if isinstance(tags, str):
+        try:
+            parsed = json.loads(tags)
+            if isinstance(parsed, list):
+                tags = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if isinstance(tags, str):
+            tags = [tags]
+
     content_dict: dict[str, Any] = {"content": content, "context": context}
 
     if timestamp:

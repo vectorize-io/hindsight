@@ -424,6 +424,27 @@ class MemoryItem(BaseModel):
         default=None,
         description="Optional tags for visibility scoping. Memories with tags can be filtered during recall.",
     )
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def coerce_tags(cls, v):
+        """Coerce JSON-string tags to list.
+
+        MCP tool bridges sometimes serialize JSON arrays as strings during
+        transport, e.g. '["a", "b"]' instead of ["a", "b"]. This validator
+        parses such strings back into lists so the retain call succeeds.
+        A plain non-JSON string is wrapped in a single-element list.
+        """
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return [v]
+        return v
+
     observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = Field(
         default=None,
         title="ObservationScopes",
