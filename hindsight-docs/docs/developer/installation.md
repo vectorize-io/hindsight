@@ -14,9 +14,9 @@ Hindsight runs on **Linux**, **macOS**, and **Windows**:
 |----------|--------|------------------|--------------------|-------|
 | **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
 | **macOS** (Apple Silicon, Intel) | ✅ | ✅ | ✅ | Fully supported |
-| **Windows** (x86_64) | ✅ | ✅ | ❌ | Requires external PostgreSQL — see [Windows setup](#windows) below |
+| **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported — see [Windows setup](#windows) for external PostgreSQL option |
 
-On Windows, the embedded database (pg0) is not available. You must install PostgreSQL separately and point Hindsight to it via `HINDSIGHT_API_DATABASE_URL`. See the [Windows](#windows) section for a step-by-step guide.
+All platforms support the embedded database (pg0) for development. On Windows, you can also use an external PostgreSQL installation — see the [Windows](#windows) section for a step-by-step guide.
 
 ---
 
@@ -225,15 +225,21 @@ PORT=80 HINDSIGHT_CP_DATAPLANE_API_URL=https://api.hindsight.io npx @vectorize-i
 
 **Best for**: Running Hindsight natively on Windows without Docker
 
-On Windows, the embedded PostgreSQL (pg0) is not available, so you need to install PostgreSQL and pgvector separately.
+Hindsight works on Windows with the embedded database (pg0) out of the box — just install and run:
 
-### Prerequisites
+```powershell
+pip install hindsight-api
 
-- Python 3.11+
-- PostgreSQL 17+ with pgvector extension
-- An LLM API key (see [Models](./models) for supported providers)
+set HINDSIGHT_API_LLM_PROVIDER=openai
+set HINDSIGHT_API_LLM_API_KEY=sk-xxx
+set HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
 
-### Install PostgreSQL and pgvector
+hindsight-api
+```
+
+### Using External PostgreSQL (optional)
+
+If you prefer to use your own PostgreSQL instance instead of the embedded database:
 
 ```powershell
 # Install PostgreSQL
@@ -253,7 +259,7 @@ psql -U postgres -c "CREATE DATABASE hindsight;"
 psql -U postgres -d hindsight -c "CREATE EXTENSION vector;"
 ```
 
-### Install and Run Hindsight
+Then run Hindsight pointing to your database:
 
 ```powershell
 pip install hindsight-api
