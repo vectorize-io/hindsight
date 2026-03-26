@@ -28,23 +28,32 @@ Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or self-h
 
 ## What Is LlamaIndex Agent Memory?
 
-LlamaIndex agents use `ChatMemoryBuffer` for in-session context. This stores the raw conversation history while the agent is running, but resets every time the agent is restarted. "Long-term" or "persistent" agent memory refers to a separate system that extracts facts from conversations, stores them durably, and retrieves relevant context in future sessions -- enabling agents to recognize repeat users and build on prior interactions without relying on conversation history.
+LlamaIndex has two generations of memory tooling. The original `ChatMemoryBuffer` stores raw conversation history in-session and resets on restart. The newer `Memory` class adds pluggable `MemoryBlock` modules -- including `FactExtractionMemoryBlock` -- backed by SQLite for persistence across restarts.
 
-`hindsight-llamaindex` provides this capability via three native LlamaIndex tools: `retain_memory` (store facts), `recall_memory` (search memory), and `reflect_on_memory` (synthesize a reasoned answer from everything stored).
+That's a real improvement. But even the newer system has hard limits: retrieval is vector similarity only, there's no knowledge graph or entity resolution, and it's tightly coupled to the LlamaIndex ecosystem. If you switch agent frameworks, your memory layer goes with it.
 
-## The Problem with LlamaIndex Session Memory
+"Persistent" memory, in the fullest sense, means a system that extracts facts from conversations, builds a knowledge graph over time, and retrieves relevant context using multiple strategies in parallel -- not just the most recent embedding match. It should work regardless of which agent framework you're running.
 
-LlamaIndex gives you `ChatMemoryBuffer` for in-session context. That's chat history. It doesn't generalize, doesn't extract facts, and grows until it blows your context window.
+`hindsight-llamaindex` provides this via three native LlamaIndex tools: `retain_memory` (store facts), `recall_memory` (search memory), and `reflect_on_memory` (synthesize a reasoned answer from everything stored).
 
-For agents that serve repeat users, you need more:
+## The Problem with LlamaIndex's Built-In Memory
 
-- A coding assistant that remembers your stack and preferences
-- A support agent that knows a user's order history across dozens of sessions
-- A research assistant that builds on findings from previous runs
+LlamaIndex's newer `Memory` API with SQLite persistence is a genuine step forward -- facts survive restarts, and `FactExtractionMemoryBlock` can pull structured information from conversations. For simple use cases, it's enough.
 
-None of this works with in-session buffers. You need a system that extracts facts from conversations, builds knowledge over time, and retrieves relevant context semantically.
+But it runs into hard architectural limits as soon as queries get complex:
 
-That's what Hindsight does. And `hindsight-llamaindex` wires it into LlamaIndex's standard tool system.
+- **Single retrieval strategy.** LlamaIndex Memory uses vector similarity only. There's no BM25 for exact matches, no graph traversal for relationship queries, no temporal search for date-bounded recall. "What was I working on last Tuesday?" returns whatever is semantically close -- not what actually happened on Tuesday.
+- **No knowledge graph.** Facts are stored as embeddings, not as entities with relationships. The system can't connect "Priya owns the rate-limiting service" to "the rate-limiting blocker is resolved" without those facts appearing in the same conversation turn.
+- **Framework coupling.** LlamaIndex Memory is designed for LlamaIndex. If you migrate to a different agent framework, your memory layer doesn't come with you.
+- **No synthesis.** There's no equivalent of `reflect_on_memory` -- a query that reasons across everything stored and returns a synthesized answer, not just a ranked list of relevant chunks.
+
+For agents that serve repeat users, you need all of this:
+
+- A coding assistant that remembers your stack, your team structure, and your open work items
+- A support agent that knows a user's history across dozens of sessions and can connect past issues to current ones
+- A research assistant that builds on findings from previous runs and understands what's already been explored
+
+That's what Hindsight does. And `hindsight-llamaindex` wires it into LlamaIndex's standard tool system without replacing anything you already have.
 
 ## How LlamaIndex Persistent Memory Works
 
@@ -232,13 +241,15 @@ Persistent memory isn't always the right tool.
 
 ## How This Compares
 
-| | `ChatMemoryBuffer` | Raw vector store | Hindsight |
-|---|---|---|---|
-| **Scope** | In-session only | Persistent | Persistent |
-| **What it stores** | Raw conversation history | Embeddings of arbitrary content | Extracted facts + entities + knowledge graph |
-| **Retrieval** | Sequential context window | Embedding similarity | Semantic + BM25 + graph + temporal, with reranking |
-| **Context management** | Grows until window limit | You manage it | Automatic deduplication and compression |
-| **Best for** | Single-session chat | Document search (RAG) | Long-term user/agent memory |
+| | `ChatMemoryBuffer` | LlamaIndex `Memory` (SQLite) | Raw vector store | Hindsight |
+|---|---|---|---|---|
+| **Scope** | In-session only | Persistent | Persistent | Persistent |
+| **What it stores** | Raw conversation history | Extracted facts (flat) | Embeddings of arbitrary content | Extracted facts + entities + knowledge graph |
+| **Retrieval** | Sequential context window | Vector similarity only | Vector similarity only | Semantic + BM25 + graph + temporal, with reranking |
+| **Entity resolution** | No | No | No | Yes |
+| **Synthesis** | No | No | No | Yes (`reflect_on_memory`) |
+| **Framework coupling** | LlamaIndex only | LlamaIndex only | None | None |
+| **Best for** | Single-session chat | Simple cross-session recall within LlamaIndex | Document search (RAG) | Long-term user/agent memory across frameworks |
 
 **vs. LangGraph/LangChain:** If you're using LangGraph instead of LlamaIndex, see [`hindsight-langgraph`](https://docs.hindsight.vectorize.io/docs/sdks/integrations/langgraph) which offers tools, graph nodes, and a `BaseStore` adapter.
 
