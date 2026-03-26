@@ -13,10 +13,12 @@ This module provides metrics for:
 
 import logging
 import os
+import types
+
 try:
     import resource
 except ImportError:
-    resource = None  # Windows doesn't have resource module
+    resource: types.ModuleType | None = None  # Windows doesn't have resource module
 import threading
 import time
 from contextlib import contextmanager

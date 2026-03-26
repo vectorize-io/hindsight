@@ -6,6 +6,20 @@ Hindsight can be deployed in several ways depending on your infrastructure and r
 **[Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** is a fully managed service that handles all infrastructure, scaling, and maintenance — [sign up here](https://ui.hindsight.vectorize.io/signup).
 :::
 
+## Supported Platforms
+
+Hindsight runs on **Linux**, **macOS**, and **Windows**:
+
+| Platform | Docker | Bare Metal (pip) | Embedded DB (pg0) | Notes |
+|----------|--------|------------------|--------------------|-------|
+| **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
+| **macOS** (Apple Silicon, Intel) | ✅ | ✅ | ✅ | Fully supported |
+| **Windows** (x86_64) | ✅ | ✅ | ❌ | Requires external PostgreSQL — see [Windows setup](#windows) below |
+
+On Windows, the embedded database (pg0) is not available. You must install PostgreSQL separately and point Hindsight to it via `HINDSIGHT_API_DATABASE_URL`. See the [Windows](#windows) section for a step-by-step guide.
+
+---
+
 ## Prerequisites
 
 ### PostgreSQL
@@ -204,6 +218,59 @@ npx @vectorize-io/hindsight-control-plane
 # Production deployment
 PORT=80 HINDSIGHT_CP_DATAPLANE_API_URL=https://api.hindsight.io npx @vectorize-io/hindsight-control-plane
 ```
+
+---
+
+## Windows
+
+**Best for**: Running Hindsight natively on Windows without Docker
+
+On Windows, the embedded PostgreSQL (pg0) is not available, so you need to install PostgreSQL and pgvector separately.
+
+### Prerequisites
+
+- Python 3.11+
+- PostgreSQL 17+ with pgvector extension
+- An LLM API key (see [Models](./models) for supported providers)
+
+### Install PostgreSQL and pgvector
+
+```powershell
+# Install PostgreSQL
+winget install PostgreSQL.PostgreSQL.17
+
+# Build pgvector (requires Visual Studio Build Tools)
+git clone https://github.com/pgvector/pgvector.git
+cd pgvector
+
+# Open "x64 Native Tools Command Prompt for VS" and run:
+set PGROOT=C:\Program Files\PostgreSQL\17
+nmake /F Makefile.win
+nmake /F Makefile.win install
+
+# Create the database and enable the vector extension
+psql -U postgres -c "CREATE DATABASE hindsight;"
+psql -U postgres -d hindsight -c "CREATE EXTENSION vector;"
+```
+
+### Install and Run Hindsight
+
+```powershell
+pip install hindsight-api
+
+set HINDSIGHT_API_DATABASE_URL=postgresql://postgres@localhost:5432/hindsight
+set HINDSIGHT_API_LLM_PROVIDER=openai
+set HINDSIGHT_API_LLM_API_KEY=sk-xxx
+set HINDSIGHT_API_LLM_MODEL=gpt-4o-mini
+
+hindsight-api
+```
+
+- **API Server**: http://localhost:8888
+
+:::tip
+You can also use the slim package (`pip install hindsight-api-slim`) if you configure external providers for embeddings and reranking. See [Configuration](./configuration#embeddings) for details.
+:::
 
 ---
 
