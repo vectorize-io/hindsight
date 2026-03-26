@@ -13,8 +13,7 @@ set -e
 PG0_DATA_DIR="${HOME}/.pg0"
 if [ -d "$PG0_DATA_DIR" ]; then
     # Look for actual PostgreSQL data directories (pg0 creates subdirs per instance)
-    pg_dirs=$(find "$PG0_DATA_DIR" -maxdepth 2 -name "PG_VERSION" 2>/dev/null)
-    if [ -n "$pg_dirs" ]; then
+    if compgen -G "$PG0_DATA_DIR"/*/PG_VERSION > /dev/null 2>&1; then
         echo "✅ Existing pg0 data directory detected at $PG0_DATA_DIR"
     elif [ "$(ls -A "$PG0_DATA_DIR" 2>/dev/null)" ]; then
         echo "⚠️  WARNING: pg0 data directory exists at $PG0_DATA_DIR but no PG_VERSION found."
@@ -107,7 +106,13 @@ fi
 #   - pg0 gets a clean PostgreSQL shutdown (checkpoint + WAL flush)
 #   - The control-plane Node.js process exits cleanly
 # =============================================================================
+# Guard against concurrent cleanup (e.g., child crash + SIGTERM arriving together)
+SHUTTING_DOWN=false
+
 cleanup() {
+    if $SHUTTING_DOWN; then return; fi
+    SHUTTING_DOWN=true
+
     echo ""
     echo "🛑 Received shutdown signal, stopping services gracefully..."
     for pid in "${PIDS[@]}"; do
@@ -115,7 +120,10 @@ cleanup() {
             kill -TERM "$pid" 2>/dev/null
         fi
     done
-    # Give processes time to shut down cleanly (pg0 needs to flush WAL)
+    # Give processes time to shut down cleanly (pg0 needs to flush WAL).
+    # NOTE: Docker's default stop_grace_period is 10s. If you use the default,
+    # either set stop_grace_period: 30s in your compose file / docker stop -t 30,
+    # or Docker will SIGKILL the container before this timeout expires.
     local timeout=30
     for ((i=1; i<=timeout; i++)); do
         local all_stopped=true
@@ -212,7 +220,9 @@ fi
 # Wait for any process to exit (use wait -n with trap-safe loop)
 while true; do
     # wait -n returns when any child exits; it also returns on signal delivery
-    # (the trap handler will run and exit, so this loop is just for robustness)
+    # (the trap handler will run and exit, so this loop is just for robustness).
+    # `&& true` prevents `set -e` from killing the script when wait -n returns
+    # non-zero (child exited with error or no backgrounded children remain).
     wait -n && true
     # Check if any tracked PID has exited
     for pid in "${PIDS[@]}"; do
