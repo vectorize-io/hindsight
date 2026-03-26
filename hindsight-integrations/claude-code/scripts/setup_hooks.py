@@ -31,17 +31,13 @@ def find_plugin_root() -> str:
 
 
 def build_hooks(plugin_root: str) -> dict:
-    # Use the current interpreter path so hooks work on Windows (where
-    # `python3` may not exist) and inside virtual environments on any OS.
-    py = sys.executable
-    scripts = os.path.join(plugin_root, "scripts")
     return {
         "UserPromptSubmit": [
             {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f'"{py}" "{os.path.join(scripts, "recall.py")}"',
+                        "command": f'python3 "{plugin_root}/scripts/recall.py"',
                         "timeout": 12,
                     }
                 ]
@@ -52,7 +48,7 @@ def build_hooks(plugin_root: str) -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f'"{py}" "{os.path.join(scripts, "retain.py")}"',
+                        "command": f'python3 "{plugin_root}/scripts/retain.py"',
                         "timeout": 15,
                         "async": True,
                     }
@@ -64,7 +60,7 @@ def build_hooks(plugin_root: str) -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f'"{py}" "{os.path.join(scripts, "session_start.py")}"',
+                        "command": f'python3 "{plugin_root}/scripts/session_start.py"',
                         "timeout": 5,
                     }
                 ]
@@ -75,7 +71,7 @@ def build_hooks(plugin_root: str) -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f'"{py}" "{os.path.join(scripts, "session_end.py")}"',
+                        "command": f'python3 "{plugin_root}/scripts/session_end.py"',
                         "timeout": 10,
                     }
                 ]

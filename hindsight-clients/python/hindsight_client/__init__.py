@@ -1,18 +1,24 @@
 """
 Hindsight Client - Clean, pythonic wrapper for the Hindsight API.
 
-This package provides a high-level interface for common Hindsight operations.
-For advanced use cases, use the auto-generated API client directly.
+This package provides a high-level ``Hindsight`` class with simplified methods
+for the most common operations (retain, recall, reflect, banks, mental models,
+directives).
 
-Example:
-    ```python
+For operations not available as convenience methods — such as documents,
+entities, async operations, webhooks, and monitoring — use the low-level API
+clients exposed as properties on the ``Hindsight`` instance (e.g.
+``client.documents``, ``client.entities``, ``client.operations``).
+All low-level methods are async.
+
+Quick start::
+
     from hindsight_client import Hindsight
 
     client = Hindsight(base_url="http://localhost:8888")
 
     # Store a memory
-    result = client.retain(bank_id="alice", content="Alice loves AI")
-    print(result.success)
+    client.retain(bank_id="alice", content="Alice loves AI")
 
     # Search memories
     response = client.recall(bank_id="alice", query="What does Alice like?")
@@ -22,7 +28,19 @@ Example:
     # Generate contextual answer
     answer = client.reflect(bank_id="alice", query="What are my interests?")
     print(answer.text)
-    ```
+
+Low-level API access::
+
+    import asyncio
+
+    # List documents
+    docs = asyncio.run(client.documents.list_documents("alice"))
+
+    # Check operation status
+    status = asyncio.run(client.operations.get_operation_status("alice", "op-id"))
+
+    # List entities
+    entities = asyncio.run(client.entities.list_entities("alice"))
 """
 
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse

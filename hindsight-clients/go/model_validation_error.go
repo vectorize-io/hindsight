@@ -24,6 +24,9 @@ type ValidationError struct {
 	Loc []ValidationErrorLocInner `json:"loc"`
 	Msg string `json:"msg"`
 	Type string `json:"type"`
+	Input interface{} `json:"input,omitempty"`
+	Ctx map[string]interface{} `json:"ctx,omitempty"`
+	Url *string `json:"url,omitempty"`
 }
 
 type _ValidationError ValidationError
@@ -120,6 +123,103 @@ func (o *ValidationError) SetType(v string) {
 	o.Type = v
 }
 
+// GetInput returns the Input field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *ValidationError) GetInput() interface{} {
+	if o == nil {
+		var ret interface{}
+		return ret
+	}
+	return o.Input
+}
+
+// GetInputOk returns a tuple with the Input field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *ValidationError) GetInputOk() (*interface{}, bool) {
+	if o == nil || IsNil(o.Input) {
+		return nil, false
+	}
+	return &o.Input, true
+}
+
+// HasInput returns a boolean if a field has been set.
+func (o *ValidationError) HasInput() bool {
+	if o != nil && !IsNil(o.Input) {
+		return true
+	}
+
+	return false
+}
+
+// SetInput gets a reference to the given interface{} and assigns it to the Input field.
+func (o *ValidationError) SetInput(v interface{}) {
+	o.Input = v
+}
+
+// GetCtx returns the Ctx field value if set, zero value otherwise.
+func (o *ValidationError) GetCtx() map[string]interface{} {
+	if o == nil || IsNil(o.Ctx) {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.Ctx
+}
+
+// GetCtxOk returns a tuple with the Ctx field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ValidationError) GetCtxOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.Ctx) {
+		return map[string]interface{}{}, false
+	}
+	return o.Ctx, true
+}
+
+// HasCtx returns a boolean if a field has been set.
+func (o *ValidationError) HasCtx() bool {
+	if o != nil && !IsNil(o.Ctx) {
+		return true
+	}
+
+	return false
+}
+
+// SetCtx gets a reference to the given map[string]interface{} and assigns it to the Ctx field.
+func (o *ValidationError) SetCtx(v map[string]interface{}) {
+	o.Ctx = v
+}
+
+// GetUrl returns the Url field value if set, zero value otherwise.
+func (o *ValidationError) GetUrl() string {
+	if o == nil || IsNil(o.Url) {
+		var ret string
+		return ret
+	}
+	return *o.Url
+}
+
+// GetUrlOk returns a tuple with the Url field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ValidationError) GetUrlOk() (*string, bool) {
+	if o == nil || IsNil(o.Url) {
+		return nil, false
+	}
+	return o.Url, true
+}
+
+// HasUrl returns a boolean if a field has been set.
+func (o *ValidationError) HasUrl() bool {
+	if o != nil && !IsNil(o.Url) {
+		return true
+	}
+
+	return false
+}
+
+// SetUrl gets a reference to the given string and assigns it to the Url field.
+func (o *ValidationError) SetUrl(v string) {
+	o.Url = &v
+}
+
 func (o ValidationError) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -133,6 +233,15 @@ func (o ValidationError) ToMap() (map[string]interface{}, error) {
 	toSerialize["loc"] = o.Loc
 	toSerialize["msg"] = o.Msg
 	toSerialize["type"] = o.Type
+	if o.Input != nil {
+		toSerialize["input"] = o.Input
+	}
+	if !IsNil(o.Ctx) {
+		toSerialize["ctx"] = o.Ctx
+	}
+	if !IsNil(o.Url) {
+		toSerialize["url"] = o.Url
+	}
 	return toSerialize, nil
 }
 

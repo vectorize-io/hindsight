@@ -161,11 +161,6 @@ def main():
         debug_log(config, "No memories found")
         return
 
-    # Apply topK limit
-    top_k = config.get("recallTopK")
-    if top_k and isinstance(top_k, int):
-        results = results[:top_k]
-
     debug_log(config, f"Injecting {len(results)} memories")
 
     # Format context message — exact match of Openclaw's format

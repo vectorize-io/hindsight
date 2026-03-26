@@ -72,6 +72,7 @@ def FieldWithDefault(default_factory: Callable, **kwargs) -> Any:
 
 from hindsight_api.config import get_config
 from hindsight_api.engine.memory_engine import Budget, _current_schema, _get_tiktoken_encoding, fq_table
+from hindsight_api.engine.providers.none_llm import LLMNotAvailableError
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES, MemoryFact, TokenUsage
 from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.extensions import HttpExtension, OperationValidationError, load_extension
@@ -2063,6 +2064,26 @@ def create_app(
     # This is required for mounted sub-applications where lifespan may not fire
     app.state.memory = memory
 
+    # ---------------------------------------------------------------------------
+    # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format
+    # ---------------------------------------------------------------------------
+    # FastAPI auto-generates ValidationError with only loc/msg/type, but Pydantic
+    # v2 actually returns additional fields: input (the rejected value), ctx (extra
+    # context dict), and url (link to error docs). Without these in the spec,
+    # generated clients using strict JSON decoding break on real 422 responses.
+    _original_openapi = app.openapi
+
+    def _patched_openapi() -> dict[str, Any]:
+        schema = _original_openapi()
+        ve = schema.get("components", {}).get("schemas", {}).get("ValidationError")
+        if ve and "input" not in ve.get("properties", {}):
+            ve["properties"]["input"] = {"title": "Input"}
+            ve["properties"]["ctx"] = {"title": "Context", "type": "object"}
+            ve["properties"]["url"] = {"title": "URL", "type": "string"}
+        return schema
+
+    app.openapi = _patched_openapi  # type: ignore[assignment]
+
     # Add HTTP metrics middleware
     @app.middleware("http")
     async def http_metrics_middleware(request, call_next):
@@ -2651,6 +2672,8 @@ def _register_routes(app: FastAPI):
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
             raise
+        except LLMNotAvailableError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except TimeoutError as e:
             logger.error("Timeout in /v1/default/banks/%s/reflect: %s", bank_id, e)
             raise HTTPException(
@@ -3017,6 +3040,8 @@ def _register_routes(app: FastAPI):
                 request_context=request_context,
             )
             return AsyncOperationSubmitResponse(operation_id=result["operation_id"], status="queued")
+        except LLMNotAvailableError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except (AuthenticationError, HTTPException):

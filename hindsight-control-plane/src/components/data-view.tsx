@@ -227,29 +227,15 @@ export function DataView({ factType }: DataViewProps) {
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, tagFilters]);
+  }, [tagFilters]);
 
-  // Debounce ref for text search
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Trigger server-side reload when text filter changes (debounced 300ms)
-  useEffect(() => {
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
+  // Trigger text search on Enter key
+  const executeSearch = () => {
+    if (currentBank) {
+      setCurrentPage(1);
+      loadData(undefined, searchQuery || undefined, tagFilters.length > 0 ? tagFilters : undefined);
     }
-    searchDebounceRef.current = setTimeout(() => {
-      if (currentBank) {
-        loadData(
-          undefined,
-          searchQuery || undefined,
-          tagFilters.length > 0 ? tagFilters : undefined
-        );
-      }
-    }, 300);
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    };
-  }, [searchQuery]);
+  };
 
   // Trigger server-side reload immediately when tag filters change
   useEffect(() => {
@@ -292,12 +278,22 @@ export function DataView({ factType }: DataViewProps) {
             <div className="flex items-center gap-2">
               {/* Text search */}
               <div className="relative max-w-xs flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                {loading ? (
+                  <RefreshCw className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none animate-spin" />
+                ) : (
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                )}
                 <Input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Filter by text or context..."
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      executeSearch();
+                    }
+                  }}
+                  placeholder="Filter by text or context (press Enter)..."
                   className="pl-8 h-9"
                 />
               </div>
@@ -356,7 +352,11 @@ export function DataView({ factType }: DataViewProps) {
                       onClick={() => {
                         const newLimit = Math.min(data.total_units, fetchLimit + 1000);
                         setFetchLimit(newLimit);
-                        loadData(newLimit);
+                        loadData(
+                          newLimit,
+                          searchQuery || undefined,
+                          tagFilters.length > 0 ? tagFilters : undefined
+                        );
                       }}
                       className="ml-2 text-primary hover:underline"
                     >

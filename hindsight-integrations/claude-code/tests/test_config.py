@@ -28,6 +28,14 @@ class TestCastEnv:
 
 
 class TestLoadConfig:
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        """Isolate from real user config and env vars."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        for k in list(os.environ):
+            if k.startswith("HINDSIGHT_"):
+                monkeypatch.delenv(k, raising=False)
+
     def test_defaults_applied_when_no_settings_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
         # No settings.json in tmp_path
@@ -95,27 +103,26 @@ class TestLoadConfig:
         user_cfg.write_text(json.dumps({"recallBudget": "high"}))
 
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
-        import lib.config as cfg_mod
-        monkeypatch.setattr(cfg_mod, "USER_CONFIG_PATH", str(user_cfg))
+        monkeypatch.setenv("HOME", str(tmp_path))
         cfg = load_config()
         assert cfg["recallBudget"] == "high"
 
     def test_user_config_missing_falls_back_gracefully(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        import lib.config as cfg_mod
-        monkeypatch.setattr(cfg_mod, "USER_CONFIG_PATH", str(tmp_path / "nonexistent.json"))
+        # HOME points to tmp_path where no .hindsight/claude-code.json exists
+        monkeypatch.setenv("HOME", str(tmp_path))
         cfg = load_config()
         assert cfg["recallBudget"] == "mid"  # default
 
     def test_env_var_wins_over_user_config(self, tmp_path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         plugin_root.mkdir()
-        user_cfg = tmp_path / "claude-code.json"
-        user_cfg.write_text(json.dumps({"recallBudget": "low"}))
+        user_cfg_dir = tmp_path / ".hindsight"
+        user_cfg_dir.mkdir()
+        (user_cfg_dir / "claude-code.json").write_text(json.dumps({"recallBudget": "low"}))
 
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_root))
+        monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("HINDSIGHT_RECALL_BUDGET", "high")
-        import lib.config as cfg_mod
-        monkeypatch.setattr(cfg_mod, "USER_CONFIG_PATH", str(user_cfg))
         cfg = load_config()
         assert cfg["recallBudget"] == "high"

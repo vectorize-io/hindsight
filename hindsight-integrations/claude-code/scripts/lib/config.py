@@ -22,13 +22,16 @@ DEFAULTS = {
         "conflicting). Only use memories that are directly useful to continue "
         "this conversation; ignore the rest:"
     ),
-    "recallTopK": None,
     # Retain
     "autoRetain": True,
+    "retainMode": "full-session",
     "retainRoles": ["user", "assistant"],
     "retainEveryNTurns": 10,
     "retainOverlapTurns": 2,
+    "retainToolCalls": True,
     "retainContext": "claude-code",
+    "retainTags": [],
+    "retainMetadata": {},
     # Connection
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
@@ -60,6 +63,7 @@ ENV_OVERRIDES = {
     "HINDSIGHT_AGENT_NAME": ("agentName", str),
     "HINDSIGHT_AUTO_RECALL": ("autoRecall", bool),
     "HINDSIGHT_AUTO_RETAIN": ("autoRetain", bool),
+    "HINDSIGHT_RETAIN_MODE": ("retainMode", str),
     "HINDSIGHT_RECALL_BUDGET": ("recallBudget", str),
     "HINDSIGHT_RECALL_MAX_TOKENS": ("recallMaxTokens", int),
     "HINDSIGHT_RECALL_MAX_QUERY_CHARS": ("recallMaxQueryChars", int),
@@ -100,9 +104,6 @@ def _load_settings_file(path: str, config: dict) -> None:
         debug_log(config, f"Failed to load {path}: {e}")
 
 
-USER_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".hindsight", "claude-code.json")
-
-
 def load_config() -> dict:
     """Load plugin configuration from settings.json + env overrides.
 
@@ -125,7 +126,8 @@ def load_config() -> dict:
     _load_settings_file(os.path.join(plugin_root, "settings.json"), config)
 
     # 2. User config — stable, version-independent, matches openclaw convention
-    _load_settings_file(USER_CONFIG_PATH, config)
+    user_config_path = os.path.join(os.path.expanduser("~"), ".hindsight", "claude-code.json")
+    _load_settings_file(user_config_path, config)
 
     # Apply environment variable overrides
     for env_name, (key, typ) in ENV_OVERRIDES.items():

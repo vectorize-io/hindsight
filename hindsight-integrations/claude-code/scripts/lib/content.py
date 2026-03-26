@@ -232,20 +232,80 @@ def format_current_time() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _extract_message_blocks(content, role: str = "") -> list:
+    """Extract structured content blocks from a message for JSON retention.
+
+    Returns a list of dicts, each representing a content block:
+      - {"type": "text", "text": "..."} for text blocks
+      - {"type": "tool_use", "name": "...", "input": {...}} for tool calls
+      - Channel message tool_use blocks get their text extracted inline.
+    """
+    if isinstance(content, str):
+        cleaned = strip_channel_envelope(strip_memory_tags(content)).strip()
+        return [{"type": "text", "text": cleaned}] if cleaned else []
+
+    if not isinstance(content, list):
+        return []
+
+    blocks = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type", "")
+
+        if block_type == "text":
+            text = strip_channel_envelope(strip_memory_tags(block.get("text", ""))).strip()
+            if text:
+                blocks.append({"type": "text", "text": text})
+
+        elif block_type == "tool_use" and role == "assistant":
+            if _is_channel_message_tool(block):
+                # Channel messages: extract the outgoing text
+                tool_input = block.get("input", {})
+                for field in _MESSAGE_TEXT_FIELDS:
+                    val = tool_input.get(field)
+                    if isinstance(val, str) and val.strip():
+                        blocks.append({"type": "text", "text": val.strip()})
+                        break
+            else:
+                name = block.get("name", "unknown")
+                inp = block.get("input", {})
+                # Skip Hindsight MCP tools to avoid feedback loops
+                if name.startswith("mcp__") and _OPERATIONAL_TOOL_PATTERN.search(name.split("__")[-1]):
+                    continue
+                blocks.append({"type": "tool_use", "name": name, "input": inp})
+
+        elif block_type == "tool_result":
+            # Include tool results for context
+            result_content = block.get("content", "")
+            if isinstance(result_content, str) and result_content.strip():
+                text = result_content.strip()
+                # Truncate very long results
+                if len(text) > 2000:
+                    text = text[:2000] + "... (truncated)"
+                blocks.append({"type": "tool_result", "tool_use_id": block.get("tool_use_id", ""), "content": text})
+
+    return blocks
+
+
 def prepare_retention_transcript(
     messages: list,
     retain_roles: list = None,
     retain_full_window: bool = False,
+    include_tool_calls: bool = False,
 ) -> tuple:
     """Format messages into a retention transcript.
 
-    Port of: prepareRetentionTranscript() in index.js
+    When include_tool_calls is True, outputs JSON with full message structure
+    including tool calls and their inputs. Otherwise outputs the legacy
+    text format with [role: ...]...[role:end] markers.
 
     Args:
         messages: List of message dicts with 'role' and 'content'.
         retain_roles: Roles to include (default: ['user', 'assistant']).
         retain_full_window: If True, retain all messages (chunked mode).
             If False, retain only the last turn (last user msg + responses).
+        include_tool_calls: If True, output JSON format with full tool call data.
 
     Returns:
         (transcript_text, message_count) or (None, 0) if nothing to retain.
@@ -267,9 +327,43 @@ def prepare_retention_transcript(
         target_messages = messages[last_user_idx:]
 
     allowed_roles = set(retain_roles or ["user", "assistant"])
+
+    if include_tool_calls:
+        return _prepare_json_transcript(target_messages, allowed_roles)
+    return _prepare_text_transcript(target_messages, allowed_roles)
+
+
+def _prepare_json_transcript(messages: list, allowed_roles: set) -> tuple:
+    """Format messages as JSON with full tool call data."""
+    import json
+
+    structured_messages = []
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        if role not in allowed_roles:
+            continue
+
+        blocks = _extract_message_blocks(msg.get("content", ""), role=role)
+        if not blocks:
+            continue
+
+        structured_messages.append({"role": role, "content": blocks})
+
+    if not structured_messages:
+        return None, 0
+
+    transcript = json.dumps(structured_messages, indent=None, ensure_ascii=False)
+    if len(transcript.strip()) < 10:
+        return None, 0
+
+    return transcript, len(structured_messages)
+
+
+def _prepare_text_transcript(messages: list, allowed_roles: set) -> tuple:
+    """Format messages as legacy text with [role:]...[role:end] markers."""
     parts = []
 
-    for msg in target_messages:
+    for msg in messages:
         role = msg.get("role", "unknown")
         if role not in allowed_roles:
             continue

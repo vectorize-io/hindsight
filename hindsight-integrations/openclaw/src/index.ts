@@ -726,6 +726,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       typeof config.recallPromptPreamble === 'string' && config.recallPromptPreamble.trim().length > 0
         ? config.recallPromptPreamble
         : DEFAULT_RECALL_PROMPT_PREAMBLE,
+    recallInjectionPosition: typeof config.recallInjectionPosition === 'string' && ['prepend', 'append', 'user'].includes(config.recallInjectionPosition) ? config.recallInjectionPosition as PluginConfig['recallInjectionPosition'] : undefined,
     debug: config.debug ?? false,
   };
 }
@@ -1141,9 +1142,18 @@ ${memoriesFormatted}
 
         debug(`[Hindsight] Auto-recall: Injecting ${results.length} memories from bank ${bankId}`);
 
-        // Inject recalled memories into system prompt space so they stay hidden from
-        // the end-user transcript/UI while still being available to the model.
-        return { prependSystemContext: contextMessage };
+        // Inject recalled memories. Position is configurable to preserve prompt caching
+        // when agents have large static system prompts.
+        const position = pluginConfig.recallInjectionPosition || 'prepend';
+        switch (position) {
+          case 'append':
+            return { appendSystemContext: contextMessage };
+          case 'user':
+            return { prependContext: contextMessage };
+          case 'prepend':
+          default:
+            return { prependSystemContext: contextMessage };
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'TimeoutError') {
           console.warn(`[Hindsight] Auto-recall timed out after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);

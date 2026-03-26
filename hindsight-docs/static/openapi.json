@@ -8265,6 +8265,17 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "url": {
+            "title": "URL",
+            "type": "string"
           }
         },
         "type": "object",

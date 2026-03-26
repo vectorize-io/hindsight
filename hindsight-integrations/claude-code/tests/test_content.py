@@ -341,3 +341,96 @@ class TestPrepareRetentionTranscript:
         msgs = [{"role": "assistant", "content": "only assistant"}]
         result, _ = prepare_retention_transcript(msgs, retain_full_window=False)
         assert result is None
+
+    def test_json_format_with_tool_calls(self):
+        """When include_tool_calls=True, output should be JSON with tool_use blocks."""
+        import json
+
+        msgs = [
+            {"role": "user", "content": "edit the file"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I'll edit that file."},
+                    {
+                        "type": "tool_use",
+                        "name": "Edit",
+                        "input": {"file_path": "/tmp/foo.py", "old_string": "old", "new_string": "new"},
+                    },
+                ],
+            },
+        ]
+        transcript, count = prepare_retention_transcript(
+            msgs, retain_full_window=True, include_tool_calls=True
+        )
+        assert transcript is not None
+        data = json.loads(transcript)
+        assert len(data) == 2
+        assert data[0]["role"] == "user"
+        assert data[1]["role"] == "assistant"
+        # Should have both text and tool_use blocks
+        block_types = [b["type"] for b in data[1]["content"]]
+        assert "text" in block_types
+        assert "tool_use" in block_types
+        # Tool input should be preserved
+        tool_block = next(b for b in data[1]["content"] if b["type"] == "tool_use")
+        assert tool_block["name"] == "Edit"
+        assert tool_block["input"]["file_path"] == "/tmp/foo.py"
+
+    def test_json_format_excludes_hindsight_mcp_tools(self):
+        """Hindsight MCP tools should be excluded even in JSON mode."""
+        import json
+
+        msgs = [
+            {"role": "user", "content": "recall something"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me check."},
+                    {"type": "tool_use", "name": "mcp__hindsight__recall", "input": {"query": "test"}},
+                ],
+            },
+        ]
+        transcript, _ = prepare_retention_transcript(
+            msgs, retain_full_window=True, include_tool_calls=True
+        )
+        data = json.loads(transcript)
+        assistant_blocks = data[1]["content"]
+        assert len(assistant_blocks) == 1
+        assert assistant_blocks[0]["type"] == "text"
+
+    def test_json_format_includes_tool_results(self):
+        """Tool results should be included in JSON mode."""
+        import json
+
+        msgs = [
+            {"role": "user", "content": "run ls"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Running ls."},
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "123", "content": "file1.py\nfile2.py"},
+                    {"type": "text", "text": "Here are the files."},
+                ],
+            },
+        ]
+        transcript, _ = prepare_retention_transcript(
+            msgs, retain_full_window=True, include_tool_calls=True
+        )
+        data = json.loads(transcript)
+        result_msg = next(m for m in data if any(b.get("type") == "tool_result" for b in m["content"]))
+        result_block = next(b for b in result_msg["content"] if b["type"] == "tool_result")
+        assert "file1.py" in result_block["content"]
+
+    def test_without_tool_calls_uses_text_format(self):
+        """Default (include_tool_calls=False) should use legacy text format."""
+        msgs = _msgs(("user", "hello"), ("assistant", "world"))
+        transcript, _ = prepare_retention_transcript(msgs, retain_full_window=True, include_tool_calls=False)
+        assert "[role: user]" in transcript
+        assert "[user:end]" in transcript

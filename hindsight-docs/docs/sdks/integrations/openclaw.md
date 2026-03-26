@@ -102,6 +102,16 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `retainRoles` - Which message roles to retain (default: `["user", "assistant"]`). Options: `user`, `assistant`, `system`, `tool`
 - `recallBudget` - Recall effort: `"low"`, `"mid"`, or `"high"` (default: `"mid"`). Higher budgets use more retrieval strategies for better results.
 - `recallMaxTokens` - Max tokens for recall response (default: `1024`). Controls how much memory context is injected per turn.
+- `recallTopK` - Max number of memories to inject per turn (default: unlimited).
+- `recallTypes` - Memory types to recall (default: `["world", "experience"]`). Options: `world`, `experience`, `observation`.
+- `recallContextTurns` - Number of prior user turns to include in the recall query (default: `1`).
+- `recallMaxQueryChars` - Max characters for the composed recall query (default: `800`).
+- `recallPromptPreamble` - Custom preamble text placed above recalled memories. Overrides the built-in guidance text.
+- `recallInjectionPosition` - Where to inject recalled memories: `"prepend"` (default), `"append"`, or `"user"`. Use `"append"` to preserve prompt caching with large static system prompts. Use `"user"` to inject before the user message instead of in the system prompt.
+- `recallRoles` - Which message roles to include when composing the contextual recall query (default: `["user", "assistant"]`).
+- `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
+- `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
+- `debug` - Enable debug logging (default: `false`).
 
 ### Memory Isolation
 

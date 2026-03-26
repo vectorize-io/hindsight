@@ -105,6 +105,7 @@ class HindsightClient:
         document_id: str = "conversation",
         context: Optional[str] = None,
         metadata: Optional[dict] = None,
+        tags: Optional[list] = None,
         timeout: int = 15,
     ) -> dict:
         """Retain content into a bank's memory.
@@ -121,6 +122,8 @@ class HindsightClient:
         }
         if context:
             item["context"] = context
+        if tags:
+            item["tags"] = tags
         body = {
             "items": [item],
             "async": True,

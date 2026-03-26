@@ -4,10 +4,16 @@ Claude Code hooks are ephemeral processes — state must be persisted to files.
 Uses $CLAUDE_PLUGIN_DATA/state/ as the storage directory.
 """
 
-import fcntl
 import json
 import os
 import re
+import sys
+
+# fcntl is Unix-only; import conditionally so the module loads on Windows
+if sys.platform != "win32":
+    import fcntl
+else:
+    fcntl = None
 
 
 def _state_dir() -> str:
@@ -85,29 +91,38 @@ def get_turn_count(session_id: str) -> int:
 def increment_turn_count(session_id: str) -> int:
     """Increment and return the turn count for a session.
 
-    Uses flock to prevent race conditions between concurrent hook processes
-    (e.g. async Stop + new UserPromptSubmit).
+    Uses flock on Unix to prevent race conditions between concurrent hook
+    processes (e.g. async Stop + new UserPromptSubmit). On Windows, flock is
+    unavailable so we proceed without a lock — minor races here are harmless.
     """
     lock_path = _state_file("turns.lock")
-    try:
-        lock_fd = open(lock_path, "w")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    if fcntl is not None:
         try:
-            turns = read_state("turns.json", {})
-            turns[session_id] = turns.get(session_id, 0) + 1
-            # Cap tracked sessions to prevent unbounded growth
-            if len(turns) > 10000:
-                sorted_keys = sorted(turns.keys())
-                for k in sorted_keys[: len(sorted_keys) // 2]:
-                    del turns[k]
-            write_state("turns.json", turns)
-            return turns[session_id]
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            lock_fd.close()
-    except OSError:
-        # Fallback: proceed without lock (better than failing)
-        turns = read_state("turns.json", {})
-        turns[session_id] = turns.get(session_id, 0) + 1
-        write_state("turns.json", turns)
-        return turns[session_id]
+            lock_fd = open(lock_path, "w")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                turns = read_state("turns.json", {})
+                turns[session_id] = turns.get(session_id, 0) + 1
+                # Cap tracked sessions to prevent unbounded growth
+                if len(turns) > 10000:
+                    sorted_keys = sorted(turns.keys())
+                    for k in sorted_keys[: len(sorted_keys) // 2]:
+                        del turns[k]
+                write_state("turns.json", turns)
+                return turns[session_id]
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+        except OSError:
+            pass
+
+    # Fallback: proceed without lock (Windows or lock acquisition failed)
+    turns = read_state("turns.json", {})
+    turns[session_id] = turns.get(session_id, 0) + 1
+    # Cap tracked sessions to prevent unbounded growth
+    if len(turns) > 10000:
+        sorted_keys = sorted(turns.keys())
+        for k in sorted_keys[: len(sorted_keys) // 2]:
+            del turns[k]
+    write_state("turns.json", turns)
+    return turns[session_id]

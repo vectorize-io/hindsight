@@ -134,6 +134,7 @@ async def tool_search_observations(
     tag_groups: "list | None" = None,
     last_consolidated_at: datetime | None = None,
     pending_consolidation: int = 0,
+    source_facts_max_tokens: int = -1,
 ) -> dict[str, Any]:
     """
     Search consolidated observations using recall.
@@ -151,10 +152,16 @@ async def tool_search_observations(
         tags_match: How to match tags - "any" (OR), "all" (AND)
         last_consolidated_at: When consolidation last ran (for staleness check)
         pending_consolidation: Number of memories waiting to be consolidated
+        source_facts_max_tokens: Token budget for source facts (-1 = disabled, 0+ = enabled with limit)
 
     Returns:
         Dict with matching observations including freshness info and source memories
     """
+    include_source_facts = source_facts_max_tokens != -1
+    recall_kwargs: dict[str, Any] = {}
+    if include_source_facts and source_facts_max_tokens > 0:
+        recall_kwargs["max_source_facts_tokens"] = source_facts_max_tokens
+
     result = await memory_engine.recall_async(
         bank_id=bank_id,
         query=query,
@@ -165,9 +172,10 @@ async def tool_search_observations(
         tags=tags,
         tags_match=tags_match,
         tag_groups=tag_groups,
-        include_source_facts=False,
+        include_source_facts=include_source_facts,
         _connection_budget=1,
         _quiet=True,
+        **recall_kwargs,
     )
 
     is_stale = pending_consolidation > 0

@@ -11,9 +11,11 @@ This module provides metrics for:
 - Database connection pool metrics
 """
 
+import importlib
 import logging
 import os
-import resource
+
+_resource_mod = importlib.import_module("resource") if importlib.util.find_spec("resource") else None
 import threading
 import time
 from contextlib import contextmanager
@@ -455,11 +457,13 @@ class MetricsCollector(MetricsCollectorBase):
 
     def _setup_process_metrics(self):
         """Set up observable gauges for process metrics."""
+        if _resource_mod is None:
+            return  # Skip process metrics on Windows
 
         def get_cpu_times(_options):
             """Get process CPU times."""
             try:
-                rusage = resource.getrusage(resource.RUSAGE_SELF)
+                rusage = _resource_mod.getrusage(_resource_mod.RUSAGE_SELF)
                 yield metrics.Observation(rusage.ru_utime, {"type": "user"})
                 yield metrics.Observation(rusage.ru_stime, {"type": "system"})
             except Exception:
@@ -468,7 +472,7 @@ class MetricsCollector(MetricsCollectorBase):
         def get_memory_usage(_options):
             """Get process memory usage in bytes."""
             try:
-                rusage = resource.getrusage(resource.RUSAGE_SELF)
+                rusage = _resource_mod.getrusage(_resource_mod.RUSAGE_SELF)
                 # ru_maxrss is in kilobytes on Linux, bytes on macOS
                 max_rss = rusage.ru_maxrss
                 if os.uname().sysname == "Linux":
@@ -486,7 +490,7 @@ class MetricsCollector(MetricsCollectorBase):
                     yield metrics.Observation(count)
                 else:
                     # Fallback: use resource limits
-                    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+                    soft, hard = _resource_mod.getrlimit(_resource_mod.RLIMIT_NOFILE)
                     yield metrics.Observation(soft, {"limit": "soft"})
             except Exception:
                 pass

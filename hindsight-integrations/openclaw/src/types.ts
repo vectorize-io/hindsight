@@ -3,6 +3,7 @@
 export interface PluginPromptHookResult {
   prependContext?: string;
   prependSystemContext?: string;
+  appendSystemContext?: string;
 }
 
 export interface MoltbotPluginAPI {
@@ -71,6 +72,7 @@ export interface PluginConfig {
   recallContextTurns?: number; // Number of user turns to include in recall query context. Default: 1 (latest only)
   recallMaxQueryChars?: number; // Max chars for composed recall query. Default: 800
   recallPromptPreamble?: string; // Prompt preamble placed above recalled memories. Default: built-in guidance text.
+  recallInjectionPosition?: 'prepend' | 'append' | 'user'; // Where to inject recalled memories. 'prepend' = start of system prompt (default), 'append' = end of system prompt (preserves prompt cache), 'user' = before user message.
   debug?: boolean; // Enable debug logging (default: false)
 }
 

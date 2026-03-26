@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ai-sdk" "chat" "openclaw" "langgraph" "nemoclaw" "strands")
+VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ai-sdk" "chat" "openclaw" "langgraph" "nemoclaw" "strands" "claude-code")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -112,8 +112,12 @@ elif [ -f "$INTEGRATION_DIR/package.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/package.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/package.json"
     rm "$INTEGRATION_DIR/package.json.bak"
+elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
+    print_info "Updating version in $INTEGRATION_DIR/.claude-plugin/plugin.json"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/.claude-plugin/plugin.json"
+    rm "$INTEGRATION_DIR/.claude-plugin/plugin.json.bak"
 else
-    print_error "No pyproject.toml or package.json found in $INTEGRATION_DIR"
+    print_error "No pyproject.toml, package.json, or plugin.json found in $INTEGRATION_DIR"
     exit 1
 fi
 

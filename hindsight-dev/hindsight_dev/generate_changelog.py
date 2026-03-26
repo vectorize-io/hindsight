@@ -38,6 +38,7 @@ VALID_INTEGRATIONS = [
     "langgraph",
     "nemoclaw",
     "strands",
+    "claude-code",
 ]
 
 
@@ -517,11 +518,14 @@ def _get_package_name(integration: str) -> str:
         "langgraph": "hindsight-langgraph",
         "nemoclaw": "@vectorize-io/hindsight-nemoclaw",
         "strands": "hindsight-strands",
+        "claude-code": "hindsight-memory",
     }
     return packages[integration]
 
 
 def _package_url(integration: str, package_name: str) -> str:
+    if integration == "claude-code":
+        return "https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/claude-code"
     if package_name.startswith("@"):
         return f"https://www.npmjs.com/package/{package_name}"
     return f"https://pypi.org/project/{package_name}/"
@@ -538,6 +542,7 @@ def _integration_display_name(integration: str) -> str:
         "langgraph": "LangGraph",
         "nemoclaw": "NemoClaw",
         "strands": "Strands",
+        "claude-code": "Claude Code",
     }
     return names.get(integration, integration)
 

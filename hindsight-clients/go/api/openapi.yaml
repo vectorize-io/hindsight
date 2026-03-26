@@ -3884,12 +3884,18 @@ components:
           loc:
           - ValidationError_loc_inner
           - ValidationError_loc_inner
+          input: ""
+          ctx: "{}"
           type: type
+          url: url
         - msg: msg
           loc:
           - ValidationError_loc_inner
           - ValidationError_loc_inner
+          input: ""
+          ctx: "{}"
           type: type
+          url: url
       properties:
         detail:
           items:
@@ -5202,7 +5208,10 @@ components:
         loc:
         - ValidationError_loc_inner
         - ValidationError_loc_inner
+        input: ""
+        ctx: "{}"
         type: type
+        url: url
       properties:
         loc:
           items:
@@ -5213,6 +5222,13 @@ components:
           type: string
         type:
           title: Error Type
+          type: string
+        input: {}
+        ctx:
+          title: Context
+          type: object
+        url:
+          title: URL
           type: string
       required:
       - loc

@@ -81,7 +81,7 @@ export ANTHROPIC_API_KEY="your-key"
 export HINDSIGHT_LLM_PROVIDER=claude-code # No API key needed
 ```
 
-The model is selected automatically by the Hindsight API. To override, set `HINDSIGHT_API_LLM_MODEL`.
+The model is selected automatically by the Hindsight API. To override, set `HINDSIGHT_LLM_MODEL`.
 
 ### 3. Existing Local Server
 
@@ -89,61 +89,99 @@ If you already have `hindsight-embed` running, leave `hindsightApiUrl` empty and
 
 ## Configuration
 
-All settings are in `~/.hindsight/claude-code.json`. Every setting can also be overridden via environment variables.
+All settings live in `~/.hindsight/claude-code.json`. Every setting can also be overridden via environment variables. The plugin ships with sensible defaults — you only need to configure what you want to change.
+
+**Loading order** (later entries win):
+1. Built-in defaults (hardcoded in the plugin)
+2. Plugin `settings.json` (ships with the plugin, at `CLAUDE_PLUGIN_ROOT/settings.json`)
+3. User config (`~/.hindsight/claude-code.json` — recommended for your overrides)
+4. Environment variables
+
+---
 
 ### Connection & Daemon
 
-| Setting | Default | Env Var | Description |
+These settings control how the plugin connects to the Hindsight API.
+
+| Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `hindsightApiUrl` | `""` | `HINDSIGHT_API_URL` | External Hindsight API URL. Empty = use local daemon. |
-| `hindsightApiToken` | `null` | `HINDSIGHT_API_TOKEN` | Auth token for external API |
-| `apiPort` | `9077` | `HINDSIGHT_API_PORT` | Port for local Hindsight daemon |
-| `daemonIdleTimeout` | `0` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | Seconds before idle daemon shuts down (0 = never) |
-| `embedVersion` | `"latest"` | `HINDSIGHT_EMBED_VERSION` | `hindsight-embed` version for `uvx` |
+| `hindsightApiUrl` | `HINDSIGHT_API_URL` | `""` (empty) | URL of an external Hindsight API server. When empty, the plugin uses a local daemon instead. |
+| `hindsightApiToken` | `HINDSIGHT_API_TOKEN` | `null` | Authentication token for the external API. Only needed when `hindsightApiUrl` is set. |
+| `apiPort` | `HINDSIGHT_API_PORT` | `9077` | Port used by the local `hindsight-embed` daemon. Change this if you run multiple instances or have a port conflict. |
+| `daemonIdleTimeout` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | `0` | Seconds of inactivity before the local daemon shuts itself down. `0` means the daemon stays running until the session ends. |
+| `embedVersion` | `HINDSIGHT_EMBED_VERSION` | `"latest"` | Which version of `hindsight-embed` to install via `uvx`. Pin to a specific version (e.g. `"0.5.2"`) for reproducibility. |
+| `embedPackagePath` | `HINDSIGHT_EMBED_PACKAGE_PATH` | `null` | Local filesystem path to a `hindsight-embed` checkout. When set, the plugin runs from this path instead of installing via `uvx`. Useful for development. |
 
-### LLM Provider (daemon mode only)
+---
 
-| Setting | Default | Env Var | Description |
+### LLM Provider (local daemon only)
+
+These settings configure which LLM the local daemon uses for fact extraction. They are **ignored** when connecting to an external API (the server uses its own LLM configuration).
+
+| Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `llmProvider` | auto-detect | `HINDSIGHT_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code` |
-| `llmModel` | provider default | `HINDSIGHT_LLM_MODEL` | Model override |
+| `llmProvider` | `HINDSIGHT_LLM_PROVIDER` | auto-detect | Which LLM provider to use. Supported values: `openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`. When omitted, the plugin auto-detects by checking for API key env vars in order: `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY` → `GROQ_API_KEY`. |
+| `llmModel` | `HINDSIGHT_LLM_MODEL` | provider default | Override the default model for the chosen provider (e.g. `"gpt-4o"`, `"claude-sonnet-4-20250514"`). When omitted, the Hindsight API picks a sensible default for each provider. |
+| `llmApiKeyEnv` | — | provider standard | Name of the environment variable that holds the API key. Normally auto-detected (e.g. `OPENAI_API_KEY` for the `openai` provider). Set this only if your key is in a non-standard env var. |
 
-Auto-detection checks these env vars in order: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`.
+---
 
 ### Memory Bank
 
-| Setting | Default | Env Var | Description |
+A **bank** is an isolated memory store — like a separate "brain." These settings control which bank the plugin reads from and writes to.
+
+| Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `bankId` | `"claude_code"` | `HINDSIGHT_BANK_ID` | Static bank ID (when `dynamicBankId` is false) |
-| `bankMission` | generic assistant | `HINDSIGHT_BANK_MISSION` | Agent identity/purpose for the memory bank |
-| `retainMission` | extraction prompt | — | Custom retain mission (what to extract from conversations) |
-| `dynamicBankId` | `false` | `HINDSIGHT_DYNAMIC_BANK_ID` | Enable per-context memory banks |
-| `dynamicBankGranularity` | `["agent", "project"]` | — | Fields for dynamic bank ID: `agent`, `project`, `session`, `channel`, `user` |
-| `bankIdPrefix` | `""` | — | Prefix for all bank IDs (e.g. `"prod"`) |
+| `bankId` | `HINDSIGHT_BANK_ID` | `"claude_code"` | The bank ID to use when `dynamicBankId` is `false`. All sessions share this single bank. |
+| `bankMission` | `HINDSIGHT_BANK_MISSION` | generic assistant prompt | A short description of the agent's identity and purpose. Sent to Hindsight when creating or updating the bank, and used during recall to contextualize results. |
+| `retainMission` | — | extraction prompt | Instructions for the fact extraction LLM — tells it *what* to extract from conversations (e.g. "Extract technical decisions and user preferences"). |
+| `dynamicBankId` | `HINDSIGHT_DYNAMIC_BANK_ID` | `false` | When `true`, the plugin derives a unique bank ID from context fields (see `dynamicBankGranularity`), giving each combination its own isolated memory. |
+| `dynamicBankGranularity` | — | `["agent", "project"]` | Which context fields to combine when building a dynamic bank ID. Available fields: `agent` (agent name), `project` (working directory), `session` (session ID), `channel` (channel ID), `user` (user ID). |
+| `bankIdPrefix` | — | `""` | A string prepended to all bank IDs — both static and dynamic. Useful for namespacing (e.g. `"prod"` or `"staging"`). |
+| `agentName` | `HINDSIGHT_AGENT_NAME` | `"claude-code"` | Name used for the `agent` field in dynamic bank ID derivation. |
+
+---
 
 ### Auto-Recall
 
-| Setting | Default | Env Var | Description |
+Auto-recall runs on every user prompt. It queries Hindsight for relevant memories and injects them into Claude's context as invisible `additionalContext` (the user doesn't see them in the chat transcript).
+
+| Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `autoRecall` | `true` | `HINDSIGHT_AUTO_RECALL` | Enable automatic memory recall |
-| `recallBudget` | `"mid"` | `HINDSIGHT_RECALL_BUDGET` | Recall effort: `low`, `mid`, `high` |
-| `recallMaxTokens` | `1024` | `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens in recall response |
-| `recallContextTurns` | `1` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | Prior turns for query composition |
+| `autoRecall` | `HINDSIGHT_AUTO_RECALL` | `true` | Master switch for auto-recall. Set to `false` to disable memory retrieval entirely. |
+| `recallBudget` | `HINDSIGHT_RECALL_BUDGET` | `"mid"` | Controls how hard Hindsight searches for memories. `"low"` = fast, fewer strategies; `"mid"` = balanced; `"high"` = thorough, slower. Affects latency directly. |
+| `recallMaxTokens` | `HINDSIGHT_RECALL_MAX_TOKENS` | `1024` | Maximum number of tokens in the recalled memory block. Lower values reduce context usage but may truncate relevant memories. |
+| `recallTypes` | — | `["world", "experience"]` | Which memory types to retrieve. `"world"` = general facts; `"experience"` = personal experiences; `"observation"` = raw observations. |
+| `recallContextTurns` | `HINDSIGHT_RECALL_CONTEXT_TURNS` | `1` | How many prior conversation turns to include when composing the recall query. `1` = only the latest user message; higher values give more context but may dilute the query. |
+| `recallMaxQueryChars` | `HINDSIGHT_RECALL_MAX_QUERY_CHARS` | `800` | Maximum character length of the query sent to Hindsight. Longer queries are truncated. |
+| `recallRoles` | — | `["user", "assistant"]` | Which message roles to include when building the recall query from prior turns. |
+| `recallPromptPreamble` | — | built-in string | Text placed above the recalled memories in the injected context block. Customize this to change how Claude interprets the memories. |
+
+---
 
 ### Auto-Retain
 
-| Setting | Default | Env Var | Description |
-|---------|---------|---------|-------------|
-| `autoRetain` | `true` | `HINDSIGHT_AUTO_RETAIN` | Enable automatic retention |
-| `retainEveryNTurns` | `10` | — | Retain every Nth turn (sliding window) |
-| `retainOverlapTurns` | `2` | — | Extra overlap turns for continuity |
-| `retainRoles` | `["user", "assistant"]` | — | Which message roles to retain |
+Auto-retain runs after Claude responds. It extracts the conversation transcript and sends it to Hindsight for long-term storage and fact extraction.
 
-### Miscellaneous
-
-| Setting | Default | Env Var | Description |
+| Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `debug` | `false` | `HINDSIGHT_DEBUG` | Enable debug logging to stderr |
+| `autoRetain` | `HINDSIGHT_AUTO_RETAIN` | `true` | Master switch for auto-retain. Set to `false` to disable memory storage entirely. |
+| `retainMode` | `HINDSIGHT_RETAIN_MODE` | `"full-session"` | Retention strategy. `"full-session"` sends the full conversation transcript (with chunking). |
+| `retainEveryNTurns` | — | `10` | How often to retain. `1` = every turn; `10` = every 10th turn. Higher values reduce API calls but delay memory capture. Values > 1 enable **chunked retention** with a sliding window. |
+| `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
+| `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
+| `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |
+| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports `{session_id}` placeholder which is replaced with the current session ID at runtime. |
+| `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. |
+| `retainContext` | — | `"claude-code"` | A label attached to retained memories identifying their source. Useful when multiple integrations write to the same bank. |
+
+---
+
+### Debug
+
+| Setting | Env Var | Default | Description |
+|---------|---------|---------|-------------|
+| `debug` | `HINDSIGHT_DEBUG` | `false` | Enable verbose logging to stderr. All log lines are prefixed with `[Hindsight]`. Useful for diagnosing connection issues, recall/retain behavior, and bank ID derivation. |
 
 ## Claude Code Channels
 

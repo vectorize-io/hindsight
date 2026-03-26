@@ -153,6 +153,8 @@ class CrossEncoderReranker:
 
         # Normalize scores using sigmoid to [0, 1] range
         # Cross-encoder returns logits which can be negative
+        import math
+
         import numpy as np
 
         def sigmoid(x):
@@ -163,11 +165,20 @@ class CrossEncoderReranker:
         # Create ScoredResult objects with cross-encoder scores
         scored_results = []
         for candidate, raw_score, norm_score in zip(candidates, scores, normalized_scores):
+            # Sanitize NaN scores (cross-encoder can return NaN for certain inputs).
+            # NaN propagates through all downstream scoring and Pydantic serializes
+            # NaN as JSON null, which breaks clients expecting numeric values.
+            raw = float(raw_score)
+            norm = float(norm_score)
+            if math.isnan(raw):
+                raw = 0.0
+            if math.isnan(norm):
+                norm = 0.0
             scored_result = ScoredResult(
                 candidate=candidate,
-                cross_encoder_score=float(raw_score),
-                cross_encoder_score_normalized=float(norm_score),
-                weight=float(norm_score),  # Initial weight is just cross-encoder score
+                cross_encoder_score=raw,
+                cross_encoder_score_normalized=norm,
+                weight=norm,  # Initial weight is just cross-encoder score
             )
             scored_results.append(scored_result)
 

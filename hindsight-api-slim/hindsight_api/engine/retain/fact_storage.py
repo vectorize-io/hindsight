@@ -81,9 +81,15 @@ async def insert_facts_batch(
         if fact.entities:
             signal_parts.extend(e.name for e in fact.entities)
         if fact.occurred_start:
-            signal_parts.append(fact.occurred_start.strftime("%B %-d %Y"))
+            try:
+                signal_parts.append(fact.occurred_start.strftime("%B %d %Y").lstrip("0").replace(" 0", " "))
+            except (ValueError, AttributeError):
+                pass
         if fact.occurred_end and fact.occurred_end != fact.occurred_start:
-            signal_parts.append(fact.occurred_end.strftime("%B %-d %Y"))
+            try:
+                signal_parts.append(fact.occurred_end.strftime("%B %d %Y").lstrip("0").replace(" 0", " "))
+            except (ValueError, AttributeError):
+                pass
         text_signals_list.append(" ".join(signal_parts) if signal_parts else None)
 
     # Batch insert all facts
@@ -215,7 +221,10 @@ async def handle_document_tracking(
     document_tags: list[str] | None = None,
 ) -> None:
     """
-    Handle document tracking in the database.
+    Handle document tracking in the database (full-replace mode).
+
+    Deletes the existing document (cascading to all units and links) on the
+    first batch, then inserts the new document record.
 
     Args:
         conn: Database connection
@@ -232,14 +241,51 @@ async def handle_document_tracking(
     combined_content = _sanitize_text(combined_content) or ""
     content_hash = hashlib.sha256(combined_content.encode()).hexdigest()
 
-    # Always delete old document first if it exists (cascades to units and links)
+    # Delete old document first (cascades to units and links)
     # Only delete on the first batch to avoid deleting data we just inserted
     if is_first_batch:
         await conn.fetchval(
-            f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id", document_id, bank_id
+            f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id",
+            document_id,
+            bank_id,
         )
 
     # Insert document (or update if exists from concurrent operations)
+    await _upsert_document_row(conn, bank_id, document_id, combined_content, content_hash, retain_params, document_tags)
+
+
+async def upsert_document_metadata(
+    conn,
+    bank_id: str,
+    document_id: str,
+    combined_content: str,
+    retain_params: dict | None = None,
+    document_tags: list[str] | None = None,
+) -> None:
+    """
+    Update document metadata without deleting existing facts/chunks.
+
+    Used by delta retain: the document row is upserted but chunks and
+    memory_units are managed separately at the chunk level.
+    """
+    import hashlib
+
+    combined_content = _sanitize_text(combined_content) or ""
+    content_hash = hashlib.sha256(combined_content.encode()).hexdigest()
+
+    await _upsert_document_row(conn, bank_id, document_id, combined_content, content_hash, retain_params, document_tags)
+
+
+async def _upsert_document_row(
+    conn,
+    bank_id: str,
+    document_id: str,
+    combined_content: str,
+    content_hash: str,
+    retain_params: dict | None = None,
+    document_tags: list[str] | None = None,
+) -> None:
+    """Insert or update a document row."""
     await conn.execute(
         f"""
         INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params, tags)
@@ -260,3 +306,34 @@ async def handle_document_tracking(
         json.dumps(retain_params) if retain_params else None,
         document_tags or [],
     )
+
+
+async def update_memory_units_tags(
+    conn,
+    bank_id: str,
+    document_id: str,
+    tags: list[str],
+) -> int:
+    """
+    Update tags on all memory_units belonging to a document.
+
+    Used during delta retain to propagate tag changes to unchanged facts.
+
+    Returns:
+        Number of memory units updated.
+    """
+    result = await conn.execute(
+        f"""
+        UPDATE {fq_table("memory_units")}
+        SET tags = $3, updated_at = NOW()
+        WHERE bank_id = $1 AND document_id = $2
+        """,
+        bank_id,
+        document_id,
+        tags or [],
+    )
+    # result is a status string like "UPDATE 5"
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0

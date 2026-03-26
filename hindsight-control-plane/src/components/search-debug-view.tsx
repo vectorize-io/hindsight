@@ -411,7 +411,7 @@ export function SearchDebugView() {
                               </div>
                             </div>
                             <div className="flex-shrink-0 text-right">
-                              <div className="text-sm font-semibold">{score.toFixed(3)}</div>
+                              <div className="text-sm font-semibold">{(score ?? 0).toFixed(3)}</div>
                               <div className="text-xs text-muted-foreground">score</div>
                             </div>
                             <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />

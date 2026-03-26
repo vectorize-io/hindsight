@@ -125,6 +125,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "openai-codex",
         "claude-code",
         "mock",
+        "none",
         "vertexai",
         "litellm",
         "bedrock",
@@ -176,6 +177,7 @@ def create_llm_provider(
         GeminiLLM,
         LiteLLMLLM,
         MockLLM,
+        NoneLLM,
         OpenAICompatibleLLM,
     )
 
@@ -201,6 +203,15 @@ def create_llm_provider(
 
     elif provider_lower == "mock":
         return MockLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+
+    elif provider_lower == "none":
+        return NoneLLM(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
@@ -250,7 +261,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
         )
 
-    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax"):
+    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "volcano"):
         return OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -319,9 +330,11 @@ class LLMProvider:
             "openai-codex",
             "claude-code",
             "mock",
+            "none",
             "minimax",
             "litellm",
             "bedrock",
+            "volcano",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")

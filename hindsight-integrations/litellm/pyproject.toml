@@ -37,6 +37,7 @@ dependencies = [
     "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
     "filelock>=3.20.3",  # TOCTOU race condition
     "urllib3>=2.6.3",  # Decompression-bomb safeguards bypass
+    "requests>=2.33.0",  # Insecure temp file reuse in extract_zipped_paths()
 ]
 
 [project.optional-dependencies]

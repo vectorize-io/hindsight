@@ -96,11 +96,13 @@ def main():
 
     debug_log(config, f"Read {len(all_messages)} messages from transcript")
 
-    # Chunked retention logic — port of Openclaw's retainEveryNTurns + sliding window
+    # Retention mode: full session (default) or chunked (legacy)
+    retain_mode = config.get("retainMode", "full-session")
     retain_every_n = max(1, config.get("retainEveryNTurns", 1))
     retain_full_window = False
     messages_to_retain = all_messages
 
+    # Respect retainEveryNTurns in both modes
     if retain_every_n > 1:
         turn_count = increment_turn_count(session_id)
         if turn_count % retain_every_n != 0:
@@ -108,6 +110,7 @@ def main():
             debug_log(config, f"Turn {turn_count}/{retain_every_n}, skipping retain (next at turn {next_at})")
             return
 
+    if retain_mode == "chunked" and retain_every_n > 1:
         # Sliding window: N turns + configured overlap
         overlap_turns = config.get("retainOverlapTurns", 0)
         window_turns = retain_every_n + overlap_turns
@@ -115,13 +118,19 @@ def main():
         retain_full_window = True
         debug_log(
             config,
-            f"Turn {turn_count}: chunked retain firing "
-            f"(window: {window_turns} turns, {len(messages_to_retain)} messages)",
+            f"Chunked retain firing (window: {window_turns} turns, {len(messages_to_retain)} messages)",
         )
+    else:
+        # Full session mode: retain all messages, always as full window
+        retain_full_window = True
+        debug_log(config, f"Full session retain: {len(all_messages)} messages")
 
     # Format transcript
     retain_roles = config.get("retainRoles", ["user", "assistant"])
-    transcript, message_count = prepare_retention_transcript(messages_to_retain, retain_roles, retain_full_window)
+    include_tool_calls = config.get("retainToolCalls", True)
+    transcript, message_count = prepare_retention_transcript(
+        messages_to_retain, retain_roles, retain_full_window, include_tool_calls=include_tool_calls
+    )
 
     if not transcript:
         debug_log(config, "Empty transcript after formatting, skipping retain")
@@ -148,12 +157,44 @@ def main():
     bank_id = derive_bank_id(hook_input, config)
     ensure_bank_mission(client, bank_id, config, debug_fn=_dbg)
 
-    # Unique document ID — mirrors Openclaw: {sessionKey}-{timestamp}
-    document_id = f"{session_id}-{int(time.time() * 1000)}"
+    # Document ID: use session_id so the same session always upserts the same document.
+    # In chunked mode, append timestamp to create distinct documents per chunk.
+    if retain_mode == "chunked" and retain_every_n > 1:
+        document_id = f"{session_id}-{int(time.time() * 1000)}"
+    else:
+        document_id = session_id
+
+    # Resolve template variables in tags and metadata.
+    # Supported variables: {session_id}, {bank_id}, {timestamp}
+    template_vars = {
+        "session_id": session_id,
+        "bank_id": bank_id,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+    def _resolve_template(value: str) -> str:
+        for k, v in template_vars.items():
+            value = value.replace(f"{{{k}}}", v)
+        return value
+
+    # Tags from config with template resolution
+    raw_tags = config.get("retainTags", [])
+    tags = [_resolve_template(t) for t in raw_tags] if raw_tags else None
+
+    # Metadata: merge built-in defaults with user-configured extras
+    metadata = {
+        "retained_at": template_vars["timestamp"],
+        "message_count": str(message_count),
+        "session_id": session_id,
+    }
+    for k, v in config.get("retainMetadata", {}).items():
+        metadata[k] = _resolve_template(str(v))
 
     debug_log(
         config, f"Retaining to bank '{bank_id}', doc '{document_id}', {message_count} messages, {len(transcript)} chars"
     )
+    if tags:
+        debug_log(config, f"Tags: {tags}")
 
     # POST to Hindsight retain API
     try:
@@ -162,11 +203,8 @@ def main():
             content=transcript,
             document_id=document_id,
             context=config.get("retainContext", "claude-code"),
-            metadata={
-                "retained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "message_count": str(message_count),
-                "session_id": session_id,
-            },
+            metadata=metadata,
+            tags=tags,
             timeout=15,
         )
         debug_log(config, f"Retain response: {json.dumps(response)[:200]}")

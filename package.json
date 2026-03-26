@@ -15,7 +15,9 @@
     "serialize-javascript": "^7.0.3",
     "minimatch": "^3.1.4",
     "undici": ">=7.24.0",
-    "flatted": ">=3.4.0",
+    "flatted": ">=3.4.2",
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "yaml": ">=1.10.3",
     "svgo": ">=3.3.3",
     "dompurify": ">=3.3.2",
     "@redocly/openapi-core": {

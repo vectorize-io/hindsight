@@ -4,12 +4,69 @@ Chunk storage for retain pipeline.
 Handles storage of document chunks in the database.
 """
 
+import hashlib
 import logging
+from dataclasses import dataclass
 
 from ..memory_engine import fq_table
 from .types import ChunkMetadata
 
 logger = logging.getLogger(__name__)
+
+
+def compute_chunk_hash(chunk_text: str) -> str:
+    """Compute SHA256 hash of chunk text for delta comparison."""
+    return hashlib.sha256(chunk_text.encode()).hexdigest()
+
+
+@dataclass
+class ExistingChunk:
+    """Represents a chunk already stored in the database."""
+
+    chunk_id: str
+    chunk_index: int
+    content_hash: str | None
+
+
+async def load_existing_chunks(conn, bank_id: str, document_id: str) -> list[ExistingChunk]:
+    """
+    Load existing chunk metadata for a document.
+
+    Returns list of ExistingChunk with chunk_id, chunk_index, and content_hash.
+    """
+    rows = await conn.fetch(
+        f"""
+        SELECT chunk_id, chunk_index, content_hash
+        FROM {fq_table("chunks")}
+        WHERE document_id = $1 AND bank_id = $2
+        ORDER BY chunk_index
+        """,
+        document_id,
+        bank_id,
+    )
+    return [
+        ExistingChunk(
+            chunk_id=row["chunk_id"],
+            chunk_index=row["chunk_index"],
+            content_hash=row["content_hash"],
+        )
+        for row in rows
+    ]
+
+
+async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
+    """
+    Delete specific chunks by their IDs.
+
+    This cascades to memory_units (via FK with CASCADE delete)
+    and their links.
+    """
+    if not chunk_ids:
+        return
+    await conn.execute(
+        f"DELETE FROM {fq_table('chunks')} WHERE chunk_id = ANY($1::text[])",
+        chunk_ids,
+    )
 
 
 async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[ChunkMetadata]) -> dict[int, str]:
@@ -32,6 +89,7 @@ async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[
     chunk_ids = []
     chunk_texts = []
     chunk_indices = []
+    content_hashes = []
     chunk_id_map = {}
 
     for chunk in chunks:
@@ -39,19 +97,21 @@ async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[
         chunk_ids.append(chunk_id)
         chunk_texts.append(chunk.chunk_text)
         chunk_indices.append(chunk.chunk_index)
+        content_hashes.append(compute_chunk_hash(chunk.chunk_text))
         chunk_id_map[chunk.chunk_index] = chunk_id
 
     # Batch insert all chunks
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("chunks")} (chunk_id, document_id, bank_id, chunk_text, chunk_index)
-        SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::integer[])
+        INSERT INTO {fq_table("chunks")} (chunk_id, document_id, bank_id, chunk_text, chunk_index, content_hash)
+        SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::integer[], $6::text[])
         """,
         chunk_ids,
         [document_id] * len(chunk_texts),
         [bank_id] * len(chunk_texts),
         chunk_texts,
         chunk_indices,
+        content_hashes,
     )
 
     return chunk_id_map

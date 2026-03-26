@@ -340,6 +340,7 @@ ENV_REFLECT_MAX_ITERATIONS = "HINDSIGHT_API_REFLECT_MAX_ITERATIONS"
 ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
+ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
 
 # Disposition settings
 ENV_DISPOSITION_SKEPTICISM = "HINDSIGHT_API_DISPOSITION_SKEPTICISM"
@@ -364,8 +365,10 @@ PROVIDER_DEFAULT_MODELS = {
     "openai-codex": "gpt-5.2-codex",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
+    "none": "none",
     "litellm": "gpt-4o-mini",
     "bedrock": "us.amazon.nova-2-lite-v1:0",
+    "volcano": "doubao-pro-32k",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 DEFAULT_LLM_MAX_CONCURRENT = 32
@@ -503,6 +506,7 @@ DEFAULT_WORKER_CONSOLIDATION_MAX_SLOTS = 2  # Max concurrent consolidation tasks
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
 DEFAULT_REFLECT_MAX_CONTEXT_TOKENS = 100_000  # Max accumulated context tokens before forcing final prompt
 DEFAULT_REFLECT_WALL_TIMEOUT = 300  # Wall-clock timeout in seconds for the entire reflect operation (5 minutes)
+DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in search_observations (-1 = disabled)
 
 # Disposition defaults (None = not set, fall back to bank DB value or 3)
 DEFAULT_DISPOSITION_SKEPTICISM = None
@@ -774,6 +778,7 @@ class HindsightConfig:
 
     # Reflect agent settings
     reflect_mission: str | None
+    reflect_source_facts_max_tokens: int
 
     # Disposition settings (hierarchical - can be overridden per bank; None = fall back to DB)
     disposition_skepticism: int | None
@@ -872,6 +877,7 @@ class HindsightConfig:
         "observations_mission",
         # Reflect settings
         "reflect_mission",
+        "reflect_source_facts_max_tokens",
         # Disposition settings
         "disposition_skepticism",
         "disposition_literalism",
@@ -954,9 +960,19 @@ class HindsightConfig:
                 f"Invalid text_search_extension: {self.text_search_extension}. Must be one of: {', '.join(valid_text_search)}"
             )
 
+        # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
+        if self.llm_provider == "none":
+            self.retain_extraction_mode = "chunks"
+            self.enable_observations = False
+            logger.info(
+                "LLM provider set to 'none': forcing retain_extraction_mode='chunks', "
+                "disabling observations/consolidation. Reflect will return HTTP 400."
+            )
+
         # RETAIN_MAX_COMPLETION_TOKENS must be greater than RETAIN_CHUNK_SIZE
         # to ensure the LLM has enough output capacity to extract facts from chunks
-        if self.retain_max_completion_tokens <= self.retain_chunk_size:
+        # (not applicable when provider is "none" since no LLM calls are made)
+        if self.llm_provider != "none" and self.retain_max_completion_tokens <= self.retain_chunk_size:
             raise ValueError(
                 f"Invalid configuration: HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS "
                 f"({self.retain_max_completion_tokens}) must be greater than "
@@ -1281,6 +1297,9 @@ class HindsightConfig:
             ),
             reflect_wall_timeout=int(os.getenv(ENV_REFLECT_WALL_TIMEOUT, str(DEFAULT_REFLECT_WALL_TIMEOUT))),
             reflect_mission=os.getenv(ENV_REFLECT_MISSION) or None,
+            reflect_source_facts_max_tokens=int(
+                os.getenv(ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS))
+            ),
             # Disposition settings (None = fall back to DB value)
             disposition_skepticism=int(os.getenv(ENV_DISPOSITION_SKEPTICISM))
             if os.getenv(ENV_DISPOSITION_SKEPTICISM)

@@ -82,6 +82,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `openai-codex` | `gpt-5.2-codex` |
 | `claude-code` | `claude-sonnet-4-5-20250929` |
 | `bedrock` | `us.amazon.nova-2-lite-v1:0` |
+| `volcano` | `doubao-pro-32k` |
 | `litellm` | `gpt-4o-mini` |
 
 **Example:** Setting just the provider uses its default model:

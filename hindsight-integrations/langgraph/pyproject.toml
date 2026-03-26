@@ -30,6 +30,8 @@ classifiers = [
 dependencies = [
     "langchain-core>=0.3.0",
     "hindsight-client>=0.4.0",
+    # Transitive dependency security fixes
+    "requests>=2.33.0",  # Insecure temp file reuse in extract_zipped_paths()
 ]
 
 [project.optional-dependencies]
