@@ -279,6 +279,5 @@ Try it now: `pip install hindsight-all hindsight-llamaindex` and run the example
 
 ## Next Steps
 
-- **Cookbook**: [LlamaIndex ReAct Agent notebook](https://github.com/vectorize-io/hindsight-cookbook/blob/main/notebooks/08-llamaindex-react-agent.ipynb)
 - **Docs**: [LlamaIndex integration guide](https://docs.hindsight.vectorize.io/docs/sdks/integrations/llamaindex)
 - **Other integrations**: [LangGraph](https://docs.hindsight.vectorize.io/docs/sdks/integrations/langgraph), [Pydantic AI](https://docs.hindsight.vectorize.io/docs/sdks/integrations/pydantic-ai), [CrewAI](https://docs.hindsight.vectorize.io/docs/sdks/integrations/crewai)
