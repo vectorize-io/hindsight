@@ -38,6 +38,7 @@ export function LLMProvidersGrid() {
       { label: 'Ollama',        icon: SiOllama },
       { label: 'LM Studio',     icon: LuBrainCog },
       { label: 'MiniMax',            icon: LuSparkles },
+      { label: 'Volcano Engine',    icon: LuZap },
       { label: 'OpenAI Compatible', icon: OpenAICompatibleIcon },
       { label: 'AWS Bedrock', icon: LuCloud },
       { label: 'LiteLLM (100+)', icon: LuLayers },
