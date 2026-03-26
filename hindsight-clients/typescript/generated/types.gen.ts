@@ -2343,6 +2343,20 @@ export type ValidationError = {
    * Error Type
    */
   type: string;
+  /**
+   * Input
+   */
+  input?: unknown;
+  /**
+   * Context
+   */
+  ctx?: {
+    [key: string]: unknown;
+  };
+  /**
+   * URL
+   */
+  url?: string;
 };
 
 /**

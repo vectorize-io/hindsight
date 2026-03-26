@@ -18,7 +18,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.validation_error_loc_inner import ValidationErrorLocInner
 from typing import Optional, Set
 from typing_extensions import Self
@@ -30,7 +30,10 @@ class ValidationError(BaseModel):
     loc: List[ValidationErrorLocInner]
     msg: StrictStr
     type: StrictStr
-    __properties: ClassVar[List[str]] = ["loc", "msg", "type"]
+    input: Optional[Any] = None
+    ctx: Optional[Dict[str, Any]] = None
+    url: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["loc", "msg", "type", "input", "ctx", "url"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +81,11 @@ class ValidationError(BaseModel):
                 if _item_loc:
                     _items.append(_item_loc.to_dict())
             _dict['loc'] = _items
+        # set to None if input (nullable) is None
+        # and model_fields_set contains the field
+        if self.input is None and "input" in self.model_fields_set:
+            _dict['input'] = None
+
         return _dict
 
     @classmethod
@@ -92,7 +100,10 @@ class ValidationError(BaseModel):
         _obj = cls.model_validate({
             "loc": [ValidationErrorLocInner.from_dict(_item) for _item in obj["loc"]] if obj.get("loc") is not None else None,
             "msg": obj.get("msg"),
-            "type": obj.get("type")
+            "type": obj.get("type"),
+            "input": obj.get("input"),
+            "ctx": obj.get("ctx"),
+            "url": obj.get("url")
         })
         return _obj
 
