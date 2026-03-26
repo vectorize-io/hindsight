@@ -261,7 +261,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
         )
 
-    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax"):
+    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "volcano"):
         return OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -334,6 +334,7 @@ class LLMProvider:
             "minimax",
             "litellm",
             "bedrock",
+            "volcano",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")

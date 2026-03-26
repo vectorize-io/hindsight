@@ -368,6 +368,7 @@ PROVIDER_DEFAULT_MODELS = {
     "none": "none",
     "litellm": "gpt-4o-mini",
     "bedrock": "us.amazon.nova-2-lite-v1:0",
+    "volcano": "doubao-pro-32k",
 }
 DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
 DEFAULT_LLM_MAX_CONCURRENT = 32

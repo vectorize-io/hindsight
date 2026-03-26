@@ -98,7 +98,7 @@ class OpenAICompatibleLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
         # Validate provider
-        valid_providers = ["openai", "groq", "ollama", "lmstudio", "minimax"]
+        valid_providers = ["openai", "groq", "ollama", "lmstudio", "minimax", "volcano"]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
 
@@ -316,8 +316,8 @@ class OpenAICompatibleLLM(LLMInterface):
                         first_msg = call_params["messages"][0]
                         if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
                             first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
-                if self.provider not in ("lmstudio", "ollama"):
-                    # LM Studio and Ollama don't support json_object response format reliably
+                if self.provider not in ("lmstudio", "ollama", "volcano"):
+                    # LM Studio, Ollama and Volcano don't support json_object response format reliably
                     call_params["response_format"] = {"type": "json_object"}
 
         last_exception = None
