@@ -13,7 +13,10 @@ This module provides metrics for:
 
 import logging
 import os
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None  # Windows doesn't have resource module
 import threading
 import time
 from contextlib import contextmanager
@@ -455,6 +458,8 @@ class MetricsCollector(MetricsCollectorBase):
 
     def _setup_process_metrics(self):
         """Set up observable gauges for process metrics."""
+        if resource is None:
+            return  # Skip process metrics on Windows
 
         def get_cpu_times(_options):
             """Get process CPU times."""

@@ -43,7 +43,8 @@ dependencies = [
     "litellm>=1.0.0,<=1.82.6", # 1.82.7+ contains a supply chain attack (malicious .pth credential stealer)
     "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4", # File to markdown conversion
     "obstore>=0.4.0", # S3/GCS/Azure object storage client (Rust-backed)
-    "uvloop>=0.22.1",
+    "winloop>=0.1.0; sys_platform == 'win32'",
+    "uvloop>=0.22.1; sys_platform != 'win32'",
     # Transitive dependency security fixes
     "pyasn1>=0.6.3", # DoS vulnerability fix
     "urllib3>=2.6.3", # Decompression-bomb safeguards bypass fix

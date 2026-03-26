@@ -81,9 +81,9 @@ async def insert_facts_batch(
         if fact.entities:
             signal_parts.extend(e.name for e in fact.entities)
         if fact.occurred_start:
-            signal_parts.append(fact.occurred_start.strftime("%B %-d %Y"))
+            signal_parts.append(fact.occurred_start.strftime("%B %d %Y").replace(" 0", " "))
         if fact.occurred_end and fact.occurred_end != fact.occurred_start:
-            signal_parts.append(fact.occurred_end.strftime("%B %-d %Y"))
+            signal_parts.append(fact.occurred_end.strftime("%B %d %Y").replace(" 0", " "))
         text_signals_list.append(" ".join(signal_parts) if signal_parts else None)
 
     # Batch insert all facts

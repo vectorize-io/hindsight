@@ -211,15 +211,24 @@ def main():
     # Prepare uvicorn config
     # When using workers or reload, we must use import string so each worker can import the app
     use_import_string = args.workers > 1 or args.reload
-    # Check for uvloop availability
-    try:
-        import uvloop  # noqa: F401
-
-        loop_impl = "uvloop"
-        print("uvloop available, will use for event loop")
-    except ImportError:
-        loop_impl = "asyncio"
-        print("uvloop not installed, using default asyncio event loop")
+    # Check for uvloop/winloop availability
+    import sys
+    loop_impl = "asyncio"
+    if sys.platform == "win32":
+        try:
+            import winloop
+            winloop.install()  # Patches asyncio globally — uvicorn uses "asyncio" but gets winloop
+            loop_impl = "asyncio"  # Tell uvicorn "asyncio" — it's now winloop underneath
+            print("winloop installed as asyncio event loop policy (Windows uvloop port)")
+        except ImportError:
+            print("winloop not installed, using default asyncio event loop")
+    else:
+        try:
+            import uvloop  # noqa: F401
+            loop_impl = "uvloop"
+            print("uvloop available, will use for event loop")
+        except ImportError:
+            print("uvloop not installed, using default asyncio event loop")
 
     uvicorn_config = {
         "app": "hindsight_api.server:app" if use_import_string else app,
