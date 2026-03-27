@@ -141,6 +141,16 @@
       "icon": "/img/icons/strands.png"
     },
     {
+      "id": "ag2",
+      "name": "AG2",
+      "description": "Persistent long-term memory for AG2 agents with retain, recall, and reflect tools across conversations.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/ag2",
+      "icon": "/img/icons/ag2.svg"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",

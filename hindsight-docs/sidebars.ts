@@ -252,6 +252,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'sdks/integrations/ag2',
+          label: 'AG2',
+          customProps: { icon: '/img/icons/ag2.svg' },
+        },
+        {
+          type: 'doc',
           id: 'sdks/integrations/skills',
           label: 'Skills',
           customProps: { icon: '/img/icons/skills.png' },
