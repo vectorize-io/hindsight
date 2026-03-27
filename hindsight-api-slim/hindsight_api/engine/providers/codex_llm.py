@@ -263,24 +263,27 @@ class CodexLLM(LLMInterface):
                 )
 
                 # Record trace span
-                from hindsight_api.tracing import get_span_recorder
+                try:
+                    from hindsight_api.tracing import get_span_recorder
 
-                # Estimate tokens for tracing
-                estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
-                estimated_output = len(content) // 4
-                span_recorder = get_span_recorder()
-                span_recorder.record_llm_call(
-                    provider=self.provider,
-                    model=self.model,
-                    scope=scope,
-                    messages=messages,
-                    response_content=result if isinstance(result, str) else json.dumps(result),
-                    input_tokens=estimated_input,
-                    output_tokens=estimated_output,
-                    duration=duration,
-                    finish_reason=None,
-                    error=None,
-                )
+                    # Estimate tokens for tracing
+                    estimated_input = sum(len(m.get("content", "")) for m in messages) // 4
+                    estimated_output = len(content) // 4
+                    span_recorder = get_span_recorder()
+                    span_recorder.record_llm_call(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        response_content=result if isinstance(result, str) else result.model_dump_json(),
+                        input_tokens=estimated_input,
+                        output_tokens=estimated_output,
+                        duration=duration,
+                        finish_reason=None,
+                        error=None,
+                    )
+                except Exception:
+                    pass  # logging failure must never affect the operation
 
                 if return_usage:
                     # Codex doesn't provide token counts, estimate based on content
@@ -526,26 +529,31 @@ class CodexLLM(LLMInterface):
             )
 
             # Record OpenTelemetry span
-            from hindsight_api.tracing import get_span_recorder
+            try:
+                from hindsight_api.tracing import get_span_recorder
 
-            span_recorder = get_span_recorder()
-            # Convert LLMToolCall objects to dicts for span recording
-            tool_calls_dict = (
-                [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls] if tool_calls else None
-            )
-            span_recorder.record_llm_call(
-                provider=self.provider,
-                model=self.model,
-                scope=scope,
-                messages=messages,
-                response_content=content,
-                input_tokens=0,  # Codex doesn't provide token counts
-                output_tokens=0,
-                duration=duration,
-                finish_reason="tool_calls" if tool_calls else "stop",
-                error=None,
-                tool_calls=tool_calls_dict,
-            )
+                span_recorder = get_span_recorder()
+                # Convert LLMToolCall objects to dicts for span recording
+                tool_calls_dict = (
+                    [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in tool_calls]
+                    if tool_calls
+                    else None
+                )
+                span_recorder.record_llm_call(
+                    provider=self.provider,
+                    model=self.model,
+                    scope=scope,
+                    messages=messages,
+                    response_content=content,
+                    input_tokens=0,  # Codex doesn't provide token counts
+                    output_tokens=0,
+                    duration=duration,
+                    finish_reason="tool_calls" if tool_calls else "stop",
+                    error=None,
+                    tool_calls=tool_calls_dict,
+                )
+            except Exception:
+                pass  # logging failure must never affect the operation
 
             return LLMToolCallResult(
                 content=content,
