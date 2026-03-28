@@ -331,7 +331,11 @@ class ClaudeCodeLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools (not used by Claude Agent SDK).
+            tool_choice: How to choose tools - "auto", "none", "required", or specific function dict.
+                - "auto": Model decides whether to call tools (default)
+                - "required": Model must call at least one tool
+                - "none": Model must not call any tools
+                - {"type": "function", "function": {"name": "..."}}: Force specific tool call
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -410,16 +414,52 @@ class ClaudeCodeLLM(LLMInterface):
                 tool_call_id = msg.get("tool_call_id", "")
                 user_content += f"\n\n[Tool result for {tool_call_id}: {content}]"
 
+        # Handle tool_choice parameter to filter tools and adjust instructions
+        # The Claude Agent SDK doesn't have a native tool_choice parameter, so we
+        # enforce it via allowed_tools filtering and system prompt instructions.
+
         # Format tool names for SDK MCP servers: mcp__{server_name}__{tool_name}
         # This is required by the Claude Agent SDK for MCP server tools
         allowed_tool_names = [f"mcp__hindsight_tools__{name}" for name in tool_names]
+        mcp_servers_config = {"hindsight_tools": mcp_server} if sdk_tools else {}
+
+        # Process tool_choice
+        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+            # Force a specific tool: filter allowed_tools to only that tool and add instruction
+            forced_name = tool_choice.get("function", {}).get("name")
+            if forced_name:
+                # Filter to only the forced tool (with MCP prefix)
+                forced_tool_mcp_name = f"mcp__hindsight_tools__{forced_name}"
+                if forced_tool_mcp_name in allowed_tool_names:
+                    allowed_tool_names = [forced_tool_mcp_name]
+                    # Add strong instruction to system prompt
+                    force_instruction = (
+                        f"\n\nIMPORTANT: You MUST call the '{forced_name}' tool. Do not respond with text only."
+                    )
+                    system_prompt += force_instruction
+                    logger.debug(f"Claude Code: Forcing tool call to '{forced_name}'")
+                else:
+                    logger.warning(f"Claude Code: Forced tool '{forced_name}' not found in available tools")
+        elif tool_choice == "required":
+            # Must call at least one tool
+            tool_instruction = (
+                "\n\nIMPORTANT: You MUST call at least one of the available tools. Do not respond with text only."
+            )
+            system_prompt += tool_instruction
+            logger.debug("Claude Code: Tool call required")
+        elif tool_choice == "none":
+            # No tools should be called - disable all tools
+            allowed_tool_names = []
+            mcp_servers_config = {}
+            logger.debug("Claude Code: Tools disabled (tool_choice=none)")
+        # else: tool_choice == "auto" or unspecified - use default behavior (no changes needed)
 
         # Configure SDK options with MCP server
         options = ClaudeAgentOptions(
             system_prompt=system_prompt if system_prompt else None,
             max_turns=1,  # Single-turn for API-style interactions
-            mcp_servers={"hindsight_tools": mcp_server} if sdk_tools else {},
-            allowed_tools=allowed_tool_names if allowed_tool_names else [],
+            mcp_servers=mcp_servers_config,
+            allowed_tools=allowed_tool_names,
         )
 
         # Call Claude Agent SDK with retry logic
