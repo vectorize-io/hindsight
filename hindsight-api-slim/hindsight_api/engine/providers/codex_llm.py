@@ -126,6 +126,32 @@ class CodexLLM(LLMInterface):
         }
         return mapping.get(effort.lower(), "auto")
 
+    def _normalize_tool_choice(self, tool_choice: str | dict[str, Any]) -> str | dict[str, Any]:
+        """Normalize forced function tool choice for the Codex Responses API.
+
+        Older agent paths may still pass OpenAI chat-completions style named
+        tool choice payloads such as:
+
+            {"type": "function", "function": {"name": "recall"}}
+
+        Codex Responses expects the named function at the top level instead:
+
+            {"type": "function", "name": "recall"}
+        """
+        if not isinstance(tool_choice, dict):
+            return tool_choice
+        if str(tool_choice.get("type") or "").strip() != "function":
+            return tool_choice
+        function_payload = tool_choice.get("function")
+        if isinstance(function_payload, dict):
+            function_name = str(function_payload.get("name") or "").strip()
+            if function_name:
+                return {"type": "function", "name": function_name}
+        function_name = str(tool_choice.get("name") or "").strip()
+        if function_name:
+            return {"type": "function", "name": function_name}
+        return tool_choice
+
     async def verify_connection(self) -> None:
         """Verify Codex connection by making a simple test call."""
         try:
@@ -425,7 +451,7 @@ class CodexLLM(LLMInterface):
             max_retries: Maximum retry attempts.
             initial_backoff: Initial backoff time in seconds.
             max_backoff: Maximum backoff time in seconds.
-            tool_choice: How to choose tools - "auto", "none", "required", or specific function.
+            tool_choice: How to choose tools - "auto", "none", "required", or a specific function.
 
         Returns:
             LLMToolCallResult with content and/or tool_calls.
@@ -482,7 +508,7 @@ class CodexLLM(LLMInterface):
             "instructions": system_instruction,
             "input": user_messages,
             "tools": codex_tools,
-            "tool_choice": tool_choice,
+            "tool_choice": self._normalize_tool_choice(tool_choice),
             "parallel_tool_calls": True,
             "reasoning": {"summary": reasoning_summary},
             "store": False,
