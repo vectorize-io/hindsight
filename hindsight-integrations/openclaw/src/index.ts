@@ -33,7 +33,7 @@ import type { RecallResponse } from './types.js';
 const inflightRecalls = new Map<string, Promise<RecallResponse>>();
 const turnCountBySession = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 10_000;
-const RECALL_TIMEOUT_MS = 10_000;
+const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
 // Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
 // blocks) so agent_end can look them up — event.messages in agent_end is clean history.
@@ -727,6 +727,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
         ? config.recallPromptPreamble
         : DEFAULT_RECALL_PROMPT_PREAMBLE,
     recallInjectionPosition: typeof config.recallInjectionPosition === 'string' && ['prepend', 'append', 'user'].includes(config.recallInjectionPosition) ? config.recallInjectionPosition as PluginConfig['recallInjectionPosition'] : undefined,
+    recallTimeoutMs: typeof config.recallTimeoutMs === 'number' && config.recallTimeoutMs >= 1000 ? config.recallTimeoutMs : undefined,
     debug: config.debug ?? false,
   };
 }
@@ -1112,7 +1113,8 @@ export default function (api: MoltbotPluginAPI) {
           debug(`[Hindsight] Reusing in-flight recall for bank ${bankId}`);
           recallPromise = existing;
         } else {
-          recallPromise = client.recall({ query: prompt, max_tokens: pluginConfig.recallMaxTokens || 1024, budget: pluginConfig.recallBudget, types: pluginConfig.recallTypes }, RECALL_TIMEOUT_MS);
+          const recallTimeoutMs = pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS;
+          recallPromise = client.recall({ query: prompt, max_tokens: pluginConfig.recallMaxTokens || 1024, budget: pluginConfig.recallBudget, types: pluginConfig.recallTypes }, recallTimeoutMs);
           inflightRecalls.set(recallKey, recallPromise);
           void recallPromise.catch(() => {}).finally(() => inflightRecalls.delete(recallKey));
         }
@@ -1156,9 +1158,9 @@ ${memoriesFormatted}
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'TimeoutError') {
-          console.warn(`[Hindsight] Auto-recall timed out after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);
+          console.warn(`[Hindsight] Auto-recall timed out after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`);
         } else if (error instanceof Error && error.name === 'AbortError') {
-          console.warn(`[Hindsight] Auto-recall aborted after ${RECALL_TIMEOUT_MS}ms, skipping memory injection`);
+          console.warn(`[Hindsight] Auto-recall aborted after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`);
         } else {
           console.error('[Hindsight] Auto-recall error:', error);
         }
