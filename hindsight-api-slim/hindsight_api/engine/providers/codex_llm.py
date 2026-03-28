@@ -140,6 +140,10 @@ class CodexLLM(LLMInterface):
             )
             logger.info(f"Codex LLM verified: {self.model}")
         except Exception as e:
+            # 429 means quota exhausted, not a configuration error — warn but allow startup
+            if "429" in str(e) or "usage_limit_reached" in str(e):
+                logger.warning(f"Codex LLM quota exhausted for {self.model}, continuing startup: {e}")
+                return
             raise RuntimeError(f"Codex LLM connection verification failed for {self.model}: {e}") from e
 
     async def call(
