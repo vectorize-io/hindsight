@@ -43,7 +43,6 @@ def upgrade() -> None:
     op.execute(f"ALTER TABLE {schema}memory_links ALTER COLUMN bank_id SET NOT NULL")
 
 
-
 def downgrade() -> None:
     schema = _get_schema_prefix()
     op.execute(f"ALTER TABLE {schema}memory_links DROP COLUMN IF EXISTS bank_id")
