@@ -130,24 +130,6 @@ class HindsightClient:
         }
         return self._request("POST", path, body, timeout=timeout)
 
-    def reflect(
-        self,
-        bank_id: str,
-        query: str,
-        budget: str = "mid",
-        max_tokens: int = 1024,
-        timeout: int = 30,
-    ) -> dict:
-        """Reflect on memories and return a synthesized answer.
-
-        Runs an agentic loop that retrieves facts, mental models, and experiences,
-        then uses the LLM to formulate a coherent response. Slower than recall
-        but produces a synthesized prose answer rather than raw facts.
-        """
-        path = f"/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}/reflect"
-        body = {"query": query, "budget": budget, "max_tokens": max_tokens}
-        return self._request("POST", path, body, timeout=timeout)
-
     def set_bank_mission(
         self, bank_id: str, mission: str, retain_mission: Optional[str] = None, timeout: int = 15
     ) -> dict:

@@ -91,6 +91,16 @@
       "icon": "/img/icons/claudecode.svg"
     },
     {
+      "id": "codex",
+      "name": "OpenAI Codex CLI",
+      "description": "Automatic long-term memory for OpenAI Codex CLI via Hindsight hooks. Captures every conversation, recalls relevant context on every prompt.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/codex",
+      "icon": "/img/icons/terminal.svg"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw",
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",

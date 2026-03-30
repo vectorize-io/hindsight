@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "nemoclaw" "strands" "claude-code")
+VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "nemoclaw" "strands" "claude-code" "codex")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"
@@ -116,8 +116,12 @@ elif [ -f "$INTEGRATION_DIR/.claude-plugin/plugin.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/.claude-plugin/plugin.json"
     sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/.claude-plugin/plugin.json"
     rm "$INTEGRATION_DIR/.claude-plugin/plugin.json.bak"
+elif [ -f "$INTEGRATION_DIR/settings.json" ] && grep -q '"version"' "$INTEGRATION_DIR/settings.json"; then
+    print_info "Updating version in $INTEGRATION_DIR/settings.json"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/settings.json"
+    rm "$INTEGRATION_DIR/settings.json.bak"
 else
-    print_error "No pyproject.toml, package.json, or plugin.json found in $INTEGRATION_DIR"
+    print_error "No pyproject.toml, package.json, plugin.json, or versioned settings.json found in $INTEGRATION_DIR"
     exit 1
 fi
 
