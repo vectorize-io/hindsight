@@ -66,21 +66,25 @@ function formatCurrentTimeForRecall(date = new Date()): string {
  * Lazy re-initialization after startup failure.
  * Called by waitForReady when initPromise rejected but API may now be reachable.
  * Throttled to one attempt per 30s to avoid hammering a down service.
+ * Only works if initialization was attempted at least once (isInitialized guard).
  */
 async function lazyReinit(): Promise<void> {
   const now = Date.now();
   if (now - lastReinitAttempt < REINIT_COOLDOWN_MS || isReinitInProgress) {
     return;
   }
+
+  // Only attempt lazy reinit if we've already done initial setup
+  // (i.e., service.start() was called at least once)
+  if (!currentPluginConfig) {
+    debug('[Hindsight] lazyReinit skipped - no plugin config (service.start() not called yet)');
+    return;
+  }
+
   isReinitInProgress = true;
   lastReinitAttempt = now;
 
   const config = currentPluginConfig;
-  if (!config) {
-    isReinitInProgress = false;
-    return;
-  }
-
   const externalApi = detectExternalApi(config);
   if (!externalApi.apiUrl) {
     isReinitInProgress = false;
@@ -127,16 +131,20 @@ if (typeof global !== 'undefined') {
     getClient: () => client,
     waitForReady: async () => {
       if (isInitialized) {return;}
-      if (initPromise) {
-        try {
-          await initPromise;
-        } catch {
-          // Init failed (e.g., health check timeout at startup).
-          // Attempt lazy re-initialization so Hindsight recovers
-          // once the API becomes reachable again.
-          if (!isInitialized) {
-            await lazyReinit();
-          }
+      // If initPromise is null, it means service.start() hasn't been called yet
+      // (CLI mode, not gateway mode). Hooks should gracefully no-op.
+      if (!initPromise) {
+        debug('[Hindsight] waitForReady called but initPromise is null (gateway not started)');
+        return;
+      }
+      try {
+        await initPromise;
+      } catch {
+        // Init failed (e.g., health check timeout at startup).
+        // Attempt lazy re-initialization so Hindsight recovers
+        // once the API becomes reachable again.
+        if (!isInitialized) {
+          await lazyReinit();
         }
       }
     },
@@ -738,7 +746,7 @@ export default function (api: MoltbotPluginAPI) {
   try {
     debug('[Hindsight] Plugin loading...');
 
-    // Get plugin config first (needed for LLM detection and debug flag)
+    // Get plugin config first (needed for debug flag and service registration)
     const pluginConfig = getPluginConfig(api);
     // If logLevel is 'debug', also enable legacy debug flag
     debugEnabled = pluginConfig.debug ?? (pluginConfig.logLevel === 'debug');
@@ -753,158 +761,158 @@ export default function (api: MoltbotPluginAPI) {
     // Store config globally for bank ID derivation in hooks
     currentPluginConfig = pluginConfig;
 
-    // Detect LLM configuration (env vars > plugin config > auto-detect)
-    debug('[Hindsight] Detecting LLM config...');
-    const llmConfig = detectLLMConfig(pluginConfig);
-
-    const baseUrlInfo = llmConfig.baseUrl ? `, base URL: ${llmConfig.baseUrl}` : '';
-    const modelInfo = llmConfig.model || 'default';
-
-    if (llmConfig.provider === 'ollama') {
-      debug(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source})`);
-    } else {
-      debug(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source}${baseUrlInfo})`);
-    }
-    if (pluginConfig.bankMission) {
-      debug(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
-    }
-
-    // Log dynamic bank ID mode
-    if (pluginConfig.dynamicBankId) {
-      const prefixInfo = pluginConfig.bankIdPrefix ? ` (prefix: ${pluginConfig.bankIdPrefix})` : '';
-      debug(`[Hindsight] ✓ Dynamic bank IDs enabled${prefixInfo} - each channel gets isolated memory`);
-    } else {
-      debug(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${DEFAULT_BANK_NAME}`);
-    }
-
-    // Detect external API mode
-    const externalApi = detectExternalApi(pluginConfig);
-
-    // Get API port from config (default: 9077)
-    const apiPort = pluginConfig.apiPort || 9077;
-
-    if (externalApi.apiUrl) {
-      // External API mode - skip local daemon
-      usingExternalApi = true;
-      debug(`[Hindsight] ✓ Using external API: ${externalApi.apiUrl}`);
-
-      // Set env vars so CLI commands (uvx hindsight-embed) use external API
-      process.env.HINDSIGHT_EMBED_API_URL = externalApi.apiUrl;
-      if (externalApi.apiToken) {
-        process.env.HINDSIGHT_EMBED_API_TOKEN = externalApi.apiToken;
-        debug('[Hindsight] API token configured');
-      }
-    } else {
-      debug(`[Hindsight] Daemon idle timeout: ${pluginConfig.daemonIdleTimeout}s (0 = never timeout)`);
-      debug(`[Hindsight] API Port: ${apiPort}`);
-    }
-
-    // Initialize in background (non-blocking)
-    debug('[Hindsight] Starting initialization in background...');
-    initPromise = (async () => {
-      try {
-        if (usingExternalApi && externalApi.apiUrl) {
-          // External API mode - check health, skip daemon startup
-          debug('[Hindsight] External API mode - skipping local daemon...');
-          await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
-
-          // Initialize client with direct HTTP mode
-          debug('[Hindsight] Creating HindsightClient (HTTP mode)...');
-          clientOptions = buildClientOptions(llmConfig, pluginConfig, externalApi);
-          clientsByBankId.clear();
-          banksWithMissionSet.clear();
-          client = new HindsightClient(clientOptions);
-
-          // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
-          const defaultBankId = deriveBankId(undefined, pluginConfig);
-          debug(`[Hindsight] Default bank: ${defaultBankId}`);
-          client.setBankId(defaultBankId);
-
-          // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
-          // For now, set it on the default bank
-          if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
-            debug(`[Hindsight] Setting bank mission...`);
-            await client.setBankMission(pluginConfig.bankMission);
-          }
-
-          if (!isInitialized) {
-            const mode = 'external API';
-            const autoRecall = pluginConfig.autoRecall !== false;
-            const autoRetain = pluginConfig.autoRetain !== false;
-            log.info(`initialized (mode: ${mode}, bank: ${defaultBankId}, autoRecall: ${autoRecall}, autoRetain: ${autoRetain})`);
-          }
-          isInitialized = true;
-          debug('[Hindsight] ✓ Ready (external API mode)');
-        } else {
-          // Local daemon mode - start hindsight-embed daemon
-          debug('[Hindsight] Creating HindsightEmbedManager...');
-          embedManager = new HindsightEmbedManager(
-            apiPort,
-            llmConfig.provider || "",
-            llmConfig.apiKey || "",
-            llmConfig.model,
-            llmConfig.baseUrl,
-            pluginConfig.daemonIdleTimeout,
-            pluginConfig.embedVersion,
-            pluginConfig.embedPackagePath
-          );
-
-          // Start the embedded server
-          debug('[Hindsight] Starting embedded server...');
-          await embedManager.start();
-
-          // Initialize client (local daemon mode — no apiUrl)
-          debug('[Hindsight] Creating HindsightClient (subprocess mode)...');
-          clientOptions = buildClientOptions(llmConfig, pluginConfig, { apiUrl: null, apiToken: null });
-          clientsByBankId.clear();
-          banksWithMissionSet.clear();
-          client = new HindsightClient(clientOptions);
-
-          // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
-          const defaultBankId = deriveBankId(undefined, pluginConfig);
-          debug(`[Hindsight] Default bank: ${defaultBankId}`);
-          client.setBankId(defaultBankId);
-
-          // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
-          // For now, set it on the default bank
-          if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
-            debug(`[Hindsight] Setting bank mission...`);
-            await client.setBankMission(pluginConfig.bankMission);
-          }
-
-          if (!isInitialized) {
-            const mode = 'local daemon';
-            const autoRecall = pluginConfig.autoRecall !== false;
-            const autoRetain = pluginConfig.autoRetain !== false;
-            log.info(`initialized (mode: ${mode}, bank: ${defaultBankId}, autoRecall: ${autoRecall}, autoRetain: ${autoRetain})`);
-          }
-          isInitialized = true;
-          debug('[Hindsight] ✓ Ready');
-        }
-      } catch (error) {
-        log.error('initialization error', error);
-        throw error;
-      }
-    })();
-
-    // Suppress unhandled rejection — service.start() will await and handle errors
-    initPromise.catch(() => {});
+    debug('[Hindsight] Plugin loaded successfully (deferred heavy init to gateway start)');
 
     // Register background service for cleanup
+    // IMPORTANT: Heavy initialization (LLM detection, daemon start, API health checks)
+    // happens in service.start() which is ONLY called on gateway start,
+    // not on every CLI command.
     debug('[Hindsight] Registering service...');
     api.registerService({
       id: 'hindsight-memory',
       async start() {
-        debug('[Hindsight] Service start called...');
+        debug('[Hindsight] Service start called - beginning heavy initialization...');
 
-        // Wait for background init if still pending
-        if (initPromise) {
-          try {
-            await initPromise;
-          } catch (error) {
-            log.error('initial initialization failed', error);
-            // Continue to health check below
+        // Detect LLM configuration (env vars > plugin config > auto-detect)
+        debug('[Hindsight] Detecting LLM config...');
+        const llmConfig = detectLLMConfig(pluginConfig);
+
+        const baseUrlInfo = llmConfig.baseUrl ? `, base URL: ${llmConfig.baseUrl}` : '';
+        const modelInfo = llmConfig.model || 'default';
+
+        if (llmConfig.provider === 'ollama') {
+          debug(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source})`);
+        } else {
+          debug(`[Hindsight] ✓ Using provider: ${llmConfig.provider}, model: ${modelInfo} (${llmConfig.source}${baseUrlInfo})`);
+        }
+        if (pluginConfig.bankMission) {
+          debug(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
+        }
+
+        // Log dynamic bank ID mode
+        if (pluginConfig.dynamicBankId) {
+          const prefixInfo = pluginConfig.bankIdPrefix ? ` (prefix: ${pluginConfig.bankIdPrefix})` : '';
+          debug(`[Hindsight] ✓ Dynamic bank IDs enabled${prefixInfo} - each channel gets isolated memory`);
+        } else {
+          debug(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${DEFAULT_BANK_NAME}`);
+        }
+
+        // Detect external API mode
+        const externalApi = detectExternalApi(pluginConfig);
+
+        // Get API port from config (default: 9077)
+        const apiPort = pluginConfig.apiPort || 9077;
+
+        if (externalApi.apiUrl) {
+          // External API mode - skip local daemon
+          usingExternalApi = true;
+          debug(`[Hindsight] ✓ Using external API: ${externalApi.apiUrl}`);
+
+          // Set env vars so CLI commands (uvx hindsight-embed) use external API
+          process.env.HINDSIGHT_EMBED_API_URL = externalApi.apiUrl;
+          if (externalApi.apiToken) {
+            process.env.HINDSIGHT_EMBED_API_TOKEN = externalApi.apiToken;
+            debug('[Hindsight] API token configured');
           }
+        } else {
+          debug(`[Hindsight] Daemon idle timeout: ${pluginConfig.daemonIdleTimeout}s (0 = never timeout)`);
+          debug(`[Hindsight] API Port: ${apiPort}`);
+        }
+
+        // Initialize (runs synchronously in service.start())
+        debug('[Hindsight] Starting initialization...');
+        initPromise = (async () => {
+          try {
+            if (usingExternalApi && externalApi.apiUrl) {
+              // External API mode - check health, skip daemon startup
+              debug('[Hindsight] External API mode - skipping local daemon...');
+              await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
+
+              // Initialize client with direct HTTP mode
+              debug('[Hindsight] Creating HindsightClient (HTTP mode)...');
+              clientOptions = buildClientOptions(llmConfig, pluginConfig, externalApi);
+              clientsByBankId.clear();
+              banksWithMissionSet.clear();
+              client = new HindsightClient(clientOptions);
+
+              // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
+              const defaultBankId = deriveBankId(undefined, pluginConfig);
+              debug(`[Hindsight] Default bank: ${defaultBankId}`);
+              client.setBankId(defaultBankId);
+
+              // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
+              // For now, set it on the default bank
+              if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
+                debug(`[Hindsight] Setting bank mission...`);
+                await client.setBankMission(pluginConfig.bankMission);
+              }
+
+              if (!isInitialized) {
+                const mode = 'external API';
+                const autoRecall = pluginConfig.autoRecall !== false;
+                const autoRetain = pluginConfig.autoRetain !== false;
+                log.info(`initialized (mode: ${mode}, bank: ${defaultBankId}, autoRecall: ${autoRecall}, autoRetain: ${autoRetain})`);
+              }
+              isInitialized = true;
+              debug('[Hindsight] ✓ Ready (external API mode)');
+            } else {
+              // Local daemon mode - start hindsight-embed daemon
+              debug('[Hindsight] Creating HindsightEmbedManager...');
+              embedManager = new HindsightEmbedManager(
+                apiPort,
+                llmConfig.provider || "",
+                llmConfig.apiKey || "",
+                llmConfig.model,
+                llmConfig.baseUrl,
+                pluginConfig.daemonIdleTimeout,
+                pluginConfig.embedVersion,
+                pluginConfig.embedPackagePath
+              );
+
+              // Start the embedded server
+              debug('[Hindsight] Starting embedded server...');
+              await embedManager.start();
+
+              // Initialize client (local daemon mode — no apiUrl)
+              debug('[Hindsight] Creating HindsightClient (subprocess mode)...');
+              clientOptions = buildClientOptions(llmConfig, pluginConfig, { apiUrl: null, apiToken: null });
+              clientsByBankId.clear();
+              banksWithMissionSet.clear();
+              client = new HindsightClient(clientOptions);
+
+              // Set default bank (will be overridden per-request when dynamic bank IDs are enabled)
+              const defaultBankId = deriveBankId(undefined, pluginConfig);
+              debug(`[Hindsight] Default bank: ${defaultBankId}`);
+              client.setBankId(defaultBankId);
+
+              // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
+              // For now, set it on the default bank
+              if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
+                debug(`[Hindsight] Setting bank mission...`);
+                await client.setBankMission(pluginConfig.bankMission);
+              }
+
+              if (!isInitialized) {
+                const mode = 'local daemon';
+                const autoRecall = pluginConfig.autoRecall !== false;
+                const autoRetain = pluginConfig.autoRetain !== false;
+                log.info(`initialized (mode: ${mode}, bank: ${defaultBankId}, autoRecall: ${autoRecall}, autoRetain: ${autoRetain})`);
+              }
+              isInitialized = true;
+              debug('[Hindsight] ✓ Ready');
+            }
+          } catch (error) {
+            log.error('initialization error', error);
+            throw error;
+          }
+        })();
+
+        // Wait for initialization to complete
+        try {
+          await initPromise;
+        } catch (error) {
+          log.error('initial initialization failed', error);
+          // Continue to health check below
         }
 
         // External API mode: check external API health
