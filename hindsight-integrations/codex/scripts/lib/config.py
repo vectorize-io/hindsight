@@ -117,7 +117,7 @@ def load_config() -> dict:
     """
     config = dict(DEFAULTS)
 
-    # 1. Plugin install settings.json (written by install.sh)
+    # 1. Plugin install settings.json (written by get-codex installer)
     install_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     _load_settings_file(os.path.join(install_root, "settings.json"), config)
 
