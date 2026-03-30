@@ -7,6 +7,7 @@ This provider supports both:
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -472,9 +473,10 @@ class GeminiLLM(LLMInterface):
                         fn_args = parse_llm_json(fn_args_str)
                         thought_signature = tc.get("thought_signature")
                         fc_kwargs: dict[str, Any] = {"name": fn_name, "args": fn_args}
+                        part_kwargs: dict[str, Any] = {"function_call": genai_types.FunctionCall(**fc_kwargs)}
                         if thought_signature:
-                            fc_kwargs["thought_signature"] = thought_signature
-                        parts.append(genai_types.Part(function_call=genai_types.FunctionCall(**fc_kwargs)))
+                            part_kwargs["thought_signature"] = base64.b64decode(thought_signature)
+                        parts.append(genai_types.Part(**part_kwargs))
                     gemini_contents.append(genai_types.Content(role="model", parts=parts))
                 else:
                     gemini_contents.append(genai_types.Content(role="model", parts=[genai_types.Part(text=content)]))
@@ -547,7 +549,10 @@ class GeminiLLM(LLMInterface):
                                 content = part.text
                             if hasattr(part, "function_call") and part.function_call:
                                 fc = part.function_call
-                                thought_signature = getattr(fc, "thought_signature", None)
+                                _raw_ts = getattr(part, "thought_signature", None)
+                                thought_signature = (
+                                    base64.b64encode(_raw_ts).decode("ascii") if isinstance(_raw_ts, bytes) else _raw_ts
+                                )
                                 tool_calls.append(
                                     LLMToolCall(
                                         id=f"gemini_{len(tool_calls)}",
