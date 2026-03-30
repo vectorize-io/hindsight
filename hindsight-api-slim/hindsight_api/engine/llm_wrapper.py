@@ -146,6 +146,7 @@ def create_llm_provider(
     reasoning_effort: str,
     groq_service_tier: str | None = None,
     openai_service_tier: str | None = None,
+    extra_body: dict[str, Any] | None = None,
     vertexai_project_id: str | None = None,
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
@@ -162,6 +163,7 @@ def create_llm_provider(
         reasoning_effort: Reasoning effort level for supported providers.
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
+        extra_body: Extra body params merged into OpenAI-compatible API calls.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -270,6 +272,7 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
             groq_service_tier=groq_service_tier,
             openai_service_tier=openai_service_tier,
+            extra_body=extra_body,
         )
 
     else:
@@ -293,6 +296,7 @@ class LLMProvider:
         groq_service_tier: str | None = None,
         openai_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
+        extra_body: dict[str, Any] | None = None,
     ):
         """
         Initialize LLM provider.
@@ -306,6 +310,7 @@ class LLMProvider:
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto") - from config.
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
+            extra_body: Extra body params merged into OpenAI-compatible API calls.
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -317,6 +322,8 @@ class LLMProvider:
         self.openai_service_tier = openai_service_tier
         # Gemini safety settings (instance default; can be overridden per-request via context var)
         self.gemini_safety_settings = gemini_safety_settings
+        # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
+        self.extra_body = extra_body
 
         # Validate provider
         valid_providers = [
@@ -413,6 +420,7 @@ class LLMProvider:
             reasoning_effort=self.reasoning_effort,
             groq_service_tier=self.groq_service_tier,
             openai_service_tier=self.openai_service_tier,
+            extra_body=self.extra_body,
             vertexai_project_id=vertexai_project_id,
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
@@ -725,7 +733,15 @@ class LLMProvider:
         base_url = os.getenv("HINDSIGHT_API_LLM_BASE_URL", "")
         model = os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b")
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="low")
+        extra_body = json.loads(os.getenv("HINDSIGHT_API_LLM_EXTRA_BODY", "null"))
+        return cls(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort="low",
+            extra_body=extra_body,
+        )
 
     @classmethod
     def for_answer_generation(cls) -> "LLMProvider":
@@ -745,7 +761,15 @@ class LLMProvider:
         base_url = os.getenv("HINDSIGHT_API_ANSWER_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_ANSWER_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="high")
+        extra_body = json.loads(os.getenv("HINDSIGHT_API_LLM_EXTRA_BODY", "null"))
+        return cls(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort="high",
+            extra_body=extra_body,
+        )
 
     @classmethod
     def for_judge(cls) -> "LLMProvider":
@@ -765,7 +789,15 @@ class LLMProvider:
         base_url = os.getenv("HINDSIGHT_API_JUDGE_LLM_BASE_URL", os.getenv("HINDSIGHT_API_LLM_BASE_URL", ""))
         model = os.getenv("HINDSIGHT_API_JUDGE_LLM_MODEL", os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"))
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model, reasoning_effort="high")
+        extra_body = json.loads(os.getenv("HINDSIGHT_API_LLM_EXTRA_BODY", "null"))
+        return cls(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort="high",
+            extra_body=extra_body,
+        )
 
 
 class ConfiguredLLMProvider:

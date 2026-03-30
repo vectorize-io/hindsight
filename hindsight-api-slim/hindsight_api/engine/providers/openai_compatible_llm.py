@@ -80,6 +80,7 @@ class OpenAICompatibleLLM(LLMInterface):
         reasoning_effort: str = "low",
         timeout: float | None = None,
         groq_service_tier: str | None = None,
+        extra_body: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         """
@@ -93,6 +94,7 @@ class OpenAICompatibleLLM(LLMInterface):
             reasoning_effort: Reasoning effort level for supported models ("low", "medium", "high").
             timeout: Request timeout in seconds (uses env var or 300s default).
             groq_service_tier: Groq service tier ("on_demand", "flex", "auto").
+            extra_body: Extra body params merged into every API call.
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -124,6 +126,8 @@ class OpenAICompatibleLLM(LLMInterface):
         # Service tier configuration (from config, not env vars)
         self.groq_service_tier = groq_service_tier
         self.openai_service_tier = kwargs.get("openai_service_tier")
+        # User-configured extra body params (merged into every API call)
+        self._config_extra_body = extra_body or {}
 
         # Get timeout config
         self.timeout = timeout or float(os.getenv(ENV_LLM_TIMEOUT, str(DEFAULT_LLM_TIMEOUT)))
@@ -273,17 +277,17 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["reasoning_effort"] = self.reasoning_effort
 
         # Provider-specific parameters
+        extra_body: dict[str, Any] = {**self._config_extra_body}
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
-            extra_body: dict[str, Any] = {}
             # Add service_tier if configured
             if self.groq_service_tier:
                 extra_body["service_tier"] = self.groq_service_tier
             # Add reasoning parameters for reasoning models
             if is_reasoning_model:
                 extra_body["include_reasoning"] = False
-            if extra_body:
-                call_params["extra_body"] = extra_body
+        if extra_body:
+            call_params["extra_body"] = extra_body
 
         # Prepare response format ONCE before retry loop
         if response_format is not None:
@@ -581,8 +585,11 @@ class OpenAICompatibleLLM(LLMInterface):
             call_params["temperature"] = temperature
 
         # Provider-specific parameters
+        extra_body: dict[str, Any] = {**self._config_extra_body}
         if self.provider == "groq":
             call_params["seed"] = DEFAULT_LLM_SEED
+        if extra_body:
+            call_params["extra_body"] = extra_body
 
         last_exception = None
 

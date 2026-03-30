@@ -396,6 +396,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=memory_llm_api_key,
             base_url=memory_llm_base_url,
             model=memory_llm_model,
+            extra_body=config.llm_extra_body,
         )
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead)
@@ -422,6 +423,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=retain_api_key,
             base_url=retain_base_url,
             model=retain_model,
+            extra_body=config.llm_extra_body,
         )
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
@@ -443,6 +445,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=reflect_api_key,
             base_url=reflect_base_url,
             model=reflect_model,
+            extra_body=config.llm_extra_body,
         )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
@@ -464,6 +467,7 @@ class MemoryEngine(MemoryEngineInterface):
             api_key=consolidation_api_key,
             base_url=consolidation_base_url,
             model=consolidation_model,
+            extra_body=config.llm_extra_body,
         )
 
         # Initialize cross-encoder reranker (cached for performance)
