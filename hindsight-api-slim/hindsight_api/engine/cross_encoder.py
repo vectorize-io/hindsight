@@ -629,12 +629,14 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
     See: https://docs.zeroentropy.dev/models
     """
 
-    RERANK_URL = "https://api.zeroentropy.dev/v1/models/rerank"
+    DEFAULT_BASE_URL = "https://api.zeroentropy.dev"
+    RERANK_PATH = "/v1/models/rerank"
 
     def __init__(
         self,
         api_key: str,
         model: str = DEFAULT_RERANKER_ZEROENTROPY_MODEL,
+        base_url: str | None = None,
         timeout: float = 60.0,
     ):
         """
@@ -643,10 +645,13 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
         Args:
             api_key: ZeroEntropy API key
             model: ZeroEntropy rerank model name (default: zerank-2)
+            base_url: Custom base URL for ZeroEntropy-compatible API (e.g., mock server or proxy)
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url.rstrip("/") if base_url else self.DEFAULT_BASE_URL
+        self.rerank_url = f"{self.base_url}{self.RERANK_PATH}"
         self.timeout = timeout
         self._async_client: httpx.AsyncClient | None = None
 
