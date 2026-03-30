@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="OpenAI Codex CLI Changelog" subtitle="Hindsight memory integration for OpenAI Codex CLI." />
 
-[← Codex CLI integration](/next/sdks/integrations/codex)
+[← Codex CLI integration](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/codex)
 
 ## [0.1.0](https://github.com/vectorize-io/hindsight/tree/integrations/codex/v0.1.0)
 
