@@ -11,25 +11,16 @@ Persistent memory for [OpenAI Codex CLI](https://github.com/openai/codex) using 
 ## Quick Start
 
 ```bash
-# 1. Clone the Hindsight repo and install the plugin
-git clone https://github.com/vectorize-io/hindsight.git
-cd hindsight/hindsight-integrations/codex
-./install.sh
-
-# 2. Configure your Hindsight connection
-cat > ~/.hindsight/codex.json << 'EOF'
-{
-  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
-  "hindsightApiToken": "hsk_your_token_here",
-  "bankId": "codex"
-}
-EOF
-
-# 3. Start Codex — memory is live
-codex
+curl -fsSL https://hindsight.vectorize.io/get-codex | bash
 ```
 
-For a local Hindsight instance, set `hindsightApiUrl` to `http://localhost:9077` and omit `hindsightApiToken`.
+The installer will guide you through choosing local or cloud mode and configuring your connection. Once installed, start a new Codex session — memory is live.
+
+To uninstall:
+
+```bash
+curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --uninstall
+```
 
 ## Features
 
@@ -174,7 +165,7 @@ With this config, running Codex in `~/projects/api` and `~/projects/frontend` st
 
 ## Troubleshooting
 
-**Hooks not firing**: Check that `~/.codex/config.toml` contains `codex_hooks = true` under `[features]`. Re-run `install.sh` to write this automatically.
+**Hooks not firing**: Check that `~/.codex/config.toml` contains `codex_hooks = true` under `[features]`. Re-run the installer to fix this automatically.
 
 **No memories recalled**: Recall returns results only after something has been retained. Either complete one Codex session first, or seed your bank manually using the [cookbook example](https://github.com/vectorize-io/hindsight-cookbook/tree/main/applications/codex-memory).
 

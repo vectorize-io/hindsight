@@ -21,20 +21,18 @@ Three Codex hooks keep memory in sync automatically:
 ## Installation
 
 ```bash
-git clone https://github.com/vectorize-io/hindsight
-cd hindsight/hindsight-integrations/codex
-./install.sh
+curl -fsSL https://hindsight.vectorize.io/get-codex | bash
 ```
 
 The installer:
-1. Copies scripts to `~/.hindsight/codex/scripts/`
+1. Downloads scripts to `~/.hindsight/codex/scripts/`
 2. Writes `~/.codex/hooks.json` with absolute paths to the scripts
 3. Adds `codex_hooks = true` to `~/.codex/config.toml`
 
 ### Uninstall
 
 ```bash
-./install.sh --uninstall
+curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --uninstall
 ```
 
 ## Configuration

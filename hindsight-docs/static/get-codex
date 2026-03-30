@@ -1,0 +1,356 @@
+#!/bin/bash
+#
+# Install Hindsight Memory for OpenAI Codex CLI
+#
+# Usage:
+#   curl -fsSL https://hindsight.vectorize.io/get-codex | bash
+#
+# Options:
+#   --uninstall    Remove Hindsight hooks
+#   --mode <mode>  Mode: local (default) or cloud
+#
+# Examples:
+#   curl -fsSL https://hindsight.vectorize.io/get-codex | bash
+#   curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --mode cloud
+#   curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --uninstall
+#
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m' # No Color
+
+print_info() {
+    echo -e "${BLUE}ℹ${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}✗${NC} $1"
+    exit 1
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
+
+print_step() {
+    echo ""
+    echo -e "${BOLD}${CYAN}▸ $1${NC}"
+    echo ""
+}
+
+print_banner() {
+    echo ""
+    # ANSI logo
+    echo -e "  \033[38;2;9;127;184m▄\033[0m\033[48;2;8;130;178m\033[38;2;5;133;186m▄\033[0m       \033[48;2;10;143;160m\033[38;2;10;143;165m▄\033[0m\033[38;2;7;140;156m▄\033[0m  "
+    echo -e " \033[38;2;8;125;192m▄\033[0m \033[38;2;3;132;191m▀\033[0m\033[38;2;2;133;192m▄\033[0m \033[38;2;3;132;180m▄\033[0m\033[38;2;1;137;184m▄\033[0m\033[38;2;3;133;174m▄\033[0m \033[38;2;3;142;176m▄\033[0m\033[38;2;4;142;169m▀\033[0m \033[38;2;10;144;164m▄\033[0m "
+    echo -e "\033[38;2;6;121;195m▀\033[0m\033[38;2;5;128;203m▀\033[0m\033[48;2;5;124;195m\033[38;2;3;125;200m▄\033[0m\033[38;2;2;126;196m▄\033[0m\033[48;2;3;128;188m\033[38;2;1;131;196m▄\033[0m\033[48;2;0;152;219m\033[38;2;2;131;191m▄\033[0m\033[38;2;1;141;196m▀\033[0m\033[38;2;1;135;183m▀\033[0m\033[38;2;1;148;198m▀\033[0m\033[48;2;1;156;202m\033[38;2;2;135;180m▄\033[0m\033[48;2;4;134;169m\033[38;2;1;137;177m▄\033[0m\033[38;2;3;138;173m▄\033[0m\033[48;2;6;137;165m\033[38;2;2;140;170m▄\033[0m\033[38;2;7;144;169m▀\033[0m\033[38;2;7;139;158m▀\033[0m"
+    echo -e "   \033[48;2;2;128;202m\033[38;2;2;124;201m▄\033[0m\033[48;2;1;130;201m\033[38;2;0;135;212m▄\033[0m\033[38;2;2;128;196m▄\033[0m \033[48;2;2;142;204m\033[38;2;7;138;199m▄\033[0m \033[38;2;1;135;186m▄\033[0m\033[48;2;1;142;186m\033[38;2;2;144;194m▄\033[0m\033[48;2;3;138;176m\033[38;2;2;134;176m▄\033[0m   "
+    echo -e " \033[48;2;8;118;200m\033[38;2;8;121;209m▄\033[0m\033[38;2;3;121;203m▀\033[0m \033[38;2;3;122;192m▀\033[0m\033[38;2;1;138;216m▀\033[0m\033[48;2;0;138;210m\033[38;2;3;128;198m▄\033[0m\033[48;2;0;126;188m\033[38;2;2;131;198m▄\033[0m\033[48;2;0;142;205m\033[38;2;3;132;193m▄\033[0m\033[38;2;1;140;196m▀\033[0m  \033[38;2;4;134;175m▀\033[0m\033[48;2;13;135;167m\033[38;2;8;136;174m▄\033[0m "
+    echo ""
+    echo -e "  ${BOLD}HINDSIGHT FOR CODEX CLI${NC}"
+    echo -e "  ${DIM}Give your Codex agent persistent memory${NC}"
+    echo ""
+}
+
+GITHUB_RAW="https://raw.githubusercontent.com/vectorize-io/hindsight/main/hindsight-integrations/codex"
+INSTALL_DIR="${HOME}/.hindsight/codex"
+SCRIPTS_DIR="${INSTALL_DIR}/scripts"
+CODEX_DIR="${HOME}/.codex"
+HOOKS_FILE="${CODEX_DIR}/hooks.json"
+CONFIG_FILE="${CODEX_DIR}/config.toml"
+
+# Script files to download
+SCRIPT_FILES=(
+    "scripts/session_start.py"
+    "scripts/recall.py"
+    "scripts/retain.py"
+    "scripts/lib/__init__.py"
+    "scripts/lib/bank.py"
+    "scripts/lib/client.py"
+    "scripts/lib/config.py"
+    "scripts/lib/content.py"
+    "scripts/lib/daemon.py"
+    "scripts/lib/llm.py"
+    "scripts/lib/state.py"
+)
+
+# Parse arguments
+MODE=""
+UNINSTALL=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --uninstall)
+            UNINSTALL=true
+            shift
+            ;;
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: curl -fsSL https://hindsight.vectorize.io/get-codex | bash [-s -- OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --mode <mode>    Mode: local (default) or cloud"
+            echo "  --uninstall      Remove Hindsight hooks"
+            exit 0
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Uninstall
+# ──────────────────────────────────────────────────────────────────────────────
+if [ "$UNINSTALL" = true ]; then
+    echo "Uninstalling Hindsight Codex integration..."
+
+    if [ -d "${SCRIPTS_DIR}" ]; then
+        rm -rf "${SCRIPTS_DIR}"
+        echo "  Removed ${SCRIPTS_DIR}"
+    fi
+
+    if [ -f "${HOOKS_FILE}" ]; then
+        rm -f "${HOOKS_FILE}"
+        echo "  Removed ${HOOKS_FILE}"
+    fi
+
+    if [ -f "${CONFIG_FILE}" ]; then
+        sed -i.bak '/^codex_hooks *= *true/d' "${CONFIG_FILE}" && rm -f "${CONFIG_FILE}.bak"
+        echo "  Removed codex_hooks from ${CONFIG_FILE}"
+    fi
+
+    echo ""
+    print_success "Uninstall complete."
+    exit 0
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Install
+# ──────────────────────────────────────────────────────────────────────────────
+
+print_banner
+
+# Step 1: Check prerequisites
+print_step "Checking prerequisites"
+
+if ! command -v python3 &> /dev/null; then
+    print_error "Python 3 is required.\nInstall from https://python.org"
+fi
+print_success "Python 3 available"
+
+if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
+    print_error "curl or wget is required to download scripts."
+fi
+
+# Step 2: Select mode
+if [ -z "$MODE" ]; then
+    if [ -t 0 ] || [ -e /dev/tty ]; then
+        echo -e "${DIM}Select deployment mode:${NC}"
+        echo ""
+        echo -e "  ${BOLD}1)${NC} Local ${DIM}- Run Hindsight on your machine (default)${NC}"
+        echo -e "  ${BOLD}2)${NC} Cloud ${DIM}- Connect to Hindsight Cloud${NC}"
+        echo ""
+        if [ -t 0 ]; then
+            read -p "Enter choice [1]: " mode_choice
+        else
+            read -p "Enter choice [1]: " mode_choice </dev/tty
+        fi
+        mode_choice=${mode_choice:-1}
+        case $mode_choice in
+            1) MODE="local" ;;
+            2) MODE="cloud" ;;
+            *) MODE="local" ;;
+        esac
+        echo ""
+    else
+        MODE="local"
+    fi
+fi
+
+print_info "Mode: ${BOLD}$MODE${NC}"
+
+# Step 3: Download scripts from GitHub
+print_step "Downloading hook scripts"
+
+mkdir -p "${SCRIPTS_DIR}/lib"
+
+download_file() {
+    local url="$1"
+    local dest="$2"
+    if command -v curl &> /dev/null; then
+        curl -fsSL "$url" -o "$dest"
+    else
+        wget -q "$url" -O "$dest"
+    fi
+}
+
+for file in "${SCRIPT_FILES[@]}"; do
+    download_file "${GITHUB_RAW}/${file}" "${SCRIPTS_DIR}/${file#scripts/}"
+done
+
+chmod +x "${SCRIPTS_DIR}/session_start.py"
+chmod +x "${SCRIPTS_DIR}/recall.py"
+chmod +x "${SCRIPTS_DIR}/retain.py"
+
+print_success "Scripts installed to ${SCRIPTS_DIR}"
+
+# Step 4: Download default settings (don't overwrite existing)
+SETTINGS_DST="${INSTALL_DIR}/settings.json"
+if [ ! -f "${SETTINGS_DST}" ]; then
+    download_file "${GITHUB_RAW}/settings.json" "${SETTINGS_DST}"
+    print_success "Default settings written to ${SETTINGS_DST}"
+else
+    print_info "Keeping existing settings at ${SETTINGS_DST}"
+fi
+
+# Step 5: Configure connection
+if [ "$MODE" = "cloud" ]; then
+    print_step "Configuring Hindsight Cloud connection"
+
+    DEFAULT_CLOUD_URL="https://api.hindsight.vectorize.io"
+
+    echo -e "${DIM}Enter your Hindsight Cloud connection details.${NC}"
+    echo -e "${DIM}Get these from https://ui.hindsight.vectorize.io${NC}"
+    echo ""
+
+    if [ -t 0 ]; then
+        read -p "Cloud API URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL
+        read -p "API Token: " CLOUD_TOKEN
+    else
+        read -p "Cloud API URL [$DEFAULT_CLOUD_URL]: " CLOUD_URL </dev/tty
+        read -p "API Token: " CLOUD_TOKEN </dev/tty
+    fi
+    CLOUD_URL=${CLOUD_URL:-$DEFAULT_CLOUD_URL}
+
+    if [ -z "$CLOUD_TOKEN" ]; then
+        print_error "API Token is required for cloud mode"
+    fi
+
+    # Write user config
+    USER_CONFIG="${HOME}/.hindsight/codex.json"
+    cat > "$USER_CONFIG" <<CFGEOF
+{
+  "hindsightApiUrl": "${CLOUD_URL}",
+  "hindsightApiToken": "${CLOUD_TOKEN}"
+}
+CFGEOF
+    chmod 600 "$USER_CONFIG"
+    print_success "Cloud config saved to ${USER_CONFIG}"
+
+else
+    # Local mode — check for LLM provider
+    print_step "Checking LLM configuration"
+
+    if [ -n "${OPENAI_API_KEY:-}" ]; then
+        print_success "OpenAI API key detected"
+    elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        print_success "Anthropic API key detected"
+    elif [ -n "${GEMINI_API_KEY:-}" ]; then
+        print_success "Gemini API key detected"
+    elif [ -n "${GROQ_API_KEY:-}" ]; then
+        print_success "Groq API key detected"
+    else
+        print_warning "No LLM API key detected. Set one before using Codex:"
+        echo -e "    ${CYAN}export OPENAI_API_KEY=sk-your-key${NC}"
+        echo -e "    ${DIM}or${NC}"
+        echo -e "    ${CYAN}export ANTHROPIC_API_KEY=your-key${NC}"
+    fi
+fi
+
+# Step 6: Write hooks.json
+print_step "Configuring Codex hooks"
+
+mkdir -p "${CODEX_DIR}"
+cat > "${HOOKS_FILE}" <<HOOKSEOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${SCRIPTS_DIR}/session_start.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${SCRIPTS_DIR}/recall.py\"",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${SCRIPTS_DIR}/retain.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKSEOF
+print_success "Hooks written to ${HOOKS_FILE}"
+
+# Step 7: Enable codex_hooks in config.toml
+if [ ! -f "${CONFIG_FILE}" ]; then
+    touch "${CONFIG_FILE}"
+fi
+
+if grep -q '^\[features\]' "${CONFIG_FILE}" 2>/dev/null; then
+    if ! grep -q '^codex_hooks' "${CONFIG_FILE}"; then
+        sed -i.bak '/^\[features\]/a codex_hooks = true' "${CONFIG_FILE}" && rm -f "${CONFIG_FILE}.bak"
+        print_success "Added codex_hooks = true to ${CONFIG_FILE}"
+    else
+        print_info "codex_hooks already enabled"
+    fi
+else
+    printf '\n[features]\ncodex_hooks = true\n' >> "${CONFIG_FILE}"
+    print_success "Added codex_hooks = true to ${CONFIG_FILE}"
+fi
+
+# Done!
+echo ""
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  ✓ Installation Complete!${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  Hindsight memory is now active in ${BOLD}Codex CLI${NC}."
+echo ""
+echo -e "  ${DIM}Configuration:${NC}"
+echo -e "    ${CYAN}~/.hindsight/codex/settings.json${NC}  ${DIM}(plugin defaults)${NC}"
+echo -e "    ${CYAN}~/.hindsight/codex.json${NC}           ${DIM}(personal overrides)${NC}"
+echo ""
+echo -e "  ${DIM}Start a new Codex session to activate.${NC}"
+echo ""
+echo -e "  ${DIM}Uninstall:${NC}"
+echo -e "    ${CYAN}curl -fsSL https://hindsight.vectorize.io/get-codex | bash -s -- --uninstall${NC}"
+echo ""
+echo -e "  ${DIM}Documentation:${NC} ${BLUE}https://hindsight.vectorize.io/sdks/integrations/codex${NC}"
+echo ""
