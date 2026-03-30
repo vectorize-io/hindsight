@@ -225,6 +225,7 @@ class RecallResult(BaseModel):
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
+    relevance: float = Field(default=0.0, description="Combined relevance score from reranking")
 
 
 class EntityObservationResponse(BaseModel):
@@ -2548,6 +2549,7 @@ def _register_routes(app: FastAPI):
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
+                    relevance=fact.relevance,
                 )
 
             recall_results = [_fact_to_result(fact) for fact in core_result.results]

@@ -180,6 +180,7 @@ class MemoryFact(BaseModel):
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
     )
+    relevance: float = Field(default=0.0, description="Combined relevance score from reranking")
 
 
 class ChunkInfo(BaseModel):
