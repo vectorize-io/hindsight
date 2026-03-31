@@ -170,6 +170,8 @@ Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
 ```
 This runs the same checks as the pre-commit hook (Ruff for Python, ESLint/Prettier for TypeScript).
 
+**After completing any implementation work, run `/code-review`** to verify your changes against project standards (missing tests, dead code, type safety, etc.). Fix any "must fix" issues before considering the task done.
+
 ### Memory Banks
 - Each bank is an isolated memory store (like a "brain" for one user/agent)
 - Banks have dispositions (skepticism, literalism, empathy traits 1-5) affecting reflect
