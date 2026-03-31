@@ -503,6 +503,81 @@ async def test_document_deletion_with_slashes_in_id(api_client):
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 
 
+
+@pytest.mark.asyncio
+async def test_delete_memory_unit(api_client):
+    """Test deleting a single memory unit via DELETE endpoint.
+
+    Workflow:
+    1. Create a bank by storing memories
+    2. List memories and pick one
+    3. Delete that single memory unit
+    4. Verify it returns 404 on GET
+    5. Verify other memories still exist
+    6. Delete again returns 404
+    """
+    test_bank_id = f"delete_memory_test_{datetime.now().timestamp()}"
+
+    # 1. Store two memories
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "Alice is a software engineer who loves hiking.",
+                    "context": "team info",
+                },
+                {
+                    "content": "Bob is a data scientist who enjoys painting.",
+                    "context": "team info",
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # 2. List memories and pick one to delete
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories/list",
+        json={},
+    )
+    assert response.status_code == 200
+    memories = response.json()["items"]
+    assert len(memories) >= 2
+    memory_to_delete = memories[0]["id"]
+    other_memory = memories[1]["id"]
+
+    # 3. Delete the memory unit
+    response = await api_client.delete(
+        f"/v1/default/banks/{test_bank_id}/memories/{memory_to_delete}"
+    )
+    assert response.status_code == 200
+    delete_result = response.json()
+    assert delete_result["success"] is True
+
+    # 4. Verify deleted memory returns 404
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/memories/{memory_to_delete}"
+    )
+    assert response.status_code == 404
+
+    # 5. Verify other memory still exists
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/memories/{other_memory}"
+    )
+    assert response.status_code == 200
+
+    # 6. Try to delete again (should return 404)
+    response = await api_client.delete(
+        f"/v1/default/banks/{test_bank_id}/memories/{memory_to_delete}"
+    )
+    assert response.status_code == 404
+
+    # Cleanup
+    await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
 @pytest.mark.asyncio
 async def test_delete_bank(api_client):
     """Test delete bank endpoint.
