@@ -345,6 +345,31 @@ class TestLiteLLMSDKEmbeddings:
             assert encode_call_args.kwargs["api_base"] == "https://custom.api.com"
             assert encode_call_args.kwargs["dimensions"] == 768
 
+    async def test_openai_invalid_output_dimensions_raises(self, mock_litellm):
+        """Invalid dimensions fail during initialize() (probe call), not per HTTP request.
+
+        MemoryEngine runs this at app lifespan startup; the process typically fails to become
+        ready rather than returning a JSON error for a single API call. The RuntimeError
+        message should still chain the underlying provider/LiteLLM detail for logs.
+        """
+        mock_litellm.aembedding.side_effect = Exception("invalid dimensions for model")
+
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="openai/text-embedding-3-small",
+                output_dimensions=9999,
+            )
+
+            with pytest.raises(
+                RuntimeError,
+                match="Failed to initialize LiteLLM SDK embeddings:.*invalid dimensions for model",
+            ):
+                await emb.initialize()
+
 
 class TestLiteLLMSDKEmbeddingsFactory:
     """Test the factory function for creating LiteLLM SDK embeddings."""
