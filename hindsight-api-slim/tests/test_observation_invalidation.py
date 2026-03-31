@@ -95,7 +95,7 @@ class TestDeleteMemoryUnitObservationCleanup:
             m2 = await _insert_memory(conn, bank_id, "Alice goes hiking every weekend.")
             obs_id = await _insert_observation(conn, bank_id, "Alice enjoys hiking regularly.", [m1, m2])
 
-        await memory.delete_memory_unit(str(m1), request_context=request_context)
+        await memory.delete_memory_unit(str(m1), bank_id=bank_id, request_context=request_context)
 
         async with pool.acquire() as conn:
             obs_ids = await _get_observation_ids(conn, bank_id)
@@ -122,7 +122,7 @@ class TestDeleteMemoryUnitObservationCleanup:
 
         # Patch out consolidation so it doesn't re-set consolidated_at before we can check it
         with patch.object(memory, "submit_async_consolidation", new=AsyncMock()):
-            await memory.delete_memory_unit(str(m1), request_context=request_context)
+            await memory.delete_memory_unit(str(m1), bank_id=bank_id, request_context=request_context)
 
         async with pool.acquire() as conn:
             # m2 should have consolidated_at reset to NULL
@@ -146,7 +146,7 @@ class TestDeleteMemoryUnitObservationCleanup:
             unrelated = await _insert_memory(conn, bank_id, "Bob likes cycling.")
             obs_id = await _insert_observation(conn, bank_id, "Alice enjoys hiking regularly.", [m1, m2])
 
-        await memory.delete_memory_unit(str(unrelated), request_context=request_context)
+        await memory.delete_memory_unit(str(unrelated), bank_id=bank_id, request_context=request_context)
 
         async with pool.acquire() as conn:
             obs_ids = await _get_observation_ids(conn, bank_id)
@@ -170,7 +170,7 @@ class TestDeleteMemoryUnitObservationCleanup:
             m1 = await _insert_memory(conn, bank_id, "Alice loves hiking.")
             obs_id = await _insert_observation(conn, bank_id, "Alice enjoys hiking.", [m1])
 
-        await memory.delete_memory_unit(str(m1), request_context=request_context)
+        await memory.delete_memory_unit(str(m1), bank_id=bank_id, request_context=request_context)
 
         async with pool.acquire() as conn:
             obs_ids = await _get_observation_ids(conn, bank_id)
@@ -192,7 +192,7 @@ class TestDeleteMemoryUnitObservationCleanup:
             obs_id = await _insert_observation(conn, bank_id, "Alice enjoys hiking.", [m1])
 
         # Delete the observation directly (not the source memory)
-        await memory.delete_memory_unit(str(obs_id), request_context=request_context)
+        await memory.delete_memory_unit(str(obs_id), bank_id=bank_id, request_context=request_context)
 
         async with pool.acquire() as conn:
             # Source memory should still be consolidated (not reset)

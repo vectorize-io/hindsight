@@ -2033,7 +2033,7 @@ def _register_delete_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
             Args:
                 memory_id: The ID of the memory to delete
-                bank_id: Optional bank (accepted for consistency, not used in deletion).
+                bank_id: Optional bank to scope the deletion to.
             """
             try:
                 target_bank = bank_id or config.bank_id_resolver()
@@ -2042,6 +2042,7 @@ def _register_delete_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
                 result = await memory.delete_memory_unit(
                     unit_id=memory_id,
+                    bank_id=target_bank,
                     request_context=_get_request_context(config),
                 )
                 return json.dumps({"status": "deleted", "memory_id": memory_id, **result}, default=str)
@@ -2073,6 +2074,7 @@ def _register_delete_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
                 result = await memory.delete_memory_unit(
                     unit_id=memory_id,
+                    bank_id=target_bank,
                     request_context=_get_request_context(config),
                 )
                 return {"status": "deleted", "memory_id": memory_id, **result}

@@ -291,6 +291,7 @@ class MemoryEngineInterface(ABC):
         self,
         unit_id: str,
         *,
+        bank_id: str,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
@@ -298,6 +299,7 @@ class MemoryEngineInterface(ABC):
 
         Args:
             unit_id: The memory unit ID.
+            bank_id: The bank that owns the memory unit (enforced in query).
             request_context: Request context for authentication.
 
         Returns:

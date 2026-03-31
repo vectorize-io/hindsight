@@ -1374,8 +1374,18 @@ class DeleteResponse(BaseModel):
 class DeleteMemoryUnitResponse(BaseModel):
     """Response model for deleting a single memory unit."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "memory_id": "abc123",
+                "message": "Memory unit and all its links deleted successfully",
+            }
+        }
+    )
+
     success: bool
-    unit_id: str | None = None
+    memory_id: str | None = None
     message: str | None = None
 
 
@@ -2437,13 +2447,27 @@ def _register_routes(app: FastAPI):
     ):
         """Delete a single memory unit by ID."""
         try:
+            import uuid as _uuid
+
+            try:
+                _uuid.UUID(memory_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid memory_id format: '{memory_id}' is not a valid UUID"
+                )
+
             result = await app.state.memory.delete_memory_unit(
                 unit_id=memory_id,
+                bank_id=bank_id,
                 request_context=request_context,
             )
             if not result.get("success"):
-                raise HTTPException(status_code=404, detail=result.get("message", "Memory unit not found"))
-            return DeleteMemoryUnitResponse(**result)
+                raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found in bank '{bank_id}'")
+            return DeleteMemoryUnitResponse(
+                success=result["success"],
+                memory_id=result.get("memory_id"),
+                message=result.get("message"),
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

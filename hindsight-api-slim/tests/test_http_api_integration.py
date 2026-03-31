@@ -1262,7 +1262,7 @@ async def test_delete_individual_memory_unit(api_client):
     assert response.status_code == 200
     result = response.json()
     assert result["success"] is True
-    assert result["unit_id"] == memory_id
+    assert result["memory_id"] == memory_id
     assert result["message"] is not None
 
     # 4. Verify the memory is gone
@@ -1278,3 +1278,37 @@ async def test_delete_individual_memory_unit(api_client):
     # 6. Deleting again should return 404
     response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/memories/{memory_id}")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_memory_unit_cross_bank_isolation(api_client):
+    """Deleting a memory via a different bank's path should return 404 (not delete it)."""
+    bank_a = f"delete_bank_a_{datetime.now().timestamp()}"
+    bank_b = f"delete_bank_b_{datetime.now().timestamp()}"
+
+    # Create a memory in bank A
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_a}/memories",
+        json={"items": [{"content": "Memory in bank A.", "context": "isolation test"}]},
+    )
+    assert response.status_code == 200
+
+    # Get the memory ID from bank A
+    response = await api_client.get(f"/v1/default/banks/{bank_a}/memories/list", params={"limit": 10})
+    assert response.status_code == 200
+    memory_id = response.json()["items"][0]["id"]
+
+    # Try to delete it via bank B's path — should fail with 404
+    response = await api_client.delete(f"/v1/default/banks/{bank_b}/memories/{memory_id}")
+    assert response.status_code == 404, "Cross-bank deletion should be rejected"
+
+    # Verify memory still exists in bank A
+    response = await api_client.get(f"/v1/default/banks/{bank_a}/memories/{memory_id}")
+    assert response.status_code == 200, "Memory should still exist in its original bank"
+
+
+@pytest.mark.asyncio
+async def test_delete_memory_unit_invalid_uuid(api_client):
+    """Deleting with a non-UUID memory_id should return 400, not 500."""
+    response = await api_client.delete(f"/v1/default/banks/test/memories/not-a-uuid")
+    assert response.status_code == 400

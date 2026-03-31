@@ -3730,6 +3730,7 @@ class MemoryEngine(MemoryEngineInterface):
         self,
         unit_id: str,
         *,
+        bank_id: str,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
@@ -3745,39 +3746,47 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             unit_id: UUID of the memory unit to delete
+            bank_id: The bank that owns the memory unit (enforced in query).
             request_context: Request context for authentication.
 
         Returns:
             Dictionary with deletion result
         """
         await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(bank_id=bank_id, operation="delete_memory_unit", request_context=request_context)
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         pool = await self._get_pool()
         invalidated_obs = 0
         bank_id_for_consolidation: str | None = None
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
-                # Get bank_id and fact_type before deletion
+                # Get fact_type before deletion (scoped to bank)
                 row = await conn.fetchrow(
-                    f"SELECT bank_id, fact_type FROM {fq_table('memory_units')} WHERE id = $1",
+                    f"SELECT fact_type FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2",
                     unit_id,
+                    bank_id,
                 )
-                bank_id = row["bank_id"] if row else None
                 fact_type = row["fact_type"] if row else None
 
                 # Invalidate observations before deletion (only for source memory types)
-                if bank_id and fact_type in ("experience", "world"):
+                if fact_type in ("experience", "world"):
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
                     if invalidated_obs > 0:
                         bank_id_for_consolidation = bank_id
 
-                # Delete the memory unit (cascades to links and associations)
+                # Delete the memory unit (scoped to bank, cascades to links and associations)
                 deleted = await conn.fetchval(
-                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
+                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 AND bank_id = $2 RETURNING id",
+                    unit_id,
+                    bank_id,
                 )
 
                 result = {
                     "success": deleted is not None,
-                    "unit_id": str(deleted) if deleted else None,
+                    "memory_id": str(deleted) if deleted else None,
                     "message": "Memory unit and all its links deleted successfully"
                     if deleted
                     else "Memory unit not found",
