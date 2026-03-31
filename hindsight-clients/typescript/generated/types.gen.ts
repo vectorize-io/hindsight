@@ -954,6 +954,22 @@ export type DocumentResponse = {
    * Tags associated with this document
    */
   tags?: Array<string>;
+  /**
+   * Document Metadata
+   *
+   * Document metadata
+   */
+  document_metadata?: {
+    [key: string]: unknown;
+  } | null;
+  /**
+   * Retain Params
+   *
+   * Parameters used during retain
+   */
+  retain_params?: {
+    [key: string]: unknown;
+  } | null;
 };
 
 /**

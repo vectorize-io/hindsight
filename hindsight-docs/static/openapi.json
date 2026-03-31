@@ -5815,6 +5815,32 @@
             "title": "Tags",
             "description": "Tags associated with this document",
             "default": []
+          },
+          "document_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Metadata",
+            "description": "Document metadata"
+          },
+          "retain_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Params",
+            "description": "Parameters used during retain"
           }
         },
         "type": "object",
@@ -5833,9 +5859,17 @@
           "bank_id": "user123",
           "content_hash": "abc123",
           "created_at": "2024-01-15T10:30:00Z",
+          "document_metadata": {
+            "channel": "#general",
+            "source": "slack"
+          },
           "id": "session_1",
           "memory_unit_count": 15,
           "original_text": "Full document text here...",
+          "retain_params": {
+            "context": "Team meeting notes",
+            "event_date": "2024-01-15"
+          },
           "tags": [
             "user_a",
             "session_123"

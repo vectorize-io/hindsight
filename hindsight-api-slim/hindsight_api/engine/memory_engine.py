@@ -3525,15 +3525,12 @@ class MemoryEngine(MemoryEngineInterface):
                 return None
 
             retain_params_raw = doc["retain_params"]
-            if isinstance(retain_params_raw, str):
-                import json as _json
-
-                retain_params_parsed = _json.loads(retain_params_raw)
-            else:
-                retain_params_parsed = retain_params_raw
+            retain_params_parsed = (
+                json.loads(retain_params_raw) if isinstance(retain_params_raw, str) else retain_params_raw
+            )
 
             # document_metadata is sourced from retain_params.metadata
-            document_metadata = (retain_params_parsed or {}).get("metadata") if retain_params_parsed else None
+            document_metadata = retain_params_parsed.get("metadata") if retain_params_parsed else None
 
             return {
                 "id": doc["id"],
@@ -3544,8 +3541,8 @@ class MemoryEngine(MemoryEngineInterface):
                 "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
                 "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
                 "tags": list(doc["tags"]) if doc["tags"] else [],
-                "document_metadata": document_metadata if document_metadata else None,
-                "retain_params": retain_params_parsed if retain_params_parsed else None,
+                "document_metadata": document_metadata or None,
+                "retain_params": retain_params_parsed or None,
             }
 
     async def delete_document(
@@ -4966,13 +4963,12 @@ class MemoryEngine(MemoryEngineInterface):
                 unit_count = count_map.get((doc_id, bank_id_val), 0)
 
                 retain_params_val = row["retain_params"]
-                if isinstance(retain_params_val, str):
-                    import json as _json
-
-                    retain_params_val = _json.loads(retain_params_val)
+                retain_params_val = (
+                    json.loads(retain_params_val) if isinstance(retain_params_val, str) else retain_params_val
+                )
 
                 # document_metadata is sourced from retain_params.metadata
-                document_metadata = (retain_params_val or {}).get("metadata") if retain_params_val else None
+                document_metadata = retain_params_val.get("metadata") if retain_params_val else None
 
                 items.append(
                     {
@@ -4983,8 +4979,8 @@ class MemoryEngine(MemoryEngineInterface):
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
                         "text_length": row["text_length"] or 0,
                         "memory_unit_count": unit_count,
-                        "retain_params": retain_params_val if retain_params_val else None,
-                        "document_metadata": document_metadata if document_metadata else None,
+                        "retain_params": retain_params_val or None,
+                        "document_metadata": document_metadata or None,
                         "tags": row["tags"] if row["tags"] else [],
                     }
                 )

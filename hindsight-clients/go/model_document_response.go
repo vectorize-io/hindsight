@@ -30,6 +30,8 @@ type DocumentResponse struct {
 	MemoryUnitCount int32 `json:"memory_unit_count"`
 	// Tags associated with this document
 	Tags []string `json:"tags,omitempty"`
+	DocumentMetadata map[string]interface{} `json:"document_metadata,omitempty"`
+	RetainParams map[string]interface{} `json:"retain_params,omitempty"`
 }
 
 type _DocumentResponse DocumentResponse
@@ -260,6 +262,72 @@ func (o *DocumentResponse) SetTags(v []string) {
 	o.Tags = v
 }
 
+// GetDocumentMetadata returns the DocumentMetadata field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *DocumentResponse) GetDocumentMetadata() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.DocumentMetadata
+}
+
+// GetDocumentMetadataOk returns a tuple with the DocumentMetadata field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *DocumentResponse) GetDocumentMetadataOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.DocumentMetadata) {
+		return map[string]interface{}{}, false
+	}
+	return o.DocumentMetadata, true
+}
+
+// HasDocumentMetadata returns a boolean if a field has been set.
+func (o *DocumentResponse) HasDocumentMetadata() bool {
+	if o != nil && !IsNil(o.DocumentMetadata) {
+		return true
+	}
+
+	return false
+}
+
+// SetDocumentMetadata gets a reference to the given map[string]interface{} and assigns it to the DocumentMetadata field.
+func (o *DocumentResponse) SetDocumentMetadata(v map[string]interface{}) {
+	o.DocumentMetadata = v
+}
+
+// GetRetainParams returns the RetainParams field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *DocumentResponse) GetRetainParams() map[string]interface{} {
+	if o == nil {
+		var ret map[string]interface{}
+		return ret
+	}
+	return o.RetainParams
+}
+
+// GetRetainParamsOk returns a tuple with the RetainParams field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *DocumentResponse) GetRetainParamsOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.RetainParams) {
+		return map[string]interface{}{}, false
+	}
+	return o.RetainParams, true
+}
+
+// HasRetainParams returns a boolean if a field has been set.
+func (o *DocumentResponse) HasRetainParams() bool {
+	if o != nil && !IsNil(o.RetainParams) {
+		return true
+	}
+
+	return false
+}
+
+// SetRetainParams gets a reference to the given map[string]interface{} and assigns it to the RetainParams field.
+func (o *DocumentResponse) SetRetainParams(v map[string]interface{}) {
+	o.RetainParams = v
+}
+
 func (o DocumentResponse) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -279,6 +347,12 @@ func (o DocumentResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["memory_unit_count"] = o.MemoryUnitCount
 	if !IsNil(o.Tags) {
 		toSerialize["tags"] = o.Tags
+	}
+	if o.DocumentMetadata != nil {
+		toSerialize["document_metadata"] = o.DocumentMetadata
+	}
+	if o.RetainParams != nil {
+		toSerialize["retain_params"] = o.RetainParams
 	}
 	return toSerialize, nil
 }

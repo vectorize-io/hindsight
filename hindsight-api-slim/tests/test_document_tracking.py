@@ -142,6 +142,70 @@ async def test_memory_without_document(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_document_metadata_from_retain_params(memory, request_context):
+    """Test that document_metadata is returned from retain_params.metadata in both get and list."""
+    bank_id = f"test_doc_meta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-with-metadata"
+        metadata = {"source": "slack", "channel": "#general"}
+
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Alice works at Google.", "context": "Team meeting", "metadata": metadata}],
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        # get_document should include document_metadata
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] == metadata
+        assert doc["retain_params"] is not None
+        assert doc["retain_params"]["metadata"] == metadata
+
+        # list_documents should also include document_metadata
+        docs_list = await memory.list_documents(
+            bank_id=bank_id, search_query=None, limit=100, offset=0, request_context=request_context
+        )
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == document_id)
+        assert listed_doc["document_metadata"] == metadata
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_document_without_metadata(memory, request_context):
+    """Test that document_metadata is None when no metadata was provided during retain."""
+    bank_id = f"test_doc_no_meta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        document_id = "doc-no-metadata"
+
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob works at Microsoft.",
+            context="Meeting",
+            document_id=document_id,
+            request_context=request_context,
+        )
+
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc is not None
+        assert doc["document_metadata"] is None
+
+        docs_list = await memory.list_documents(
+            bank_id=bank_id, search_query=None, limit=100, offset=0, request_context=request_context
+        )
+        listed_doc = next(d for d in docs_list["items"] if d["id"] == document_id)
+        assert listed_doc["document_metadata"] is None
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_document_persisted_with_zero_facts(memory, request_context):
     """
     Test that documents are persisted even when zero facts are extracted.
