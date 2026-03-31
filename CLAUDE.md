@@ -164,11 +164,13 @@ Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
 ## Key Conventions
 
 ### Code Quality
+
+**Before writing code, read `.claude/skills/code-review.md`** for the full coding standards (Python style, type safety, TypeScript style, general principles).
+
 **Always run the lint script after making Python or TypeScript/Node changes:**
 ```bash
 ./scripts/hooks/lint.sh
 ```
-This runs the same checks as the pre-commit hook (Ruff for Python, ESLint/Prettier for TypeScript).
 
 **After completing any implementation work, run `/code-review`** to verify your changes against project standards (missing tests, dead code, type safety, etc.). Fix any "must fix" issues before considering the task done.
 
@@ -201,49 +203,6 @@ When adding or modifying parameters in the dataplane API (hindsight-api), you mu
    - Pass the parameter to the SDK call
    - Update the client type definition in `lib/api.ts`
    - Update any UI components that need to use the new parameter
-
-### Python Style
-- Python 3.11+, type hints required
-- Async throughout (asyncpg, async FastAPI)
-- Pydantic models for request/response
-- Ruff for linting (line-length 120)
-- No Python files at project root - maintain clean directory structure
-- **Never use multi-item tuple return values** - prefer dataclass or Pydantic model for structured returns
-
-### Type Safety with Pydantic Models
-**NEVER use raw `dict` types for structured data.** Always use Pydantic models:
-- Use Pydantic `BaseModel` for all data structures passed between functions
-- Add `@field_validator` for type coercion (e.g., ensuring datetimes are timezone-aware)
-- Avoid `dict.get()` patterns - use typed model attributes instead
-- Parse external data (JSON, API responses) into Pydantic models at the boundary
-- This catches type errors at parse time, not deep in business logic
-
-```python
-# BAD - error-prone dict access
-def process(data: dict) -> str:
-    return data.get("name", "")  # No validation, silent failures
-
-# GOOD - typed and validated
-class UserData(BaseModel):
-    name: str
-    created_at: datetime
-
-    @field_validator("created_at", mode="before")
-    @classmethod
-    def ensure_tz_aware(cls, v):
-        if isinstance(v, str):
-            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
-        if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v
-
-def process(data: UserData) -> str:
-    return data.name  # Type-safe, validated at construction
-```
-
-### TypeScript Style
-- Next.js App Router for control plane
-- Tailwind CSS with shadcn/ui components
 
 ### Adding New API Configuration Flags
 

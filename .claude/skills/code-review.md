@@ -1,14 +1,68 @@
 ---
 name: code-review
-description: Review changed code against project standards. Checks for missing tests, dead code, type safety, lint issues, and CLAUDE.md conventions. Run after completing any implementation work.
+description: Review changed code against project standards. Checks for missing tests, dead code, type safety, lint issues, and coding conventions. Run after completing any implementation work.
 user_invocable: true
 ---
 
 # Code Review
 
-Review all changed code against the project's quality standards. This skill enforces the conventions in CLAUDE.md and catches common issues.
+Review all changed code against the project's quality standards and coding conventions.
 
-## Steps
+## Code Standards
+
+Read and internalize these standards before writing code. The review steps below verify compliance.
+
+### Python Style
+- Python 3.11+, type hints required
+- Async throughout (asyncpg, async FastAPI)
+- Pydantic models for request/response
+- Ruff for linting (line-length 120)
+- No Python files at project root - maintain clean directory structure
+- **Never use multi-item tuple return values** - prefer dataclass or Pydantic model for structured returns
+
+### Type Safety with Pydantic Models
+**NEVER use raw `dict` types for structured data.** Always use Pydantic models:
+- Use Pydantic `BaseModel` for all data structures passed between functions
+- Add `@field_validator` for type coercion (e.g., ensuring datetimes are timezone-aware)
+- Avoid `dict.get()` patterns - use typed model attributes instead
+- Parse external data (JSON, API responses) into Pydantic models at the boundary
+- This catches type errors at parse time, not deep in business logic
+
+```python
+# BAD - error-prone dict access
+def process(data: dict) -> str:
+    return data.get("name", "")  # No validation, silent failures
+
+# GOOD - typed and validated
+class UserData(BaseModel):
+    name: str
+    created_at: datetime
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def ensure_tz_aware(cls, v):
+        if isinstance(v, str):
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+def process(data: UserData) -> str:
+    return data.name  # Type-safe, validated at construction
+```
+
+### TypeScript Style
+- Next.js App Router for control plane
+- Tailwind CSS with shadcn/ui components
+
+### General Principles
+- Don't add features, refactor code, or make "improvements" beyond what was asked
+- Don't add unnecessary error handling for impossible scenarios
+- Don't create helpers or abstractions for one-time operations
+- No backwards-compatibility hacks (unused vars, re-exports, "removed" comments)
+- Three similar lines of code is better than a premature abstraction
+
+## Review Steps
 
 ### 1. Identify changed files
 
@@ -37,8 +91,8 @@ For each changed TypeScript file, check for:
 
 ### 4. Check type safety (Python)
 
-For each changed Python file, check for violations of project conventions:
-- **No raw `dict` for structured data** — should use Pydantic models (see CLAUDE.md)
+For each changed Python file, check for violations:
+- **No raw `dict` for structured data** — should use Pydantic models
 - **No multi-item tuple returns** — should use dataclass or Pydantic model
 - **Missing type hints** on function parameters and return types
 - **Missing `@field_validator`** for datetime fields that should be timezone-aware
@@ -60,9 +114,9 @@ If any files in `hindsight-api-slim/hindsight_api/api/` were changed:
 - Were the client SDKs regenerated? (`./scripts/generate-clients.sh`)
 - Were the control plane proxy routes updated? (`hindsight-control-plane/src/app/api/`)
 
-### 7. Review against CLAUDE.md conventions
+### 7. Review against coding standards
 
-Check the diff for violations of:
+Check the diff for violations of the standards listed above:
 - Python files at project root (not allowed)
 - Missing async patterns (should be async throughout)
 - Pydantic models for request/response
