@@ -165,7 +165,7 @@ Key tables: `banks`, `memory_units`, `documents`, `entities`, `entity_links`
 
 ### Code Quality
 
-**Before writing code, read `.claude/skills/code-review.md`** for the full coding standards (Python style, type safety, TypeScript style, general principles).
+**Before writing code, read `.claude/skills/code-review/SKILL.md`** for the full coding standards (Python style, type safety, TypeScript style, general principles).
 
 **Always run the lint script after making Python or TypeScript/Node changes:**
 ```bash
