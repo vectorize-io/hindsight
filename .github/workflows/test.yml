@@ -56,7 +56,7 @@ jobs:
         # For pull_request_review, checkout the PR head (not the base branch)
         ref: ${{ github.event_name == 'pull_request_review' && github.event.pull_request.head.sha || '' }}
 
-    - uses: dorny/paths-filter@v3
+    - uses: dorny/paths-filter@v4
       id: filter
       with:
         filters: |
