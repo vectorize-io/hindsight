@@ -455,9 +455,14 @@ class ClaudeCodeLLM(LLMInterface):
         # else: tool_choice == "auto" or unspecified - use default behavior (no changes needed)
 
         # Configure SDK options with MCP server
+        # tools=[] disables built-in CLI tools (Read, Write, Bash, ToolSearch, etc.)
+        # Without this, Claude Code CLI defers MCP tools when too many built-in tools
+        # are loaded, forcing Claude to use ToolSearch first — which wastes the max_turns
+        # budget and prevents direct MCP tool calls.
         options = ClaudeAgentOptions(
             system_prompt=system_prompt if system_prompt else None,
-            max_turns=1,  # Single-turn for API-style interactions
+            tools=[],  # Disable built-in tools so MCP tools load eagerly
+            max_turns=2,  # Allow tool call + tool result round-trip
             mcp_servers=mcp_servers_config,
             allowed_tools=allowed_tool_names,
         )
