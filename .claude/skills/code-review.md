@@ -55,6 +55,22 @@ def process(data: UserData) -> str:
 - Next.js App Router for control plane
 - Tailwind CSS with shadcn/ui components
 
+### Code Comments
+- **Always comment non-trivial technical decisions** with the reasoning behind the choice. If someone would ask "why is it done this way?", there should be a comment.
+- **Keep comments up to date with history** — when changing an approach, update the comment to explain what was tried before and why it was changed. Comments serve as a tracker of previous implementations that likely had problems.
+- Don't comment obvious code — only where the "why" isn't self-evident from the code itself.
+
+```python
+# BAD - no context for future readers
+results = await asyncio.gather(*tasks, return_exceptions=True)
+
+# GOOD - explains the non-obvious choice
+# Use return_exceptions=True to avoid cancelling sibling tasks on failure.
+# Previously we used TaskGroup but it cancelled all tasks when one failed,
+# causing partial writes that left orphaned entity links (see #412).
+results = await asyncio.gather(*tasks, return_exceptions=True)
+```
+
 ### General Principles
 - Don't add features, refactor code, or make "improvements" beyond what was asked
 - Don't add unnecessary error handling for impossible scenarios
@@ -114,7 +130,14 @@ If any files in `hindsight-api-slim/hindsight_api/api/` were changed:
 - Were the client SDKs regenerated? (`./scripts/generate-clients.sh`)
 - Were the control plane proxy routes updated? (`hindsight-control-plane/src/app/api/`)
 
-### 7. Review against coding standards
+### 7. Check code comments
+
+For each non-trivial change:
+- **New non-obvious logic** — is there a comment explaining the reasoning?
+- **Changed approach** — does the comment include what was done before and why it changed?
+- **Stale comments** — do existing comments near the changed code still accurately describe the behavior?
+
+### 8. Review against other coding standards
 
 Check the diff for violations of the standards listed above:
 - Python files at project root (not allowed)
@@ -126,7 +149,7 @@ Check the diff for violations of the standards listed above:
 - Premature abstractions or speculative helpers
 - Backwards-compatibility hacks (unused vars, re-exports, "removed" comments)
 
-### 8. Report findings
+### 9. Report findings
 
 Present a clear summary organized by severity:
 
