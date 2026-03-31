@@ -752,6 +752,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         api_key: str,
         model: str = DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
         api_base: str | None = None,
+        output_dimensions: int | None = None,
         batch_size: int = 100,
         timeout: float = 60.0,
     ):
@@ -762,12 +763,14 @@ class LiteLLMSDKEmbeddings(Embeddings):
             api_key: API key for the embedding provider
             model: Model name with provider prefix (e.g., "cohere/embed-english-v3.0")
             api_base: Custom base URL for API (optional)
+            output_dimensions: Optional output embedding dimensions (provider-dependent)
             batch_size: Maximum batch size for embedding requests (default: 100)
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.api_key = api_key
         self.model = model
         self.api_base = api_base
+        self.output_dimensions = output_dimensions
         self.batch_size = batch_size
         self.timeout = timeout
         self._litellm = None  # Will be set during initialization
@@ -809,6 +812,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
             }
             if self.api_base:
                 embed_kwargs["api_base"] = self.api_base
+            if self.output_dimensions is not None:
+                embed_kwargs["dimensions"] = self.output_dimensions
 
             # Use async embedding method (standard in litellm)
             response = await self._litellm.aembedding(**embed_kwargs)
@@ -856,6 +861,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 }
                 if self.api_base:
                     embed_kwargs["api_base"] = self.api_base
+                if self.output_dimensions is not None:
+                    embed_kwargs["dimensions"] = self.output_dimensions
 
                 # Use sync embedding (litellm doesn't have async in thread-safe way)
                 response = self._litellm.embedding(**embed_kwargs)
@@ -938,6 +945,7 @@ def create_embeddings_from_env() -> Embeddings:
             api_key=api_key,
             model=config.embeddings_litellm_sdk_model,
             api_base=config.embeddings_litellm_sdk_api_base,
+            output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
         )
     else:
         raise ValueError(
