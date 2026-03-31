@@ -180,6 +180,10 @@ class MemoryFact(BaseModel):
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
     )
+    access_count: int | None = Field(
+        None,
+        description="Number of times this memory has been retrieved via user-facing recall operations",
+    )
 
 
 class ChunkInfo(BaseModel):

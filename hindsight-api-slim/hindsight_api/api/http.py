@@ -225,6 +225,7 @@ class RecallResult(BaseModel):
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
+    access_count: int | None = None  # Number of user-facing recall retrievals
 
 
 class EntityObservationResponse(BaseModel):
@@ -2548,6 +2549,7 @@ def _register_routes(app: FastAPI):
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
+                    access_count=fact.access_count,
                 )
 
             recall_results = [_fact_to_result(fact) for fact in core_result.results]

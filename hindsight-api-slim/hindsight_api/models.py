@@ -104,6 +104,7 @@ class MemoryUnit(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
+    access_count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     # Relationships
     document = relationship("Document", back_populates="memory_units")
     unit_entities = relationship("UnitEntity", back_populates="memory_unit", cascade="all, delete-orphan")
@@ -169,6 +170,7 @@ class MemoryUnit(Base):
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        Index("idx_memory_units_access_count", "access_count", postgresql_ops={"access_count": "DESC"}),
     )
 
 

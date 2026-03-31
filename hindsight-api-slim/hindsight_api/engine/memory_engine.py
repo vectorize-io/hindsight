@@ -2635,6 +2635,26 @@ class MemoryEngine(MemoryEngineInterface):
                 except Exception as e:
                     logger.warning(f"Post-recall hook error (non-fatal): {e}")
 
+            # Increment access_count for user-facing recall results (not internal operations).
+            # Internal operations (reflect, consolidation) pass _quiet=True to suppress logging
+            # and should not inflate retrieval frequency metrics.
+            if not _quiet and result is not None and result.results:
+                memory_ids = [uuid.UUID(fact.id) for fact in result.results]
+                try:
+                    pool = await self._get_pool()
+                    async with acquire_with_retry(pool) as conn:
+                        await conn.execute(
+                            f"""
+                            UPDATE {fq_table("memory_units")}
+                            SET access_count = access_count + 1
+                            WHERE id = ANY($1::uuid[])
+                            """,
+                            memory_ids,
+                        )
+                except Exception as e:
+                    # Non-fatal: log and continue — recall results are still valid
+                    logger.warning(f"Failed to increment access_count: {e}")
+
             return result
         finally:
             recall_span_context.__exit__(None, None, None)
@@ -3354,6 +3374,25 @@ class MemoryEngine(MemoryEngineInterface):
                                 {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
                             )
 
+            # Fetch access_count for final results (single batch query)
+            access_count_map: dict[str, int] = {}
+            if top_scored:
+                unit_ids_for_access = [uuid.UUID(sr.id) for sr in top_scored]
+                try:
+                    async with acquire_with_retry(pool) as ac_conn:
+                        ac_rows = await ac_conn.fetch(
+                            f"""
+                            SELECT id, access_count
+                            FROM {fq_table("memory_units")}
+                            WHERE id = ANY($1::uuid[])
+                            """,
+                            unit_ids_for_access,
+                        )
+                        for r in ac_rows:
+                            access_count_map[str(r["id"])] = r["access_count"]
+                except Exception:
+                    pass  # Non-fatal: access_count will be None in response
+
             # Convert results to MemoryFact objects
             memory_facts = []
             for result_dict in top_results_dicts:
@@ -3378,6 +3417,7 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=result_dict.get("chunk_id"),
                         tags=result_dict.get("tags"),
                         source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
+                        access_count=access_count_map.get(result_id),
                     )
                 )
 
@@ -4553,7 +4593,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             units = await conn.fetch(
                 f"""
-                SELECT id, text, event_date, context, fact_type, mentioned_at, occurred_start, occurred_end, chunk_id, proof_count, tags
+                SELECT id, text, event_date, context, fact_type, mentioned_at, occurred_start, occurred_end, chunk_id, proof_count, tags, access_count
                 FROM {fq_table("memory_units")}
                 {where_clause}
                 ORDER BY mentioned_at DESC NULLS LAST, created_at DESC
@@ -4607,6 +4647,7 @@ class MemoryEngine(MemoryEngineInterface):
                         "chunk_id": row["chunk_id"] if row["chunk_id"] else None,
                         "proof_count": row["proof_count"] if row["proof_count"] is not None else 1,
                         "tags": list(row["tags"]) if row["tags"] else [],
+                        "access_count": row["access_count"],
                     }
                 )
 
@@ -4642,7 +4683,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, text, context, event_date, occurred_start, occurred_end,
                        mentioned_at, fact_type, document_id, chunk_id, tags, source_memory_ids,
-                       observation_scopes
+                       observation_scopes, access_count
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,
@@ -4692,6 +4733,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "chunk_id": str(row["chunk_id"]) if row["chunk_id"] else None,
                 "tags": row["tags"] if row["tags"] else [],
                 "observation_scopes": row["observation_scopes"] if row["observation_scopes"] else None,
+                "access_count": row["access_count"],
             }
 
             # For observations, include source_memory_ids
