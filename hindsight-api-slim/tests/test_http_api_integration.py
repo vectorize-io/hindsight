@@ -1229,3 +1229,45 @@ async def test_retain_with_timestamp_async_complete_processing(api_client, test_
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) > 0, "Should have stored memories after async processing"
+
+
+@pytest.mark.asyncio
+async def test_http_recall_preserves_metadata(api_client, test_bank_id):
+    """
+    Regression test for #797: HTTP recall must return metadata stored during retain.
+
+    The engine correctly preserves metadata, but _fact_to_result in http.py was
+    missing the metadata= kwarg, causing the HTTP endpoint to always return null.
+    """
+    metadata = {"source": "slack", "channel": "engineering", "importance": "high"}
+
+    # Retain with metadata
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={
+            "items": [
+                {
+                    "content": "The product launch is scheduled for March 1st.",
+                    "metadata": metadata,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    # Recall via HTTP
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories/recall",
+        json={"query": "When is the product launch?", "budget": "low"},
+    )
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert len(results) > 0, "Should recall at least one fact"
+
+    # Find a result that has our metadata (LLM may extract multiple facts)
+    facts_with_metadata = [r for r in results if r.get("metadata")]
+    assert len(facts_with_metadata) > 0, "At least one fact must have metadata (regression #797)"
+    fact = facts_with_metadata[0]
+    assert fact["metadata"]["source"] == "slack"
+    assert fact["metadata"]["channel"] == "engineering"
+    assert fact["metadata"]["importance"] == "high"

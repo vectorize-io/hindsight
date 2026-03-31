@@ -2545,6 +2545,7 @@ def _register_routes(app: FastAPI):
                     occurred_end=fact.occurred_end,
                     mentioned_at=fact.mentioned_at,
                     document_id=fact.document_id,
+                    metadata=fact.metadata,
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
