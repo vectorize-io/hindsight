@@ -288,12 +288,11 @@ async def _upsert_document_row(
     """Insert or update a document row."""
     await conn.execute(
         f"""
-        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, metadata, retain_params, tags)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO {fq_table("documents")} (id, bank_id, original_text, content_hash, retain_params, tags)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id, bank_id) DO UPDATE
         SET original_text = EXCLUDED.original_text,
             content_hash = EXCLUDED.content_hash,
-            metadata = EXCLUDED.metadata,
             retain_params = EXCLUDED.retain_params,
             tags = EXCLUDED.tags,
             updated_at = NOW()
@@ -302,7 +301,6 @@ async def _upsert_document_row(
         bank_id,
         combined_content,
         content_hash,
-        json.dumps({}),  # Empty metadata dict
         json.dumps(retain_params) if retain_params else None,
         document_tags or [],
     )

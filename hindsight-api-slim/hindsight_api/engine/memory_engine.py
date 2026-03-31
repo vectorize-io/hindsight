@@ -3509,11 +3509,13 @@ class MemoryEngine(MemoryEngineInterface):
             doc = await conn.fetchrow(
                 f"""
                 SELECT d.id, d.bank_id, d.original_text, d.content_hash,
-                       d.created_at, d.updated_at, d.tags, COUNT(mu.id) as unit_count
+                       d.created_at, d.updated_at, d.tags, d.retain_params,
+                       COUNT(mu.id) as unit_count
                 FROM {fq_table("documents")} d
                 LEFT JOIN {fq_table("memory_units")} mu ON mu.document_id = d.id
                 WHERE d.id = $1 AND d.bank_id = $2
-                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash, d.created_at, d.updated_at, d.tags
+                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash,
+                         d.created_at, d.updated_at, d.tags, d.retain_params
                 """,
                 document_id,
                 bank_id,
@@ -3521,6 +3523,17 @@ class MemoryEngine(MemoryEngineInterface):
 
             if not doc:
                 return None
+
+            retain_params_raw = doc["retain_params"]
+            if isinstance(retain_params_raw, str):
+                import json as _json
+
+                retain_params_parsed = _json.loads(retain_params_raw)
+            else:
+                retain_params_parsed = retain_params_raw
+
+            # document_metadata is sourced from retain_params.metadata
+            document_metadata = (retain_params_parsed or {}).get("metadata") if retain_params_parsed else None
 
             return {
                 "id": doc["id"],
@@ -3531,6 +3544,8 @@ class MemoryEngine(MemoryEngineInterface):
                 "created_at": doc["created_at"].isoformat() if doc["created_at"] else None,
                 "updated_at": doc["updated_at"].isoformat() if doc["updated_at"] else None,
                 "tags": list(doc["tags"]) if doc["tags"] else [],
+                "document_metadata": document_metadata if document_metadata else None,
+                "retain_params": retain_params_parsed if retain_params_parsed else None,
             }
 
     async def delete_document(
@@ -4950,6 +4965,15 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id_val = row["bank_id"]
                 unit_count = count_map.get((doc_id, bank_id_val), 0)
 
+                retain_params_val = row["retain_params"]
+                if isinstance(retain_params_val, str):
+                    import json as _json
+
+                    retain_params_val = _json.loads(retain_params_val)
+
+                # document_metadata is sourced from retain_params.metadata
+                document_metadata = (retain_params_val or {}).get("metadata") if retain_params_val else None
+
                 items.append(
                     {
                         "id": doc_id,
@@ -4959,7 +4983,8 @@ class MemoryEngine(MemoryEngineInterface):
                         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
                         "text_length": row["text_length"] or 0,
                         "memory_unit_count": unit_count,
-                        "retain_params": row["retain_params"] if row["retain_params"] else None,
+                        "retain_params": retain_params_val if retain_params_val else None,
+                        "document_metadata": document_metadata if document_metadata else None,
                         "tags": row["tags"] if row["tags"] else [],
                     }
                 )

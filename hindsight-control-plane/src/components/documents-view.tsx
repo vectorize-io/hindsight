@@ -239,6 +239,7 @@ export function DocumentsView() {
                     <TableHead>Created</TableHead>
                     <TableHead>Tags</TableHead>
                     <TableHead>Context</TableHead>
+                    <TableHead>Metadata</TableHead>
                     <TableHead>Text Length</TableHead>
                     <TableHead>Memory Units</TableHead>
                   </TableRow>
@@ -282,6 +283,19 @@ export function DocumentsView() {
                           {doc.retain_params?.context || "-"}
                         </TableCell>
                         <TableCell className="text-card-foreground">
+                          {doc.document_metadata &&
+                          Object.keys(doc.document_metadata).length > 0 ? (
+                            <span
+                              className="text-xs font-mono truncate max-w-[200px] inline-block"
+                              title={JSON.stringify(doc.document_metadata)}
+                            >
+                              {JSON.stringify(doc.document_metadata)}
+                            </span>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                        <TableCell className="text-card-foreground">
                           {doc.text_length?.toLocaleString()} chars
                         </TableCell>
                         <TableCell className="text-card-foreground">
@@ -291,7 +305,7 @@ export function DocumentsView() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center">
+                      <TableCell colSpan={7} className="text-center">
                         Click "Load Documents" to view data
                       </TableCell>
                     </TableRow>
@@ -466,6 +480,19 @@ export function DocumentsView() {
                     </div>
                   </div>
                 )}
+
+                {/* Document Metadata */}
+                {selectedDocument.document_metadata &&
+                  Object.keys(selectedDocument.document_metadata).length > 0 && (
+                    <div className="p-4 bg-muted/50 rounded-lg">
+                      <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                        Document Metadata
+                      </div>
+                      <pre className="text-sm bg-background p-2 rounded text-card-foreground whitespace-pre-wrap">
+                        {JSON.stringify(selectedDocument.document_metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
 
                 {/* Tags */}
                 <div className="p-4 bg-muted/50 rounded-lg">

@@ -1277,6 +1277,8 @@ class DocumentResponse(BaseModel):
                 "updated_at": "2024-01-15T10:30:00Z",
                 "memory_unit_count": 15,
                 "tags": ["user_a", "session_123"],
+                "document_metadata": {"source": "slack", "channel": "#general"},
+                "retain_params": {"context": "Team meeting notes", "event_date": "2024-01-15"},
             }
         }
     )
@@ -1289,6 +1291,8 @@ class DocumentResponse(BaseModel):
     updated_at: str
     memory_unit_count: int
     tags: list[str] = FieldWithDefault(list, description="Tags associated with this document")
+    document_metadata: dict[str, Any] | None = Field(default=None, description="Document metadata")
+    retain_params: dict[str, Any] | None = Field(default=None, description="Parameters used during retain")
 
 
 class UpdateDocumentRequest(BaseModel):
