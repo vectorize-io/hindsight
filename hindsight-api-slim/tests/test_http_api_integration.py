@@ -1229,3 +1229,52 @@ async def test_retain_with_timestamp_async_complete_processing(api_client, test_
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) > 0, "Should have stored memories after async processing"
+
+
+@pytest.mark.asyncio
+async def test_delete_individual_memory_unit(api_client):
+    """
+    Test DELETE /v1/default/banks/{bank_id}/memories/{memory_id}.
+
+    Verifies:
+    1. Deleting an existing memory returns 200 with success=True
+    2. The memory is no longer listed after deletion
+    3. Deleting a non-existent memory returns 404
+    """
+    test_bank_id = f"delete_unit_test_{datetime.now().timestamp()}"
+
+    # 1. Create a memory
+    response = await api_client.post(
+        f"/v1/default/banks/{test_bank_id}/memories",
+        json={"items": [{"content": "This is a test memory that will be deleted.", "context": "delete test"}]},
+    )
+    assert response.status_code == 200
+
+    # 2. List memories to get the ID
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 10})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) > 0, "Should have at least one memory"
+    memory_id = items[0]["id"]
+
+    # 3. Delete the memory
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/memories/{memory_id}")
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] is True
+    assert result["unit_id"] == memory_id
+    assert result["message"] is not None
+
+    # 4. Verify the memory is gone
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/{memory_id}")
+    assert response.status_code == 404
+
+    # 5. Verify it's not in the list
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/memories/list", params={"limit": 10})
+    assert response.status_code == 200
+    remaining_ids = [item["id"] for item in response.json()["items"]]
+    assert memory_id not in remaining_ids, "Deleted memory should not appear in list"
+
+    # 6. Deleting again should return 404
+    response = await api_client.delete(f"/v1/default/banks/{test_bank_id}/memories/{memory_id}")
+    assert response.status_code == 404
