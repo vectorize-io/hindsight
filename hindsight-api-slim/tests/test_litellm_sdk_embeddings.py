@@ -277,6 +277,49 @@ class TestLiteLLMSDKEmbeddings:
             call_args = mock_litellm.embedding.call_args
             assert call_args.kwargs["api_base"] == "https://custom.api.com"
 
+    async def test_output_dimensions_passed_when_set(self, mock_litellm):
+        """Test output dimensions are passed to LiteLLM when configured."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="cohere/embed-english-v3.0",
+                output_dimensions=768,
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert init_call_args.kwargs["dimensions"] == 768
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert encode_call_args.kwargs["dimensions"] == 768
+
+    async def test_output_dimensions_omitted_when_unset(self, mock_litellm):
+        """Test output dimensions are omitted when not configured."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="cohere/embed-english-v3.0",
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert "dimensions" not in init_call_args.kwargs
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert "dimensions" not in encode_call_args.kwargs
+
 
 class TestLiteLLMSDKEmbeddingsFactory:
     """Test the factory function for creating LiteLLM SDK embeddings."""
@@ -323,6 +366,21 @@ class TestLiteLLMSDKEmbeddingsFactory:
 
             assert isinstance(embeddings, LiteLLMSDKEmbeddings)
             assert embeddings.api_base == "https://custom.api.com"
+
+    def test_create_from_env_with_output_dimensions(self, monkeypatch):
+        """Test creating embeddings with configured output dimensions."""
+        mock_config = MagicMock()
+        mock_config.embeddings_provider = "litellm-sdk"
+        mock_config.embeddings_litellm_sdk_api_key = "test_key"
+        mock_config.embeddings_litellm_sdk_model = "gemini/gemini-embedding-2-preview"
+        mock_config.embeddings_litellm_sdk_api_base = None
+        mock_config.embeddings_litellm_sdk_output_dimensions = 768
+
+        with patch("hindsight_api.config.get_config", return_value=mock_config):
+            embeddings = create_embeddings_from_env()
+
+            assert isinstance(embeddings, LiteLLMSDKEmbeddings)
+            assert embeddings.output_dimensions == 768
 
 
 class TestLiteLLMSDKCohereEmbeddings:
