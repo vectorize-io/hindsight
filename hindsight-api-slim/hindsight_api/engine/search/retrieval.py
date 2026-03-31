@@ -148,7 +148,7 @@ async def retrieve_semantic_bm25_combined(
 
     cols = (
         "id, text, context, event_date, occurred_start, occurred_end, mentioned_at, "
-        "fact_type, document_id, chunk_id, tags, metadata"
+        "fact_type, document_id, chunk_id, tags, metadata, proof_count"
     )
     table = fq_table("memory_units")
 

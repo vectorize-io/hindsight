@@ -48,6 +48,7 @@ class RetrievalResult:
     chunk_id: str | None = None
     tags: list[str] | None = None  # Visibility scope tags
     metadata: dict[str, str] | None = None  # User-provided metadata
+    proof_count: int | None = None  # Number of supporting memories (observations only)
 
     # Retrieval-specific scores (only one will be set depending on retrieval method)
     similarity: float | None = None  # Semantic retrieval
@@ -72,6 +73,7 @@ class RetrievalResult:
             chunk_id=row.get("chunk_id"),
             tags=row.get("tags"),
             metadata=row.get("metadata"),
+            proof_count=row.get("proof_count"),
             similarity=row.get("similarity"),
             bm25_score=row.get("bm25_score"),
             activation=row.get("activation"),
