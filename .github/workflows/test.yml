@@ -587,7 +587,7 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha || '' }}
 
     - name: Install Helm
-      uses: azure/setup-helm@v4
+      uses: azure/setup-helm@v5
       with:
         version: 'latest'
 
