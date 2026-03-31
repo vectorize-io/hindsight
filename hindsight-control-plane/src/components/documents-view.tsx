@@ -36,6 +36,48 @@ import {
 
 const ITEMS_PER_PAGE = 50;
 
+function formatRelativeTime(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const seconds = Math.floor((now - then) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function MetadataBadges({ metadata }: { metadata: Record<string, any> }) {
+  const entries = Object.entries(metadata);
+  if (entries.length === 0) return <span>-</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {entries.slice(0, 3).map(([k, v]) => (
+        <span
+          key={k}
+          className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium"
+        >
+          {k}={String(v)}
+        </span>
+      ))}
+      {entries.length > 3 && (
+        <span className="text-xs px-2 py-0.5 text-muted-foreground">+{entries.length - 3}</span>
+      )}
+    </div>
+  );
+}
+
 export function DocumentsView() {
   const { currentBank } = useBank();
   const [documents, setDocuments] = useState<any[]>([]);
@@ -238,9 +280,8 @@ export function DocumentsView() {
                     <TableHead>Document ID</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead>Tags</TableHead>
-                    <TableHead>Context</TableHead>
                     <TableHead>Metadata</TableHead>
-                    <TableHead>Text Length</TableHead>
+                    <TableHead>Size</TableHead>
                     <TableHead>Memory Units</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -252,11 +293,14 @@ export function DocumentsView() {
                         className={`cursor-pointer hover:bg-muted/50 ${selectedDocument?.id === doc.id ? "bg-primary/10" : ""}`}
                         onClick={() => viewDocumentText(doc.id)}
                       >
-                        <TableCell title={doc.id} className="text-card-foreground">
-                          {doc.id.length > 30 ? doc.id.substring(0, 30) + "..." : doc.id}
+                        <TableCell className="text-card-foreground font-mono text-xs break-all">
+                          {doc.id}
                         </TableCell>
-                        <TableCell className="text-card-foreground">
-                          {doc.created_at ? new Date(doc.created_at).toLocaleString() : "N/A"}
+                        <TableCell
+                          className="text-card-foreground"
+                          title={doc.created_at ? new Date(doc.created_at).toLocaleString() : ""}
+                        >
+                          {doc.created_at ? formatRelativeTime(doc.created_at) : "N/A"}
                         </TableCell>
                         <TableCell className="text-card-foreground">
                           {doc.tags && doc.tags.length > 0 ? (
@@ -280,23 +324,15 @@ export function DocumentsView() {
                           )}
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {doc.retain_params?.context || "-"}
-                        </TableCell>
-                        <TableCell className="text-card-foreground">
                           {doc.document_metadata &&
                           Object.keys(doc.document_metadata).length > 0 ? (
-                            <span
-                              className="text-xs font-mono truncate max-w-[200px] inline-block"
-                              title={JSON.stringify(doc.document_metadata)}
-                            >
-                              {JSON.stringify(doc.document_metadata)}
-                            </span>
+                            <MetadataBadges metadata={doc.document_metadata} />
                           ) : (
                             "-"
                           )}
                         </TableCell>
                         <TableCell className="text-card-foreground">
-                          {doc.text_length?.toLocaleString()} chars
+                          {formatBytes(doc.text_length || 0)}
                         </TableCell>
                         <TableCell className="text-card-foreground">
                           {doc.memory_unit_count}
@@ -305,7 +341,7 @@ export function DocumentsView() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center">
+                      <TableCell colSpan={6} className="text-center">
                         Click "Load Documents" to view data
                       </TableCell>
                     </TableRow>
@@ -376,7 +412,7 @@ export function DocumentsView() {
 
       {/* Document Detail Panel - Fixed on Right */}
       {documents.length > 0 && selectedDocument && (
-        <div className="fixed right-0 top-0 h-screen w-[420px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
+        <div className="fixed right-0 top-0 h-screen w-[560px] bg-card border-l-2 border-primary shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300 ease-out">
           <div className="p-5">
             {/* Header with close button */}
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-border">
@@ -438,61 +474,49 @@ export function DocumentsView() {
                   </div>
                 )}
 
-                {/* Text Length */}
+                {/* Text Size */}
                 {selectedDocument.original_text && (
                   <div className="p-4 bg-muted/50 rounded-lg">
                     <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                      Text Length
+                      Size
                     </div>
                     <div className="text-sm font-medium text-card-foreground">
-                      {selectedDocument.original_text.length.toLocaleString()} characters
+                      {formatBytes(new Blob([selectedDocument.original_text]).size)}
                     </div>
                   </div>
                 )}
 
                 {/* Retain Parameters */}
                 {selectedDocument.retain_params && (
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
+                  <div className="p-4 bg-muted/50 rounded-lg space-y-3">
+                    <div className="text-xs font-bold text-muted-foreground uppercase">
                       Retain Parameters
                     </div>
-                    <div className="text-sm space-y-2 text-card-foreground">
-                      {selectedDocument.retain_params.context && (
-                        <div>
-                          <span className="font-semibold">Context:</span>{" "}
+                    {selectedDocument.retain_params.context && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Context</div>
+                        <div className="text-sm text-card-foreground">
                           {selectedDocument.retain_params.context}
                         </div>
-                      )}
-                      {selectedDocument.retain_params.event_date && (
-                        <div>
-                          <span className="font-semibold">Event Date:</span>{" "}
+                      </div>
+                    )}
+                    {selectedDocument.retain_params.event_date && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Event Date</div>
+                        <div className="text-sm text-card-foreground">
                           {new Date(selectedDocument.retain_params.event_date).toLocaleString()}
                         </div>
-                      )}
-                      {selectedDocument.retain_params.metadata && (
-                        <div className="mt-2">
-                          <span className="font-semibold">Metadata:</span>
-                          <pre className="mt-1 text-xs bg-background p-2 rounded text-card-foreground">
-                            {JSON.stringify(selectedDocument.retain_params.metadata, null, 2)}
-                          </pre>
+                      </div>
+                    )}
+                    {selectedDocument.retain_params.metadata &&
+                      Object.keys(selectedDocument.retain_params.metadata).length > 0 && (
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Metadata</div>
+                          <MetadataBadges metadata={selectedDocument.retain_params.metadata} />
                         </div>
                       )}
-                    </div>
                   </div>
                 )}
-
-                {/* Document Metadata */}
-                {selectedDocument.document_metadata &&
-                  Object.keys(selectedDocument.document_metadata).length > 0 && (
-                    <div className="p-4 bg-muted/50 rounded-lg">
-                      <div className="text-xs font-bold text-muted-foreground uppercase mb-2">
-                        Document Metadata
-                      </div>
-                      <pre className="text-sm bg-background p-2 rounded text-card-foreground whitespace-pre-wrap">
-                        {JSON.stringify(selectedDocument.document_metadata, null, 2)}
-                      </pre>
-                    </div>
-                  )}
 
                 {/* Tags */}
                 <div className="p-4 bg-muted/50 rounded-lg">
