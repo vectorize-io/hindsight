@@ -544,6 +544,7 @@ class CohereCrossEncoder(CrossEncoderModel):
         self.base_url = base_url
         self.timeout = timeout
         self._client = None
+        self._httpx_client: httpx.Client | None = None
 
     @property
     def provider_name(self) -> str:
@@ -551,23 +552,32 @@ class CohereCrossEncoder(CrossEncoderModel):
 
     async def initialize(self) -> None:
         """Initialize the Cohere client."""
-        if self._client is not None:
+        if self._client is not None or self._httpx_client is not None:
             return
-
-        try:
-            import cohere
-        except ImportError:
-            raise ImportError("cohere is required for CohereCrossEncoder. Install it with: pip install cohere")
 
         base_url_msg = f" at {self.base_url}" if self.base_url else ""
         logger.info(f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg}")
 
-        # Build client kwargs, only including base_url if set (for Azure or custom endpoints)
-        client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
         if self.base_url:
-            client_kwargs["base_url"] = self.base_url
-        self._client = cohere.Client(**client_kwargs)
-        logger.info("Reranker: Cohere provider initialized")
+            # For custom endpoints (Azure AI Foundry), use httpx directly to avoid SDK path appending
+            # Azure endpoints already include the full path (e.g., /models/.../invoke)
+            self._httpx_client = httpx.Client(
+                timeout=self.timeout,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            logger.info("Reranker: Cohere provider initialized (using httpx for custom endpoint)")
+        else:
+            # For native Cohere API, use the official SDK
+            try:
+                import cohere
+            except ImportError:
+                raise ImportError("cohere is required for CohereCrossEncoder. Install it with: pip install cohere")
+
+            self._client = cohere.Client(api_key=self.api_key, timeout=self.timeout)
+            logger.info("Reranker: Cohere provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
@@ -579,7 +589,7 @@ class CohereCrossEncoder(CrossEncoderModel):
         Returns:
             List of relevance scores
         """
-        if self._client is None:
+        if self._client is None and self._httpx_client is None:
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
 
         if not pairs:
@@ -605,18 +615,40 @@ class CohereCrossEncoder(CrossEncoderModel):
             texts = [text for _, text in indexed_texts]
             indices = [idx for idx, _ in indexed_texts]
 
-            response = self._client.rerank(
-                query=query,
-                documents=texts,
-                model=self.model,
-                return_documents=False,
-            )
+            if self._httpx_client:
+                # Direct HTTP request for custom endpoints (Azure AI Foundry)
+                response = self._httpx_client.post(
+                    self.base_url,
+                    json={
+                        "model": self.model,
+                        "query": query,
+                        "documents": texts,
+                        "return_documents": False,
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
 
-            # Map scores back to original positions
-            for result in response.results:
-                original_idx = result.index
-                score = result.relevance_score
-                all_scores[indices[original_idx]] = score
+                # Map scores back to original positions
+                # Azure Cohere response format: {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
+                for item in result.get("results", []):
+                    original_idx = item["index"]
+                    score = item["relevance_score"]
+                    all_scores[indices[original_idx]] = score
+            else:
+                # Native Cohere SDK for standard API
+                response = self._client.rerank(
+                    query=query,
+                    documents=texts,
+                    model=self.model,
+                    return_documents=False,
+                )
+
+                # Map scores back to original positions
+                for result in response.results:
+                    original_idx = result.index
+                    score = result.relevance_score
+                    all_scores[indices[original_idx]] = score
 
         return all_scores
 
