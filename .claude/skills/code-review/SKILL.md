@@ -71,6 +71,10 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 results = await asyncio.gather(*tasks, return_exceptions=True)
 ```
 
+### Branch Hygiene
+- **Always start new feature branches from `origin/main`** — rebase to ensure a clean base.
+- **Only include commits relevant to the PR/branch/feature** — no unrelated changes. If the branch contains commits that don't belong, they must be removed before merging.
+
 ### General Principles
 - Don't add features, refactor code, or make "improvements" beyond what was asked
 - Don't add unnecessary error handling for impossible scenarios
@@ -80,11 +84,17 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 
 ## Review Steps
 
-### 1. Identify changed files
+### 1. Check branch hygiene
+
+- Run `git log --oneline main..HEAD` to list all commits on the branch.
+- Verify every commit is relevant to the feature/PR. Flag any unrelated commits.
+- Check the branch is based on a recent `origin/main` (no stale base).
+
+### 2. Identify changed files
 
 Run `git diff --name-only HEAD` (unstaged) and `git diff --cached --name-only` (staged) to get all changed files. If there are no local changes, diff against the base branch using `git diff main...HEAD --name-only` and `git diff main...HEAD` to review all commits on the current branch.
 
-### 2. Run linters
+### 3. Run linters
 
 ```bash
 ./scripts/hooks/lint.sh
@@ -92,7 +102,7 @@ Run `git diff --name-only HEAD` (unstaged) and `git diff --cached --name-only` (
 
 Report any failures. Do NOT fix them yourself — just report.
 
-### 3. Check for dead code
+### 4. Check for dead code
 
 For each changed Python file, check for:
 - Unused imports (Ruff should catch these, but verify)
@@ -105,7 +115,7 @@ For each changed TypeScript file, check for:
 - Unused variables or functions
 - Commented-out code
 
-### 4. Check type safety (Python)
+### 5. Check type safety (Python)
 
 For each changed Python file, check for violations:
 - **No raw `dict` for structured data** — should use Pydantic models
@@ -113,7 +123,7 @@ For each changed Python file, check for violations:
 - **Missing type hints** on function parameters and return types
 - **Missing `@field_validator`** for datetime fields that should be timezone-aware
 
-### 5. Check for missing tests
+### 6. Check for missing tests
 
 For each new or significantly changed function/endpoint/class:
 - Check if there is a corresponding test addition or update
@@ -123,21 +133,21 @@ For each new or significantly changed function/endpoint/class:
 
 Flag any new logic that lacks test coverage.
 
-### 6. Check API consistency
+### 7. Check API consistency
 
 If any files in `hindsight-api-slim/hindsight_api/api/` were changed:
 - Were the OpenAPI specs regenerated? (`./scripts/generate-openapi.sh`)
 - Were the client SDKs regenerated? (`./scripts/generate-clients.sh`)
 - Were the control plane proxy routes updated? (`hindsight-control-plane/src/app/api/`)
 
-### 7. Check code comments
+### 8. Check code comments
 
 For each non-trivial change:
 - **New non-obvious logic** — is there a comment explaining the reasoning?
 - **Changed approach** — does the comment include what was done before and why it changed?
 - **Stale comments** — do existing comments near the changed code still accurately describe the behavior?
 
-### 8. Review against other coding standards
+### 9. Review against other coding standards
 
 Check the diff for violations of the standards listed above:
 - Python files at project root (not allowed)
@@ -149,11 +159,12 @@ Check the diff for violations of the standards listed above:
 - Premature abstractions or speculative helpers
 - Backwards-compatibility hacks (unused vars, re-exports, "removed" comments)
 
-### 9. Report findings
+### 10. Report findings
 
 Present a clear summary organized by severity:
 
 **Must fix** — issues that will break CI or violate hard project rules:
+- Unrelated commits on the branch
 - Lint failures
 - Missing type hints on public functions
 - Raw dict usage for structured data
