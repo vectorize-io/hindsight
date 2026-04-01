@@ -8,13 +8,13 @@ description: "When you run multiple OpenClaw instances, each one learns independ
 hide_table_of_contents: true
 ---
 
+![Your Team of OpenClaw Instances Is Operating Without Shared Memory](/img/blog/openclaw-shared-memory.png)
+
 You're running more than one OpenClaw instance. Maybe one handles customer support, one serves your dev team, one is a personal assistant. Each instance is doing its job — having conversations, picking up context, learning what matters. But by default, none of that learning is shared. One instance figures something out; every other instance starts from zero.
 
 A team of agents that can't share memory isn't really a team.
 
 <!-- truncate -->
-
-![Your Team of OpenClaw Instances Is Operating Without Shared Memory](/img/blog/openclaw-shared-memory.png)
 
 Hindsight solves this with shared memory banks — a single store that every instance reads from and writes to. One agent learns something; every agent knows it. One config change.
 
