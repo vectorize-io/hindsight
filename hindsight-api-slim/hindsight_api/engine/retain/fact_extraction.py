@@ -25,6 +25,102 @@ from .entity_labels import (
     parse_entity_labels,
 )
 
+# ── Chinese first-person experience reclassification heuristic ──────────────
+# Safety net for when the LLM classifies Chinese first-person experiences as
+# "world". If the fact text contains a Chinese first-person subject followed by
+# a Chinese action verb, reclassify it as "experience".
+
+_CHINESE_FIRST_PERSON_SUBJECTS = (
+    "我",
+    "我们",
+    "咱",
+    "咱们",
+    "助手",
+    "助理",
+    "本人",
+    "agent",
+)
+
+_CHINESE_ACTION_VERBS = (
+    "修复了",
+    "调试了",
+    "实现了",
+    "部署了",
+    "发现了",
+    "找到了",
+    "解决了",
+    "更改了",
+    "更新了",
+    "修改了",
+    "创建了",
+    "构建了",
+    "配置了",
+    "安装了",
+    "迁移了",
+    "优化了",
+    "调查了",
+    "分析了",
+    "测试了",
+    "验证了",
+    "确认了",
+    "学到了",
+    "决定了",
+    "选择了",
+    "设计了",
+    "编写了",
+    "添加了",
+    "删除了",
+    "完成了",
+    "开始了",
+    "搭建了",
+    "整理了",
+    "清理了",
+    "设置了",
+    "写入了",
+    "提取了",
+    "采集了",
+    "抓取了",
+    "执行了",
+    "运行了",
+    "搞定了",
+    "处理了",
+    "记录了",
+    "读取了",
+    "导入了",
+    "导出了",
+    "成功",
+    "尝试",
+)
+
+# Pre-compiled regex: Chinese first-person subject + optional filler + action verb
+_CHINESE_EXPERIENCE_RE = re.compile(
+    r"(?:"
+    + "|".join(re.escape(s) for s in _CHINESE_FIRST_PERSON_SUBJECTS)
+    + r")[\s\S]{0,20}(?:"
+    + "|".join(re.escape(v) for v in _CHINESE_ACTION_VERBS)
+    + r")"
+)
+
+
+def _reclassify_chinese_experience(fact_text: str, current_type: str) -> str:
+    """Reclassify a 'world' fact as 'experience' if it contains Chinese first-person markers.
+
+    This is a post-LLM safety net — when the LLM misses Chinese first-person
+    experiences and classifies them as 'world', this heuristic catches them.
+
+    Args:
+        fact_text: The extracted fact text to check.
+        current_type: The current fact_type value ('world' or 'experience').
+
+    Returns:
+        The (possibly reclassified) fact_type value.
+    """
+    if current_type != "world":
+        return current_type
+    if _CHINESE_EXPERIENCE_RE.search(fact_text):
+        return "experience"
+    return current_type
+
 
 def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | None:
     """
@@ -160,7 +256,7 @@ class ExtractedFact(BaseModel):
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
+        description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker (e.g., 'I changed X', '我修复了X', '助手完成了Z')."
     )
     entities: list[Entity] | None = Field(default=None, description="People, places, concepts")
     causal_relations: list[FactCausalRelation] | None = Field(
@@ -263,7 +359,7 @@ class ExtractedFactVerbose(BaseModel):
     )
 
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = objective/external facts about other people, events, general knowledge. 'assistant' = first-person actions, experiences, or observations by the speaker (e.g., 'I changed X', 'I discovered Y')."
+        description="'world' = objective/external facts about other people, events, general knowledge. 'assistant' = first-person actions, experiences, or observations by the speaker (e.g., 'I changed X', 'I discovered Y', '我修复了X', '我发现了Y', '助手完成了Z')."
     )
 
     entities: list[Entity] | None = Field(
@@ -313,7 +409,7 @@ class ExtractedFactNoCausal(BaseModel):
     occurred_start: str | None = Field(default=None, description="WHEN the event happened (ISO timestamp).")
     occurred_end: str | None = Field(default=None, description="WHEN the event ended (ISO timestamp).")
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = about the user/others. 'assistant' = experience with assistant."
+        description="'world' = about the user/others. 'assistant' = first-person actions/experiences by the speaker (e.g., 'I changed X', '我修复了X', '助手完成了Z')."
     )
     entities: list[Entity] | None = Field(
         default=None,
@@ -355,7 +451,7 @@ class VerbatimExtractedFact(BaseModel):
     occurred_start: str | None = Field(default=None, description="ISO timestamp for events")
     occurred_end: str | None = Field(default=None, description="ISO timestamp for event end")
     fact_type: Literal["world", "assistant"] = Field(
-        description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker."
+        description="'world' = objective/external facts. 'assistant' = first-person actions, experiences, or observations by the speaker (e.g., 'I changed X', '我修复了X', '助手完成了Z')."
     )
     entities: list[Entity] | None = Field(default=None, description="People, places, concepts")
 
@@ -504,7 +600,7 @@ fact_kind:
 
 fact_type:
 - "world": About other people, external events, general knowledge, objective facts
-- "assistant": First-person actions, experiences, or observations by the speaker/author (e.g., "I changed X", "I discovered Y", "I debugged Z"). Also includes interactions with the user (requests, recommendations). If the narrator describes something they did, tried, learned, or decided — use "assistant".
+- "assistant": First-person actions, experiences, or observations by the speaker/author (e.g., "I changed X", "I discovered Y", "I debugged Z", "我修复了X", "我发现了Y", "助手完成了Z"). Also includes interactions with the user (requests, recommendations). If the narrator describes something they did, tried, learned, or decided — use "assistant". This applies in ALL languages — Chinese first-person markers like 我/助手/助理 + action verbs are "assistant".
 
 ══════════════════════════════════════════════════════════════════════════
 TEMPORAL HANDLING
@@ -567,6 +663,13 @@ Input: "Alice has 5 years of Kubernetes experience and holds CKA certification. 
 Output: ONLY 2 facts (skip coffee preference - too trivial):
 1. what="Alice has 5 years Kubernetes experience, CKA certified", who="Alice", entities=["Alice", "Kubernetes", "CKA"]
 2. what="Alice leads infrastructure team since March", who="Alice", entities=["Alice", "infrastructure"]
+
+Example 3 - Chinese input with mixed fact_type (Event Date: 2024-06-10):
+Input: "我通过 app_id + app_secret 获取 token 写入了飞书表格。王先生要求每周一执行Reddit监控。"
+
+Output: 2 facts:
+1. what="通过 app_id + app_secret 获取 token 写入了飞书表格", fact_type="assistant", who="assistant", entities=["飞书", "token", "app_id"]
+2. what="王先生要求每周一执行Reddit监控", fact_type="world", who="王先生", entities=["王先生", "Reddit"]
 
 ══════════════════════════════════════════════════════════════════════════
 QUALITY OVER QUANTITY
@@ -1099,6 +1202,10 @@ async def _extract_facts_from_chunk(
                 else:
                     raw_fact_kind = llm_fact.get("fact_kind")
                     fact_type = "experience" if raw_fact_kind == "assistant" else "world"
+
+                # Post-LLM safety net: reclassify Chinese first-person experiences
+                if what:
+                    fact_type = _reclassify_chinese_experience(what, fact_type)
 
                 # Get fact_kind for temporal handling (but don't store it)
                 fact_kind = llm_fact.get("fact_kind", "conversation")
@@ -1805,6 +1912,10 @@ async def extract_facts_from_contents_batch_api(
             else:
                 raw_fact_kind = llm_fact.get("fact_kind")
                 fact_type = "experience" if raw_fact_kind == "assistant" else "world"
+
+            # Post-LLM safety net: reclassify Chinese first-person experiences
+            if what:
+                fact_type = _reclassify_chinese_experience(what, fact_type)
 
             # Build combined fact text
             combined_parts = [what]
