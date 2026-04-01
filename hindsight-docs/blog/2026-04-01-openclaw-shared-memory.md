@@ -32,9 +32,54 @@ This default makes sense when you want full isolation. But when your instances a
 
 ---
 
-## The Setup: One Bank, Many Instances
+## Setup
 
-Point every instance at the same external Hindsight endpoint and disable per-instance bank derivation. In `~/.openclaw/openclaw.json` on **every machine running an instance**:
+### Step 1: Get a Hindsight API endpoint
+
+The shared bank requires an external Hindsight server that all instances can reach. The fastest option is [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — sign up, create a bank, and get an API URL and token.
+
+If you need full data control, you can [self-host Hindsight](/developer/installation) on your own infrastructure instead.
+
+### Step 2: Configure an LLM provider for extraction
+
+Hindsight needs an LLM to extract facts from conversations in the background. This is separate from your agent's primary model. Set one of these on each machine:
+
+```bash
+# OpenAI (uses gpt-4o-mini by default)
+export OPENAI_API_KEY="sk-..."
+
+# Anthropic (uses claude-3-5-haiku by default)
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Gemini
+export GEMINI_API_KEY="..."
+
+# Claude Code or Codex (no key needed)
+export HINDSIGHT_API_LLM_PROVIDER=claude-code
+```
+
+Any OpenAI-compatible endpoint works too — OpenRouter, a local model, etc. A small, cheap model is fine here; extraction doesn't need your most capable model.
+
+### Step 3: Install the plugin
+
+Run this on every machine in the team:
+
+```bash
+openclaw plugins install @vectorize-io/hindsight-openclaw
+```
+
+You should see:
+
+```
+Exclusive slot "memory" switched from "memory-core" to "hindsight-openclaw".
+Installed plugin: hindsight-openclaw
+```
+
+This confirms Hindsight has taken over the memory slot on that instance.
+
+### Step 4: Point every instance at the shared bank
+
+Configure each instance to use the same Hindsight endpoint and disable per-instance bank derivation. In `~/.openclaw/openclaw.json` on **every machine running an instance**:
 
 ```json
 {
@@ -141,12 +186,14 @@ For most teams, Hindsight Cloud is the right starting point. Create an account, 
 
 ---
 
-## Get Started
+## Checklist
 
-1. Create a [Hindsight Cloud account](https://ui.hindsight.vectorize.io/signup) and generate an API token
-2. Deploy the config with `dynamicBankId: false` (or `dynamicBankGranularity: ["user"]`) on every instance
-3. Add a `retainMission` focused on context that generalizes across conversations
-4. Let the team run — the bank builds from the first conversation
+1. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) (or self-host) and get your API URL and token
+2. Set an extraction LLM API key on each machine
+3. Run `openclaw plugins install @vectorize-io/hindsight-openclaw` on each machine
+4. Add the shared bank config (`dynamicBankId: false` or `dynamicBankGranularity: ["user"]`) to each instance
+5. Optionally add a `retainMission` to focus what gets retained
+6. Launch each instance — the bank builds from the first conversation
 
 The more your instances interact, the more the shared bank accumulates. Every instance gets smarter from every other instance's conversations.
 
