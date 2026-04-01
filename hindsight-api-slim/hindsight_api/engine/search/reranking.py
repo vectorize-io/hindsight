@@ -39,10 +39,10 @@ def apply_combined_scoring(
         proof_count_boost = 1 + proof_count_alpha * (proof_norm  - 0.5)   # in [1-α/2, 1+α/2]
         combined_score    = CE_normalized * recency_boost * temporal_boost * proof_count_boost
 
-    proof_norm maps proof_count using natural log1p without an arbitrary cap:
-      proof_count=1 → base log1p(1)=0.693 (difference=0.0 → neutral multiplier)
-      proof_count=10 → log1p(10)=2.39 (gives boost)
-      proof_count=100 → log1p(100)=4.61 (strong boost)
+    proof_norm maps proof_count using a smooth logarithmic curve centered at 0.5:
+      proof_count=1 → 0.5 + 0 = 0.5 (neutral multiplier)
+      proof_count=150 → 0.5 + 0.5 = 1.0 (strong boost)
+      proof_count=22000 → 0.5 + 1.0 = 1.5 (very strong boost)
 
     Temporal proximity is treated as neutral (0.5) when not set by temporal retrieval,
     so temporal_boost collapses to 1.0 for non-temporal queries.
@@ -76,13 +76,15 @@ def apply_combined_scoring(
         # Proof count: log-normalized evidence strength; neutral for non-observations.
         proof_count = sr.retrieval.proof_count
         if proof_count is not None and proof_count >= 1:
-            # We don't cap this at an arbitrary number like 100 anymore.
-            # log1p naturally dampens large numbers:
-            # count=1 -> 0.69, count=50 -> 3.93, count=500 -> 6.21
-            proof_norm = math.log1p(proof_count)
+            # We don't cap this at an arbitrary number. 
+            # We scale naturally so that:
+            # count=1 -> 0.5 (neutral baseline)
+            # count=150 -> 1.0 (+5% boost)
+            # count=22000 -> 1.5 (+10% boost)
+            proof_norm = 0.5 + (math.log(proof_count) / 10.0)
         else:
-            # Neutral baseline for log1p is log1p(1) = 0.693
-            proof_norm = math.log1p(1)
+            # Neutral baseline is precisely 0.5, ensuring neutral multiplier (1.0)
+            proof_norm = 0.5
 
         # RRF: kept at 0.0 for trace continuity but excluded from scoring.
         # RRF is batch-relative (min-max normalised) and redundant after reranking.
