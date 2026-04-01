@@ -175,7 +175,7 @@ class BFSGraphRetriever(GraphRetriever):
         entry_points = await conn.fetch(
             f"""
             SELECT id, text, context, event_date, occurred_start, occurred_end,
-                   mentioned_at, fact_type, document_id, chunk_id, tags,
+                   mentioned_at, fact_type, document_id, chunk_id, tags, proof_count,
                    1 - (embedding <=> $1::vector) AS similarity
             FROM {fq_table("memory_units")}
             WHERE bank_id = $2
@@ -230,7 +230,7 @@ class BFSGraphRetriever(GraphRetriever):
                 neighbors = await conn.fetch(
                     f"""
                     SELECT mu.id, mu.text, mu.context, mu.occurred_start, mu.occurred_end,
-                           mu.mentioned_at, mu.fact_type,
+                           mu.mentioned_at, mu.fact_type, mu.proof_count,
                            mu.document_id, mu.chunk_id, mu.tags, mu.metadata,
                            ml.weight, ml.link_type, ml.from_unit_id
                     FROM {fq_table("memory_links")} ml

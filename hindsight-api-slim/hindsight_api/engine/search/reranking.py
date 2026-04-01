@@ -39,8 +39,10 @@ def apply_combined_scoring(
         proof_count_boost = 1 + proof_count_alpha * (proof_norm  - 0.5)   # in [1-α/2, 1+α/2]
         combined_score    = CE_normalized * recency_boost * temporal_boost * proof_count_boost
 
-    proof_norm maps proof_count to [0, 1] using log1p normalization:
-      proof_count=1 → 0.5 (neutral), proof_count=5 → 0.72, proof_count=50 → 0.93
+    proof_norm maps proof_count using natural log1p without an arbitrary cap:
+      proof_count=1 → base log1p(1)=0.693 (difference=0.0 → neutral multiplier)
+      proof_count=10 → log1p(10)=2.39 (gives boost)
+      proof_count=100 → log1p(100)=4.61 (strong boost)
 
     Temporal proximity is treated as neutral (0.5) when not set by temporal retrieval,
     so temporal_boost collapses to 1.0 for non-temporal queries.
@@ -72,14 +74,15 @@ def apply_combined_scoring(
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5
 
         # Proof count: log-normalized evidence strength; neutral for non-observations.
-        # log1p(1)/log1p(100) ≈ 0.15 → maps to neutral 0.5 after centering.
-        # log1p(50)/log1p(100) ≈ 0.85 → strong boost.
         proof_count = sr.retrieval.proof_count
         if proof_count is not None and proof_count >= 1:
-            proof_norm = math.log1p(proof_count) / math.log1p(100)  # → [0, 1]
-            proof_norm = min(proof_norm, 1.0)
+            # We don't cap this at an arbitrary number like 100 anymore.
+            # log1p naturally dampens large numbers:
+            # count=1 -> 0.69, count=50 -> 3.93, count=500 -> 6.21
+            proof_norm = math.log1p(proof_count)
         else:
-            proof_norm = 0.5  # Neutral
+            # Neutral baseline for log1p is log1p(1) = 0.693
+            proof_norm = math.log1p(1)
 
         # RRF: kept at 0.0 for trace continuity but excluded from scoring.
         # RRF is batch-relative (min-max normalised) and redundant after reranking.
