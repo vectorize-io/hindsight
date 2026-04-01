@@ -14,6 +14,8 @@ A team of agents that can't share memory isn't really a team.
 
 <!-- truncate -->
 
+![Your Team of OpenClaw Instances Is Operating Without Shared Memory](/img/blog/openclaw-shared-memory.png)
+
 Hindsight solves this with shared memory banks — a single store that every instance reads from and writes to. One agent learns something; every agent knows it. One config change.
 
 ---
