@@ -5,10 +5,24 @@ _DEFAULT_MISSION = "Track every detail: names, numbers, dates, places, and relat
 
 # Processing rules — always present regardless of mission
 _PROCESSING_RULES = """Processing rules (always apply):
-- REDUNDANT: same info worded differently → UPDATE the existing observation.
-- CONTRADICTION/UPDATE: capture both states with temporal markers ("used to X, now Y").
-- RESOLVE REFERENCES: when a new fact provides a concrete value resolving a vague placeholder in an existing observation (e.g. "home country", "hometown", "birthplace", "native language", "her ex", "that city"), UPDATE the observation to embed the resolved value explicitly. Example: new fact says "grandma in Sweden" + existing observation says "moved from her home country" → update to "home country is Sweden".
-- NEVER merge observations about different people or unrelated topics."""
+
+1. ONE OBSERVATION PER DISTINCT FACET: each observation tracks exactly one specific facet — a count ("has 3 items"), a named entity ("has a dog named Rex"), a relationship ("works at Google"), etc. Never merge different facets into one observation.
+
+2. MATCH BY ENTITY/FACET, NOT TOPIC: when deciding whether to UPDATE vs CREATE, match on the specific entity or facet. "Sold item X" updates only the X observation. "Now has 5 items" updates only the count observation. Do not update observations about different entities just because they share a general topic.
+
+3. STATE CHANGES — UPDATE CONCISELY: when a fact changes the state of something ("sold X", "X died", "moved to Y"), UPDATE the matching observation to reflect the current state. Include dates when available. Keep it concise — only information about THAT specific facet. Example: "User owned a dog named Rex who died on March 15, 2025". Do NOT pull in information from other observations — each observation stays focused on its own facet.
+
+4. CASCADE TO ALL AFFECTED OBSERVATIONS: a state change may affect multiple observations. For example, if entity C is removed from a group, update BOTH the individual observation for C AND any list/group observation that includes C (remove C from the list while keeping all other members intact).
+
+5. NO COMPUTATION: you do not have the full picture — never calculate, derive, or adjust numeric values. If the user says "I have 2 dogs" and then "I have a dog named Rex", do NOT update the count to 3 — you don't know if Rex is one of the 2 or a new one. If the user says "I sold X", do NOT decrement a count. Only update a count when the user explicitly states a new count. Synthesize and consolidate what was stated, but never do arithmetic or logical deductions.
+
+6. SAME FACET → UPDATE, NOT CREATE: a new count supersedes the old count — UPDATE the existing count observation, don't create a second one. If there's an existing observation for the same specific facet, always UPDATE it rather than creating a duplicate.
+
+7. PRESERVE HISTORY: observations that record significant events (sold, died, moved, changed) are important history — never DELETE them. Only delete an observation when it is restated identically or truly meaningless. Be very conservative with deletes.
+
+8. RESOLVE REFERENCES: when a new fact provides a concrete value for a vague placeholder in an existing observation (e.g., "home country" → "Sweden"), UPDATE to embed the resolved value.
+
+9. NEVER merge observations about different people or unrelated topics."""
 
 # Data section — format placeholders {facts_text} and {observations_text} are substituted at call time
 _BATCH_DATA_SECTION = """
@@ -26,8 +40,8 @@ Each observation includes:
 - source_memories: array of supporting facts with their text and dates
 
 Compare the facts against existing observations:
-- Same topic as an existing observation → UPDATE it (observation_id + source_fact_ids)
-- New topic with durable knowledge → CREATE a new observation (source_fact_ids)
+- Same facet as an existing observation → UPDATE it (observation_id + source_fact_ids)
+- New facet with durable knowledge → CREATE a new observation (source_fact_ids)
 - Cross-reference facts within the batch: a later fact may resolve a vague reference in an earlier one
 - Purely ephemeral facts → omit them unless the MISSION above explicitly targets such data (e.g. timestamped events, session state, screen content)"""
 

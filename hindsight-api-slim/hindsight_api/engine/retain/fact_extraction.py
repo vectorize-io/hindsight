@@ -1464,28 +1464,76 @@ async def extract_facts_from_text(
             f"chunk_size={config.retain_chunk_size:,}) - starting parallel LLM extraction"
         )
 
-    tasks = [
-        _extract_facts_with_auto_split(
-            chunk=chunk,
-            chunk_index=i,
-            total_chunks=len(chunks),
-            event_date=event_date,
-            context=context,
-            llm_config=llm_config,
-            config=config,
-            agent_name=agent_name,
-            metadata=metadata,
-        )
-        for i, chunk in enumerate(chunks)
-    ]
-    chunk_results = await asyncio.gather(*tasks)
+    # Per-chunk retry wrapper: each chunk gets up to MAX_CHUNK_RETRIES attempts.
+    # This handles transient LLM failures (timeouts, rate limits, malformed responses)
+    # without discarding the entire batch. If a chunk still fails after all retries,
+    # the ENTIRE retain fails — we do not accept partial extraction.
+    MAX_CHUNK_RETRIES = 3
+    CHUNK_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
+
+    async def _extract_chunk_with_retry(chunk: str, chunk_index: int) -> tuple:
+        """Extract facts from a single chunk with retries on failure."""
+        last_exception = None
+        for attempt in range(MAX_CHUNK_RETRIES):
+            try:
+                return await _extract_facts_with_auto_split(
+                    chunk=chunk,
+                    chunk_index=chunk_index,
+                    total_chunks=len(chunks),
+                    event_date=event_date,
+                    context=context,
+                    llm_config=llm_config,
+                    config=config,
+                    agent_name=agent_name,
+                    metadata=metadata,
+                )
+            except Exception as e:
+                last_exception = e
+                if attempt < MAX_CHUNK_RETRIES - 1:
+                    delay = CHUNK_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        f"Chunk {chunk_index}/{len(chunks)} extraction failed "
+                        f"(attempt {attempt + 1}/{MAX_CHUNK_RETRIES}): "
+                        f"{type(e).__name__}. Retrying in {delay:.0f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Chunk {chunk_index}/{len(chunks)} extraction failed after "
+                        f"{MAX_CHUNK_RETRIES} attempts: {type(e).__name__}: {e}"
+                    )
+        raise last_exception
+
+    tasks = [_extract_chunk_with_retry(chunk, i) for i, chunk in enumerate(chunks)]
+
+    # return_exceptions=True so we can collect all results even if some chunks
+    # exhausted their retries. We check for failures below and fail the retain
+    # if ANY chunk could not be extracted — partial extraction is not acceptable.
+    chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+
     all_facts = []
     chunk_metadata = []  # [(chunk_text, fact_count), ...]
     total_usage = TokenUsage()
-    for chunk, (chunk_facts, chunk_usage) in zip(chunks, chunk_results):
+    failed_chunks = []
+    for i, (chunk, result) in enumerate(zip(chunks, chunk_results)):
+        if isinstance(result, Exception):
+            failed_chunks.append((i, result))
+            continue
+        chunk_facts, chunk_usage = result
         all_facts.extend(chunk_facts)
         chunk_metadata.append((chunk, len(chunk_facts)))
         total_usage = total_usage + chunk_usage
+
+    if failed_chunks:
+        # Fail the entire retain — partial extraction is not acceptable.
+        # All successfully extracted facts are discarded because the transaction
+        # hasn't committed yet. The worker poller will retry the entire task.
+        failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
+        raise RuntimeError(
+            f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed "
+            f"after {MAX_CHUNK_RETRIES} retries each. First failures: {failed_summary}"
+        )
+
     return all_facts, chunk_metadata, total_usage
 
 
@@ -2055,8 +2103,9 @@ async def extract_facts_from_contents(
         )
         fact_extraction_tasks.append(task)
 
-    # Step 2: Wait for all fact extractions to complete
-    all_fact_results = await asyncio.gather(*fact_extraction_tasks)
+    # Step 2: Wait for all fact extractions to complete.
+    # Use return_exceptions=True so one content item failure doesn't discard the rest.
+    all_fact_results = await asyncio.gather(*fact_extraction_tasks, return_exceptions=True)
 
     # Step 3: Flatten and convert to typed objects
     extracted_facts: list[ExtractedFactType] = []
@@ -2066,9 +2115,16 @@ async def extract_facts_from_contents(
     global_chunk_idx = 0
     global_fact_idx = 0
 
-    for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(
-        zip(contents, all_fact_results)
-    ):
+    # Filter out failed content items
+    valid_results = []
+    for content, result in zip(contents, all_fact_results):
+        if isinstance(result, Exception):
+            logger.warning(f"Content extraction failed (skipping): {type(result).__name__}: {result}")
+            valid_results.append((content, ([], [], TokenUsage())))
+        else:
+            valid_results.append((content, result))
+
+    for content_index, (content, (facts_from_llm, chunks_from_llm, content_usage)) in enumerate(valid_results):
         total_usage = total_usage + content_usage
         chunk_start_idx = global_chunk_idx
 

@@ -15,7 +15,7 @@ dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
     # Transitive dependency security fixes
-    "cryptography>=46.0.5", # Subgroup attack vulnerability fix
+    "cryptography>=46.0.6", # Incomplete DNS name constraint enforcement fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
 ]
 

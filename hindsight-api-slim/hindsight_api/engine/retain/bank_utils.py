@@ -137,7 +137,7 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
 
         # Bank doesn't exist, create with defaults.
         # Generate internal_id here so we control the value and can use it
-        # immediately for HNSW index creation without a RETURNING round-trip.
+        # immediately for vector index creation without a RETURNING round-trip.
         internal_id = uuid.uuid4()
         inserted = await conn.fetchval(
             f"""

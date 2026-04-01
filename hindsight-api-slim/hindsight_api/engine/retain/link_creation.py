@@ -32,17 +32,26 @@ async def create_temporal_links_batch(conn, bank_id: str, unit_ids: list[str]) -
     return await link_utils.create_temporal_links_batch_per_fact(conn, bank_id, unit_ids, log_buffer=[])
 
 
-async def create_semantic_links_batch(conn, bank_id: str, unit_ids: list[str], embeddings: list[list[float]]) -> int:
+async def create_semantic_links_batch(
+    conn,
+    bank_id: str,
+    unit_ids: list[str],
+    embeddings: list[list[float]],
+    pre_computed_ann_links: list[tuple] | None = None,
+) -> int:
     """
     Create semantic links between facts.
 
     Links facts that are semantically similar based on embeddings.
+    When pre_computed_ann_links are provided (from Phase 1), they are used
+    instead of running ANN queries inside the transaction.
 
     Args:
         conn: Database connection
         bank_id: Bank identifier
         unit_ids: List of unit IDs to create links for
         embeddings: List of embedding vectors (same length as unit_ids)
+        pre_computed_ann_links: Pre-computed ANN results from Phase 1
 
     Returns:
         Number of semantic links created
@@ -53,7 +62,9 @@ async def create_semantic_links_batch(conn, bank_id: str, unit_ids: list[str], e
     if len(unit_ids) != len(embeddings):
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and embeddings ({len(embeddings)})")
 
-    return await link_utils.create_semantic_links_batch(conn, bank_id, unit_ids, embeddings, log_buffer=[])
+    return await link_utils.create_semantic_links_batch(
+        conn, bank_id, unit_ids, embeddings, log_buffer=[], pre_computed_ann_links=pre_computed_ann_links
+    )
 
 
 async def create_causal_links_batch(conn, bank_id: str, unit_ids: list[str], facts: list[ProcessedFact]) -> int:

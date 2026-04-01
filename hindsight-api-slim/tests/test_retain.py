@@ -2045,6 +2045,72 @@ async def test_semantic_links_within_same_batch(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_semantic_links_phase1_ann_cross_batch(memory, request_context):
+    """
+    Test that Phase 1 ANN search creates semantic links between facts from
+    DIFFERENT retain batches.
+
+    The semantic ANN search runs in Phase 1 on a separate connection (outside
+    the write transaction) using placeholder unit IDs to avoid TimeoutErrors
+    from HNSW index contention under concurrent load. This test verifies that:
+    1. Phase 1 ANN with placeholder IDs works correctly
+    2. Placeholder IDs are remapped to real unit IDs before insertion
+    3. Cross-batch semantic links are created between similar facts
+    """
+    bank_id = f"test_semantic_phase1_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # First batch: store some facts about Python
+        await memory.retain_async(
+            bank_id=bank_id,
+            content="Alice is an expert Python developer who builds web applications using FastAPI.",
+            context="team skills",
+            request_context=request_context,
+        )
+
+        # Second batch: store similar facts — Phase 1 ANN should find the first batch's
+        # facts via HNSW index and create cross-batch semantic links
+        unit_ids_2 = await memory.retain_async(
+            bank_id=bank_id,
+            content="Bob specializes in Python programming and creates REST APIs with FastAPI.",
+            context="team skills",
+            request_context=request_context,
+        )
+
+        assert len(unit_ids_2) > 0
+
+        # Verify cross-batch semantic links exist
+        async with memory._pool.acquire() as conn:
+            cross_batch_links = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE from_unit_id::text = ANY($1)
+                  AND link_type = 'semantic'
+                  AND to_unit_id::text != ALL($1)
+                """,
+                unit_ids_2,
+            )
+
+            logger.info(f"Cross-batch semantic links from batch 2: {len(cross_batch_links)}")
+            for link in cross_batch_links:
+                logger.info(
+                    f"  {str(link['from_unit_id'])[:8]}... -> {str(link['to_unit_id'])[:8]}... "
+                    f"(weight: {link['weight']:.3f})"
+                )
+
+            # Phase 1 ANN should have found similar facts from batch 1
+            assert len(cross_batch_links) > 0, (
+                "Phase 1 ANN search should create semantic links between similar facts "
+                "from different retain batches. This tests that placeholder unit IDs are "
+                "correctly remapped to real IDs after insert_facts_batch."
+            )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_temporal_links_within_same_batch(memory, request_context):
     """
     Test that temporal links are created between facts retained in the SAME batch.
@@ -2790,6 +2856,480 @@ async def test_named_strategy_applied_end_to_end(memory, request_context):
         assert any("Alice" in f.text for f in facts.results), "Verbatim content should be retrievable"
 
         logger.info("✓ named strategy 'chunks' with chunks applied end-to-end: no LLM, verbatim storage")
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_semantic_ann_uses_hnsw_index(memory, request_context):
+    """
+    Test that Phase 1 ANN semantic search creates links between similar world
+    facts across batches.  This exercises the per-fact_type partial HNSW index
+    and the placeholder-ID remap logic.
+    """
+    bank_id = f"test_sem_ann_hnsw_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        # Batch 1: world facts about machine learning
+        unit_ids_1 = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "Deep learning models require large amounts of training data. "
+                "Gradient descent is the primary optimization algorithm used in neural networks."
+            ),
+            context="ML knowledge base",
+            event_date=datetime(2024, 3, 1, tzinfo=timezone.utc),
+            request_context=request_context,
+        )
+        assert len(unit_ids_1) > 0, "Batch 1 should produce facts"
+
+        # Batch 2: similar ML world facts — Phase 1 ANN should link to batch 1
+        unit_ids_2 = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "Neural networks learn by adjusting weights through backpropagation. "
+                "Training deep learning models requires GPUs for fast gradient computation."
+            ),
+            context="ML knowledge base",
+            event_date=datetime(2024, 3, 2, tzinfo=timezone.utc),
+            request_context=request_context,
+        )
+        assert len(unit_ids_2) > 0, "Batch 2 should produce facts"
+
+        logger.info(f"Batch 1: {len(unit_ids_1)} facts, Batch 2: {len(unit_ids_2)} facts")
+
+        # Verify cross-batch semantic links exist
+        async with memory._pool.acquire() as conn:
+            cross_links = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE from_unit_id::text = ANY($1)
+                  AND link_type = 'semantic'
+                  AND to_unit_id::text = ANY($2)
+                """,
+                unit_ids_2,
+                unit_ids_1,
+            )
+
+            logger.info(f"Cross-batch semantic links (batch2 -> batch1): {len(cross_links)}")
+            for link in cross_links:
+                logger.info(
+                    f"  {str(link['from_unit_id'])[:8]}... -> "
+                    f"{str(link['to_unit_id'])[:8]}... (weight: {link['weight']:.3f})"
+                )
+
+            assert len(cross_links) > 0, (
+                "Phase 1 ANN should create semantic links between similar world facts "
+                "from different batches via the HNSW index with placeholder-ID remap."
+            )
+
+            # All weights must meet the similarity threshold
+            for link in cross_links:
+                assert link["weight"] >= 0.7, (
+                    f"Semantic link weight {link['weight']:.3f} below threshold 0.7"
+                )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_temporal_links_scoped_by_fact_type(memory, request_context):
+    """
+    Test that temporal links only connect facts of the SAME fact_type.
+
+    World facts should not get temporal links to experience facts even when
+    their event dates fall within the time window.
+    """
+    bank_id = f"test_temporal_scope_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        base_date = datetime(2024, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Store a world fact
+        world_ids = await memory.retain_async(
+            bank_id=bank_id,
+            content="Python 3.12 was released with significant performance improvements for the interpreter.",
+            context="tech news",
+            event_date=base_date,
+            fact_type_override="world",
+            request_context=request_context,
+        )
+        assert len(world_ids) > 0, "Should create world fact(s)"
+
+        # Store an experience fact at a nearby timestamp (same hour)
+        experience_ids = await memory.retain_async(
+            bank_id=bank_id,
+            content="I upgraded all my projects to Python 3.12 and benchmarked the speed improvements.",
+            context="personal log",
+            event_date=base_date + timedelta(hours=1),
+            fact_type_override="experience",
+            request_context=request_context,
+        )
+        assert len(experience_ids) > 0, "Should create experience fact(s)"
+
+        # Store another world fact at a nearby timestamp so we can confirm
+        # same-type temporal links ARE created
+        world_ids_2 = await memory.retain_async(
+            bank_id=bank_id,
+            content="The Python Software Foundation announced long-term support plans for Python 3.12.",
+            context="tech news",
+            event_date=base_date + timedelta(hours=2),
+            fact_type_override="world",
+            request_context=request_context,
+        )
+        assert len(world_ids_2) > 0, "Should create second world fact(s)"
+
+        logger.info(
+            f"World1: {world_ids}, Experience: {experience_ids}, World2: {world_ids_2}"
+        )
+
+        async with memory._pool.acquire() as conn:
+            # Check that world facts DO have temporal links to each other
+            world_all = world_ids + world_ids_2
+            world_temporal = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE from_unit_id::text = ANY($1)
+                  AND to_unit_id::text = ANY($1)
+                  AND link_type = 'temporal'
+                """,
+                world_all,
+            )
+            logger.info(f"World-to-world temporal links: {len(world_temporal)}")
+            assert len(world_temporal) > 0, (
+                "World facts with nearby dates should have temporal links to each other"
+            )
+
+            # Check that world facts do NOT have temporal links to experience facts
+            cross_type_links = await conn.fetch(
+                """
+                SELECT from_unit_id, to_unit_id, weight
+                FROM memory_links
+                WHERE (
+                    (from_unit_id::text = ANY($1) AND to_unit_id::text = ANY($2))
+                    OR
+                    (from_unit_id::text = ANY($2) AND to_unit_id::text = ANY($1))
+                )
+                AND link_type = 'temporal'
+                """,
+                world_all,
+                experience_ids,
+            )
+            logger.info(f"Cross-type temporal links (world<->experience): {len(cross_type_links)}")
+            assert len(cross_type_links) == 0, (
+                f"Temporal links should NOT cross fact types, but found {len(cross_type_links)} "
+                f"world<->experience links"
+            )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ---------------------------------------------------------------------------
+# Streaming chunk batching tests
+# ---------------------------------------------------------------------------
+
+import json
+import uuid
+from unittest.mock import patch
+
+import pytest_asyncio
+
+from hindsight_api.engine.llm_wrapper import TokenUsage
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.task_backend import SyncTaskBackend
+
+
+def _make_mock_llm_call():
+    """Create a mock LLM call function that returns deterministic facts."""
+
+    async def mock_llm_call(*args, **kwargs):
+        from hindsight_api.engine.consolidation.consolidator import _ConsolidationBatchResponse
+
+        if kwargs.get("scope") == "consolidation":
+            return_usage = kwargs.get("return_usage", False)
+            if return_usage:
+                return _ConsolidationBatchResponse(), TokenUsage(input_tokens=0, output_tokens=0)
+            return _ConsolidationBatchResponse()
+
+        messages = kwargs.get("messages", args[0] if args else [])
+        user_msg = messages[-1]["content"] if messages else ""
+
+        # Extract sentences from the content to generate one fact per sentence
+        sentences = [s.strip() for s in user_msg.split(".") if s.strip() and len(s.strip()) > 10]
+        num_facts = max(1, min(len(sentences), 10))
+
+        facts = []
+        for i in range(num_facts):
+            sentence = sentences[i] if i < len(sentences) else f"Fact {i}"
+            facts.append({
+                "what": sentence[:200],
+                "when": "2024-06-15",
+                "where": "N/A",
+                "who": "N/A",
+                "why": "N/A",
+                "fact_type": "world",
+                "entities": [{"text": f"Entity{i}"}],
+                "causal_relations": [],
+            })
+
+        response_dict = {"facts": facts}
+        return_usage = kwargs.get("return_usage", False)
+        if return_usage:
+            usage = TokenUsage(
+                input_tokens=len(user_msg) // 4,
+                output_tokens=len(json.dumps(response_dict)) // 4,
+            )
+            return response_dict, usage
+        return response_dict
+
+    return mock_llm_call
+
+
+@pytest_asyncio.fixture(scope="function")
+async def memory_mock_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+    """MemoryEngine with mock LLM for streaming tests."""
+    mem = MemoryEngine(
+        db_url=pg0_db_url,
+        memory_llm_provider="openai",
+        memory_llm_api_key="mock-key",
+        memory_llm_model="gpt-4",
+        embeddings=embeddings,
+        cross_encoder=cross_encoder,
+        query_analyzer=query_analyzer,
+        pool_min_size=1,
+        pool_max_size=5,
+        run_migrations=False,
+        skip_llm_verification=True,
+        task_backend=SyncTaskBackend(),
+    )
+    await mem.initialize()
+    yield mem
+    try:
+        if mem._pool and not mem._pool._closing:
+            await mem.close()
+    except Exception:
+        pass
+
+
+def _generate_chunky_content(num_chunks: int, chunk_size: int = 3000) -> str:
+    """Generate content that will produce approximately num_chunks chunks.
+
+    Each chunk is chunk_size characters, separated by double newlines.
+    """
+    base_sentences = [
+        "Alice works as a senior engineer at TechCorp in San Francisco.",
+        "Bob joined the marketing team last month from Chicago.",
+        "The project deadline was extended to December 15th.",
+        "Sarah mentioned she is planning a trip to Tokyo next month.",
+        "The quarterly budget review showed a 15% increase in revenue.",
+        "Mike suggested exploring alternative cloud providers.",
+        "The client feedback from beta testing was positive overall.",
+        "Emily started learning Rust programming language last week.",
+        "The new office will be located in the financial district.",
+        "David presented the annual technology roadmap to stakeholders.",
+    ]
+
+    chunks = []
+    for chunk_idx in range(num_chunks):
+        # Generate enough text for one chunk
+        lines = []
+        chars = 0
+        line_idx = 0
+        while chars < chunk_size - 100:
+            sentence = f"[Chunk {chunk_idx}, Line {line_idx}] {base_sentences[line_idx % len(base_sentences)]}"
+            lines.append(sentence)
+            chars += len(sentence) + 1
+            line_idx += 1
+        chunks.append("\n".join(lines))
+
+    return "\n\n".join(chunks)
+
+
+def _set_chunk_batch_size(memory: MemoryEngine, batch_size: int) -> None:
+    """Set retain_chunk_batch_size on the config resolver's global config."""
+    memory._config_resolver._global_config.retain_chunk_batch_size = batch_size
+
+
+@pytest.mark.asyncio
+async def test_streaming_chunk_batching_produces_same_facts(memory_mock_llm, request_context):
+    """
+    Retain a medium document (~10 chunks) with batch_size=3.
+    Verify all facts are extracted (streaming should not lose facts).
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 3)
+    bank_id = f"test_streaming_{uuid.uuid4().hex[:8]}"
+    document_id = f"streaming_doc_{uuid.uuid4().hex[:8]}"
+
+    # Generate content that produces ~10 chunks at default chunk_size (3000 chars)
+    content = _generate_chunky_content(num_chunks=10, chunk_size=3000)
+
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            # Retain with streaming enabled (batch_size=3, so 10 chunks -> 4 mini-batches)
+            result = await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{
+                    "content": content,
+                    "context": "streaming test",
+                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                }],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        streaming_unit_ids = result[0] if result else []
+        logger.info(f"Streaming produced {len(streaming_unit_ids)} facts")
+        assert len(streaming_unit_ids) > 0, "Streaming should produce facts"
+
+        # Verify facts are in the DB
+        async with memory._pool.acquire() as conn:
+            fact_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
+                bank_id,
+            )
+            assert fact_count == len(streaming_unit_ids), (
+                f"DB has {fact_count} facts, but streaming returned {len(streaming_unit_ids)} unit_ids"
+            )
+
+            # Verify the document was tracked
+            doc = await conn.fetchrow(
+                "SELECT id FROM documents WHERE bank_id = $1 AND id = $2",
+                bank_id, document_id,
+            )
+            assert doc is not None, "Document should be tracked in DB"
+
+            # Verify chunks were stored with correct indices
+            chunk_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM chunks WHERE bank_id = $1 AND document_id = $2",
+                bank_id, document_id,
+            )
+            assert chunk_count > 0, "Chunks should be stored in DB"
+            logger.info(f"Stored {chunk_count} chunks for document {document_id}")
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_streaming_chunk_batching_recovery(memory_mock_llm, request_context):
+    """
+    Test recovery: retain a document with streaming, then retain the same
+    document again. Delta retain should detect existing chunks and skip
+    re-extraction. Fact count should be unchanged (no duplicates).
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 3)
+    bank_id = f"test_streaming_recovery_{uuid.uuid4().hex[:8]}"
+    document_id = f"recovery_doc_{uuid.uuid4().hex[:8]}"
+
+    content = _generate_chunky_content(num_chunks=9, chunk_size=3000)
+
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        # First retain — streaming mode
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            result1 = await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{
+                    "content": content,
+                    "context": "recovery test",
+                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                }],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        first_unit_ids = result1[0] if result1 else []
+        assert len(first_unit_ids) > 0, "First retain should produce facts"
+
+        async with memory._pool.acquire() as conn:
+            first_fact_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
+                bank_id,
+            )
+
+        logger.info(f"First retain: {first_fact_count} facts")
+
+        # Second retain — same document, same content (should be a no-op via delta retain)
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            result2 = await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{
+                    "content": content,
+                    "context": "recovery test",
+                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                }],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        async with memory._pool.acquire() as conn:
+            second_fact_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_units WHERE bank_id = $1",
+                bank_id,
+            )
+
+        logger.info(f"Second retain: {second_fact_count} facts")
+
+        # Fact count should be the same (delta retain skipped unchanged chunks)
+        assert second_fact_count == first_fact_count, (
+            f"Second retain should not create duplicates: first={first_fact_count}, second={second_fact_count}"
+        )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_streaming_disabled_for_small_docs(memory_mock_llm, request_context):
+    """
+    Retain a small document (2 chunks) with batch_size=500.
+    Verify it uses the non-streaming path (no batching overhead).
+    """
+    memory = memory_mock_llm
+    _set_chunk_batch_size(memory, 500)
+    bank_id = f"test_streaming_small_{uuid.uuid4().hex[:8]}"
+    document_id = f"small_doc_{uuid.uuid4().hex[:8]}"
+
+    # Generate content that produces ~2 chunks
+    content = _generate_chunky_content(num_chunks=2, chunk_size=3000)
+
+    mock_llm_call = _make_mock_llm_call()
+
+    try:
+        with patch("hindsight_api.engine.llm_wrapper.LLMProvider.call", new=mock_llm_call):
+            # batch_size=500 >> 2 chunks, so non-streaming path should be used
+            result = await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{
+                    "content": content,
+                    "context": "small doc test",
+                    "event_date": datetime(2024, 6, 15, tzinfo=timezone.utc),
+                }],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        unit_ids = result[0] if result else []
+        logger.info(f"Small doc produced {len(unit_ids)} facts")
+        assert len(unit_ids) > 0, "Should produce facts even through non-streaming path"
+
+        # Verify the document was tracked
+        async with memory._pool.acquire() as conn:
+            doc = await conn.fetchrow(
+                "SELECT id FROM documents WHERE bank_id = $1 AND id = $2",
+                bank_id, document_id,
+            )
+            assert doc is not None, "Document should be tracked"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

@@ -101,8 +101,8 @@ cd hindsight-control-plane && npm run dev
 
 **search/**: Multi-strategy retrieval
 - `retrieval.py`: Main retrieval orchestrator
-- `graph_retrieval.py`: Entity/relationship graph traversal
-- `mpfp_retrieval.py`: Multi-Path Fact Propagation retrieval
+- `graph_retrieval.py`: Graph retrieval abstract base class
+- `link_expansion_retrieval.py`: Link expansion graph retrieval
 - `fusion.py`: Reciprocal rank fusion for combining results
 - `reranking.py`: Cross-encoder reranking
 

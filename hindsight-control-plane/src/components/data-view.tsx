@@ -39,9 +39,11 @@ import { Switch } from "@/components/ui/switch";
 import { MemoryDetailPanel } from "./memory-detail-panel";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
+import { Constellation } from "./constellation";
+import { ScatterChart } from "lucide-react";
 
 type FactType = "world" | "experience" | "observation";
-type ViewMode = "graph" | "table" | "timeline";
+type ViewMode = "graph" | "table" | "timeline" | "constellation";
 
 interface DataViewProps {
   factType: FactType;
@@ -49,7 +51,7 @@ interface DataViewProps {
 
 export function DataView({ factType }: DataViewProps) {
   const { currentBank } = useBank();
-  const [viewMode, setViewMode] = useState<ViewMode>("graph");
+  const [viewMode, setViewMode] = useState<ViewMode>("constellation");
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -412,6 +414,17 @@ export function DataView({ factType }: DataViewProps) {
             </div>
             <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
               <button
+                onClick={() => setViewMode("constellation")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  viewMode === "constellation"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ScatterChart className="w-4 h-4" />
+                Constellation
+              </button>
+              <button
                 onClick={() => setViewMode("graph")}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
                   viewMode === "graph"
@@ -674,6 +687,92 @@ export function DataView({ factType }: DataViewProps) {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {viewMode === "constellation" && (
+            <div className="flex gap-0">
+              <div className="flex-1 min-w-0 border border-border rounded-lg overflow-hidden">
+                <Constellation
+                  data={graph2DData}
+                  height={700}
+                  onNodeClick={handleGraphNodeClick}
+                  nodeColorFn={nodeColorFn}
+                  linkColorFn={linkColorFn}
+                />
+              </div>
+
+              {/* Right Toggle Button */}
+              <button
+                onClick={() => setShowControlPanel(!showControlPanel)}
+                className="flex-shrink-0 w-5 h-[700px] bg-transparent hover:bg-muted/50 flex items-center justify-center transition-colors"
+                title={showControlPanel ? "Hide panel" : "Show panel"}
+              >
+                {showControlPanel ? (
+                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                ) : (
+                  <ChevronLeft className="w-3 h-3 text-muted-foreground" />
+                )}
+              </button>
+
+              {/* Right Panel — reuse the same panel as graph view */}
+              {showControlPanel && (
+                <div className="w-72 flex-shrink-0 border border-border rounded-lg bg-muted/20 overflow-y-auto h-[700px]">
+                  {selectedGraphNode ? (
+                    <MemoryDetailPanel
+                      memory={selectedGraphNode}
+                      onClose={() => setSelectedGraphNode(null)}
+                      inPanel
+                      bankId={currentBank || undefined}
+                    />
+                  ) : (
+                    <div className="p-4 space-y-4">
+                      <h3 className="text-sm font-semibold text-foreground">Constellation View</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Canvas-rendered memory map with spatial label deconfliction. Scroll to zoom,
+                        drag to pan, hover to explore entity connections. Click a memory to view
+                        details.
+                      </p>
+                      <div className="space-y-2 pt-2">
+                        <h4 className="text-xs font-medium text-muted-foreground">Link types</h4>
+                        {Object.entries({
+                          semantic: "#0074d9",
+                          temporal: "#009296",
+                          entity: "#f59e0b",
+                          causal: "#8b5cf6",
+                        }).map(([type, color]) => (
+                          <div
+                            key={type}
+                            className="flex items-center gap-2 cursor-pointer"
+                            onClick={() => toggleLinkType(type)}
+                          >
+                            <div
+                              className="w-3 h-3 rounded-full"
+                              style={{
+                                backgroundColor: color,
+                                opacity: visibleLinkTypes.has(type) ? 1 : 0.2,
+                              }}
+                            />
+                            <span
+                              className={`text-xs capitalize ${visibleLinkTypes.has(type) ? "text-foreground" : "text-muted-foreground line-through"}`}
+                            >
+                              {type}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-xs text-muted-foreground space-y-1 pt-2">
+                        <div>
+                          Nodes: <span className="text-foreground">{graph2DData.nodes.length}</span>
+                        </div>
+                        <div>
+                          Links: <span className="text-foreground">{graph2DData.links.length}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1003,7 +1102,7 @@ function TimelineView({
     });
 
     return Object.entries(groups)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([, a], [, b]) => a.date.getTime() - b.date.getTime())
       .map(([key, { items, date }]) => ({
         key,
         label: getGroupLabel(key, date),

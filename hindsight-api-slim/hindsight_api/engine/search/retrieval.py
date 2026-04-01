@@ -18,11 +18,10 @@ from typing import Optional
 from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
-from .graph_retrieval import BFSGraphRetriever, GraphRetriever
+from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
-from .mpfp_retrieval import MPFPGraphRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
-from .types import MPFPTimings, RetrievalResult
+from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,9 @@ class ParallelRetrievalResult:
     temporal: list[RetrievalResult] | None
     timings: dict[str, float] = field(default_factory=dict)
     temporal_constraint: tuple | None = None  # (start_date, end_date)
-    mpfp_timings: list[MPFPTimings] = field(default_factory=list)  # MPFP sub-step timings per fact type
+    graph_timings: list[GraphRetrievalTimings] = field(
+        default_factory=list
+    )  # Graph retrieval sub-step timings per fact type
     max_conn_wait: float = 0.0  # Maximum connection acquisition wait time across all methods
 
 
@@ -72,15 +73,7 @@ def get_default_graph_retriever() -> GraphRetriever:
     if _default_graph_retriever is None:
         config = get_config()
         retriever_type = config.graph_retriever.lower()
-        if retriever_type == "mpfp":
-            _default_graph_retriever = MPFPGraphRetriever()
-            logger.info(
-                f"Using MPFP graph retriever (top_k_neighbors={_default_graph_retriever.config.top_k_neighbors})"
-            )
-        elif retriever_type == "bfs":
-            _default_graph_retriever = BFSGraphRetriever()
-            logger.info("Using BFS graph retriever")
-        elif retriever_type == "link_expansion":
+        if retriever_type == "link_expansion":
             _default_graph_retriever = LinkExpansionRetriever()
             logger.info("Using LinkExpansion graph retriever")
         else:
@@ -627,9 +620,11 @@ async def retrieve_all_fact_types_parallel(
     timings["temporal_combined"] = temporal_time
 
     # Step 3: Run graph retrieval for each fact type in parallel
-    async def run_graph_for_fact_type(ft: str) -> tuple[str, list[RetrievalResult], float, MPFPTimings | None]:
+    async def run_graph_for_fact_type(
+        ft: str,
+    ) -> tuple[str, list[RetrievalResult], float, GraphRetrievalTimings | None]:
         graph_start = time.time()
-        results, mpfp_timing = await retriever.retrieve(
+        results, graph_timing = await retriever.retrieve(
             pool=pool,
             query_embedding_str=query_embedding_str,
             bank_id=bank_id,
@@ -642,7 +637,7 @@ async def retrieve_all_fact_types_parallel(
             tags_match=tags_match,
             tag_groups=tag_groups,
         )
-        return ft, results, time.time() - graph_start, mpfp_timing
+        return ft, results, time.time() - graph_start, graph_timing
 
     # Run graph for all fact types in parallel
     graph_tasks = [run_graph_for_fact_type(ft) for ft in fact_types]
@@ -651,7 +646,7 @@ async def retrieve_all_fact_types_parallel(
     # Organize results by fact type
     results_by_fact_type: dict[str, ParallelRetrievalResult] = {}
     max_conn_wait = conn_wait  # Single connection for semantic+bm25+temporal
-    all_mpfp_timings: list[MPFPTimings] = []
+    all_graph_timings: list[GraphRetrievalTimings] = []
 
     for ft in fact_types:
         # Get semantic + bm25 results for this fact type
@@ -660,14 +655,14 @@ async def retrieve_all_fact_types_parallel(
         # Find graph results for this fact type
         graph_results = []
         graph_time = 0.0
-        mpfp_timing = None
+        graph_timing = None
         for gr in graph_results_list:
             if gr[0] == ft:
                 graph_results = gr[1]
                 graph_time = gr[2]
-                mpfp_timing = gr[3]
-                if mpfp_timing:
-                    all_mpfp_timings.append(mpfp_timing)
+                graph_timing = gr[3]
+                if graph_timing:
+                    all_graph_timings.append(graph_timing)
                 break
 
         # Get temporal results for this fact type from combined result
@@ -688,7 +683,7 @@ async def retrieve_all_fact_types_parallel(
                 "temporal_extraction": temporal_extraction_time,
             },
             temporal_constraint=temporal_constraint,
-            mpfp_timings=[mpfp_timing] if mpfp_timing else [],
+            graph_timings=[graph_timing] if graph_timing else [],
             max_conn_wait=max_conn_wait,
         )
 

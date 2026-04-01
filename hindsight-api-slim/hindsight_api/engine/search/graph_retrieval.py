@@ -2,17 +2,15 @@
 Graph retrieval strategies for memory recall.
 
 This module provides an abstraction for graph-based memory retrieval,
-allowing different algorithms (BFS spreading activation, PPR, etc.) to be
-swapped without changing the rest of the recall pipeline.
+allowing different algorithms to be swapped without changing the rest
+of the recall pipeline.
 """
 
 import logging
 from abc import ABC, abstractmethod
 
-from ..db_utils import acquire_with_retry
-from ..memory_engine import fq_table
-from .tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
-from .types import MPFPTimings, RetrievalResult
+from .tags import TagGroup, TagsMatch
+from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +27,7 @@ class GraphRetriever(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Return identifier for this retrieval strategy (e.g., 'bfs', 'mpfp')."""
+        """Return identifier for this retrieval strategy (e.g., 'link_expansion')."""
         pass
 
     @abstractmethod
@@ -47,7 +45,7 @@ class GraphRetriever(ABC):
         tags: list[str] | None = None,  # Visibility scope tags for filtering
         tags_match: TagsMatch = "any",  # How to match tags: 'any' (OR) or 'all' (AND)
         tag_groups: list[TagGroup] | None = None,  # Compound boolean tag filter groups
-    ) -> tuple[list[RetrievalResult], MPFPTimings | None]:
+    ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
         """
         Retrieve relevant facts via graph traversal.
 
@@ -60,15 +58,13 @@ class GraphRetriever(ABC):
             query_text: Original query text (optional, for some strategies)
             semantic_seeds: Pre-computed semantic entry points (from semantic retrieval)
             temporal_seeds: Pre-computed temporal entry points (from temporal retrieval)
-            adjacency: Pre-loaded typed adjacency graph (optional, for MPFP)
+            adjacency: Pre-loaded typed adjacency graph (optional)
             tags: Optional list of tags for visibility filtering (OR matching)
 
         Returns:
             Tuple of (List of RetrievalResult with activation scores, optional timing info)
         """
         pass
-
-
 class BFSGraphRetriever(GraphRetriever):
     """
     Graph retrieval using BFS-style spreading activation.

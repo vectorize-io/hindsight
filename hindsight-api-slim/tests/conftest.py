@@ -17,7 +17,7 @@ from hindsight_api.pg0 import EmbeddedPostgres
 
 # Default pg0 instance configuration for tests
 DEFAULT_PG0_INSTANCE_NAME = "hindsight-test"
-DEFAULT_PG0_PORT = None
+DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 
 
 # Load environment variables from .env at the start of test session

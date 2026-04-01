@@ -11,8 +11,8 @@ from typing import Any
 
 
 @dataclass
-class MPFPTimings:
-    """Timing breakdown for a single MPFP retrieval call."""
+class GraphRetrievalTimings:
+    """Timing breakdown for a single graph retrieval call."""
 
     fact_type: str
     edge_count: int = 0  # Total edges loaded

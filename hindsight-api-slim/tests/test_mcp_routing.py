@@ -5,6 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+def _tools(mcp_server):
+    """Helper to get tools dict from MCP server (FastMCP 3.x compatible)."""
+    return {
+        k.split(":")[1].split("@")[0]: v
+        for k, v in mcp_server._local_provider._components.items()
+        if k.startswith("tool:")
+    }
+
+
 @pytest.fixture
 def mock_memory():
     """Create a mock MemoryEngine."""
@@ -42,7 +51,7 @@ async def test_mcp_tools_use_context_bank_id(mock_memory):
     mcp_server = create_mcp_server(mock_memory)
 
     # Get the tools
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
     assert "retain" in tools
     assert "recall" in tools
 
@@ -125,7 +134,7 @@ async def test_mcp_tools_propagate_api_key(mock_memory):
     from hindsight_api.api.mcp import _current_api_key, _current_bank_id, create_mcp_server
 
     mcp_server = create_mcp_server(mock_memory)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # Set both bank_id and api_key context
     bank_token = _current_bank_id.set("test-bank")
@@ -190,7 +199,7 @@ async def test_mcp_tools_propagate_tenant_id_and_api_key_id(mock_memory):
     )
 
     mcp_server = create_mcp_server(mock_memory)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # Set all context vars (simulating what MCPMiddleware does after authenticate_mcp)
     bank_token = _current_bank_id.set("test-bank")
@@ -220,7 +229,7 @@ def test_multi_bank_mode_exposes_all_tools(mock_memory):
 
     # Create server in multi-bank mode (default)
     mcp_server = create_mcp_server(mock_memory, multi_bank=True)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # Core tools
     assert "retain" in tools
@@ -244,7 +253,7 @@ def test_single_bank_mode_excludes_bank_management_tools(mock_memory):
 
     # Create server in single-bank mode
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # Should have bank-scoped tools
     assert "retain" in tools
@@ -271,7 +280,7 @@ def test_multi_bank_mode_tools_have_bank_id_param(mock_memory):
     from hindsight_api.api.mcp import create_mcp_server
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=True)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # All bank-scoped tools should have bank_id parameter in multi-bank mode
     bank_scoped_tools = [
@@ -298,7 +307,7 @@ def test_single_bank_mode_tools_no_bank_id_param(mock_memory):
     from hindsight_api.api.mcp import create_mcp_server
 
     mcp_server = create_mcp_server(mock_memory, multi_bank=False)
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
 
     # No bank-scoped tool should have bank_id parameter in single-bank mode
     bank_scoped_tools = [
@@ -331,8 +340,8 @@ async def test_middleware_handles_both_endpoints(mock_memory):
     assert middleware.single_bank_app is not None
 
     # Verify they expose different tools
-    multi_bank_tools = middleware.multi_bank_server._tool_manager._tools
-    single_bank_tools = middleware.single_bank_server._tool_manager._tools
+    multi_bank_tools = _tools(middleware.multi_bank_server)
+    single_bank_tools = _tools(middleware.single_bank_server)
 
     # Multi-bank should have all tools
     assert "retain" in multi_bank_tools
@@ -363,7 +372,7 @@ def test_global_mcp_enabled_tools_filter_restricts_registered_tools(mock_memory)
     with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
         mcp_server = create_mcp_server(mock_memory, multi_bank=True)
 
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
     assert "retain" in tools
     assert "recall" in tools
     assert "reflect" not in tools
@@ -384,7 +393,7 @@ def test_global_mcp_enabled_tools_none_exposes_all_tools(mock_memory):
     with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
         mcp_server = create_mcp_server(mock_memory, multi_bank=True)
 
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
     assert "retain" in tools
     assert "recall" in tools
     assert "reflect" in tools
@@ -408,7 +417,7 @@ def test_global_mcp_enabled_tools_intersects_with_single_bank_mode(mock_memory):
     with patch("hindsight_api.api.mcp._get_raw_config", return_value=mock_cfg):
         mcp_server = create_mcp_server(mock_memory, multi_bank=False)
 
-    tools = mcp_server._tool_manager._tools
+    tools = _tools(mcp_server)
     assert "retain" in tools
     assert "recall" in tools
     assert "list_banks" not in tools  # single-bank mode excludes it regardless

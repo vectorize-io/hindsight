@@ -30,7 +30,7 @@ dependencies = [
     "crewai>=0.86.0",
     "hindsight-client>=0.4.0",
     # Transitive dependency security fixes
-    "cryptography>=46.0.5", # Subgroup attack vulnerability fix
+    "cryptography>=46.0.6", # Incomplete DNS name constraint enforcement fix
     "pillow>=12.1.1", # Out-of-bounds write in PSD image loading fix
     "pyjwt>=2.12.0", # Accepts unknown crit header extensions fix
     "requests>=2.33.0", # Insecure temp file reuse in extract_zipped_paths()

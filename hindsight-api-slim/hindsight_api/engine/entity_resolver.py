@@ -317,8 +317,13 @@ class EntityResolver:
         entity_texts = list(set(e["text"] for e in entities_data))
 
         # Fetch candidates for all unique entity texts in a single batched query.
-        # The trigram % operator uses the GIN index; the substring conditions cover
-        # exact prefix/suffix matches that trigrams might miss at low similarity.
+        # Uses the GIN trigram index on LOWER(canonical_name) for case-insensitive
+        # similarity lookup. Previous version also had LIKE '%...' substring fallbacks,
+        # but those forced full sequential scans of the entities table and caused
+        # TimeoutErrors on banks with 10k+ entities. Lowering the similarity threshold
+        # to 0.15 (from default 0.3) catches most substring relationships while
+        # staying fully index-based.
+        await conn.execute("SET pg_trgm.similarity_threshold = 0.15")
         rows = await conn.fetch(
             f"""
             SELECT DISTINCT ON (e.id)
@@ -327,16 +332,13 @@ class EntityResolver:
             FROM unnest($2::text[]) AS q(query_text)
             JOIN {fq_table("entities")} e ON (
                 e.bank_id = $1
-                AND (
-                    e.canonical_name % q.query_text
-                    OR LOWER(e.canonical_name) LIKE '%' || LOWER(q.query_text) || '%'
-                    OR LOWER(q.query_text) LIKE '%' || LOWER(e.canonical_name) || '%'
-                )
+                AND LOWER(e.canonical_name) % LOWER(q.query_text)
             )
             """,
             bank_id,
             entity_texts,
         )
+        await conn.execute("RESET pg_trgm.similarity_threshold")
 
         # Group candidates by query_text
         all_candidates: dict[str, list] = {t: [] for t in entity_texts}
@@ -808,14 +810,19 @@ class EntityResolver:
             return await self._link_units_to_entities_batch_impl(conn, unit_entity_pairs)
 
     async def _link_units_to_entities_batch_impl(self, conn, unit_entity_pairs: list[tuple[str, str]]):
-        # Batch insert all unit-entity links
-        await conn.executemany(
+        # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
+        # across concurrent transactions on the unit_entities unique index.
+        sorted_pairs = sorted(unit_entity_pairs)
+        unit_ids = [p[0] for p in sorted_pairs]
+        entity_ids = [p[1] for p in sorted_pairs]
+        await conn.execute(
             f"""
             INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
-            VALUES ($1, $2)
+            SELECT u, e FROM unnest($1::uuid[], $2::uuid[]) AS t(u, e)
             ON CONFLICT DO NOTHING
             """,
-            unit_entity_pairs,
+            unit_ids,
+            entity_ids,
         )
 
         # Build map of unit -> entities for co-occurrence calculation

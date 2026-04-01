@@ -148,7 +148,7 @@ def mcp_server_with_mental_models(mock_memory):
     """Create a FastMCP server with mental model tools registered (multi-bank mode)."""
     from fastmcp import FastMCP
 
-    mcp = FastMCP("test", stateless_http=True)
+    mcp = FastMCP("test")
     config = MCPToolsConfig(
         bank_id_resolver=lambda: "test-bank",
         include_bank_id_param=True,
@@ -191,7 +191,7 @@ class TestMentalModelToolRegistration:
     """Test that mental model tools are registered correctly."""
 
     def test_tools_registered_multi_bank(self, mcp_server_with_mental_models):
-        tools = mcp_server_with_mental_models._tool_manager._tools
+        tools = _tools(mcp_server_with_mental_models)
         expected = {
             "list_mental_models",
             "get_mental_model",
@@ -203,7 +203,7 @@ class TestMentalModelToolRegistration:
         assert expected == set(tools.keys())
 
     def test_tools_registered_single_bank(self, mcp_server_single_bank):
-        tools = mcp_server_single_bank._tool_manager._tools
+        tools = _tools(mcp_server_single_bank)
         expected = {
             "list_mental_models",
             "get_mental_model",
@@ -218,7 +218,7 @@ class TestMentalModelToolRegistration:
     async def test_list_mental_models_propagates_request_context(self, mock_memory):
         from fastmcp import FastMCP
 
-        mcp = FastMCP("test", stateless_http=True)
+        mcp = FastMCP("test")
         config = MCPToolsConfig(
             bank_id_resolver=lambda: "test-bank",
             api_key_resolver=lambda: "test-api-key",
@@ -234,7 +234,7 @@ class TestMentalModelToolRegistration:
     async def test_create_mental_model_propagates_request_context(self, mock_memory):
         from fastmcp import FastMCP
 
-        mcp = FastMCP("test", stateless_http=True)
+        mcp = FastMCP("test")
         config = MCPToolsConfig(
             bank_id_resolver=lambda: "test-bank",
             api_key_resolver=lambda: "test-api-key",
@@ -281,14 +281,14 @@ class TestMentalModelToolRegistration:
         memory.get_bank_stats = AsyncMock(return_value={})
         memory.delete_bank = AsyncMock(return_value={})
 
-        mcp = FastMCP("test", stateless_http=True)
+        mcp = FastMCP("test")
         config = MCPToolsConfig(
             bank_id_resolver=lambda: "bank",
             include_bank_id_param=True,
             tools=None,  # Default - all tools
         )
         register_mcp_tools(mcp, memory, config)
-        tools = mcp._tool_manager._tools
+        tools = _tools(mcp)
         assert "list_mental_models" in tools
         assert "create_mental_model" in tools
         assert "refresh_mental_model" in tools
@@ -311,7 +311,7 @@ def no_bank_mcp_server(mock_memory):
     """Create a multi-bank MCP server where bank_id_resolver returns None."""
     from fastmcp import FastMCP
 
-    mcp = FastMCP("test", stateless_http=True)
+    mcp = FastMCP("test")
     config = MCPToolsConfig(
         bank_id_resolver=lambda: None,
         include_bank_id_param=True,
@@ -329,8 +329,12 @@ def no_bank_mcp_server(mock_memory):
 
 
 def _tools(mcp_server):
-    """Helper to get tools dict from MCP server."""
-    return mcp_server._tool_manager._tools
+    """Helper to get tools dict from MCP server (FastMCP 3.x compatible)."""
+    return {
+        k.split(":")[1].split("@")[0]: v
+        for k, v in mcp_server._local_provider._components.items()
+        if k.startswith("tool:")
+    }
 
 
 @pytest.mark.asyncio
@@ -718,7 +722,7 @@ def _make_mcp_server(mock_memory, tools, include_bank_id=True):
     """Helper to create an MCP server with specific tools."""
     from fastmcp import FastMCP
 
-    mcp = FastMCP("test", stateless_http=True)
+    mcp = FastMCP("test")
     config = MCPToolsConfig(
         bank_id_resolver=lambda: "test-bank",
         include_bank_id_param=include_bank_id,
@@ -1289,10 +1293,10 @@ class TestBankToolFiltering:
         register_mcp_tools(mcp, mock_memory_with_resolver, config)
 
         # Both tools are registered in the manager's internal dict
-        assert "recall" in mcp._tool_manager._tools
+        assert "recall" in _tools(mcp)
 
-        # But get_tools() (used by tools/list and tools/call) filters it out
-        visible = await mcp._tool_manager.get_tools()
+        # But list_tools() (used by tools/list and tools/call) filters it out
+        visible = {t.name for t in await mcp.list_tools()}
         assert "retain" in visible
         assert "recall" not in visible
 
@@ -1313,7 +1317,7 @@ class TestBankToolFiltering:
         )
         register_mcp_tools(mcp, mock_memory_with_resolver, config)
 
-        visible = await mcp._tool_manager.get_tools()
+        visible = {t.name for t in await mcp.list_tools()}
         assert "retain" in visible
         assert "recall" in visible
 
@@ -1332,7 +1336,7 @@ class TestBankToolFiltering:
         )
         register_mcp_tools(mcp, mock_memory_with_resolver, config)
 
-        visible = await mcp._tool_manager.get_tools()
+        visible = {t.name for t in await mcp.list_tools()}
         assert "retain" in visible
         assert "recall" in visible
 
@@ -1353,7 +1357,7 @@ class TestBankToolFiltering:
         )
         register_mcp_tools(mcp, mock_memory_with_resolver, config)
 
-        visible = await mcp._tool_manager.get_tools()
+        visible = {t.name for t in await mcp.list_tools()}
         # Filter bypassed — config resolver was never consulted, all tools visible
         assert "recall" in visible
         mock_memory_with_resolver._config_resolver.get_bank_config.assert_not_called()

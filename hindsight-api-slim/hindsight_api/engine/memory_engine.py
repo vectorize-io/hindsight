@@ -532,10 +532,11 @@ class MemoryEngine(MemoryEngineInterface):
         # Configurable via HINDSIGHT_API_RECALL_MAX_CONCURRENT (default: 50)
         self._search_semaphore = asyncio.Semaphore(get_config().recall_max_concurrent)
 
-        # Backpressure for put operations: limit concurrent puts to prevent database contention
-        # Each put_batch holds a connection for the entire transaction, so we limit to 5
-        # concurrent puts to avoid connection pool exhaustion and reduce write contention
-        self._put_semaphore = asyncio.Semaphore(5)
+        # Backpressure for retain DB writes: limit concurrent transactions to prevent contention
+        # on entity/link tables. Acquired in the orchestrator *after* LLM extraction completes,
+        # so LLM calls run in full parallelism while only the DB-heavy phase is throttled.
+        # Configurable via HINDSIGHT_API_RETAIN_MAX_CONCURRENT (default: 4).
+        self._put_semaphore = asyncio.Semaphore(get_config().retain_max_concurrent)
 
         # initialize encoding eagerly to avoid delaying the first time
         _get_tiktoken_encoding()
@@ -2213,7 +2214,6 @@ class MemoryEngine(MemoryEngineInterface):
                     document_id=document_id,
                     is_first_batch=i == 1,  # Only upsert on first batch
                     fact_type_override=fact_type_override,
-                    confidence_score=confidence_score,
                     document_tags=document_tags,
                     operation_id=operation_id,
                     strategy=strategy,
@@ -2238,7 +2238,6 @@ class MemoryEngine(MemoryEngineInterface):
                 document_id=document_id,
                 is_first_batch=True,
                 fact_type_override=fact_type_override,
-                confidence_score=confidence_score,
                 document_tags=document_tags,
                 operation_id=operation_id,
                 strategy=strategy,
@@ -2290,7 +2289,6 @@ class MemoryEngine(MemoryEngineInterface):
         document_id: str | None = None,
         is_first_batch: bool = True,
         fact_type_override: str | None = None,
-        confidence_score: float | None = None,
         document_tags: list[str] | None = None,
         operation_id: str | None = None,
         outbox_callback: "Callable[[asyncpg.Connection], Awaitable[None]] | None" = None,
@@ -2311,54 +2309,51 @@ class MemoryEngine(MemoryEngineInterface):
             document_id: Optional document ID (always upserts if exists)
             is_first_batch: Whether this is the first batch (for chunked operations, only delete on first batch)
             fact_type_override: Override fact type for all facts
-            confidence_score: Confidence score for opinions
             document_tags: Tags applied to all items in this batch
 
         Returns:
             Tuple of (unit ID lists, token usage for fact extraction)
         """
-        # Backpressure: limit concurrent retains to prevent database contention
-        async with self._put_semaphore:
-            # Use the new modular orchestrator
-            from .retain import orchestrator
+        # Use the new modular orchestrator
+        from .retain import orchestrator
 
-            pool = await self._get_pool()
+        pool = await self._get_pool()
 
-            # Resolve bank-specific config for this operation
-            resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+        # Resolve bank-specific config for this operation
+        resolved_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
 
-            # Force chunks mode when LLM provider is "none" (no LLM available for fact extraction)
-            if self._llm_config.provider == "none":
-                resolved_config.retain_extraction_mode = "chunks"
-                resolved_config.enable_observations = False
+        # Force chunks mode when LLM provider is "none" (no LLM available for fact extraction)
+        if self._llm_config.provider == "none":
+            resolved_config.retain_extraction_mode = "chunks"
+            resolved_config.enable_observations = False
 
-            # Apply strategy overrides: explicit strategy > bank default strategy
-            from hindsight_api.config_resolver import apply_strategy
+        # Apply strategy overrides: explicit strategy > bank default strategy
+        from hindsight_api.config_resolver import apply_strategy
 
-            effective_strategy = strategy or resolved_config.retain_default_strategy
-            if effective_strategy:
-                resolved_config = apply_strategy(resolved_config, effective_strategy)
+        effective_strategy = strategy or resolved_config.retain_default_strategy
+        if effective_strategy:
+            resolved_config = apply_strategy(resolved_config, effective_strategy)
 
-            # Create parent span for retain operation
-            with create_operation_span("retain", bank_id):
-                return await orchestrator.retain_batch(
-                    pool=pool,
-                    embeddings_model=self.embeddings,
-                    llm_config=self._retain_llm_config.with_config(resolved_config),
-                    entity_resolver=self.entity_resolver,
-                    format_date_fn=self._format_readable_date,
-                    bank_id=bank_id,
-                    contents_dicts=contents,
-                    document_id=document_id,
-                    is_first_batch=is_first_batch,
-                    fact_type_override=fact_type_override,
-                    confidence_score=confidence_score,
-                    document_tags=document_tags,
-                    config=resolved_config,
-                    operation_id=operation_id,
-                    schema=_current_schema.get(),
-                    outbox_callback=outbox_callback,
-                )
+        # Create parent span for retain operation
+        with create_operation_span("retain", bank_id):
+            return await orchestrator.retain_batch(
+                pool=pool,
+                embeddings_model=self.embeddings,
+                llm_config=self._retain_llm_config.with_config(resolved_config),
+                entity_resolver=self.entity_resolver,
+                format_date_fn=self._format_readable_date,
+                bank_id=bank_id,
+                contents_dicts=contents,
+                document_id=document_id,
+                is_first_batch=is_first_batch,
+                fact_type_override=fact_type_override,
+                document_tags=document_tags,
+                config=resolved_config,
+                operation_id=operation_id,
+                schema=_current_schema.get(),
+                outbox_callback=outbox_callback,
+                db_semaphore=self._put_semaphore,
+            )
 
     def recall(
         self,
@@ -2832,7 +2827,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "temporal": 0.0,
                 "temporal_extraction": 0.0,
             }
-            all_mpfp_timings = []
+            all_graph_timings = []
 
             detected_temporal_constraint = None
             max_conn_wait = multi_result.max_conn_wait
@@ -2894,25 +2889,25 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
             # Log graph retriever timing breakdown if available
-            if all_mpfp_timings:
+            if all_graph_timings:
                 retriever_name = get_default_graph_retriever().name.upper()
-                mpfp_total = all_mpfp_timings[0]  # Take first fact type's timing as representative
-                mpfp_parts = [
-                    f"db_queries={mpfp_total.db_queries}",
-                    f"edge_load={mpfp_total.edge_load_time:.3f}s",
-                    f"edges={mpfp_total.edge_count}",
-                    f"patterns={mpfp_total.pattern_count}",
+                graph_total = all_graph_timings[0]  # Take first fact type's timing as representative
+                graph_parts = [
+                    f"db_queries={graph_total.db_queries}",
+                    f"edge_load={graph_total.edge_load_time:.3f}s",
+                    f"edges={graph_total.edge_count}",
+                    f"patterns={graph_total.pattern_count}",
                 ]
-                if mpfp_total.seeds_time > 0.01:
-                    mpfp_parts.append(f"seeds={mpfp_total.seeds_time:.3f}s")
-                if mpfp_total.fusion > 0.001:
-                    mpfp_parts.append(f"fusion={mpfp_total.fusion:.3f}s")
-                if mpfp_total.fetch > 0.001:
-                    mpfp_parts.append(f"fetch={mpfp_total.fetch:.3f}s")
-                log_buffer.append(f"      [{retriever_name}] {', '.join(mpfp_parts)}")
+                if graph_total.seeds_time > 0.01:
+                    graph_parts.append(f"seeds={graph_total.seeds_time:.3f}s")
+                if graph_total.fusion > 0.001:
+                    graph_parts.append(f"fusion={graph_total.fusion:.3f}s")
+                if graph_total.fetch > 0.001:
+                    graph_parts.append(f"fetch={graph_total.fetch:.3f}s")
+                log_buffer.append(f"      [{retriever_name}] {', '.join(graph_parts)}")
                 # Log detailed hop timing for debugging slow queries
-                if mpfp_total.hop_details:
-                    for hd in mpfp_total.hop_details:
+                if graph_total.hop_details:
+                    for hd in graph_total.hop_details:
                         log_buffer.append(
                             f"        hop{hd['hop']}: exec={hd.get('exec_time', 0) * 1000:.0f}ms, "
                             f"uncached={hd.get('uncached_after_filter', 0)}, "
@@ -4262,23 +4257,27 @@ class MemoryEngine(MemoryEngineInterface):
                     source_memory_ids.extend(unit["source_memory_ids"])
             source_memory_ids = list(set(source_memory_ids))  # Deduplicate
 
-            # Fetch links involving both visible units AND source memories
+            # Fetch links where BOTH endpoints are in the visible set (or source memories)
+            # Cap at 10k edges — the UI can't usefully render more, and uncapped queries
+            # on highly-connected graphs (e.g. 1000 nodes with 500k+ edges) are too slow.
+            max_edges = 10000
             all_relevant_ids = unit_ids + source_memory_ids
             if all_relevant_ids:
                 links = await conn.fetch(
                     f"""
-                    SELECT DISTINCT ON (LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid))
-                        ml.from_unit_id,
-                        ml.to_unit_id,
-                        ml.link_type,
-                        ml.weight,
-                        e.canonical_name as entity_name
+                    SELECT ml.from_unit_id,
+                           ml.to_unit_id,
+                           ml.link_type,
+                           ml.weight,
+                           e.canonical_name as entity_name
                     FROM {fq_table("memory_links")} ml
                     LEFT JOIN {fq_table("entities")} e ON ml.entity_id = e.id
-                    WHERE ml.from_unit_id = ANY($1::uuid[]) OR ml.to_unit_id = ANY($1::uuid[])
-                    ORDER BY LEAST(ml.from_unit_id, ml.to_unit_id), GREATEST(ml.from_unit_id, ml.to_unit_id), ml.link_type, COALESCE(ml.entity_id, '00000000-0000-0000-0000-000000000000'::uuid), ml.weight DESC
+                    WHERE ml.from_unit_id = ANY($1::uuid[]) AND ml.to_unit_id = ANY($1::uuid[])
+                    ORDER BY ml.weight DESC NULLS LAST
+                    LIMIT $2
                 """,
                     all_relevant_ids,
+                    max_edges,
                 )
             else:
                 links = []
@@ -4339,13 +4338,17 @@ class MemoryEngine(MemoryEngineInterface):
                 link for link in links if link["from_unit_id"] in unit_id_set and link["to_unit_id"] in unit_id_set
             ]
 
-            # Get entity information
-            unit_entities = await conn.fetch(f"""
-                SELECT ue.unit_id, e.canonical_name
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                ORDER BY ue.unit_id
-            """)
+            # Get entity information — only for visible units
+            if unit_ids:
+                unit_entities = await conn.fetch(f"""
+                    SELECT ue.unit_id, e.canonical_name
+                    FROM {fq_table("unit_entities")} ue
+                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
+                    WHERE ue.unit_id = ANY($1::uuid[])
+                    ORDER BY ue.unit_id
+                """, unit_ids)
+            else:
+                unit_entities = []
 
         # Build entity mapping
         entity_map = {}

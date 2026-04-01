@@ -5,7 +5,7 @@ Revises: e0a1b2c3d4e5
 Create Date: 2025-01-12
 
 Add composite index on memory_links (from_unit_id, link_type, weight DESC)
-to optimize MPFP graph traversal queries that need top-k edges per type.
+to optimize graph traversal queries that need top-k edges per type.
 """
 
 from collections.abc import Sequence
@@ -26,7 +26,7 @@ def _get_schema_prefix() -> str:
 
 
 def upgrade() -> None:
-    """Add composite index for efficient MPFP edge loading."""
+    """Add composite index for efficient graph retrieval edge loading."""
     schema = _get_schema_prefix()
     # Create composite index for efficient top-k per (from_node, link_type) queries
     # This enables LATERAL joins to use index-only scans with early termination

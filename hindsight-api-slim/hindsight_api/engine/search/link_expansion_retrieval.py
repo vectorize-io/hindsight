@@ -4,9 +4,9 @@ Link Expansion graph retrieval.
 Expands from semantic/temporal seeds through three parallel, first-class signals
 stored in memory_links:
 
-1. Entity links  — precomputed co-occurrence graph (created at retain time, bounded to
-                   MAX_LINKS_PER_ENTITY per entity). Score = number of distinct shared
-                   entities between the seed set and each candidate.
+1. Entity links  — query-time self-join through unit_entities. Score = number of distinct
+                   shared entities between the seed set and each candidate, computed via
+                   COUNT(DISTINCT entity_id). More accurate than precomputed entity links.
 2. Semantic links — precomputed kNN graph (each new fact linked to its top-5 most
                     similar existing facts at insert time, similarity >= 0.7). Checked
                     in both directions since the graph is not symmetric. Score = weight.
@@ -29,7 +29,7 @@ from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
 from .tags import TagGroup, TagsMatch, filter_results_by_tag_groups, filter_results_by_tags
-from .types import MPFPTimings, RetrievalResult
+from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class LinkExpansionRetriever(GraphRetriever):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list[TagGroup] | None = None,
-    ) -> tuple[list[RetrievalResult], MPFPTimings | None]:
+    ) -> tuple[list[RetrievalResult], GraphRetrievalTimings | None]:
         """
         Retrieve facts by expanding links from seeds.
 
@@ -136,7 +136,7 @@ class LinkExpansionRetriever(GraphRetriever):
             Tuple of (results, timings)
         """
         start_time = time.time()
-        timings = MPFPTimings(fact_type=fact_type)
+        timings = GraphRetrievalTimings(fact_type=fact_type)
 
         async with acquire_with_retry(pool) as conn:
             # Find seeds if not provided
@@ -264,29 +264,33 @@ class LinkExpansionRetriever(GraphRetriever):
         """
         ml = fq_table("memory_links")
         mu = fq_table("memory_units")
-        all_rows = await conn.fetch(
-            f"""
-            WITH entity_expanded AS (
-                -- Entity co-occurrence: seeds → their precomputed entity-link neighbors.
-                -- Score = distinct shared entities (bounded at retain time to
-                -- MAX_LINKS_PER_ENTITY=50).  GROUP BY mu.id is sufficient because mu.id
-                -- is the primary key and functionally determines all other mu columns.
-                SELECT
-                    mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
-                    mu.occurred_end, mu.mentioned_at,
-                    mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
-                    COUNT(DISTINCT ml.entity_id)::float AS score,
-                    'entity'::text AS source
-                FROM {ml} ml
-                JOIN {mu} mu ON mu.id = ml.to_unit_id
-                WHERE ml.from_unit_id = ANY($1::uuid[])
-                  AND ml.link_type = 'entity'
+        ue = fq_table("unit_entities")
+
+        entity_cte = f"""
+            entity_expanded AS (
+                -- Entity co-occurrence via unit_entities self-join.
+                -- Finds units sharing entities with seeds at query time — more accurate
+                -- than precomputed entity links (no stale 50-neighbor cap).
+                -- Score = COUNT(DISTINCT shared entities), mapped to [0,1] via tanh.
+                SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
+                       mu.occurred_end, mu.mentioned_at,
+                       mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
+                       COUNT(DISTINCT ue_seed.entity_id)::float AS score,
+                       'entity'::text AS source
+                FROM {ue} ue_seed
+                JOIN {ue} ue_target ON ue_seed.entity_id = ue_target.entity_id
+                JOIN {mu} mu ON mu.id = ue_target.unit_id
+                WHERE ue_seed.unit_id = ANY($1::uuid[])
+                  AND ue_target.unit_id != ALL($1::uuid[])
                   AND mu.fact_type = $2
-                  AND mu.id != ALL($1::uuid[])
                 GROUP BY mu.id
                 ORDER BY score DESC
                 LIMIT $3
-            ),
+            )"""
+
+        all_rows = await conn.fetch(
+            f"""
+            WITH {entity_cte},
             semantic_expanded AS (
                 -- Semantic kNN: both outgoing (seeds → their kNN at insert time) and
                 -- incoming (facts inserted after seeds that found seeds as kNN).
@@ -397,6 +401,19 @@ class LinkExpansionRetriever(GraphRetriever):
                 f"{len(source_ids_found)} source_memory_ids found"
             )
 
+        ue = fq_table("unit_entities")
+
+        connected_sources_cte = f"""
+            connected_sources AS (
+                -- Find sources sharing entities with seed observation sources
+                -- via unit_entities self-join (query-time, no precomputed links needed).
+                SELECT DISTINCT ue_target.unit_id AS source_id
+                FROM seed_sources ss
+                JOIN {ue} ue_seed ON ue_seed.unit_id = ss.source_id
+                JOIN {ue} ue_target ON ue_seed.entity_id = ue_target.entity_id
+                WHERE ue_target.unit_id != ss.source_id
+            )"""
+
         entity_rows = await conn.fetch(
             f"""
             WITH seed_sources AS (
@@ -405,15 +422,7 @@ class LinkExpansionRetriever(GraphRetriever):
                 WHERE id = ANY($1::uuid[])
                   AND source_memory_ids IS NOT NULL
             ),
-            connected_sources AS (
-                -- Mirror the non-observation entity expansion: follow pre-bounded entity
-                -- links in memory_links (capped to MAX_LINKS_PER_ENTITY=50 at retain time).
-                -- Score = number of distinct shared entities, same as the non-obs path.
-                SELECT DISTINCT ml.to_unit_id AS source_id
-                FROM seed_sources ss
-                JOIN {fq_table("memory_links")} ml ON ml.from_unit_id = ss.source_id
-                WHERE ml.link_type = 'entity'
-            ),
+            {connected_sources_cte},
             connected_array AS (
                 SELECT array_agg(source_id) AS source_ids FROM connected_sources
             )

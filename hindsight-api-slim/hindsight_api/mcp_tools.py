@@ -482,7 +482,7 @@ def _apply_audit_logging(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
     if hasattr(mcp, "_tool_manager"):
         # FastMCP 2.x
         try:
-            for name, tool in mcp._tool_manager._tools.items():
+            for name, tool in mcp._tool_manager._tools.items():  # type: ignore[unresolved-attribute]  # FastMCP 2.x internal; guarded by hasattr
                 if name in _AUDITABLE_MCP_TOOLS:
                     object.__setattr__(tool, "run", _wrap_tool_run(name, tool.run))
         except (AttributeError, KeyError) as e:

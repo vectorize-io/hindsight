@@ -9,6 +9,15 @@ from hindsight_api import MemoryEngine
 from hindsight_api.extensions.mcp import MCPExtension
 
 
+def _tools(mcp_server):
+    """Helper to get tools dict from MCP server (FastMCP 3.x compatible)."""
+    return {
+        k.split(":")[1].split("@")[0]: v
+        for k, v in mcp_server._local_provider._components.items()
+        if k.startswith("tool:")
+    }
+
+
 class MockMCPExtension(MCPExtension):
     """Test extension that registers a custom tool."""
 
@@ -76,7 +85,7 @@ class TestMCPExtensionLoading:
             mcp = create_mcp_server(mock_memory)
 
         # Core tools should be registered
-        tools = mcp._tool_manager._tools
+        tools = _tools(mcp)
         assert "retain" in tools
         assert "recall" in tools
         assert "reflect" in tools
@@ -96,7 +105,7 @@ class TestMCPExtensionLoading:
         assert mock_ext.register_tools_called is True
 
         # Core tools should still be registered
-        tools = mcp._tool_manager._tools
+        tools = _tools(mcp)
         assert "retain" in tools
         assert "recall" in tools
 
@@ -114,7 +123,7 @@ class TestMCPExtensionLoading:
             mcp = create_mcp_server(mock_memory)
 
         # Get and call the extension tool
-        tools = mcp._tool_manager._tools
+        tools = _tools(mcp)
         test_tool = tools["test_extension_tool"]
         result = await test_tool.fn(query="hello world")
 
@@ -156,7 +165,7 @@ class TestMCPExtensionIntegration:
         with patch("hindsight_api.api.mcp.load_extension", return_value=mock_ext):
             mcp = create_mcp_server(mock_memory)
 
-        tools = mcp._tool_manager._tools
+        tools = _tools(mcp)
         # All core tools present
         assert "retain" in tools
         assert "recall" in tools

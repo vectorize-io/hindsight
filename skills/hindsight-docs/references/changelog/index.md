@@ -6,6 +6,33 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Changelog" subtitle="User-facing changes only. Internal maintenance and infrastructure updates are omitted." />
 
+## [0.4.22](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.22)
+
+**Features**
+
+- API now supports passing custom LLM request parameters via the HINDSIGHT_API_LLM_EXTRA_BODY configuration. ([`ecaa1ad1`](https://github.com/vectorize-io/hindsight/commit/ecaa1ad1))
+- Document metadata is now exposed through the API and control plane. ([`627ec5d5`](https://github.com/vectorize-io/hindsight/commit/627ec5d5))
+- Added a /code-review skill for automated code quality checks against project standards. ([`bdb33c58`](https://github.com/vectorize-io/hindsight/commit/bdb33c58))
+- ZeroEntropy reranker now supports a configurable base URL. ([`a915584e`](https://github.com/vectorize-io/hindsight/commit/a915584e))
+- Codex can now retain structured tool calls from rollout files. ([`3461398b`](https://github.com/vectorize-io/hindsight/commit/3461398b))
+
+**Improvements**
+
+- Embeddings via the LiteLLM SDK can now optionally specify output dimensions. ([`f841bcb9`](https://github.com/vectorize-io/hindsight/commit/f841bcb9))
+- API responses now include an X-Ignored-Params header to warn when unknown request parameters were ignored. ([`cef42d81`](https://github.com/vectorize-io/hindsight/commit/cef42d81))
+- OpenClaw CLI startup is faster by deferring heavy initialization until the service starts. ([`41025c3b`](https://github.com/vectorize-io/hindsight/commit/41025c3b))
+
+**Bug Fixes**
+
+- Mental model triggers now support the full config schema, including tag matching and tag group filters. ([`2c32ffad`](https://github.com/vectorize-io/hindsight/commit/2c32ffad))
+- Cohere reranking via Azure endpoints now works reliably (avoids 404 errors). ([`84985ee9`](https://github.com/vectorize-io/hindsight/commit/84985ee9))
+- Claude Code provider no longer defers to built-in tools, preventing MCP tool handling issues. ([`fa82efc8`](https://github.com/vectorize-io/hindsight/commit/fa82efc8))
+- Recall endpoint now returns metadata correctly instead of dropping it from the response. ([`4768bf39`](https://github.com/vectorize-io/hindsight/commit/4768bf39))
+- Gemini 3.1+ tool calls now read thought signatures correctly. ([`1b5c262a`](https://github.com/vectorize-io/hindsight/commit/1b5c262a))
+- First-person agent memories are now correctly classified as "experience" facts. ([`00961156`](https://github.com/vectorize-io/hindsight/commit/00961156))
+- Codex upgrades now preserve and merge new settings instead of skipping them. ([`b104bad0`](https://github.com/vectorize-io/hindsight/commit/b104bad0))
+- LlamaIndex integration fixes improve document ID handling, memory API behavior, and ReAct tracing. ([`d93dfea8`](https://github.com/vectorize-io/hindsight/commit/d93dfea8))
+
 ## [0.4.21](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.21)
 
 **Features**

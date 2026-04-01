@@ -164,7 +164,7 @@ def _make_tools_tolerant(mcp: FastMCP) -> None:
     This wraps each tool's run() to filter arguments to only known parameters.
     """
     try:
-        for name, tool in mcp._tool_manager._tools.items():
+        for name, tool in mcp._tool_manager._tools.items():  # type: ignore[unresolved-attribute]  # FastMCP 2.x internal; guarded by try/except
             if hasattr(tool, "parameters") and tool.parameters:
                 allowed = set(tool.parameters.get("properties", {}).keys())
                 original_run = tool.run
