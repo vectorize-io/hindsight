@@ -264,6 +264,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'sdks/integrations/autogen',
+          label: 'AutoGen',
+          customProps: { icon: '/img/icons/autogen.svg' },
+        },
+        {
+          type: 'doc',
           id: 'sdks/integrations/llamaindex',
           label: 'LlamaIndex',
           customProps: { icon: '/img/icons/llamaindex.png' },
