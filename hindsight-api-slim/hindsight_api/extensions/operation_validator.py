@@ -96,7 +96,6 @@ class RetainContext:
     request_context: "RequestContext"
     document_id: str | None = None
     fact_type_override: str | None = None
-    confidence_score: float | None = None
 
 
 @dataclass
@@ -169,7 +168,6 @@ class RetainResult:
     request_context: "RequestContext"
     document_id: str | None
     fact_type_override: str | None
-    confidence_score: float | None
     # Result
     unit_ids: list[list[str]]  # List of unit IDs per content item
     success: bool = True
@@ -402,7 +400,6 @@ class OperationValidatorExtension(Extension, ABC):
                 - request_context: Request context with auth info
                 - document_id: Optional document ID
                 - fact_type_override: Optional fact type override
-                - confidence_score: Optional confidence score
 
         Returns:
             ValidationResult indicating whether the operation is allowed.

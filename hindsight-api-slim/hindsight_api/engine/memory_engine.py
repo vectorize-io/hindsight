@@ -2003,7 +2003,6 @@ class MemoryEngine(MemoryEngineInterface):
         event_date: datetime | None = None,
         document_id: str | None = None,
         fact_type_override: str | None = None,
-        confidence_score: float | None = None,
         *,
         request_context: "RequestContext",
     ) -> list[str]:
@@ -2019,7 +2018,6 @@ class MemoryEngine(MemoryEngineInterface):
             event_date: When the event occurred (defaults to now)
             document_id: Optional document ID for tracking (always upserts if document already exists)
             fact_type_override: Override fact type ('world', 'experience')
-            confidence_score: Confidence score (0.0 to 1.0)
             request_context: Request context for authentication.
 
         Returns:
@@ -2038,7 +2036,6 @@ class MemoryEngine(MemoryEngineInterface):
             contents=[content_dict],
             request_context=request_context,
             fact_type_override=fact_type_override,
-            confidence_score=confidence_score,
         )
 
         # Return the first (and only) list of unit IDs
@@ -2052,7 +2049,6 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_id: str | None = None,
         fact_type_override: str | None = None,
-        confidence_score: float | None = None,
         document_tags: list[str] | None = None,
         return_usage: bool = False,
         operation_id: str | None = None,
@@ -2078,7 +2074,6 @@ class MemoryEngine(MemoryEngineInterface):
             document_id: **DEPRECATED** - Use "document_id" key in each content dict instead.
                         Applies the same document_id to ALL content items that don't specify their own.
             fact_type_override: Override fact type for all facts ('world', 'experience')
-            confidence_score: Confidence score (0.0 to 1.0)
             return_usage: If True, returns tuple of (unit_ids, TokenUsage). Default False for backward compatibility.
 
         Returns:
@@ -2128,7 +2123,6 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
                 document_id=document_id,
                 fact_type_override=fact_type_override,
-                confidence_score=confidence_score,
             )
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
@@ -2254,7 +2248,6 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
                 document_id=document_id,
                 fact_type_override=fact_type_override,
-                confidence_score=confidence_score,
                 unit_ids=result,
                 success=True,
                 error=None,

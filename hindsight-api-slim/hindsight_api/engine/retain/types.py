@@ -287,7 +287,6 @@ class RetainBatch:
     contents: list[RetainContent]
     document_id: str | None = None
     fact_type_override: str | None = None
-    confidence_score: float | None = None
     document_tags: list[str] = field(default_factory=list)  # Tags applied to all items
 
     # Extracted data (populated during processing)
