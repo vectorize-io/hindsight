@@ -1555,6 +1555,24 @@ class MentalModelListResponse(BaseModel):
     items: list[MentalModelResponse]
 
 
+class SlimMentalModelResponse(BaseModel):
+    """Slim response model for a mental model with only essential fields."""
+
+    id: str
+    bank_id: str
+    name: str
+    content: str = Field(
+        description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)"
+    )
+    tags: list[str] = FieldWithDefault(list)
+
+
+class SlimMentalModelListResponse(BaseModel):
+    """Response model for listing mental models with slim=True."""
+
+    items: list[SlimMentalModelResponse]
+
+
 class CreateMentalModelRequest(BaseModel):
     """Request model for creating a mental model."""
 
@@ -3031,7 +3049,6 @@ def _register_routes(app: FastAPI):
 
     @app.get(
         "/v1/default/banks/{bank_id}/mental-models",
-        response_model=MentalModelListResponse,
         summary="List mental models",
         description="List user-curated living documents that stay current.",
         operation_id="list_mental_models",
@@ -3041,10 +3058,11 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
         tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
+        slim: bool = Query(False, description="Return only essential fields (id, bank_id, name, content, tags)"),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
-    ):
+    ) -> MentalModelListResponse | SlimMentalModelListResponse:
         """List mental models for a bank."""
         try:
             mental_models = await app.state.memory.list_mental_models(
@@ -3055,7 +3073,21 @@ def _register_routes(app: FastAPI):
                 offset=offset,
                 request_context=request_context,
             )
-            return MentalModelListResponse(items=[MentalModelResponse(**m) for m in mental_models])
+            if slim:
+                return SlimMentalModelListResponse(
+                    items=[
+                        SlimMentalModelResponse(
+                            id=m["id"],
+                            bank_id=m.get("bank_id", ""),
+                            name=m["name"],
+                            content=m.get("content", ""),
+                            tags=m.get("tags", []),
+                        )
+                        for m in mental_models
+                    ]
+                )
+            else:
+                return MentalModelListResponse(items=[MentalModelResponse(**m) for m in mental_models])
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):
@@ -5098,7 +5130,9 @@ def _register_routes(app: FastAPI):
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context)
+            await app.state.memory.delete_bank(
+                bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
+            )
 
             return DeleteResponse(success=True)
         except OperationValidationError as e:

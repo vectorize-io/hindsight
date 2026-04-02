@@ -377,6 +377,97 @@ class TestListMentalModels:
         assert isinstance(result, dict)
         assert "error" in result
 
+    async def test_list_slim_multi_bank(self, mcp_server_with_mental_models, mock_memory):
+        """Test slim=True filters response to essential fields only (multi-bank mode)."""
+        # Setup mock to return models with all fields
+        mock_memory.list_mental_models.return_value = [
+            {
+                "id": "mm-1",
+                "bank_id": "test-bank",
+                "name": "Coding Prefs",
+                "source_query": "coding preferences?",
+                "content": "Prefers Python",
+                "tags": ["coding", "prefs"],
+                "max_tokens": 2048,
+                "trigger": {"refresh_after_consolidation": False},
+                "reflect_response": {"text": "Full response", "observations": []},
+                "created_at": "2024-01-01T00:00:00Z",
+                "last_refreshed_at": "2024-01-02T00:00:00Z",
+            }
+        ]
+
+        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn(slim=True)
+        import json
+        data = json.loads(result)
+        assert "items" in data
+        assert len(data["items"]) == 1
+        item = data["items"][0]
+
+        # Should only have slim fields
+        assert set(item.keys()) == {"id", "bank_id", "name", "content", "tags"}
+        assert item["id"] == "mm-1"
+        assert item["bank_id"] == "test-bank"
+        assert item["name"] == "Coding Prefs"
+        assert item["content"] == "Prefers Python"
+        assert item["tags"] == ["coding", "prefs"]
+
+    async def test_list_slim_single_bank(self, mcp_server_single_bank, mock_memory):
+        """Test slim=True filters response to essential fields only (single-bank mode)."""
+        # Setup mock to return models with all fields
+        mock_memory.list_mental_models.return_value = [
+            {
+                "id": "mm-2",
+                "bank_id": "fixed-bank",
+                "name": "Goals",
+                "source_query": "current goals?",
+                "content": "Ship v2",
+                "tags": ["goals"],
+                "max_tokens": 4096,
+                "trigger": {"refresh_after_consolidation": True},
+                "reflect_response": None,
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+        ]
+
+        result = await _tools(mcp_server_single_bank)["list_mental_models"].fn(slim=True)
+        assert isinstance(result, dict)
+        assert "items" in result
+        assert len(result["items"]) == 1
+        item = result["items"][0]
+
+        # Should only have slim fields
+        assert set(item.keys()) == {"id", "bank_id", "name", "content", "tags"}
+        assert item["id"] == "mm-2"
+        assert item["name"] == "Goals"
+
+    async def test_list_slim_false_includes_all_fields(self, mcp_server_with_mental_models, mock_memory):
+        """Test slim=False (default) includes all fields."""
+        mock_memory.list_mental_models.return_value = [
+            {
+                "id": "mm-1",
+                "bank_id": "test-bank",
+                "name": "Full Model",
+                "source_query": "test query",
+                "content": "Test content",
+                "tags": ["test"],
+                "max_tokens": 2048,
+                "trigger": {},
+            }
+        ]
+
+        result = await _tools(mcp_server_with_mental_models)["list_mental_models"].fn(slim=False)
+        import json
+        data = json.loads(result)
+        assert "items" in data
+        item = data["items"][0]
+
+        # Should have ALL fields
+        assert "id" in item
+        assert "source_query" in item
+        assert "max_tokens" in item
+        assert "trigger" in item
+
+
 
 @pytest.mark.asyncio
 class TestGetMentalModel:

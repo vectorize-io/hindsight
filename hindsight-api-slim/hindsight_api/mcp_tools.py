@@ -1002,6 +1002,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool()
         async def list_mental_models(
             tags: list[str] | None = None,
+            slim: bool = False,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -1013,6 +1014,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
+                slim: Return only essential fields (id, bank_id, name, content, tags). Default: False.
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1025,6 +1027,9 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                     tags=tags,
                     request_context=_get_request_context(config),
                 )
+                if slim:
+                    slim_fields = {"id", "bank_id", "name", "content", "tags"}
+                    models = [{k: v for k, v in m.items() if k in slim_fields} for m in models]
                 return json.dumps({"items": models}, indent=2, default=str)
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")
@@ -1038,6 +1043,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool()
         async def list_mental_models(
             tags: list[str] | None = None,
+            slim: bool = False,
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
@@ -1048,6 +1054,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
+                slim: Return only essential fields (id, bank_id, name, content, tags). Default: False.
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1059,6 +1066,9 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                     tags=tags,
                     request_context=_get_request_context(config),
                 )
+                if slim:
+                    slim_fields = {"id", "bank_id", "name", "content", "tags"}
+                    models = [{k: v for k, v in m.items() if k in slim_fields} for m in models]
                 return {"items": models}
             except OperationValidationError as e:
                 logger.warning(f"Operation rejected: {e}")

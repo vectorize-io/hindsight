@@ -1327,5 +1327,146 @@ class TestMentalModelTriggerSchema:
         from hindsight_api.api.http import MentalModelTrigger
         from pydantic import ValidationError
 
+
+class TestMentalModelSlimResponse:
+    """Tests for slim parameter in list_mental_models endpoint."""
+
+    async def test_list_mental_models_slim_excludes_heavy_fields(self, memory: MemoryEngine, request_context):
+        """Create a mental model, list with slim=True, verify only essential fields present."""
+        from hindsight_api.api import create_app
+        import httpx
+        import uuid
+
+        bank_id = f"test-slim-{uuid.uuid4().hex[:8]}"
+
+        # Create a mental model with all fields
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the meaning of life?",
+            content="Initial content",
+            tags=["test", "slim"],
+            request_context=request_context,
+        )
+
+        # List with slim=True via HTTP
+        app = create_app(memory, initialize_memory=False)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/v1/default/banks/{bank_id}/mental-models?slim=true")
+            assert response.status_code == 200
+            data = response.json()
+            assert "items" in data
+            assert len(data["items"]) == 1
+            item = data["items"][0]
+
+            # Should have slim fields
+            assert "id" in item
+            assert "bank_id" in item
+            assert "name" in item
+            assert "content" in item
+            assert "tags" in item
+
+            # Should NOT have heavy fields
+            assert "reflect_response" not in item
+            assert "source_query" not in item
+            assert "trigger" not in item
+            assert "max_tokens" not in item
+            assert "last_refreshed_at" not in item
+            assert "created_at" not in item
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_list_mental_models_slim_default_false(self, memory: MemoryEngine, request_context):
+        """List without slim param, verify all fields present."""
+        from hindsight_api.api import create_app
+        import httpx
+        import uuid
+
+        bank_id = f"test-full-{uuid.uuid4().hex[:8]}"
+
+        # Create a mental model
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Full Model",
+            source_query="What are the facts?",
+            content="Full content",
+            tags=["full"],
+            request_context=request_context,
+        )
+
+        # List WITHOUT slim parameter (default=False)
+        app = create_app(memory, initialize_memory=False)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/v1/default/banks/{bank_id}/mental-models")
+            assert response.status_code == 200
+            data = response.json()
+            assert "items" in data
+            assert len(data["items"]) == 1
+            item = data["items"][0]
+
+            # Should have ALL fields
+            assert "id" in item
+            assert "bank_id" in item
+            assert "name" in item
+            assert "content" in item
+            assert "tags" in item
+            assert "source_query" in item
+            assert "trigger" in item
+            assert "max_tokens" in item
+            # Note: reflect_response may be None, created_at/last_refreshed_at may be present
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+    async def test_list_mental_models_slim_with_tags_filter(self, memory: MemoryEngine, request_context):
+        """Create models with different tags, list with slim=True and tags filter, verify filtering works."""
+        from hindsight_api.api import create_app
+        import httpx
+        import uuid
+
+        bank_id = f"test-slim-tags-{uuid.uuid4().hex[:8]}"
+
+        # Create two mental models with different tags
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Work Model",
+            source_query="Work stuff?",
+            content="Work content",
+            tags=["work"],
+            request_context=request_context,
+        )
+
+        await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Personal Model",
+            source_query="Personal stuff?",
+            content="Personal content",
+            tags=["personal"],
+            request_context=request_context,
+        )
+
+        # List with slim=True and tags filter
+        app = create_app(memory, initialize_memory=False)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/v1/default/banks/{bank_id}/mental-models?slim=true&tags=work")
+            assert response.status_code == 200
+            data = response.json()
+            assert "items" in data
+            assert len(data["items"]) == 1
+            item = data["items"][0]
+
+            # Should have slim fields only
+            assert set(item.keys()) == {"id", "bank_id", "name", "content", "tags"}
+            assert item["name"] == "Work Model"
+            assert item["tags"] == ["work"]
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
         with pytest.raises(ValidationError):
             MentalModelTrigger(tag_groups=[{"invalid_key": "bad"}])
