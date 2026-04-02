@@ -39,10 +39,10 @@ def apply_combined_scoring(
         proof_count_boost = 1 + proof_count_alpha * (proof_norm  - 0.5)   # in [1-α/2, 1+α/2]
         combined_score    = CE_normalized * recency_boost * temporal_boost * proof_count_boost
 
-    proof_norm maps proof_count using a smooth logarithmic curve centered at 0.5:
+    proof_norm maps proof_count using a smooth logarithmic curve centered at 0.5,
+    clamped to [0, 1]:
       proof_count=1 → 0.5 + 0 = 0.5 (neutral multiplier)
-      proof_count=150 → 0.5 + 0.5 = 1.0 (strong boost)
-      proof_count=22000 → 0.5 + 1.0 = 1.5 (very strong boost)
+      proof_count=150 → clamped to 1.0 (max +5% boost)
 
     Temporal proximity is treated as neutral (0.5) when not set by temporal retrieval,
     so temporal_boost collapses to 1.0 for non-temporal queries.
@@ -76,12 +76,8 @@ def apply_combined_scoring(
         # Proof count: log-normalized evidence strength; neutral for non-observations.
         proof_count = sr.retrieval.proof_count
         if proof_count is not None and proof_count >= 1:
-            # We don't cap this at an arbitrary number. 
-            # We scale naturally so that:
-            # count=1 -> 0.5 (neutral baseline)
-            # count=150 -> 1.0 (+5% boost)
-            # count=22000 -> 1.5 (+10% boost)
-            proof_norm = 0.5 + (math.log(proof_count) / 10.0)
+            # Clamp to [0, 1] so extreme counts stay within documented ±5% range
+            proof_norm = min(1.0, max(0.0, 0.5 + (math.log(proof_count) / 10.0)))
         else:
             # Neutral baseline is precisely 0.5, ensuring neutral multiplier (1.0)
             proof_norm = 0.5

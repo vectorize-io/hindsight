@@ -58,7 +58,7 @@ def test_proof_count_neutral_at_one():
     
     apply_combined_scoring([sr], now, proof_count_alpha=0.1)
     
-    # proof_count=1 -> log1p(1) = 0.693, base log1p(1) = 0.693 -> difference 0.0 -> multipler 1.0
+    # proof_count=1 -> math.log(1) = 0 -> 0.5 + 0/10 = 0.5 (neutral) -> multiplier 1.0
     assert sr.combined_score == pytest.approx(0.8, rel=1e-3)
 
 def test_proof_count_increases_with_higher_counts():
@@ -79,16 +79,18 @@ def test_proof_count_increases_with_higher_counts():
     assert sr_100.combined_score > sr_50.combined_score
 
 def test_proof_count_no_hardcoded_cap_at_100():
-    """Test that observations with counts > 100 continue to scale up (no log1p(100) cap)."""
+    """Test that proof_count continues to scale within the clamped [0, 1] range."""
     now = datetime.now(UTC)
     
-    # If capped at 100, these would both get identical scores
+    # Use values that stay below the clamp ceiling (proof_norm < 1.0)
+    # log(5)/10=0.16, log(20)/10=0.30, log(100)/10=0.46 → all below 0.5 headroom
+    sr_5 = create_mock_scored_result(proof_count=5, ce_score=0.8)
+    sr_20 = create_mock_scored_result(proof_count=20, ce_score=0.8)
     sr_100 = create_mock_scored_result(proof_count=100, ce_score=0.8)
-    sr_500 = create_mock_scored_result(proof_count=500, ce_score=0.8)
-    sr_1000 = create_mock_scored_result(proof_count=1000, ce_score=0.8)
     
-    apply_combined_scoring([sr_100, sr_500, sr_1000], now, proof_count_alpha=0.1)
+    apply_combined_scoring([sr_5, sr_20, sr_100], now, proof_count_alpha=0.1)
     
-    # Must strictly increase, not plateau
-    assert sr_500.combined_score > sr_100.combined_score
-    assert sr_1000.combined_score > sr_500.combined_score
+    # Must strictly increase within the valid range
+    assert sr_20.combined_score > sr_5.combined_score
+    assert sr_100.combined_score > sr_20.combined_score
+
