@@ -284,7 +284,7 @@ async def test_llm_provider_memory_operations(provider: str, model: str):
     # Verify facts have required fields
     for fact in facts:
         assert fact.fact, f"{provider}/{model} fact missing text"
-        assert fact.fact_type in ["world", "experience", "opinion"], f"{provider}/{model} invalid fact_type: {fact.fact_type}"
+        assert fact.fact_type in ["world", "experience"], f"{provider}/{model} invalid fact_type: {fact.fact_type}"
 
     # Test 2: Reflect (actual reflect function)
     response = await reflect(

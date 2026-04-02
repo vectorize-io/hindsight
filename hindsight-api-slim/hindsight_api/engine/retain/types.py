@@ -107,7 +107,7 @@ class ExtractedFact:
     """
 
     fact_text: str
-    fact_type: str  # "world", "experience", "opinion", "observation"
+    fact_type: str  # "world", "experience", "observation"
     entities: list[str] = field(default_factory=list)
     occurred_start: datetime | None = None
     occurred_end: datetime | None = None

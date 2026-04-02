@@ -10,7 +10,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# Valid fact types for recall operations (excludes 'opinion' which is deprecated)
 VALID_RECALL_FACT_TYPES = frozenset(["world", "experience", "observation"])
 
 

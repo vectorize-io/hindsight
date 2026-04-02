@@ -131,7 +131,7 @@ class RetrievalResult(BaseModel):
     text: str = Field(description="Memory unit text content")
     context: str = Field(default="", description="Memory unit context")
     event_date: datetime | None = Field(default=None, description="When the memory occurred")
-    fact_type: str | None = Field(default=None, description="Fact type (world, experience, opinion)")
+    fact_type: str | None = Field(default=None, description="Fact type (world, experience)")
     score: float = Field(description="Score from this retrieval method")
     score_name: str = Field(description="Name of the score (e.g., 'similarity', 'bm25_score', 'activation')")
 
@@ -140,9 +140,7 @@ class RetrievalMethodResults(BaseModel):
     """Results from a single retrieval method."""
 
     method_name: Literal["semantic", "bm25", "graph", "temporal"] = Field(description="Name of retrieval method")
-    fact_type: str | None = Field(
-        default=None, description="Fact type this retrieval was for (world, experience, opinion)"
-    )
+    fact_type: str | None = Field(default=None, description="Fact type this retrieval was for (world, experience)")
     results: list[RetrievalResult] = Field(description="Retrieved results with ranks")
     duration_seconds: float = Field(description="Time taken for this retrieval")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Method-specific metadata")

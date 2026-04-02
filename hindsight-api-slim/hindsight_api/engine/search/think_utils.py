@@ -110,11 +110,7 @@ def build_think_prompt(
     context: str | None = None,
     entity_summaries_text: str | None = None,
 ) -> str:
-    """Build the think prompt for the LLM.
-
-    Note: opinion_facts_text parameter removed - opinions are now stored as mental models
-    and included via entity_summaries_text.
-    """
+    """Build the think prompt for the LLM."""
     disposition_desc = build_disposition_description(disposition)
 
     name_section = f"""

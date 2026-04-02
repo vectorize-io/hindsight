@@ -198,7 +198,7 @@ async def test_real_openai_batch_api(real_llm_config, test_contents_real, integr
         for fact in facts:
             assert hasattr(fact, "fact_text"), "Fact should have fact_text"
             assert hasattr(fact, "fact_type"), "Fact should have fact_type"
-            assert fact.fact_type in ["world", "experience", "opinion"], f"Invalid fact_type: {fact.fact_type}"
+            assert fact.fact_type in ["world", "experience"], f"Invalid fact_type: {fact.fact_type}"
 
         logger.info("\n✅ All assertions passed!")
 

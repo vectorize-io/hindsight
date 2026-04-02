@@ -748,7 +748,7 @@ class ReflectFact(BaseModel):
     text: str = Field(
         description="Fact text. When type='observation', this contains markdown-formatted consolidated knowledge"
     )
-    type: str | None = None  # fact type: world, experience, observation
+    type: str | None = None  # fact type: world, experience, opinion, observation
     context: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
@@ -5098,7 +5098,9 @@ def _register_routes(app: FastAPI):
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context)
+            await app.state.memory.delete_bank(
+                bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
+            )
 
             return DeleteResponse(success=True)
         except OperationValidationError as e:

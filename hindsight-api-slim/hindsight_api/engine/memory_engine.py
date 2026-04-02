@@ -270,7 +270,7 @@ class MemoryEngine(MemoryEngineInterface):
     This class provides:
     - Embedding generation for semantic search
     - Entity, temporal, and semantic link creation
-    - Think operations for formulating answers with opinions
+    - Think operations for formulating answers with observations
     - bank profile and disposition management
     """
 
@@ -2373,7 +2373,7 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: bank ID to recall for
             query: Recall query
-            fact_type: Required filter for fact type ('world', 'experience', or 'opinion')
+            fact_type: Required filter for fact type ('world' or 'experience')
             budget: Budget level for graph traversal (low=100, mid=300, high=600 units)
             max_tokens: Maximum tokens to return (counts only 'text' field, default 4096)
             enable_trace: If True, returns detailed trace object
@@ -2467,8 +2467,10 @@ class MemoryEngine(MemoryEngineInterface):
         if fact_type is None:
             fact_type = list(VALID_RECALL_FACT_TYPES)
 
-        # Filter out 'opinion' early (deprecated, silently ignore)
+        # Filter out 'opinion' (removed fact type, silently ignore for backwards compat)
         fact_type = [ft for ft in fact_type if ft != "opinion"]
+        if not fact_type:
+            return RecallResultModel(results=[], entities={}, chunks={})
 
         # Validate fact types
         invalid_types = set(fact_type) - VALID_RECALL_FACT_TYPES
@@ -2477,9 +2479,6 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Invalid fact type(s): {', '.join(sorted(invalid_types))}. "
                 f"Must be one of: {', '.join(sorted(VALID_RECALL_FACT_TYPES))}"
             )
-        if not fact_type:
-            # All requested types were opinions - return empty result
-            return RecallResultModel(results=[], entities={}, chunks={})
 
         # Validate operation if validator is configured
         if self._operation_validator:
@@ -3854,7 +3853,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             bank_id: bank ID to delete
-            fact_type: Optional fact type filter (world, experience, opinion). If provided, only deletes memories of that type.
+            fact_type: Optional fact type filter (world, experience). If provided, only deletes memories of that type.
             request_context: Request context for authentication.
 
         Returns:
@@ -4173,7 +4172,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             bank_id: Filter by bank ID
-            fact_type: Filter by fact type (world, experience, opinion)
+            fact_type: Filter by fact type (world, experience)
             limit: Maximum number of items to return (default: 1000)
             q: Full-text search query (searches text and context fields)
             tags: Filter by tags
@@ -4552,7 +4551,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             bank_id: Filter by bank ID
-            fact_type: Filter by fact type (world, experience, opinion)
+            fact_type: Filter by fact type (world, experience)
             search_query: Full-text search query (searches text and context fields)
             limit: Maximum number of results to return
             offset: Offset for pagination

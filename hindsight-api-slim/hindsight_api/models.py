@@ -121,12 +121,10 @@ class MemoryUnit(Base):
             name="memory_units_document_fkey",
             ondelete="CASCADE",
         ),
-        CheckConstraint("fact_type IN ('world', 'experience', 'opinion', 'observation')"),
+        CheckConstraint("fact_type IN ('world', 'experience', 'observation')"),
         CheckConstraint("confidence_score IS NULL OR (confidence_score >= 0.0 AND confidence_score <= 1.0)"),
         CheckConstraint(
-            "(fact_type = 'opinion' AND confidence_score IS NOT NULL) OR "
-            "(fact_type = 'observation') OR "
-            "(fact_type NOT IN ('opinion', 'observation') AND confidence_score IS NULL)",
+            "(fact_type = 'observation') OR (fact_type NOT IN ('observation') AND confidence_score IS NULL)",
             name="confidence_score_fact_type_check",
         ),
         Index("idx_memory_units_bank_id", "bank_id"),
@@ -140,20 +138,6 @@ class MemoryUnit(Base):
             "bank_id",
             "fact_type",
             "event_date",
-            postgresql_ops={"event_date": "DESC"},
-        ),
-        Index(
-            "idx_memory_units_opinion_confidence",
-            "bank_id",
-            "confidence_score",
-            postgresql_where=sql_text("fact_type = 'opinion'"),
-            postgresql_ops={"confidence_score": "DESC"},
-        ),
-        Index(
-            "idx_memory_units_opinion_date",
-            "bank_id",
-            "event_date",
-            postgresql_where=sql_text("fact_type = 'opinion'"),
             postgresql_ops={"event_date": "DESC"},
         ),
         Index(

@@ -64,8 +64,7 @@ async def insert_facts_batch(
         mentioned_ats.append(fact.mentioned_at)
         contexts.append(_sanitize_text(fact.context))
         fact_types.append(fact.fact_type)
-        # confidence_score is only for opinion facts
-        confidence_scores.append(1.0 if fact.fact_type == "opinion" else None)
+        confidence_scores.append(None)
         metadata_jsons.append(json.dumps(fact.metadata))
         chunk_ids.append(fact.chunk_id)
         # Use per-fact document_id if available, otherwise fallback to batch-level document_id

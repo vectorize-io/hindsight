@@ -87,7 +87,7 @@ class Fact(BaseModel):
 
     # Required fields
     fact: str = Field(description="Combined fact text: what | when | where | who | why")
-    fact_type: Literal["world", "experience", "opinion"] = Field(description="Perspective: world/experience/opinion")
+    fact_type: Literal["world", "experience"] = Field(description="Perspective: world/experience")
 
     # Optional temporal fields
     occurred_start: str | None = None
@@ -1967,7 +1967,7 @@ async def extract_facts_from_contents_batch_api(
         for fact_from_llm in chunk_facts:
             extracted_fact = ExtractedFactType(
                 fact_text=fact_from_llm.fact,
-                fact_type="experience" if fact_from_llm.fact_type == "assistant" else "world",
+                fact_type=fact_from_llm.fact_type,
                 entities=[e.text for e in (fact_from_llm.entities or [])],
                 occurred_start=_parse_datetime(fact_from_llm.occurred_start) if fact_from_llm.occurred_start else None,
                 occurred_end=_parse_datetime(fact_from_llm.occurred_end) if fact_from_llm.occurred_end else None,
@@ -2152,7 +2152,7 @@ async def extract_facts_from_contents(
                     # mentioned_at is always the event_date (when the conversation/document occurred)
                     extracted_fact = ExtractedFactType(
                         fact_text=fact_from_llm.fact,
-                        fact_type="experience" if fact_from_llm.fact_type == "assistant" else "world",
+                        fact_type=fact_from_llm.fact_type,
                         entities=[e.text for e in (fact_from_llm.entities or [])],
                         # occurred_start/end: from LLM only, leave None if not provided
                         occurred_start=_parse_datetime(fact_from_llm.occurred_start)
