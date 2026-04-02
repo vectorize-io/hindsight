@@ -1,5 +1,7 @@
 ---
 sidebar_position: 12
+title: "AutoGen Persistent Memory with Hindsight | Integration Guide"
+description: "Add long-term memory to AutoGen agents with Hindsight. Provides FunctionTool instances that plug directly into AutoGen AssistantAgent with fact extraction and temporal awareness."
 ---
 
 # AutoGen
