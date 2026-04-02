@@ -9,6 +9,7 @@ import type {
   RetainResponse,
   RecallRequest,
   RecallResponse,
+  BankStats,
 } from './types.js';
 import * as log from './logger.js';
 
@@ -257,5 +258,22 @@ export class HindsightClient {
     } catch (error) {
       throw new Error(`Failed to recall memories: ${error}`, { cause: error });
     }
+  }
+
+  async getBankStats(): Promise<BankStats> {
+    if (!this.httpMode) {
+      throw new Error('Bank stats are only available in HTTP mode');
+    }
+    const url = `${this.apiUrl}/v1/default/banks/${encodeURIComponent(this.bankId)}/stats`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: this.httpHeaders(),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Failed to get bank stats (HTTP ${res.status}): ${text}`);
+    }
+    return res.json() as Promise<BankStats>;
   }
 }

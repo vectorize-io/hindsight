@@ -29,6 +29,7 @@ That's it! The plugin will automatically start capturing and recalling memories.
 - **Auto-capture** and **auto-recall** of memories each turn, injected into system prompt space so recalled memories stay out of the visible chat transcript
 - **Memory isolation** — configurable per agent, channel, user, or provider via `dynamicBankGranularity`
 - **Retention controls** — choose which message roles to retain and toggle auto-retain on/off
+- **Historical backfill CLI** — import prior OpenClaw session history into Hindsight using the active plugin bank-routing config by default
 
 ## Configuration
 
@@ -104,6 +105,51 @@ tail -f ~/.hindsight/profiles/openclaw.log
 # List profiles
 uvx hindsight-embed@latest profile list
 ```
+
+## Backfilling Existing OpenClaw History
+
+The package includes a config-aware backfill CLI for importing historical OpenClaw sessions into Hindsight.
+
+By default it mirrors the active plugin settings for:
+
+- `dynamicBankId`
+- `dynamicBankGranularity`
+- `bankIdPrefix`
+- local daemon vs external `hindsightApiUrl`
+
+Dry-run example:
+
+```bash
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-backfill \
+  --openclaw-root ~/.openclaw \
+  --dry-run
+```
+
+Direct invocation from a built checkout:
+
+```bash
+node dist/backfill.js --openclaw-root ~/.openclaw --dry-run
+```
+
+Migration-oriented overrides are explicit:
+
+```bash
+node dist/backfill.js \
+  --openclaw-root ~/.openclaw \
+  --bank-strategy agent \
+  --agent proj-run \
+  --resume \
+  --max-pending-operations 10
+```
+
+Useful options:
+
+- `--agent <id>` limit import to selected agents
+- `--exclude-archive` ignore `sessions-archive-from-migration_backup`
+- `--bank-strategy mirror-config|agent|fixed`
+- `--resume` skip already checkpointed entries
+- `--checkpoint <path>` store progress outside the default location
+- `--wait-until-drained` block until the target bank queues have finished enqueue processing
 
 ## Links
 

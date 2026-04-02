@@ -122,6 +122,22 @@ export interface RecallResponse {
   chunks: unknown | null;
 }
 
+export interface BankStats {
+  bank_id: string;
+  total_nodes: number;
+  total_links: number;
+  total_documents: number;
+  pending_operations: number;
+  failed_operations: number;
+  pending_consolidation: number;
+  last_consolidated_at: string | null;
+  total_observations: number;
+  nodes_by_fact_type?: Record<string, number>;
+  links_by_link_type?: Record<string, number>;
+  links_by_fact_type?: Record<string, number>;
+  links_breakdown?: Record<string, unknown>;
+}
+
 export interface MemoryResult {
   id: string;
   text: string;

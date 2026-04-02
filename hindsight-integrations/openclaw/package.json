@@ -4,6 +4,9 @@
   "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "hindsight-openclaw-backfill": "dist/backfill.js"
+  },
   "type": "module",
   "openclaw": {
     "extensions": [
@@ -34,6 +37,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
+    "backfill:help": "node dist/backfill.js --help",
     "test": "vitest run src",
     "test:watch": "vitest src",
     "test:integration": "vitest run --config vitest.integration.config.ts",
