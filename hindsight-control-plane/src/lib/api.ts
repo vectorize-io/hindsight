@@ -1244,8 +1244,12 @@ export class ControlPlaneClient {
 
     formData.append("request", JSON.stringify(requestData));
 
-    // Use fetch directly for multipart/form-data
-    const response = await fetch(`/api/files/retain`, {
+    // Use fetch directly for multipart/form-data (can't use fetchApi for FormData)
+    let url = `/api/files/retain`;
+    if (this._tenant) {
+      url += `?tenant=${encodeURIComponent(this._tenant)}`;
+    }
+    const response = await fetch(url, {
       method: "POST",
       body: formData,
       // Don't set Content-Type - browser will set it with boundary

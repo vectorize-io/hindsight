@@ -40,6 +40,7 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
+    if (currentTenant === null) return;
     setCurrentBank(null);
     loadBanks();
   }, [currentTenant]);

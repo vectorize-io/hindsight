@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sdk, getClientForTenant } from "@/lib/hindsight-client";
+import { getClientForTenant } from "@/lib/hindsight-client";
 
 export async function GET(request: NextRequest) {
   try {
