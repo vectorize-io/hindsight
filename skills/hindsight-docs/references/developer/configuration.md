@@ -352,7 +352,7 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `cohere`, `litellm`, or `litellm-sdk` | `local` |
+| `HINDSIGHT_API_EMBEDDINGS_PROVIDER` | Provider: `local`, `tei`, `openai`, `cohere`, `google`, `litellm`, or `litellm-sdk` | `local` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL` | Model for local provider | `BAAI/bge-small-en-v1.5` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
 | `HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU` | Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS) | `false` |
@@ -370,6 +370,12 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MODEL` | LiteLLM SDK embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `cohere/embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_BASE` | Custom base URL for LiteLLM SDK embeddings (optional) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS` | Optional output embedding dimensions (provider-dependent, e.g., `768` for Gemini embedding models) | - |
+| `HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY` | Gemini API key for embeddings (falls back to `HINDSIGHT_API_LLM_API_KEY`) | - |
+| `HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL` | Gemini embedding model | `gemini-embedding-001` |
+| `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` | Output embedding dimensions (Gemini supports configurable dimensionality) | `768` |
+| `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID` | Vertex AI project ID for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
+| `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
+| `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
 
 ```bash
 # Local (default) - uses SentenceTransformers
@@ -413,6 +419,19 @@ export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE=http://localhost:4000
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY=your-litellm-key  # optional
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL=text-embedding-3-small  # or cohere/embed-english-v3.0
 
+# Google - Gemini API (API key auth)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=google
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY=xxxxxxxxxxxx  # or reuses HINDSIGHT_API_LLM_API_KEY
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL=gemini-embedding-001  # 768 dimensions (default)
+# export HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY=768  # configurable: 256, 512, 768, 1024, etc.
+
+# Google - Vertex AI auth (auto-detected when project ID is set)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=google
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL=gemini-embedding-001
+export HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID=your-gcp-project-id  # falls back to HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID
+# export HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION=us-central1  # falls back to HINDSIGHT_API_LLM_VERTEXAI_REGION
+# export HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY=/path/to/key.json  # falls back to LLM config, or uses ADC
+
 # LiteLLM SDK - direct API access without proxy server (recommended)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=litellm-sdk
 export HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_API_KEY=your-provider-api-key
@@ -444,13 +463,15 @@ Supported OpenAI embedding dimensions:
 - `text-embedding-3-small`: 1536 dimensions
 - `text-embedding-3-large`: 3072 dimensions
 - `text-embedding-ada-002`: 1536 dimensions (legacy)
+
+Google's `gemini-embedding-001` produces 3072 dimensions natively but supports configurable output dimensionality. Set `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY` to control the output size (default: 768).
 :::
 
 ### Reranker
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `zeroentropy`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `zeroentropy`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -474,6 +495,9 @@ Supported OpenAI embedding dimensions:
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY` | ZeroEntropy API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL` | ZeroEntropy rerank model (`zerank-2`, `zerank-2-small`) | `zerank-2` |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL` | Custom base URL for ZeroEntropy-compatible API (e.g., mock server, proxy, or self-hosted deployment) | `https://api.zeroentropy.dev` |
+| `HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID` | Google Cloud project ID for Discovery Engine reranking (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
+| `HINDSIGHT_API_RERANKER_GOOGLE_MODEL` | Google Discovery Engine ranking model | `semantic-ranker-default-004` |
+| `HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY` | Path to service account JSON key (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`). If unset, uses ADC. | - |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_MODEL` | FlashRank model for fast CPU-based reranking | `ms-marco-MiniLM-L-12-v2` |
 | `HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR` | Cache directory for FlashRank models | System default |
 | `HINDSIGHT_API_RERANKER_JINA_MLX_MODEL_PATH` | Local path to downloaded `jina-reranker-v3-mlx` model (auto-downloads from HuggingFace if unset) | - |
@@ -520,6 +544,12 @@ export HINDSIGHT_API_RERANKER_LITELLM_MODEL=cohere/rerank-english-v3.0  # or voy
 export HINDSIGHT_API_RERANKER_PROVIDER=litellm-sdk
 export HINDSIGHT_API_RERANKER_LITELLM_SDK_API_KEY=your-deepinfra-api-key
 export HINDSIGHT_API_RERANKER_LITELLM_SDK_MODEL=deepinfra/Qwen3-reranker-8B  # or cohere/rerank-english-v3.0, etc.
+
+# Google Discovery Engine - cloud-based semantic reranking
+export HINDSIGHT_API_RERANKER_PROVIDER=google
+export HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID=your-gcp-project-id
+export HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY=/path/to/service-account.json  # optional, uses ADC if unset
+export HINDSIGHT_API_RERANKER_GOOGLE_MODEL=semantic-ranker-default-004  # or semantic-ranker-fast-004
 
 # Jina MLX - Apple Silicon native reranking (no GPU/cloud required)
 # Model (~1.2 GB) is downloaded automatically from HuggingFace Hub on first use.
