@@ -178,6 +178,14 @@ ENV_EMBEDDINGS_OPENAI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY"
 ENV_EMBEDDINGS_OPENAI_MODEL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL"
 ENV_EMBEDDINGS_OPENAI_BASE_URL = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL"
 
+# Gemini/Vertex AI embeddings configuration
+ENV_EMBEDDINGS_GEMINI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY"
+ENV_EMBEDDINGS_GEMINI_MODEL = "HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL"
+ENV_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY"
+ENV_EMBEDDINGS_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID"
+ENV_EMBEDDINGS_VERTEXAI_REGION = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION"
+ENV_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY"
+
 # Cohere configuration (separate for embeddings and reranker)
 ENV_EMBEDDINGS_COHERE_API_KEY = "HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY"
 ENV_EMBEDDINGS_COHERE_MODEL = "HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL"
@@ -230,6 +238,11 @@ ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
 ENV_RERANKER_ZEROENTROPY_API_KEY = "HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY"
 ENV_RERANKER_ZEROENTROPY_MODEL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL"
 ENV_RERANKER_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL"
+
+# Google Discovery Engine reranker configuration
+ENV_RERANKER_GOOGLE_MODEL = "HINDSIGHT_API_RERANKER_GOOGLE_MODEL"
+ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
+ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
@@ -403,6 +416,8 @@ DEFAULT_EMBEDDINGS_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU = False  # Force CPU mode for local embeddings (avoids MPS/XPC issues on macOS)
 DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE = False  # Security: disabled by default, required for some models
 DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
+DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
 DEFAULT_EMBEDDING_DIMENSION = 384
 
 DEFAULT_RERANKER_PROVIDER = "local"
@@ -425,6 +440,8 @@ DEFAULT_EMBEDDINGS_COHERE_MODEL = "embed-english-v3.0"
 DEFAULT_RERANKER_COHERE_MODEL = "rerank-english-v3.0"
 
 DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
+
+DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
 # Vector extension (pgvector, vchord, or pgvectorscale)
 DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvectorscale"
@@ -706,6 +723,13 @@ class HindsightConfig:
     embeddings_litellm_sdk_model: str
     embeddings_litellm_sdk_api_base: str | None
     embeddings_litellm_sdk_output_dimensions: int | None
+    # Gemini/Vertex AI embeddings
+    embeddings_gemini_api_key: str | None
+    embeddings_gemini_model: str
+    embeddings_gemini_output_dimensionality: int | None
+    embeddings_vertexai_project_id: str | None
+    embeddings_vertexai_region: str | None
+    embeddings_vertexai_service_account_key: str | None
 
     # Reranker
     reranker_provider: str
@@ -733,6 +757,9 @@ class HindsightConfig:
     reranker_zeroentropy_api_key: str | None
     reranker_zeroentropy_model: str
     reranker_zeroentropy_base_url: str | None
+    reranker_google_model: str
+    reranker_google_project_id: str | None
+    reranker_google_service_account_key: str | None
 
     # Server
     host: str
@@ -882,6 +909,10 @@ class HindsightConfig:
         "reranker_zeroentropy_base_url",
         # Service Account Keys
         "llm_vertexai_service_account_key",
+        "embeddings_vertexai_service_account_key",
+        "reranker_google_service_account_key",
+        # Embeddings API keys
+        "embeddings_gemini_api_key",
         # File storage credentials
         "file_storage_s3_access_key_id",
         "file_storage_s3_secret_access_key",
@@ -1160,6 +1191,20 @@ class HindsightConfig:
             embeddings_litellm_sdk_output_dimensions=int(v)
             if (v := os.getenv(ENV_EMBEDDINGS_LITELLM_SDK_OUTPUT_DIMENSIONS))
             else None,
+            # Gemini/Vertex AI embeddings (with fallback to LLM keys)
+            embeddings_gemini_api_key=os.getenv(ENV_EMBEDDINGS_GEMINI_API_KEY) or os.getenv(ENV_LLM_API_KEY),
+            embeddings_gemini_model=os.getenv(ENV_EMBEDDINGS_GEMINI_MODEL, DEFAULT_EMBEDDINGS_GEMINI_MODEL),
+            embeddings_gemini_output_dimensionality=int(
+                os.getenv(
+                    ENV_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY,
+                    str(DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY),
+                )
+            ),
+            embeddings_vertexai_project_id=os.getenv(ENV_EMBEDDINGS_VERTEXAI_PROJECT_ID)
+            or os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID),
+            embeddings_vertexai_region=os.getenv(ENV_EMBEDDINGS_VERTEXAI_REGION) or os.getenv(ENV_LLM_VERTEXAI_REGION),
+            embeddings_vertexai_service_account_key=os.getenv(ENV_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY)
+            or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             # Reranker
             reranker_provider=os.getenv(ENV_RERANKER_PROVIDER, DEFAULT_RERANKER_PROVIDER),
             reranker_local_model=os.getenv(ENV_RERANKER_LOCAL_MODEL, DEFAULT_RERANKER_LOCAL_MODEL),
@@ -1209,6 +1254,12 @@ class HindsightConfig:
             reranker_zeroentropy_api_key=os.getenv(ENV_RERANKER_ZEROENTROPY_API_KEY),
             reranker_zeroentropy_model=os.getenv(ENV_RERANKER_ZEROENTROPY_MODEL, DEFAULT_RERANKER_ZEROENTROPY_MODEL),
             reranker_zeroentropy_base_url=os.getenv(ENV_RERANKER_ZEROENTROPY_BASE_URL) or None,
+            # Google Discovery Engine reranker (with fallback to LLM Vertex AI keys)
+            reranker_google_model=os.getenv(ENV_RERANKER_GOOGLE_MODEL, DEFAULT_RERANKER_GOOGLE_MODEL),
+            reranker_google_project_id=os.getenv(ENV_RERANKER_GOOGLE_PROJECT_ID)
+            or os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID),
+            reranker_google_service_account_key=os.getenv(ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY)
+            or os.getenv(ENV_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY),
             # Server
             host=os.getenv(ENV_HOST, DEFAULT_HOST),
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
