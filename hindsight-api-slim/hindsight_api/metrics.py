@@ -332,7 +332,6 @@ class MetricsCollector(MetricsCollectorBase):
         start_time = time.time()
         attributes = {
             "operation": operation,
-            "bank_id": bank_id,
             "source": source,
             "tenant": _get_tenant(),
         }

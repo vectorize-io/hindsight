@@ -95,7 +95,7 @@ class TestMetricsCollector:
         # Second arg is attributes dict
         attributes = call_args[0][1]
         assert attributes["operation"] == "recall"
-        assert attributes["bank_id"] == "test_bank"
+        assert "bank_id" not in attributes
         assert attributes["source"] == "api"
         assert attributes["success"] == "true"
 
