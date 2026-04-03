@@ -95,6 +95,17 @@ spec:
           {{- toYaml .Values.api.readinessProbe | nindent 10 }}
         resources:
           {{- toYaml .Values.api.resources | nindent 10 }}
+        {{- if .Values.api.persistence.modelCache.enabled }}
+        volumeMounts:
+        - name: model-cache
+          mountPath: /home/hindsight/.cache
+        {{- end }}
+      {{- if .Values.api.persistence.modelCache.enabled }}
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: {{ include "hindsight.fullname" . }}-api-model-cache
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

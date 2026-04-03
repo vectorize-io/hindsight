@@ -1,0 +1,21 @@
+{{- if and .Values.api.enabled .Values.api.persistence.modelCache.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hindsight.fullname" . }}-api-model-cache
+  labels:
+    {{- include "hindsight.api.labels" . | nindent 4 }}
+  {{- with .Values.api.persistence.modelCache.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.api.persistence.modelCache.accessModes | nindent 4 }}
+  {{- if .Values.api.persistence.modelCache.storageClass }}
+  storageClassName: {{ .Values.api.persistence.modelCache.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.api.persistence.modelCache.size }}
+{{- end }}
