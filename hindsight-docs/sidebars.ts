@@ -204,8 +204,13 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+<<<<<<< HEAD
           href: '/sdks/integrations/grok-build',
           label: 'Grok Build',
+=======
+          href: '/sdks/integrations/cursor',
+          label: 'Cursor',
+>>>>>>> e4dbdeb5 (docs(cursor): add integration docs, blog post, and sidebar entry)
           customProps: { icon: '/img/icons/terminal.svg' },
         },
         {
