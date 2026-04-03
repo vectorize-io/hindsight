@@ -1,0 +1,29 @@
+{
+  "name": "opencode-hindsight",
+  "version": "0.1.0",
+  "description": "Persistent long-term memory for OpenCode sessions via Hindsight. Auto-captures conversations, recalls context via MCP, and supports backfilling historical sessions.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "hindsight",
+    "memory",
+    "ai-agent",
+    "long-term-memory",
+    "plugin"
+  ],
+  "author": "Vectorize.io Contributors",
+  "license": "MIT",
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}

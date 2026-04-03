@@ -101,6 +101,16 @@
       "icon": "/img/icons/openai.png"
     },
     {
+      "id": "opencode",
+      "name": "OpenCode",
+      "description": "Persistent long-term memory for OpenCode sessions. Auto-captures conversations on session completion and recalls context via MCP. Includes a backfill CLI for importing historical sessions.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/opencode",
+      "icon": "/img/icons/opencode.png"
+    },
+    {
       "id": "openclaw",
       "name": "OpenClaw",
       "description": "Integrate Hindsight with OpenClaw to add memory capabilities to Claude-based agent workflows.",
