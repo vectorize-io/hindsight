@@ -82,12 +82,26 @@ function buildClients(apiKey: string): TenantClients {
 
 /**
  * Get SDK clients for a specific tenant.
- * Falls back to the first tenant if name is not found.
+ *
+ * In multi-tenant mode, providing an unknown tenant name throws an error
+ * to prevent silent cross-tenant data leakage.  In single-tenant mode
+ * (or when no name is provided), falls back to the first configured tenant.
  */
 export function getClientForTenant(tenantName?: string | null): TenantClients {
-  const name = tenantName && tenantsByName.has(tenantName)
-    ? tenantName
-    : tenantEntries[0]?.name ?? "default";
+  let name: string;
+  if (tenantName) {
+    if (!tenantsByName.has(tenantName)) {
+      if (isMultiTenant()) {
+        throw new Error(`Unknown tenant: ${tenantName}`);
+      }
+      // Single-tenant fallback
+      name = tenantEntries[0]?.name ?? "default";
+    } else {
+      name = tenantName;
+    }
+  } else {
+    name = tenantEntries[0]?.name ?? "default";
+  }
 
   let clients = clientCache.get(name);
   if (!clients) {

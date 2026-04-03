@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { client } from "./api";
 import { useTenant } from "./tenant-context";
@@ -19,17 +19,22 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   const { currentTenant } = useTenant();
   const [currentBank, setCurrentBank] = useState<string | null>(null);
   const [banks, setBanks] = useState<string[]>([]);
+  // Guard against stale responses when tenant switches rapidly
+  const loadIdRef = useRef(0);
 
-  const loadBanks = async () => {
+  const loadBanks = useCallback(async () => {
+    const id = ++loadIdRef.current;
     try {
       const response = await client.listBanks();
-      // Extract bank_id from each bank object
+      // Drop the result if a newer load was started while we were waiting
+      if (id !== loadIdRef.current) return;
       const bankIds = response.banks?.map((bank: any) => bank.bank_id) || [];
       setBanks(bankIds);
     } catch (error) {
+      if (id !== loadIdRef.current) return;
       console.error("Error loading banks:", error);
     }
-  };
+  }, []);
 
   // Initialize bank from URL on mount
   useEffect(() => {
@@ -43,7 +48,7 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
     if (currentTenant === null) return;
     setCurrentBank(null);
     loadBanks();
-  }, [currentTenant]);
+  }, [currentTenant, loadBanks]);
 
   return (
     <BankContext.Provider value={{ currentBank, setCurrentBank, banks, loadBanks }}>
