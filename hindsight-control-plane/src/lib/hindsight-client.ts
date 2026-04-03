@@ -43,7 +43,11 @@ function parseTenantKeyMap(raw: string): TenantEntry[] {
   });
 }
 
-const TENANT_KEY_MAP_RAW = process.env.HINDSIGHT_CP_TENANT_KEY_MAP || "";
+// CP-specific var takes precedence; falls back to the API key map so
+// operators don't have to duplicate keys across two env vars.
+const TENANT_KEY_MAP_RAW = process.env.HINDSIGHT_CP_TENANT_KEY_MAP
+  || process.env.HINDSIGHT_API_TENANT_KEY_MAP
+  || "";
 const SINGLE_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
 
 const tenantEntries: TenantEntry[] = TENANT_KEY_MAP_RAW
