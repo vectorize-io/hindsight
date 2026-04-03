@@ -1,6 +1,12 @@
 /**
- * Shared Hindsight API client instance for the control plane.
- * Configured to connect to the dataplane API server.
+ * Tenant-aware Hindsight API client factory for the control plane.
+ *
+ * Supports two modes:
+ * 1. Multi-tenant: HINDSIGHT_CP_TENANT_KEY_MAP=key1:name1;key2:name2
+ * 2. Single-tenant (backwards-compat): HINDSIGHT_CP_DATAPLANE_API_KEY=key
+ *
+ * In multi-tenant mode, getClientForTenant(name) returns a client scoped to
+ * that tenant's schema. In single-tenant mode, all calls use the single key.
  */
 
 import {
@@ -11,16 +17,113 @@ import {
   sdk,
 } from "@vectorize-io/hindsight-client";
 
-export const DATAPLANE_URL = process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
-const DATAPLANE_API_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+export const DATAPLANE_URL =
+  process.env.HINDSIGHT_CP_DATAPLANE_API_URL || "http://localhost:8888";
+
+// --- Tenant key map parsing ---
+
+interface TenantEntry {
+  name: string;
+  apiKey: string;
+}
+
+function parseTenantKeyMap(raw: string): TenantEntry[] {
+  if (!raw.trim()) return [];
+  return raw.split(";").filter(Boolean).map((entry) => {
+    const colonIdx = entry.indexOf(":");
+    if (colonIdx === -1) {
+      throw new Error(
+        `Invalid HINDSIGHT_CP_TENANT_KEY_MAP entry "${entry}". Expected "key:name".`
+      );
+    }
+    return {
+      apiKey: entry.slice(0, colonIdx).trim(),
+      name: entry.slice(colonIdx + 1).trim(),
+    };
+  });
+}
+
+const TENANT_KEY_MAP_RAW = process.env.HINDSIGHT_CP_TENANT_KEY_MAP || "";
+const SINGLE_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
+
+const tenantEntries: TenantEntry[] = TENANT_KEY_MAP_RAW
+  ? parseTenantKeyMap(TENANT_KEY_MAP_RAW)
+  : SINGLE_KEY
+    ? [{ name: "default", apiKey: SINGLE_KEY }]
+    : [];
+
+const tenantsByName = new Map(tenantEntries.map((e) => [e.name, e]));
+
+// --- Client cache (one per tenant, created lazily) ---
+
+interface TenantClients {
+  hindsightClient: HindsightClient;
+  lowLevelClient: ReturnType<typeof createClient>;
+  apiKey: string;
+}
+
+const clientCache = new Map<string, TenantClients>();
+
+function buildClients(apiKey: string): TenantClients {
+  return {
+    hindsightClient: new HindsightClient({
+      baseUrl: DATAPLANE_URL,
+      apiKey: apiKey || undefined,
+    }),
+    lowLevelClient: createClient(
+      createConfig({
+        baseUrl: DATAPLANE_URL,
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      })
+    ),
+    apiKey,
+  };
+}
+
+/**
+ * Get SDK clients for a specific tenant.
+ * Falls back to the first tenant if name is not found.
+ */
+export function getClientForTenant(tenantName?: string | null): TenantClients {
+  const name = tenantName && tenantsByName.has(tenantName)
+    ? tenantName
+    : tenantEntries[0]?.name ?? "default";
+
+  let clients = clientCache.get(name);
+  if (!clients) {
+    const entry = tenantsByName.get(name);
+    clients = buildClients(entry?.apiKey ?? "");
+    clientCache.set(name, clients);
+  }
+  return clients;
+}
+
+/**
+ * Return the list of configured tenant names.
+ * Used by the /api/tenants route and TenantContext.
+ */
+export function getTenantNames(): string[] {
+  return tenantEntries.map((e) => e.name);
+}
+
+/**
+ * Whether multi-tenant mode is active (more than one tenant configured).
+ */
+export function isMultiTenant(): boolean {
+  return tenantEntries.length > 1;
+}
 
 /**
  * Auth headers for direct fetch calls to the dataplane API.
  */
-export function getDataplaneHeaders(extra?: Record<string, string>): Record<string, string> {
+export function getDataplaneHeaders(
+  tenantName?: string | null,
+  extra?: Record<string, string>
+): Record<string, string> {
+  const { apiKey } = getClientForTenant(tenantName);
   const headers: Record<string, string> = { ...extra };
-  if (DATAPLANE_API_KEY) {
-    headers["Authorization"] = `Bearer ${DATAPLANE_API_KEY}`;
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
   return headers;
 }
@@ -34,30 +137,14 @@ export function dataplaneBankUrl(bankId: string, suffix = ""): string {
   return `${DATAPLANE_URL}/v1/default/banks/${encodeURIComponent(bankId)}${suffix}`;
 }
 
-/**
- * High-level client with convenience methods
- */
-export const hindsightClient = new HindsightClient({
-  baseUrl: DATAPLANE_URL,
-  apiKey: DATAPLANE_API_KEY || undefined,
-});
+// --- Backwards-compatible default exports ---
+// These use the first configured tenant (or the single key).
 
-/**
- * Low-level client for direct SDK access
- */
-export const lowLevelClient = createClient(
-  createConfig({
-    baseUrl: DATAPLANE_URL,
-    headers: DATAPLANE_API_KEY ? { Authorization: `Bearer ${DATAPLANE_API_KEY}` } : undefined,
-  })
-);
+const defaultClients = getClientForTenant();
 
-/**
- * Export SDK functions for direct API access
- */
-export { sdk };
+/** @deprecated Use getClientForTenant() instead */
+export const hindsightClient = defaultClients.hindsightClient;
+/** @deprecated Use getClientForTenant() instead */
+export const lowLevelClient = defaultClients.lowLevelClient;
 
-/**
- * Export HindsightError for error handling
- */
-export { HindsightError };
+export { sdk, HindsightError };
