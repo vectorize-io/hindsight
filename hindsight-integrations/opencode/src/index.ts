@@ -65,15 +65,28 @@ export const HindsightMemory: Plugin = async ({ directory }) => {
     },
 
     // Inject recalled memories into compaction context
-    "experimental.session.compacting": async (_input, output) => {
+    "experimental.session.compacting": async (input, output) => {
       if (!config.autoRecall || !client) return;
 
       try {
         const bankId = deriveBankId(config, directory);
 
-        // Use the compaction input to build a recall query.
-        // The input contains the conversation being compacted.
-        const query = "What are the key decisions, preferences, and context from recent coding sessions?";
+        // Build a recall query from the compaction input when available.
+        // The input may contain a summary or the conversation being compacted.
+        const inputContext = typeof input === "object" && input !== null
+          ? (input as Record<string, unknown>)
+          : {};
+        const sessionSummary = typeof inputContext.summary === "string"
+          ? inputContext.summary.slice(0, 500)
+          : "";
+        const sessionTitle = typeof inputContext.title === "string"
+          ? inputContext.title
+          : "";
+
+        const queryParts = [sessionTitle, sessionSummary].filter(Boolean);
+        const query = queryParts.length > 0
+          ? `Context from current session: ${queryParts.join(". ")}. What related decisions, preferences, and knowledge from past sessions are relevant?`
+          : "What are the key decisions, preferences, and context from recent coding sessions?";
 
         const response = await client.recall({
           bankId,

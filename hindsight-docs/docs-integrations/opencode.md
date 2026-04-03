@@ -46,11 +46,13 @@ For the agent to actively recall and retain memories during sessions, add Hindsi
   "mcp": {
     "hindsight": {
       "type": "remote",
-      "url": "http://localhost:8888/mcp/opencode/"
+      "url": "http://localhost:9077/mcp/opencode/"
     }
   }
 }
 ```
+
+The default port is `9077` (the `hindsight-embed` daemon default). If you're running the full Hindsight API server, the default is `8888` instead.
 
 This gives the agent `retain`, `recall`, and `reflect` tools natively via MCP.
 

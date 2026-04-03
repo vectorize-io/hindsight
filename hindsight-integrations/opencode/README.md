@@ -35,11 +35,13 @@ Start OpenCode. The plugin activates automatically.
   "mcp": {
     "hindsight": {
       "type": "remote",
-      "url": "http://localhost:8888/mcp/opencode/"
+      "url": "http://localhost:9077/mcp/opencode/"
     }
   }
 }
 ```
+
+The default port is `9077` (hindsight-embed daemon). If running the full Hindsight API server, the default is `8888`.
 
 This gives the agent `retain`, `recall`, and `reflect` tools natively.
 

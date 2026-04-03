@@ -11,7 +11,7 @@
     "declaration": true,
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["bun-types"]
+    "types": ["bun"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]

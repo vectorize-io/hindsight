@@ -366,8 +366,20 @@ def create_bank_if_needed(client, args):
             ),
         )
         print(f"Created bank: {args.bank_id}")
-    except Exception:
-        pass  # Bank already exists
+    except Exception as e:
+        error_str = str(e).lower()
+        # 409 Conflict means the bank already exists; that's expected
+        if (
+            "409" in error_str
+            or "conflict" in error_str
+            or "already exists" in error_str
+        ):
+            if args.verbose:
+                print(f"Bank '{args.bank_id}' already exists")
+        else:
+            print(
+                f"Warning: failed to create bank '{args.bank_id}': {e}", file=sys.stderr
+            )
 
 
 def main():

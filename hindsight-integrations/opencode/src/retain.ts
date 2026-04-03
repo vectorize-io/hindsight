@@ -114,6 +114,8 @@ export async function retainSession(
   }
 
   const db = new Database(OPENCODE_DB_PATH, { readonly: true });
+  // Enable WAL mode for safe concurrent reads while OpenCode is writing
+  db.exec("PRAGMA journal_mode=WAL");
 
   try {
     // Determine which session just completed.
@@ -123,14 +125,17 @@ export async function retainSession(
 
     let session: SessionRow | null = null;
 
-    // Try session ID from event first
+    // Try session ID from event first (preferred, avoids race conditions)
     const sessionId = sessionEvent.sessionID as string | undefined;
     if (sessionId) {
       session = findSessionById(db, sessionId);
     }
 
-    // Fall back to most recent session in the working directory
+    // Fall back to most recent session in the working directory.
+    // This is less reliable: if a new session started in the same directory
+    // between idle and retain, we'd pick the wrong one.
     if (!session) {
+      debugLog(config, "session.idle event did not include sessionID; falling back to directory lookup");
       session = findSessionByDirectory(db, directory);
     }
 

@@ -59,7 +59,7 @@ export async function ensureBankMission(
         bankId,
         name: `OpenCode - ${bankId}`,
         mission: config.bankMission,
-        retainMission: config.retainMission ?? undefined,
+        retainMission: config.retainMission || undefined,
       });
     }
     ensuredBanks.add(bankId);

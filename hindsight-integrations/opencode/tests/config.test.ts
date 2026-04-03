@@ -2,10 +2,16 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { loadConfig } from "../src/config";
 
 describe("loadConfig", () => {
-  const originalEnv = { ...process.env };
+  // Track env vars we add so we can clean them up without replacing process.env
+  const addedKeys: string[] = [];
+
+  function setEnv(key: string, value: string) {
+    addedKeys.push(key);
+    process.env[key] = value;
+  }
 
   beforeEach(() => {
-    // Clear Hindsight env vars
+    // Clear any Hindsight env vars that may exist
     for (const key of Object.keys(process.env)) {
       if (key.startsWith("HINDSIGHT_")) {
         delete process.env[key];
@@ -14,7 +20,11 @@ describe("loadConfig", () => {
   });
 
   afterEach(() => {
-    process.env = { ...originalEnv };
+    // Remove only the keys we added
+    for (const key of addedKeys) {
+      delete process.env[key];
+    }
+    addedKeys.length = 0;
   });
 
   test("returns defaults when no config file or env vars", () => {
@@ -31,11 +41,11 @@ describe("loadConfig", () => {
   });
 
   test("env vars override defaults", () => {
-    process.env.HINDSIGHT_API_URL = "http://custom:9999";
-    process.env.HINDSIGHT_AUTO_RETAIN = "false";
-    process.env.HINDSIGHT_RECALL_MAX_TOKENS = "2048";
-    process.env.HINDSIGHT_DEBUG = "true";
-    process.env.HINDSIGHT_BANK_ID = "my-bank";
+    setEnv("HINDSIGHT_API_URL", "http://custom:9999");
+    setEnv("HINDSIGHT_AUTO_RETAIN", "false");
+    setEnv("HINDSIGHT_RECALL_MAX_TOKENS", "2048");
+    setEnv("HINDSIGHT_DEBUG", "true");
+    setEnv("HINDSIGHT_BANK_ID", "my-bank");
 
     const config = loadConfig();
     expect(config.hindsightApiUrl).toBe("http://custom:9999");
@@ -46,7 +56,7 @@ describe("loadConfig", () => {
   });
 
   test("boolean env vars handle various truthy values", () => {
-    process.env.HINDSIGHT_DEBUG = "1";
+    setEnv("HINDSIGHT_DEBUG", "1");
     expect(loadConfig().debug).toBe(true);
 
     process.env.HINDSIGHT_DEBUG = "TRUE";
@@ -60,15 +70,15 @@ describe("loadConfig", () => {
   });
 
   test("integer env vars parse correctly", () => {
-    process.env.HINDSIGHT_API_PORT = "8888";
+    setEnv("HINDSIGHT_API_PORT", "8888");
     expect(loadConfig().apiPort).toBe(8888);
 
-    process.env.HINDSIGHT_RECALL_MAX_TOKENS = "512";
+    setEnv("HINDSIGHT_RECALL_MAX_TOKENS", "512");
     expect(loadConfig().recallMaxTokens).toBe(512);
   });
 
   test("invalid integer env vars are ignored", () => {
-    process.env.HINDSIGHT_API_PORT = "not-a-number";
+    setEnv("HINDSIGHT_API_PORT", "not-a-number");
     expect(loadConfig().apiPort).toBe(9077); // default
   });
 
