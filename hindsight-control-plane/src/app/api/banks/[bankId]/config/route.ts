@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { lowLevelClient, sdk } from "@/lib/hindsight-client";
+import { sdk, getClientForTenant } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
 
     const response = await sdk.getBankConfig({
@@ -30,6 +32,8 @@ export async function PATCH(
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
     const body = await request.json();
     const { updates } = body;
@@ -57,6 +61,8 @@ export async function DELETE(
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
 
     const response = await sdk.resetBankConfig({

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getClientForTenant } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ chunkId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { chunkId } = await params;
 
     const response = await sdk.getChunk({

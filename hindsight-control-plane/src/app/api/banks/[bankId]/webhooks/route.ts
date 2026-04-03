@@ -1,22 +1,24 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
-export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
+  const tenant = request.nextUrl.searchParams.get("tenant");
   const { bankId } = await params;
   const res = await fetch(dataplaneBankUrl(bankId, "/webhooks"), {
-    headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+    headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
   });
   const data = await res.json();
   if (!res.ok) return NextResponse.json({ error: data.detail || "Failed" }, { status: res.status });
   return NextResponse.json(data);
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
+  const tenant = request.nextUrl.searchParams.get("tenant");
   const { bankId } = await params;
   const body = await request.json();
   const res = await fetch(dataplaneBankUrl(bankId, "/webhooks"), {
     method: "POST",
-    headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+    headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   const data = await res.json();

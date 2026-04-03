@@ -3,6 +3,7 @@ import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     // Clone the form data to read bank_id without consuming it
     const formData = await request.formData();
 
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
     // Forward the form data to the dataplane
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(tenant),
       body: formData,
       // Don't set Content-Type - let fetch handle multipart boundary
     });

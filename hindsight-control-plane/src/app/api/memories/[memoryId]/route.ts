@@ -6,6 +6,7 @@ export async function GET(
   { params }: { params: Promise<{ memoryId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { memoryId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
@@ -18,7 +19,7 @@ export async function GET(
       dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(memoryId)}`),
       {
         method: "GET",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
       }
     );
 

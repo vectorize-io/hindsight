@@ -3,6 +3,7 @@ import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: NextRequest) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id") || searchParams.get("agent_id");
 
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
     if (chunkId) params.append("chunk_id", chunkId);
 
     const response = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/graph?${params}`, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(tenant),
     });
 
     if (!response.ok) {

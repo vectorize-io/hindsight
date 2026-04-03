@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hindsightClient } from "@/lib/hindsight-client";
+import { getClientForTenant } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { hindsightClient } = getClientForTenant(tenant);
     const body = await request.json();
     const bankId = body.bank_id || body.agent_id;
 

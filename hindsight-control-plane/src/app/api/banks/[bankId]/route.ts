@@ -1,8 +1,10 @@
-import { NextResponse } from "next/server";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { NextRequest, NextResponse } from "next/server";
+import { sdk, getClientForTenant } from "@/lib/hindsight-client";
 
-export async function PUT(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
     const body = await request.json();
 
@@ -32,8 +34,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ bank
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
     const body = await request.json();
 
@@ -64,10 +68,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ba
 }
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId } = await params;
 
     if (!bankId) {

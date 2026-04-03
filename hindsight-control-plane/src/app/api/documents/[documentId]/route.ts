@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { sdk, getClientForTenant, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { documentId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
@@ -31,6 +33,7 @@ export async function PATCH(
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { documentId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
@@ -44,7 +47,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/documents/${encodeURIComponent(documentId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -67,6 +70,8 @@ export async function DELETE(
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { documentId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");

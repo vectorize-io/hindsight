@@ -39,6 +39,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
+import { useTenant } from "@/lib/tenant-context";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -57,6 +58,7 @@ function BankSelectorInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentBank, setCurrentBank, banks, loadBanks } = useBank();
+  const { currentTenant, setCurrentTenant, tenants, isMultiTenant } = useTenant();
   const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
@@ -426,6 +428,22 @@ function BankSelectorInner() {
 
         {/* Separator */}
         <div className="h-8 w-px bg-border" />
+
+        {/* Tenant Selector (multi-tenant mode only) */}
+        {isMultiTenant && (
+          <Select value={currentTenant ?? ""} onValueChange={setCurrentTenant}>
+            <SelectTrigger className="w-[180px] h-9 text-sm">
+              <SelectValue placeholder="Select tenant" />
+            </SelectTrigger>
+            <SelectContent>
+              {tenants.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {/* Memory Bank Selector */}
         <Popover

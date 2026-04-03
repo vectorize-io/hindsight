@@ -1,11 +1,13 @@
-import { NextResponse } from "next/server";
-import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { NextRequest, NextResponse } from "next/server";
+import { sdk, getClientForTenant, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string; operationId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { bankId, operationId } = await params;
 
     if (!bankId) {
@@ -38,10 +40,11 @@ export async function GET(
 }
 
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string; operationId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId, operationId } = await params;
 
     if (!bankId) {
@@ -55,7 +58,7 @@ export async function POST(
     const url = dataplaneBankUrl(bankId, `/operations/${encodeURIComponent(operationId)}/retry`);
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
     });
 
     const data = await response.json();

@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient, createConfig, sdk } from "@vectorize-io/hindsight-client";
 import { getDataplaneHeaders } from "@/lib/hindsight-client";
 
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const tenant = request.nextUrl.searchParams.get("tenant");
   const status: {
     status: string;
     service: string;
@@ -28,7 +29,7 @@ export async function GET() {
       createConfig({
         baseUrl: dataplaneUrl,
         signal: controller.signal,
-        headers: getDataplaneHeaders(),
+        headers: getDataplaneHeaders(tenant),
       })
     );
 

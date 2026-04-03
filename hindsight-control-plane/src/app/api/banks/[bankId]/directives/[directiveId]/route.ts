@@ -1,11 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string; directiveId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
@@ -14,7 +15,7 @@ export async function GET(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
-      { method: "GET", headers: getDataplaneHeaders() }
+      { method: "GET", headers: getDataplaneHeaders(tenant) }
     );
 
     if (!response.ok) {
@@ -32,10 +33,11 @@ export async function GET(
 }
 
 export async function PATCH(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string; directiveId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
@@ -48,7 +50,7 @@ export async function PATCH(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
       {
         method: "PATCH",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       }
     );
@@ -71,10 +73,11 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ bankId: string; directiveId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId, directiveId } = await params;
 
     if (!bankId || !directiveId) {
@@ -83,7 +86,7 @@ export async function DELETE(
 
     const response = await fetch(
       dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
-      { method: "DELETE", headers: getDataplaneHeaders() }
+      { method: "DELETE", headers: getDataplaneHeaders(tenant) }
     );
 
     if (!response.ok) {

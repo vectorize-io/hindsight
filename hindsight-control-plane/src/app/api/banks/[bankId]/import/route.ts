@@ -6,6 +6,7 @@ export async function POST(
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId } = await params;
     const body = await request.json();
     const dryRun = request.nextUrl.searchParams.get("dry_run") === "true";
@@ -14,7 +15,7 @@ export async function POST(
     const url = dataplaneBankUrl(bankId, `/import${dryRun ? "?dry_run=true" : ""}`);
     const response = await fetch(url, {
       method: "POST",
-      headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+      headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
 

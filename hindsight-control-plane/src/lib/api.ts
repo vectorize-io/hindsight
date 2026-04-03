@@ -118,9 +118,27 @@ export interface BankTemplateImportResponse {
 }
 
 export class ControlPlaneClient {
+  private _tenant: string | null = null;
+
+  /** Set the current tenant. Pass null to clear. */
+  setTenant(tenant: string | null) {
+    this._tenant = tenant;
+  }
+
+  get tenant(): string | null {
+    return this._tenant;
+  }
+
   private async fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+    // Append ?tenant=<name> to the path if set
+    let url = path;
+    if (this._tenant) {
+      const separator = path.includes("?") ? "&" : "?";
+      url = `${path}${separator}tenant=${encodeURIComponent(this._tenant)}`;
+    }
+
     try {
-      const response = await fetch(path, {
+      const response = await fetch(url, {
         ...options,
         headers: {
           "Content-Type": "application/json",
@@ -1163,6 +1181,14 @@ export class ControlPlaneClient {
         changed_at: string;
       }[]
     >(bankApi(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/history`));
+  }
+
+  /**
+   * List configured tenants
+   */
+  async listTenants() {
+    const response = await fetch("/api/tenants", { cache: "no-store" });
+    return response.json() as Promise<{ tenants: string[]; multi_tenant: boolean }>;
   }
 
   /**

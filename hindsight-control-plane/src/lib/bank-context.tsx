@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { client } from "./api";
+import { useTenant } from "./tenant-context";
 
 interface BankContextType {
   currentBank: string | null;
@@ -15,6 +16,7 @@ const BankContext = createContext<BankContextType | undefined>(undefined);
 
 export function BankProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { currentTenant } = useTenant();
   const [currentBank, setCurrentBank] = useState<string | null>(null);
   const [banks, setBanks] = useState<string[]>([]);
 
@@ -38,8 +40,9 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
+    setCurrentBank(null);
     loadBanks();
-  }, []);
+  }, [currentTenant]);
 
   return (
     <BankContext.Provider value={{ currentBank, setCurrentBank, banks, loadBanks }}>

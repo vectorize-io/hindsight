@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { BankProvider } from "@/lib/bank-context";
 import { FeaturesProvider } from "@/lib/features-context";
+import { TenantProvider } from "@/lib/tenant-context";
 import { ThemeProvider } from "@/lib/theme-context";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -23,7 +24,9 @@ export default function RootLayout({
       <body className="bg-background text-foreground">
         <ThemeProvider>
           <FeaturesProvider>
-            <BankProvider>{children}</BankProvider>
+            <TenantProvider>
+              <BankProvider>{children}</BankProvider>
+            </TenantProvider>
           </FeaturesProvider>
         </ThemeProvider>
         <Toaster />

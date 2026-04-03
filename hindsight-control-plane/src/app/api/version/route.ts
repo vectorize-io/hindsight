@@ -1,8 +1,10 @@
-import { NextResponse } from "next/server";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { NextRequest, NextResponse } from "next/server";
+import { sdk, getClientForTenant } from "@/lib/hindsight-client";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const response = await sdk.getVersion({
       client: lowLevelClient,
     });

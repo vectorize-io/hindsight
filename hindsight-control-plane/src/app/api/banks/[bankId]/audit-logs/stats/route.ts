@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
-export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ bankId: string }> }) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId } = await params;
     if (!bankId) {
       return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
@@ -14,7 +15,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const url = dataplaneBankUrl(bankId, `/audit-logs/stats${query ? `?${query}` : ""}`);
     const response = await fetch(url, {
       method: "GET",
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(tenant),
     });
 
     const data = await response.json();

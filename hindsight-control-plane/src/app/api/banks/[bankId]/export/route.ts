@@ -6,11 +6,12 @@ export async function GET(
   { params }: { params: Promise<{ bankId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { bankId } = await params;
 
     const url = dataplaneBankUrl(bankId, "/export");
     const response = await fetch(url, {
-      headers: getDataplaneHeaders(),
+      headers: getDataplaneHeaders(tenant),
     });
 
     const data = await response.json();

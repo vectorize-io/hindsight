@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { sdk, getClientForTenant } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ entityId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
+    const { lowLevelClient } = getClientForTenant(tenant);
     const { entityId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
