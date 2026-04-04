@@ -4,7 +4,6 @@ Handles creation, deletion, and management of configuration profiles.
 Each profile has its own config, daemon lock, log file, and port.
 """
 
-import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +12,50 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+# ==============================================================================
+# Cross-platform file locking implementation
+# ==============================================================================
+# Why not use a library like portalocker or fasteners?
+#
+# 1. Minimal dependency: Our use case is extremely simple - only basic
+#    exclusive file locking for metadata persistence. Adding a new dependency
+#    (even a small one) for such a narrow use case is unnecessary.
+#
+# 2. Portability: We only need to support the two major platforms (Unix and
+#    Windows), both of which have well-understood file locking mechanisms
+#    that can be implemented in ~10 lines of code each.
+#
+# 3. Maintainability: The code is straightforward and has no external
+#    dependencies to track or update. The locking logic is localized here,
+#    making it easy to understand and modify if needed.
+#
+# 4. Feature scope: Libraries like portalocker provide many features we don't
+#    need (timeout handling, shared locks, lock files, etc.), which would add
+#    unnecessary complexity to our simple use case.
+#
+# If our locking requirements become more complex in the future (e.g., needing
+# timeouts, better error handling, or supporting more edge cases), reconsider
+# using a dedicated library like portalocker.
+# ==============================================================================
+
+if sys.platform != "win32":
+    import fcntl
+
+    def lock_file(file_obj):
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX)
+
+    def unlock_file(file_obj):
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+else:
+    import msvcrt
+
+    def lock_file(file_obj):
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_LOCK, 1)
+
+    def unlock_file(file_obj):
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 import httpx
 
@@ -470,8 +513,8 @@ class ProfileManager:
         temp_file = metadata_file.with_suffix(".json.tmp")
 
         with open(temp_file, "w") as f:
-            # Acquire exclusive lock
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            # Acquire exclusive lock (cross-platform)
+            lock_file(f)
             try:
                 json.dump(
                     {"version": metadata.version, "profiles": metadata.profiles},
@@ -481,7 +524,7 @@ class ProfileManager:
                 f.flush()
                 os.fsync(f.fileno())
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                unlock_file(f)
 
         # Atomic rename
         temp_file.rename(metadata_file)
