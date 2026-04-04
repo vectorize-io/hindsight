@@ -4,11 +4,13 @@ Handles creation, deletion, and management of configuration profiles.
 Each profile has its own config, daemon lock, log file, and port.
 """
 
-import fcntl
 import hashlib
 import json
 import os
 import sys
+
+if sys.platform != "win32":
+    import fcntl
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -470,8 +472,9 @@ class ProfileManager:
         temp_file = metadata_file.with_suffix(".json.tmp")
 
         with open(temp_file, "w") as f:
-            # Acquire exclusive lock
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            # Acquire exclusive lock (Unix only — Windows uses atomic rename for safety)
+            if sys.platform != "win32":
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 json.dump(
                     {"version": metadata.version, "profiles": metadata.profiles},
@@ -481,7 +484,8 @@ class ProfileManager:
                 f.flush()
                 os.fsync(f.fileno())
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                if sys.platform != "win32":
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Atomic rename
         temp_file.rename(metadata_file)
