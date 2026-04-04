@@ -167,6 +167,15 @@ def build_content_dict(
         if isinstance(tags, str):
             tags = [tags]
 
+    # Coerce metadata from JSON string to dict if needed.
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except (json.JSONDecodeError, TypeError):
+            metadata = None
+
     content_dict: dict[str, Any] = {"content": content, "context": context}
 
     if timestamp:
@@ -665,6 +674,18 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
 
                 budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
                 budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
+                # Coerce JSON-string arrays to list (MCP bridges sometimes serialize them as strings)
+                if isinstance(types, str):
+                    try:
+                        types = json.loads(types)
+                    except (json.JSONDecodeError, TypeError):
+                        types = None
+                if isinstance(tags, str):
+                    try:
+                        parsed = json.loads(tags)
+                        tags = parsed if isinstance(parsed, list) else [tags]
+                    except (json.JSONDecodeError, TypeError):
+                        tags = [tags]
                 fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
 
                 recall_kwargs: dict[str, Any] = {
@@ -722,6 +743,18 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
 
                 budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
                 budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
+                # Coerce JSON-string arrays to list (MCP bridges sometimes serialize them as strings)
+                if isinstance(types, str):
+                    try:
+                        types = json.loads(types)
+                    except (json.JSONDecodeError, TypeError):
+                        types = None
+                if isinstance(tags, str):
+                    try:
+                        parsed = json.loads(tags)
+                        tags = parsed if isinstance(parsed, list) else [tags]
+                    except (json.JSONDecodeError, TypeError):
+                        tags = [tags]
                 fact_types = types if types is not None else list(VALID_RECALL_FACT_TYPES)
 
                 recall_kwargs: dict[str, Any] = {

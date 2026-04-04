@@ -172,6 +172,23 @@ class RecallRequest(BaseModel):
         "Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.",
     )
 
+    @field_validator("types", "tags", mode="before")
+    @classmethod
+    def coerce_string_to_list(cls, v: Any) -> Any:
+        """Coerce JSON-string arrays to list.
+
+        MCP tool bridges sometimes serialize JSON arrays as strings during
+        transport, e.g. '["world"]' instead of ["world"]. Parse them back.
+        """
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return v
+
     @field_validator("query")
     @classmethod
     def validate_query_not_empty(cls, v: str) -> str:
@@ -446,6 +463,23 @@ class MemoryItem(BaseModel):
             except (json.JSONDecodeError, TypeError):
                 pass
             return [v]
+        return v
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def coerce_metadata(cls, v: Any) -> Any:
+        """Coerce JSON-string metadata to dict.
+
+        MCP tool bridges sometimes serialize JSON objects as strings during
+        transport, e.g. '{"key": "value"}' instead of {"key": "value"}.
+        """
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
         return v
 
     observation_scopes: Literal["per_tag", "combined", "all_combinations"] | list[list[str]] | None = Field(
