@@ -918,7 +918,6 @@ def _build_user_message(
 
     if event_date is not None:
         event_date = parse_datetime_flexible(event_date)
-    if event_date is not None:
         event_date_str = f"{event_date.strftime('%A, %B %d, %Y')} ({event_date.isoformat()})"
     else:
         event_date_str = "Unknown"
