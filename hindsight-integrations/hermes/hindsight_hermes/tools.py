@@ -427,8 +427,58 @@ def register(ctx: Any) -> None:
         except Exception as exc:
             logger.warning("Hindsight post_llm_call retain failed: %s", exc)
 
+    def _on_pre_compress(
+        *,
+        messages: list[dict[str, Any]] | None = None,
+        session_id: str = "",
+        **kwargs: Any,
+    ) -> str:
+        """Extract insights before context compression discards turns.
+
+        When Hermes compresses the context window to save tokens, the
+        original messages are summarised and the full text is lost.  This
+        hook fires just before that happens, giving us a chance to persist
+        the about-to-be-discarded turns into the Hindsight knowledge graph
+        so they remain searchable via recall/reflect.
+
+        The retain call runs in a background thread so it never blocks the
+        compression pipeline.
+        """
+        if not messages or not bank_id:
+            return ""
+        parts: list[str] = []
+        for msg in messages[-10:]:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if isinstance(content, str) and content.strip() and role in ("user", "assistant"):
+                parts.append(f"{role}: {content[:500]}")
+        if not parts:
+            return ""
+        combined = "\n".join(parts)
+
+        import threading
+
+        def _flush() -> None:
+            try:
+                _ensure_bank_sync(bank_id)
+                resolved_client.retain(
+                    bank_id=bank_id,
+                    content=f"[Pre-compression context]\n{combined}",
+                )
+                logger.info(
+                    "Hindsight pre-compression flush: %d messages retained",
+                    len(parts),
+                )
+            except Exception as exc:
+                logger.warning("Hindsight pre-compression flush failed: %s", exc)
+
+        t = threading.Thread(target=_flush, daemon=True, name="hindsight-precompress")
+        t.start()
+        return ""
+
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("post_llm_call", _on_post_llm_call)
+    ctx.register_hook("on_pre_compress", _on_pre_compress)
 
 
 def memory_instructions(
