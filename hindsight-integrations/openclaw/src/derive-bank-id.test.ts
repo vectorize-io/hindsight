@@ -85,6 +85,32 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('my-agent::group%3A-100123456%3Atopic%3A7::telegram');
   });
 
+  it('should fall back to sessionKey channel when ctx.channelId is a known provider name', () => {
+    // OpenClaw Discord contexts incorrectly set ctx.channelId = "discord" (the provider name)
+    // instead of the actual channel snowflake ID. The fix detects this and uses the session key.
+    const discordCtx: PluginHookAgentContext = {
+      agentId: 'main',
+      channelId: 'discord',
+      sessionKey: 'agent:main:discord:channel:1472750640760623226',
+    };
+    const config: PluginConfig = { ...baseConfig, dynamicBankGranularity: ['agent', 'channel'] };
+    const bankId = deriveBankId(discordCtx, config);
+    // Should use channel from sessionKey parsing, not "discord"
+    expect(bankId).toBe('main::channel%3A1472750640760623226');
+  });
+
+  it('should not discard a real channel ID that happens to share a name with a provider', () => {
+    // A user-defined channel named "slack-general" or "my-discord-bot" should not be filtered out;
+    // only exact matches to known provider names (case-insensitive) are treated as missing.
+    const ctx2: PluginHookAgentContext = {
+      agentId: 'agent-123',
+      channelId: 'slack-general',
+      senderId: 'user-789',
+    };
+    const bankId = deriveBankId(ctx2, baseConfig);
+    expect(bankId).toBe('agent-123::slack-general::user-789');
+  });
+
   it('should return "openclaw" if dynamicBankId is false', () => {
     const config: PluginConfig = { dynamicBankId: false };
     const bankId = deriveBankId(ctx, config);

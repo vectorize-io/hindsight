@@ -541,9 +541,20 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
     debug('[Hindsight] senderId not available in context — bank ID will use "anonymous". Ensure your OpenClaw provider passes senderId.');
   }
 
+  // Some OpenClaw providers (e.g. Discord) populate ctx.channelId with the provider/platform name
+  // (e.g. "discord") rather than the actual channel identifier. Detect and discard these so the
+  // sessionKey fallback can supply the real channel ID.
+  const KNOWN_PROVIDER_NAMES = new Set(['discord', 'telegram', 'slack', 'whatsapp', 'signal', 'matrix', 'irc', 'line']);
+  const rawChannelId = ctx?.channelId;
+  const channelIdIsProviderName = !!rawChannelId && KNOWN_PROVIDER_NAMES.has(rawChannelId.toLowerCase());
+  if (channelIdIsProviderName) {
+    debug(`[Hindsight] ctx.channelId="${rawChannelId}" matches a known provider name — likely an OpenClaw context bug. Falling back to sessionKey for channel.`);
+  }
+  const effectiveChannelId = channelIdIsProviderName ? undefined : rawChannelId;
+
   const fieldMap: Record<string, string> = {
     agent: ctx?.agentId || sessionParsed.agentId || 'default',
-    channel: ctx?.channelId || sessionParsed.channel || 'unknown',
+    channel: effectiveChannelId || sessionParsed.channel || 'unknown',
     user: ctx?.senderId || 'anonymous',
     provider: ctx?.messageProvider || sessionParsed.provider || 'unknown',
   };
