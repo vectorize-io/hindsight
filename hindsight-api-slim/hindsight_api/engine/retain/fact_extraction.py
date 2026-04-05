@@ -918,6 +918,7 @@ def _build_user_message(
 
     if event_date is not None:
         event_date = parse_datetime_flexible(event_date)
+    if event_date is not None:
         event_date_str = f"{event_date.strftime('%A, %B %d, %Y')} ({event_date.isoformat()})"
     else:
         event_date_str = "Unknown"
@@ -1055,7 +1056,7 @@ async def _extract_facts_from_chunk(
                     f"LLM response missing 'facts' field or returned empty list. "
                     f"Response: {extraction_response_json}. "
                     f"Input: "
-                    f"date: {event_date.isoformat()}, "
+                    f"date: {event_date.isoformat() if event_date else 'unset'}, "
                     f"context: {context if context else 'none'}, "
                     f"text: {chunk}"
                 )
