@@ -112,7 +112,7 @@ In local mode, Hindsight runs an embedded server with built-in PostgreSQL. The d
 }
 ```
 
-Startup logs land at `~/.hermes/logs/hindsight-embed.log` if you need to debug.
+The daemon starts when Hermes displays "starting agent" on your first message — not at launch. On a fresh system this can take over a minute while the embedded PostgreSQL server initializes. Subsequent startups are fast. Startup logs land at `~/.hermes/logs/hindsight-embed.log` if you need to debug.
 
 For persistent memory across machines or shared across multiple Hermes instances, use cloud mode instead. Both modes use the same API. Switching is a one-line config change, not a migration.
 
