@@ -180,9 +180,9 @@ Be explicit: persistent memory isn't always the right tool.
 
 **vs. AutoGen chat history:** Chat history stores raw messages in-session. It doesn't extract facts, doesn't generalize, and disappears when the conversation ends. Hindsight extracts structured facts, deduplicates, and retrieves only what's relevant — it compresses knowledge rather than accumulating tokens.
 
-**vs. raw vector stores (Pinecone, Weaviate, Chroma):** A vector store gives you embedding similarity search. Hindsight runs four parallel retrieval strategies (semantic, BM25, graph traversal, temporal) with cross-encoder reranking, plus it extracts entities, resolves coreferences, and builds a knowledge graph. It's a memory engine, not a database. For independent benchmark results on what that architecture achieves at scale, see [Hindsight on BEAM](/blog/2026/04/02/beam-sota).
+**vs. raw vector stores (Pinecone, Weaviate, Chroma):** A vector store gives you embedding similarity search. Hindsight runs four parallel retrieval strategies (semantic, BM25, graph traversal, temporal) with cross-encoder reranking, plus it extracts entities, resolves coreferences, and builds a knowledge graph. It's a memory engine, not a database. For independent benchmark results on what that architecture achieves at scale, see [Hindsight on BEAM](https://hindsight.vectorize.io/blog/2026/04/02/beam-sota).
 
-**vs. other framework integrations:** If you're using LlamaIndex, LangGraph, CrewAI, or Pydantic AI instead of AutoGen, Hindsight has [dedicated integrations](/sdks/integrations/) for each.
+**vs. other framework integrations:** If you're using LlamaIndex, LangGraph, CrewAI, or Pydantic AI instead of AutoGen, Hindsight has dedicated integrations for each: [LlamaIndex](/sdks/integrations/llamaindex), [LangGraph](/sdks/integrations/langgraph), [CrewAI](/sdks/integrations/crewai), [Pydantic AI](/sdks/integrations/pydantic-ai).
 
 ## Recap
 
@@ -195,7 +195,5 @@ Be explicit: persistent memory isn't always the right tool.
 
 - **Try it locally:** `pip install hindsight-all hindsight-autogen autogen-agentchat "autogen-ext[openai]"` and run the example above
 - **Use Hindsight Cloud:** Skip self-hosting with a [free account](https://ui.hindsight.vectorize.io/signup)
-- **Run the cookbook:** [AutoGen Assistant Agent recipe](/cookbook/recipes/autogen-assistant-agent)
-- **Read the docs:** [AutoGen integration guide](/sdks/integrations/autogen)
-- **Benchmark results:** [Why Hindsight leads on BEAM at 10M tokens](/blog/2026/04/02/beam-sota)
+- **Benchmark results:** [Why Hindsight leads on BEAM at 10M tokens](https://hindsight.vectorize.io/blog/2026/04/02/beam-sota)
 - **Explore other integrations:** [LlamaIndex](/sdks/integrations/llamaindex), [LangGraph](/sdks/integrations/langgraph), [Pydantic AI](/sdks/integrations/pydantic-ai), [CrewAI](/sdks/integrations/crewai)
