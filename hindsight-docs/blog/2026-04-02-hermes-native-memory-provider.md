@@ -24,7 +24,7 @@ Hindsight integrates at two points in the Hermes lifecycle:
 
 **After each response**, your conversation is retained asynchronously. Hindsight extracts facts, entities, and relationships in the background. What you say in this turn becomes searchable starting the next call.
 
-This is intentional: the prefetch pattern means **memories from the current turn won't appear until the next one**. It's how teknium designed the integration, and it keeps every call fast.
+This is intentional: the prefetch pattern means **memories from the current turn won't appear until the next one**. It keeps every call fast.
 
 ---
 
