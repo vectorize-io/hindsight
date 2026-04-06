@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { join, resolve } from 'path';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient } from './client.js';
 import { buildClientOptions, detectExternalApi, detectLLMConfig } from './index.js';
@@ -537,9 +537,20 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   console.log(args.json ? JSON.stringify(summary, null, 2) : JSON.stringify(summary));
 }
 
-function isDirectExecution(): boolean {
-  const entrypoint = process.argv[1];
-  return !!entrypoint && import.meta.url === pathToFileURL(entrypoint).href;
+function canonicalizeExecutionPath(path: string): string {
+  const resolved = resolve(path);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+export function isDirectExecution(entrypoint: string | undefined = process.argv[1], moduleUrl: string = import.meta.url): boolean {
+  if (!entrypoint) {
+    return false;
+  }
+  return canonicalizeExecutionPath(entrypoint) === canonicalizeExecutionPath(fileURLToPath(moduleUrl));
 }
 
 if (isDirectExecution()) {

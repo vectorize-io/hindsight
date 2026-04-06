@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { pathToFileURL } from 'url';
 import type { BankStats, PluginConfig } from './types.js';
 import type { BackfillCheckpoint, BackfillPlanEntry } from './backfill-lib.js';
 
@@ -134,5 +135,17 @@ describe('backfill helpers', () => {
     expect(runtime.apiUrl).toBe('http://127.0.0.1:9077');
     await runtime.stop();
     expect(managerStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a symlinked bin path as direct execution', async () => {
+    const { isDirectExecution } = await import('./backfill.js');
+    const dir = mkdtempSync(join(tmpdir(), 'hindsight-backfill-bin-'));
+    const modulePath = join(process.cwd(), 'dist', 'backfill.js');
+    const symlinkPath = join(dir, 'hindsight-openclaw-backfill');
+    symlinkSync(modulePath, symlinkPath);
+
+    const moduleUrl = pathToFileURL(modulePath).href;
+    expect(isDirectExecution(symlinkPath, moduleUrl)).toBe(true);
+    expect(isDirectExecution(join(dir, 'other-entrypoint'), moduleUrl)).toBe(false);
   });
 });
