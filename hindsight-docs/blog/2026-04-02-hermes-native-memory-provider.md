@@ -66,7 +66,9 @@ Config lives at `$HERMES_HOME/hindsight/config.json`:
 
 ## Memory Modes
 
-The `memory_mode` setting controls how Hindsight integrates with each Hermes turn:
+Auto-recall is the core behavior: before every turn, Hindsight automatically fetches relevant memories from your history and injects them into the system prompt. Hermes has the context it needs without the model calling any tool and without you repeating yourself. It happens transparently on every call.
+
+The `memory_mode` setting controls whether auto-recall is active and whether explicit tools are also exposed:
 
 | Mode | Behavior |
 |------|----------|
