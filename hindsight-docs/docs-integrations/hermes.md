@@ -15,7 +15,7 @@ Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/h
 hermes memory setup
 ```
 
-Or configure manually (cloud mode):
+Or configure manually (cloud mode — get an API key at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)):
 
 ```bash
 hermes config set memory.provider hindsight
@@ -56,7 +56,7 @@ The plugin registers via Hermes's `hermes_agent.plugins` entry point system:
 
 ### 1. Cloud (recommended for production)
 
-Connect to Hindsight Cloud or a self-hosted server. Requires an API key from [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io).
+Connect to Hindsight Cloud. Get an API key at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io).
 
 ```json
 {
