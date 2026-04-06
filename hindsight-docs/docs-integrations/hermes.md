@@ -79,6 +79,10 @@ Runs an embedded Hindsight server with built-in PostgreSQL. Requires an LLM API 
 }
 ```
 
+:::note
+The embedded server starts on the first message when Hermes says "starting agent". On a fresh system this can take over a minute while the embedded PostgreSQL initializes. Subsequent startups are fast.
+:::
+
 Daemon startup logs: `~/.hermes/logs/hindsight-embed.log`  
 Daemon runtime logs: `~/.hindsight/profiles/<profile>.log`
 
