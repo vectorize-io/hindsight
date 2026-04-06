@@ -4,8 +4,11 @@ authors: [benfrank241]
 date: 2026-04-02
 tags: [hermes, memory, hindsight, integration]
 description: "Hermes Agent now supports pluggable memory providers. Here's why Hindsight is the backend to use, and how to set it up in two minutes."
+image: /img/blog/hermes-native-memory-provider.png
 hide_table_of_contents: true
 ---
+
+![Hindsight is now a native memory provider in Hermes Agent](/img/blog/hermes-native-memory-provider.png)
 
 Hermes Agent now ships with a pluggable memory provider system. Hindsight is one of the supported backends, and it's the one that leads on [the benchmark that actually tests memory at scale](/blog/2026/04/02/beam-sota).
 
