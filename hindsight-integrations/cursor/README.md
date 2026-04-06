@@ -4,62 +4,48 @@ Biomimetic long-term memory for [Cursor](https://cursor.com) using [Hindsight](h
 
 ## Quick Start
 
-### 1. Install the plugin
+### Option A — Hindsight Cloud (fastest)
+
+No local server needed. [Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) and create an API key under **Settings > API Keys**.
 
 ```bash
+cd /path/to/your-project
 pip install hindsight-cursor
-cd /path/to/your-project
-hindsight-cursor init
+hindsight-cursor init --api-url https://api.hindsight.vectorize.io --api-token YOUR_HINDSIGHT_API_TOKEN
 ```
-
-Or with [uvx](https://docs.astral.sh/uv/) (no permanent install needed):
-
-```bash
-cd /path/to/your-project
-uvx hindsight-cursor init
-```
-
-This copies the plugin files into `.cursor-plugin/hindsight-memory/` and creates a default `~/.hindsight/cursor.json` config if one does not exist.
 
 > If Cursor is already open, **fully quit and reopen it** after installing. Plugins load at startup.
 
-### 2. Configure Hindsight
+### Option B — Local Hindsight server
 
-Edit `~/.hindsight/cursor.json` (created by `init`):
-
-**Option A — Hindsight Cloud** (no local server needed):
-
-```json
-{
-  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
-  "hindsightApiToken": "YOUR_HINDSIGHT_API_TOKEN",
-  "bankId": "cursor"
-}
-```
-
-Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to get a token. Go to **Settings > API Keys** in the dashboard to create one.
-
-**Option B — Local server:**
-
-```json
-{
-  "hindsightApiUrl": "http://localhost:8888",
-  "bankId": "cursor"
-}
-```
-
-**Option C — Auto-managed daemon** (requires an LLM API key):
+Start Hindsight locally with Docker:
 
 ```bash
-export OPENAI_API_KEY="sk-your-key"
-# or: export ANTHROPIC_API_KEY="your-key"
+export OPENAI_API_KEY=your-key
+docker run --rm -it --pull always -p 8888:8888 \
+  -e HINDSIGHT_API_LLM_API_KEY=$OPENAI_API_KEY \
+  -e HINDSIGHT_API_LLM_MODEL=gpt-4o-mini \
+  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 \
+  ghcr.io/vectorize-io/hindsight:latest
 ```
 
-Leave `hindsightApiUrl` empty and the plugin will auto-start `hindsight-embed` locally.
+Then install the plugin:
 
-### 3. Open Cursor
+```bash
+cd /path/to/your-project
+pip install hindsight-cursor
+hindsight-cursor init --api-url http://localhost:8888
+```
 
-Open the target project in Cursor. The plugin activates automatically.
+> You can also use `uvx hindsight-cursor init` instead of `pip install` + `hindsight-cursor init` if you prefer not to install the package permanently.
+
+### What `init` does
+
+- Copies plugin files into `.cursor-plugin/hindsight-memory/`
+- Creates `~/.hindsight/cursor.json` with your connection settings (if the file does not already exist)
+- Use `--force` to overwrite an existing installation
+
+After installing, **fully quit and reopen Cursor**. The plugin activates automatically.
 
 ## Features
 
