@@ -10,7 +10,7 @@ Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/h
 
 ## Quick Start
 
-**1. Get an API key** at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
+**1. Get an API key** at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect). The API endpoint is `https://api.hindsight.vectorize.io`.
 
 **2. Run the setup wizard:**
 
@@ -18,7 +18,7 @@ Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/h
 hermes memory setup    # select "hindsight"
 ```
 
-The wizard will prompt for your API key and configure everything automatically.
+The wizard will prompt for your API key and API URL, and configure everything automatically.
 
 Or configure manually:
 
