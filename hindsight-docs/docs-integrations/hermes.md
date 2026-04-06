@@ -10,19 +10,26 @@ Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/h
 
 ## Quick Start
 
+**1. Get an API key** at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
+
+**2. Run the setup wizard:**
+
 ```bash
-# Run the setup wizard — select "hindsight" when prompted
-hermes memory setup
+hermes memory setup    # select "hindsight"
 ```
 
-Or configure manually (cloud mode — get an API key at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)):
+The wizard will prompt for your API key and configure everything automatically.
+
+Or configure manually:
 
 ```bash
 hermes config set memory.provider hindsight
+# Add your key and the API endpoint
 echo "HINDSIGHT_API_KEY=your-key" >> ~/.hermes/.env
+echo "HINDSIGHT_API_URL=https://api.hindsight.vectorize.io" >> ~/.hermes/.env
 ```
 
-Then confirm memory is active:
+**3. Confirm memory is active:**
 
 ```bash
 hermes memory status
