@@ -11,25 +11,21 @@ Persistent long-term memory for [Hermes Agent](https://github.com/NousResearch/h
 ## Quick Start
 
 ```bash
-# 1. Install the plugin into Hermes's Python environment
-uv pip install hindsight-hermes --python $HOME/.hermes/hermes-agent/venv/bin/python
+# Run the setup wizard — select "hindsight" when prompted
+hermes memory setup
+```
 
-# 2. Configure (choose one)
-# Option A: Config file (recommended)
-mkdir -p ~/.hindsight
-cat > ~/.hindsight/hermes.json << 'EOF'
-{
-  "hindsightApiUrl": "http://localhost:9077",
-  "bankId": "hermes"
-}
-EOF
+Or configure manually (cloud mode):
 
-# Option B: Environment variables
-export HINDSIGHT_API_URL=http://localhost:9077
-export HINDSIGHT_BANK_ID=hermes
+```bash
+hermes config set memory.provider hindsight
+echo "HINDSIGHT_API_KEY=your-key" >> ~/.hermes/.env
+```
 
-# 3. Start Hermes — the plugin activates automatically
-hermes
+Then confirm memory is active:
+
+```bash
+hermes memory status
 ```
 
 ## Features
@@ -37,8 +33,8 @@ hermes
 - **Auto-recall** — on every turn, queries Hindsight for relevant memories and injects them into the system prompt (via `pre_llm_call` hook)
 - **Auto-retain** — after every response, retains the user/assistant exchange to Hindsight (via `post_llm_call` hook)
 - **Explicit tools** — `hindsight_retain`, `hindsight_recall`, `hindsight_reflect` for direct model control
-- **Config file** — `~/.hindsight/hermes.json` with the same field names as openclaw and claude-code integrations
-- **Zero config overhead** — env vars still work as overrides for CI/automation
+- **Memory modes** — choose between automatic injection, tools-only, or hybrid
+- **Zero config overhead** — env vars work as overrides for CI/automation
 
 :::note
 The lifecycle hooks (`pre_llm_call`/`post_llm_call`) require hermes-agent with [PR #2823](https://github.com/NousResearch/hermes-agent/pull/2823) or later. On older versions, only the three tools are registered — hooks are silently skipped.
@@ -58,60 +54,66 @@ The plugin registers via Hermes's `hermes_agent.plugins` entry point system:
 
 ## Connection Modes
 
-### 1. External API (recommended for production)
+### 1. Cloud (recommended for production)
 
-Connect to a running Hindsight server (cloud or self-hosted). No local LLM needed — the server handles fact extraction.
-
-```json
-{
-  "hindsightApiUrl": "https://your-hindsight-server.com",
-  "hindsightApiToken": "your-token",
-  "bankId": "hermes"
-}
-```
-
-### 2. Local Daemon
-
-If you're running `hindsight-embed` locally, point to it:
+Connect to Hindsight Cloud or a self-hosted server. Requires an API key from [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io).
 
 ```json
 {
-  "hindsightApiUrl": "http://localhost:9077",
-  "bankId": "hermes"
+  "mode": "cloud",
+  "api_url": "https://api.hindsight.vectorize.io",
+  "api_key": "hsk_your_token",
+  "bank_id": "hermes"
 }
 ```
 
-Follow the [Quick Start](/developer/api/quickstart) guide to get the Hindsight API running.
+### 2. Local (embedded)
+
+Runs an embedded Hindsight server with built-in PostgreSQL. Requires an LLM API key for memory extraction and synthesis. The daemon starts automatically in the background on first use.
+
+```json
+{
+  "mode": "local",
+  "llm_provider": "groq",
+  "llm_api_key": "your-groq-key"
+}
+```
+
+Daemon startup logs: `~/.hermes/logs/hindsight-embed.log`  
+Daemon runtime logs: `~/.hindsight/profiles/<profile>.log`
 
 ## Configuration
 
-All settings are in `~/.hindsight/hermes.json`. Every setting can also be overridden via environment variables (env vars take priority).
+All settings are in `~/.hermes/hindsight/config.json`. Every setting can also be overridden via environment variables (env vars take priority).
 
 ### Connection & Daemon
 
 | Setting | Default | Env Var | Description |
 |---------|---------|---------|-------------|
-| `hindsightApiUrl` | — | `HINDSIGHT_API_URL` | Hindsight API URL |
-| `hindsightApiToken` | `null` | `HINDSIGHT_API_TOKEN` / `HINDSIGHT_API_KEY` | Auth token for API |
+| `mode` | `cloud` | `HINDSIGHT_MODE` | `cloud` or `local` |
+| `api_url` | `https://api.hindsight.vectorize.io` | `HINDSIGHT_API_URL` | Hindsight API URL |
+| `api_key` | `null` | `HINDSIGHT_API_KEY` | Auth token for Hindsight Cloud |
 | `apiPort` | `9077` | `HINDSIGHT_API_PORT` | Port for local Hindsight daemon |
 | `daemonIdleTimeout` | `0` | `HINDSIGHT_DAEMON_IDLE_TIMEOUT` | Seconds before idle daemon shuts down (0 = never) |
 | `embedVersion` | `"latest"` | `HINDSIGHT_EMBED_VERSION` | `hindsight-embed` version for `uvx` |
 
-### LLM Provider (daemon mode only)
+### LLM Provider (local mode only)
 
 | Setting | Default | Env Var | Description |
 |---------|---------|---------|-------------|
-| `llmProvider` | auto-detect | `HINDSIGHT_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `ollama` |
-| `llmModel` | provider default | `HINDSIGHT_LLM_MODEL` | Model override |
+| `llm_provider` | `openai` | `HINDSIGHT_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama`, `lmstudio` |
+| `llm_api_key` | — | `HINDSIGHT_LLM_API_KEY` | API key for the chosen LLM provider |
+| `llm_model` | provider default | `HINDSIGHT_LLM_MODEL` | Model override (auto-defaults per provider) |
+
+Default models per provider: `openai` → `gpt-4o-mini`, `anthropic` → `claude-haiku-4-5`, `gemini` → `gemini-2.5-flash`, `groq` → `openai/gpt-oss-120b`, `minimax` → `MiniMax-M2.7`, `ollama` → `gemma3:12b`.
 
 ### Memory Bank
 
 | Setting | Default | Env Var | Description |
 |---------|---------|---------|-------------|
-| `bankId` | — | `HINDSIGHT_BANK_ID` | Memory bank ID |
+| `bank_id` | `hermes` | `HINDSIGHT_BANK_ID` | Memory bank ID |
 | `bankMission` | `""` | `HINDSIGHT_BANK_MISSION` | Agent identity/purpose for the memory bank |
 | `retainMission` | `null` | — | Custom retain mission (what to extract from conversations) |
-| `bankIdPrefix` | `""` | — | Prefix for all bank IDs |
 
 ### Auto-Recall
 
@@ -134,6 +136,22 @@ Default preamble:
 | `retainEveryNTurns` | `1` | — | Retain every Nth turn |
 | `retainOverlapTurns` | `2` | — | Extra overlap turns for continuity |
 | `retainRoles` | `["user", "assistant"]` | — | Which message roles to retain |
+
+### Integration Mode
+
+| Setting | Default | Env Var | Description |
+|---------|---------|---------|-------------|
+| `memory_mode` | `hybrid` | — | How memories are integrated into the agent (see below) |
+| `prefetch_method` | `recall` | — | Method used for automatic context injection (see below) |
+
+**memory_mode:**
+- `hybrid` — automatic context injection before each turn, plus tools available to the LLM
+- `context` — automatic injection only; no tools exposed to the model
+- `tools` — tools only (`hindsight_retain`, `hindsight_recall`, `hindsight_reflect`); no automatic injection
+
+**prefetch_method:**
+- `recall` — injects raw memory facts into the system prompt (fast)
+- `reflect` — injects an LLM-synthesized summary of relevant memories (slower, more coherent)
 
 ### Miscellaneous
 
@@ -167,11 +185,16 @@ print(list(eps))
 ```
 You should see `EntryPoint(name='hindsight', value='hindsight_hermes', ...)`.
 
-**Tools don't appear in `/tools`**: Check that `hindsightApiUrl` (or `HINDSIGHT_API_URL`) is set. The plugin silently skips registration when unconfigured.
+**Tools don't appear in `/tools`**: Check that `api_url` (or `HINDSIGHT_API_URL`) is set, or that `HINDSIGHT_API_KEY` is set for cloud mode. The plugin silently skips tool registration when unconfigured.
 
 **Connection refused**: Verify the Hindsight API is running:
 ```bash
 curl http://localhost:9077/health
+```
+
+**Local daemon not starting**: Check the daemon log for errors:
+```bash
+cat ~/.hermes/logs/hindsight-embed.log
 ```
 
 **Recall returning no memories**: Memories need at least one retain cycle. Try storing a fact first, then asking about it in a new session.
