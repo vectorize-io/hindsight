@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { BankStats, PluginConfig } from './types.js';
 import type { BackfillCheckpoint, BackfillPlanEntry } from './backfill-lib.js';
 
@@ -7,11 +10,11 @@ const managerStop = vi.fn();
 const managerGetBaseUrl = vi.fn(() => 'http://127.0.0.1:9077');
 
 vi.mock('./embed-manager.js', () => ({
-  HindsightEmbedManager: vi.fn().mockImplementation(() => ({
-    start: managerStart,
-    stop: managerStop,
-    getBaseUrl: managerGetBaseUrl,
-  })),
+  HindsightEmbedManager: vi.fn(class {
+    start = managerStart;
+    stop = managerStop;
+    getBaseUrl = managerGetBaseUrl;
+  }),
 }));
 
 afterEach(() => {
@@ -51,7 +54,7 @@ function makeStats(overrides: Partial<BankStats> = {}): BankStats {
 
 describe('backfill helpers', () => {
   it('resume skips only completed entries', async () => {
-    const { filterEntriesForResume } = await import('./backfill.js');
+    const { filterEntriesForResume, splitResumeEntries } = await import('./backfill.js');
     const entries = [makeEntry('bank-a', '1'), makeEntry('bank-a', '2'), makeEntry('bank-a', '3')];
     const checkpoint: BackfillCheckpoint = {
       version: 1,
@@ -61,10 +64,31 @@ describe('backfill helpers', () => {
         'bank-a::backfill::bank-a::3': { status: 'failed', bankId: 'bank-a', filePath: '/tmp/3', sessionId: '3', updatedAt: 'now' },
       },
     };
-    expect(filterEntriesForResume(entries, checkpoint, true).map((entry) => entry.sessionId)).toEqual(['2', '3']);
+    const resumable = filterEntriesForResume(entries, checkpoint, true);
+    expect(resumable.map((entry) => entry.sessionId)).toEqual(['2', '3']);
+    expect(splitResumeEntries(resumable, checkpoint, false).entriesToEnqueue.map((entry) => entry.sessionId)).toEqual(['2', '3']);
+    expect(splitResumeEntries(resumable, checkpoint, true)).toEqual({
+      entriesToEnqueue: [entries[2]],
+      alreadyEnqueuedKeys: ['bank-a::backfill::bank-a::2'],
+    });
   });
 
-  it('marks enqueued entries completed or failed based on drained bank stats', async () => {
+  it('normalizes legacy queued checkpoint entries', async () => {
+    const { loadCheckpoint } = await import('./backfill-lib.js');
+    const dir = mkdtempSync(join(tmpdir(), 'hindsight-backfill-'));
+    const checkpointPath = join(dir, 'checkpoint.json');
+    writeFileSync(checkpointPath, JSON.stringify({
+      version: 1,
+      entries: {
+        legacy: { status: 'queued', bankId: 'bank-a', filePath: '/tmp/a', sessionId: 'a', updatedAt: 'now' },
+      },
+    }), 'utf8');
+
+    const checkpoint = loadCheckpoint(checkpointPath);
+    expect(checkpoint.entries.legacy.status).toBe('enqueued');
+  });
+
+  it('marks drained entries completed and leaves aggregate-failure banks enqueued', async () => {
     const { applyDrainResults } = await import('./backfill.js');
     const checkpoint: BackfillCheckpoint = {
       version: 1,
@@ -87,9 +111,13 @@ describe('backfill helpers', () => {
     ]);
 
     const result = applyDrainResults(checkpoint, touchedEntriesByBank, finalStatsByBank, initialFailedByBank);
-    expect(result).toEqual({ completed: 1, failed: 1 });
+    expect(result.completed).toBe(1);
+    expect(result.unresolved).toBe(1);
+    expect(result.warnings).toEqual([
+      'bank bank-b reported 2 new failed operations during drain; leaving 1 checkpoint entries enqueued',
+    ]);
     expect(checkpoint.entries.a.status).toBe('completed');
-    expect(checkpoint.entries.b.status).toBe('failed');
+    expect(checkpoint.entries.b.status).toBe('enqueued');
   });
 
   it('starts local daemon when no external API is configured and health check fails', async () => {

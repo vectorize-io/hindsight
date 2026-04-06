@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync } from 'fs';
 import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient } from './client.js';
 import { buildClientOptions, detectExternalApi, detectLLMConfig } from './index.js';
@@ -213,6 +214,8 @@ export function splitResumeEntries(
     if (status === 'enqueued') {
       if (waitUntilDrained) {
         alreadyEnqueuedKeys.push(checkpointKey(entry));
+      } else {
+        entriesToEnqueue.push(entry);
       }
       continue;
     }
@@ -226,29 +229,32 @@ export function applyDrainResults(
   touchedEntriesByBank: Map<string, string[]>,
   finalStatsByBank: Map<string, BankStats>,
   initialFailedOperationsByBank: Map<string, number>,
-): { completed: number; failed: number } {
+): { completed: number; unresolved: number; warnings: string[] } {
   let completed = 0;
-  let failed = 0;
+  let unresolved = 0;
+  const warnings: string[] = [];
 
   for (const [bankId, entryKeys] of touchedEntriesByBank.entries()) {
     const stats = finalStatsByBank.get(bankId);
     const initialFailed = initialFailedOperationsByBank.get(bankId) ?? 0;
     const hasNewFailures = !!stats && stats.failed_operations > initialFailed;
 
+    if (hasNewFailures) {
+      warnings.push(
+        `bank ${bankId} reported ${stats!.failed_operations - initialFailed} new failed operations during drain; leaving ${entryKeys.length} checkpoint entries enqueued`,
+      );
+    } else if (!stats || stats.pending_operations > 0) {
+      warnings.push(
+        `bank ${bankId} did not finish draining cleanly; leaving ${entryKeys.length} checkpoint entries enqueued`,
+      );
+    }
+
     for (const entryKey of entryKeys) {
       const existing = checkpoint.entries[entryKey];
       if (!existing || existing.status !== 'enqueued') {
         continue;
       }
-      if (hasNewFailures) {
-        checkpoint.entries[entryKey] = {
-          ...existing,
-          status: 'failed',
-          updatedAt: new Date().toISOString(),
-          error: `bank ${bankId} reported ${stats!.failed_operations - initialFailed} new failed operations during drain`,
-        };
-        failed += 1;
-      } else if (stats && stats.pending_operations === 0) {
+      if (!hasNewFailures && stats && stats.pending_operations === 0) {
         checkpoint.entries[entryKey] = {
           ...existing,
           status: 'completed',
@@ -256,11 +262,13 @@ export function applyDrainResults(
           error: undefined,
         };
         completed += 1;
+      } else {
+        unresolved += 1;
       }
     }
   }
 
-  return { completed, failed };
+  return { completed, unresolved, warnings };
 }
 
 export async function createBackfillRuntime(
@@ -357,8 +365,8 @@ async function waitForBanksToDrain(clientsByBankId: Map<string, HindsightClient>
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const args = parseArgs(argv);
   if (!existsSync(join(args.openclawRoot, 'openclaw.json'))) {
     throw new Error(`could not find openclaw.json under ${args.openclawRoot}`);
   }
@@ -444,8 +452,7 @@ async function main(): Promise<void> {
       const client = bankRuntime.client;
 
       if (!bankRuntime.missionApplied && pluginConfig.bankMission) {
-        await client.ensureBankMission(pluginConfig.bankMission);
-        bankRuntime.missionApplied = true;
+        await client.setBankMission(pluginConfig.bankMission);
       }
 
       if (typeof args.maxPendingOperations === 'number' && args.maxPendingOperations >= 0) {
@@ -476,6 +483,10 @@ async function main(): Promise<void> {
           updatedAt: new Date().toISOString(),
         };
         bankRuntime.touchedEntryKeys.push(checkpointKey(entry));
+        if (!bankRuntime.missionApplied && pluginConfig.bankMission) {
+          await client.setBankMission(pluginConfig.bankMission);
+          bankRuntime.missionApplied = true;
+        }
         saveCheckpoint(args.checkpointPath, checkpoint);
         console.log(`${entry.agentId}\t${entry.bankId}\t${entry.sessionId}\tenqueued`);
         imported += 1;
@@ -502,7 +513,9 @@ async function main(): Promise<void> {
       const initialFailedByBank = new Map(Array.from(clientsByBankId.entries()).map(([bankId, value]) => [bankId, value.initialFailedOperations]));
       const finalization = applyDrainResults(checkpoint, touchedEntriesByBank, finalStatsByBank, initialFailedByBank);
       finalized = finalization.completed;
-      failed += finalization.failed;
+      for (const warning of finalization.warnings) {
+        console.warn(warning);
+      }
       saveCheckpoint(args.checkpointPath, checkpoint);
     }
   } finally {
@@ -524,7 +537,14 @@ async function main(): Promise<void> {
   console.log(args.json ? JSON.stringify(summary, null, 2) : JSON.stringify(summary));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function isDirectExecution(): boolean {
+  const entrypoint = process.argv[1];
+  return !!entrypoint && import.meta.url === pathToFileURL(entrypoint).href;
+}
+
+if (isDirectExecution()) {
+  runCli().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

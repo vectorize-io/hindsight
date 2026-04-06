@@ -52,6 +52,15 @@ export interface BackfillCheckpoint {
   entries: Record<string, BackfillCheckpointEntry>;
 }
 
+interface RawBackfillCheckpointEntry extends Omit<BackfillCheckpointEntry, 'status'> {
+  status: BackfillCheckpointEntry['status'] | 'queued';
+}
+
+interface RawBackfillCheckpoint {
+  version: 1;
+  entries: Record<string, RawBackfillCheckpointEntry>;
+}
+
 interface SessionDirectory {
   agentId: string;
   path: string;
@@ -257,8 +266,22 @@ export function loadCheckpoint(checkpointPath: string): BackfillCheckpoint {
   if (!existsSync(checkpointPath)) {
     return { version: 1, entries: {} };
   }
-  const raw = JSON.parse(readFileSync(checkpointPath, 'utf8')) as BackfillCheckpoint;
-  return raw.version === 1 && raw.entries ? raw : { version: 1, entries: {} };
+  const raw = JSON.parse(readFileSync(checkpointPath, 'utf8')) as RawBackfillCheckpoint;
+  if (raw.version !== 1 || !raw.entries || typeof raw.entries !== 'object') {
+    return { version: 1, entries: {} };
+  }
+  return {
+    version: 1,
+    entries: Object.fromEntries(
+      Object.entries(raw.entries).map(([key, entry]) => [
+        key,
+        {
+          ...entry,
+          status: entry.status === 'queued' ? 'enqueued' : entry.status,
+        },
+      ]),
+    ) as Record<string, BackfillCheckpointEntry>,
+  };
 }
 
 export function saveCheckpoint(checkpointPath: string, checkpoint: BackfillCheckpoint): void {
