@@ -4,23 +4,52 @@ Biomimetic long-term memory for [Cursor](https://cursor.com) using [Hindsight](h
 
 ## Quick Start
 
+### 1. Install the plugin
+
 ```bash
-# 1. Install the plugin (copy or symlink into your project)
+mkdir -p /path/to/your-project/.cursor-plugin
 cp -r hindsight-integrations/cursor /path/to/your-project/.cursor-plugin/hindsight-memory
-
-# 2. Configure your LLM provider for memory extraction
-# Option A: OpenAI (auto-detected)
-export OPENAI_API_KEY="sk-your-key"
-
-# Option B: Anthropic (auto-detected)
-export ANTHROPIC_API_KEY="your-key"
-
-# Option C: Connect to an external Hindsight server
-mkdir -p ~/.hindsight
-echo '{"hindsightApiUrl": "https://your-hindsight-server.com"}' > ~/.hindsight/cursor.json
-
-# 3. Open Cursor — the plugin activates automatically
 ```
+
+> If Cursor is already open, **fully quit and reopen it** after adding the plugin. Plugins load at startup.
+
+### 2. Configure Hindsight
+
+Create `~/.hindsight/cursor.json`:
+
+**Option A — Hindsight Cloud** (no local server needed):
+
+```json
+{
+  "hindsightApiUrl": "https://api.hindsight.vectorize.io",
+  "hindsightApiToken": "YOUR_HINDSIGHT_API_TOKEN",
+  "bankId": "cursor"
+}
+```
+
+Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) to get a token.
+
+**Option B — Local server:**
+
+```json
+{
+  "hindsightApiUrl": "http://localhost:8888",
+  "bankId": "cursor"
+}
+```
+
+**Option C — Auto-managed daemon** (requires an LLM API key):
+
+```bash
+export OPENAI_API_KEY="sk-your-key"
+# or: export ANTHROPIC_API_KEY="your-key"
+```
+
+Leave `hindsightApiUrl` empty and the plugin will auto-start `hindsight-embed` locally.
+
+### 3. Open Cursor
+
+Open the target project in Cursor. The plugin activates automatically.
 
 ## Features
 
