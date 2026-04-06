@@ -39,7 +39,7 @@ export interface BackfillPlanEntry {
 }
 
 export interface BackfillCheckpointEntry {
-  status: 'queued' | 'failed';
+  status: 'enqueued' | 'completed' | 'failed';
   bankId: string;
   filePath: string;
   sessionId: string;

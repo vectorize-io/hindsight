@@ -581,7 +581,7 @@ const PROVIDER_DETECTION = [
   { name: 'claude-code', keyEnv: '' },
 ];
 
-function detectLLMConfig(pluginConfig?: PluginConfig): {
+export function detectLLMConfig(pluginConfig?: PluginConfig): {
   provider?: string;
   apiKey?: string;
   model?: string;
@@ -705,7 +705,7 @@ function detectLLMConfig(pluginConfig?: PluginConfig): {
  * Detect external Hindsight API configuration.
  * Priority: env vars > plugin config
  */
-function detectExternalApi(pluginConfig?: PluginConfig): {
+export function detectExternalApi(pluginConfig?: PluginConfig): {
   apiUrl: string | null;
   apiToken: string | null;
 } {
@@ -717,7 +717,7 @@ function detectExternalApi(pluginConfig?: PluginConfig): {
 /**
  * Build HindsightClientOptions from LLM config, plugin config, and external API settings.
  */
-function buildClientOptions(
+export function buildClientOptions(
   llmConfig: { provider?: string; apiKey?: string; model?: string },
   pluginCfg: PluginConfig,
   externalApi: { apiUrl: string | null; apiToken: string | null },

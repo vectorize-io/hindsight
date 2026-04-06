@@ -147,9 +147,9 @@ Useful options:
 - `--agent <id>` limit import to selected agents
 - `--exclude-archive` ignore `sessions-archive-from-migration_backup`
 - `--bank-strategy mirror-config|agent|fixed`
-- `--resume` skip already checkpointed entries
+- `--resume` skip only entries already finalized as completed
 - `--checkpoint <path>` store progress outside the default location
-- `--wait-until-drained` block until the target bank queues have finished enqueue processing
+- `--wait-until-drained` block until the touched bank queues have finished and checkpoint state can be finalized
 
 ## Links
 

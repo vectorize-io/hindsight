@@ -95,6 +95,16 @@ export class HindsightClient {
     return this.setBankMissionSubprocess(mission);
   }
 
+  async ensureBankMission(mission: string): Promise<void> {
+    if (!mission || mission.trim().length === 0) {
+      return;
+    }
+    if (this.httpMode) {
+      return this.ensureBankMissionHttp(mission);
+    }
+    return this.ensureBankMissionSubprocess(mission);
+  }
+
   private async setBankMissionHttp(mission: string): Promise<void> {
     try {
       const url = `${this.apiUrl}/v1/default/banks/${encodeURIComponent(this.bankId)}`;
@@ -124,6 +134,28 @@ export class HindsightClient {
       // Don't fail if mission set fails - bank might not exist yet, will be created on first retain
       log.warn(`could not set bank mission (bank may not exist yet): ${error}`);
     }
+  }
+
+  private async ensureBankMissionHttp(mission: string): Promise<void> {
+    const url = `${this.apiUrl}/v1/default/banks/${encodeURIComponent(this.bankId)}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.httpHeaders(),
+      body: JSON.stringify({ mission }),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Failed to set bank mission (HTTP ${res.status}): ${body}`);
+    }
+    log.verbose('bank mission ensured via HTTP');
+  }
+
+  private async ensureBankMissionSubprocess(mission: string): Promise<void> {
+    const [cmd, ...baseArgs] = this.getEmbedCommand();
+    const args = [...baseArgs, '--profile', 'openclaw', 'bank', 'mission', this.bankId, sanitize(mission)];
+    const { stdout } = await execFileAsync(cmd, args, { maxBuffer: MAX_BUFFER });
+    log.verbose(`bank mission ensured: ${stdout.trim()}`);
   }
 
   // --- retain ---
