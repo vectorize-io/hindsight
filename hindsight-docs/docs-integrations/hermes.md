@@ -63,7 +63,7 @@ The plugin registers via Hermes's `hermes_agent.plugins` entry point system:
 
 ### 1. Cloud (recommended for production)
 
-Connect to Hindsight Cloud. Get an API key at [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io).
+Connect to Hindsight Cloud at `https://api.hindsight.vectorize.io`. Get an API key at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect).
 
 ```json
 {
