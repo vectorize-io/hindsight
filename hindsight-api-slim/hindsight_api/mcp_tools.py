@@ -548,6 +548,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             document_id: str | None = None,
             bank_id: str | None = None,
             strategy: str | None = None,
+            agent_name: str | None = None,
         ) -> dict:
             """
             Args:
@@ -559,6 +560,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 document_id: Optional document ID to associate this memory with
                 bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+                agent_name: Optional name of the AI agent retaining this memory. When set, first-person content ('I', 'we') is attributed to the agent, enabling correct 'experience' fact type classification.
             """
             target_bank = bank_id or config.bank_id_resolver()
             if target_bank is None:
@@ -575,6 +577,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     bank_id=target_bank,
                     contents=[content_dict],
                     request_context=request_context,
+                    agent_name=agent_name,
                 )
                 return {
                     "status": "accepted",
@@ -599,6 +602,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             metadata: dict[str, str] | None = None,
             document_id: str | None = None,
             strategy: str | None = None,
+            agent_name: str | None = None,
         ) -> dict:
             """
             Args:
@@ -609,6 +613,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 metadata: Optional key-value metadata to attach (e.g., {'source': 'slack', 'channel': 'general'})
                 document_id: Optional document ID to associate this memory with
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+                agent_name: Optional name of the AI agent retaining this memory. When set, first-person content ('I', 'we') is attributed to the agent, enabling correct 'experience' fact type classification.
             """
             target_bank = config.bank_id_resolver()
             if target_bank is None:
@@ -625,6 +630,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                     bank_id=target_bank,
                     contents=[content_dict],
                     request_context=request_context,
+                    agent_name=agent_name,
                 )
                 return {
                     "status": "accepted",

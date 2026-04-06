@@ -641,6 +641,7 @@ class MemoryEngine(MemoryEngineInterface):
         document_tags = task_dict.get("document_tags")
         operation_id = task_dict.get("operation_id")  # For batch API crash recovery
         strategy = task_dict.get("strategy")
+        agent_name = task_dict.get("_agent_name")
 
         logger.info(
             f"[BATCH_RETAIN_TASK] Starting background batch retain for bank_id={bank_id}, {len(contents)} items, operation_id={operation_id}"
@@ -665,6 +666,7 @@ class MemoryEngine(MemoryEngineInterface):
             request_context=context,
             operation_id=operation_id,
             strategy=strategy,
+            agent_name=agent_name,
             outbox_callback=self._build_retain_outbox_callback(
                 bank_id=bank_id,
                 contents=contents,
@@ -2054,6 +2056,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str | None = None,
         outbox_callback: "Callable[[asyncpg.Connection], Awaitable[None]] | None" = None,
         strategy: str | None = None,
+        agent_name: str | None = None,
     ):
         """
         Store multiple content items as memory units in ONE batch operation.
@@ -2211,6 +2214,7 @@ class MemoryEngine(MemoryEngineInterface):
                     document_tags=document_tags,
                     operation_id=operation_id,
                     strategy=strategy,
+                    agent_name=agent_name,
                     # Outbox callback runs inside the last sub-batch's transaction so the
                     # webhook delivery row is committed atomically with the final retain data.
                     outbox_callback=outbox_callback if i == len(sub_batches) else None,
@@ -2235,6 +2239,7 @@ class MemoryEngine(MemoryEngineInterface):
                 document_tags=document_tags,
                 operation_id=operation_id,
                 strategy=strategy,
+                agent_name=agent_name,
                 outbox_callback=outbox_callback,
             )
 
@@ -2286,6 +2291,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str | None = None,
         outbox_callback: "Callable[[asyncpg.Connection], Awaitable[None]] | None" = None,
         strategy: str | None = None,
+        agent_name: str | None = None,
     ) -> tuple[list[list[str]], "TokenUsage"]:
         """
         Internal method for batch processing without chunking logic.
@@ -2346,6 +2352,7 @@ class MemoryEngine(MemoryEngineInterface):
                 schema=_current_schema.get(),
                 outbox_callback=outbox_callback,
                 db_semaphore=self._put_semaphore,
+                agent_name=agent_name,
             )
 
     def recall(
@@ -7682,6 +7689,7 @@ class MemoryEngine(MemoryEngineInterface):
         request_context: "RequestContext",
         document_tags: list[str] | None = None,
         strategy: str | None = None,
+        agent_name: str | None = None,
     ) -> dict[str, Any]:
         """Submit a batch retain operation to run asynchronously.
 
@@ -7794,6 +7802,8 @@ class MemoryEngine(MemoryEngineInterface):
                 task_payload["document_tags"] = document_tags
             if strategy:
                 task_payload["strategy"] = strategy
+            if agent_name:
+                task_payload["_agent_name"] = agent_name
             # Pass tenant_id and api_key_id through task payload
             if request_context.tenant_id:
                 task_payload["_tenant_id"] = request_context.tenant_id

@@ -410,6 +410,7 @@ async def retain_batch(
     schema: str | None = None,
     outbox_callback: Callable[["asyncpg.Connection"], Awaitable[None]] | None = None,
     db_semaphore: "asyncio.Semaphore | None" = None,
+    agent_name: str | None = None,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a batch of content through the retain pipeline.
@@ -429,7 +430,7 @@ async def retain_batch(
 
     # Get bank profile
     profile = await bank_utils.get_bank_profile(pool, bank_id)
-    agent_name = profile["name"]
+    agent_name = agent_name or profile["name"]
 
     # Convert dicts to RetainContent objects
     contents = _build_contents(contents_dicts, document_tags)
@@ -474,6 +475,7 @@ async def retain_batch(
                     schema=schema,
                     outbox_callback=outbox_callback,
                     db_semaphore=db_semaphore,
+                    agent_name=agent_name,
                 )
                 for group_idx, orig_idx in enumerate(original_indices[doc_key]):
                     if group_idx < len(group_ids):
