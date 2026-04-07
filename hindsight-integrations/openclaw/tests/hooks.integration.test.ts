@@ -19,6 +19,7 @@ import type { MoltbotPluginAPI, PluginConfig } from '../src/types.js';
 import type { RecallResponse, RetainResponse } from '../src/types.js';
 
 const HINDSIGHT_API_URL = process.env.HINDSIGHT_API_URL || 'http://localhost:8888';
+const HINDSIGHT_API_TOKEN = process.env.HINDSIGHT_API_TOKEN || '';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,6 +151,7 @@ beforeAll(async () => {
     statelessSessionPatterns: ['agent:*:subagent:**', 'agent:*:heartbeat:**'],
     skipStatelessSessions: true,
     // No bankMission — keeps init lean
+    ...(HINDSIGHT_API_TOKEN ? { hindsightApiUrl: HINDSIGHT_API_URL, hindsightApiToken: HINDSIGHT_API_TOKEN } : {}),
   });
   triggerHook = handle.trigger;
   stopServicesFn = handle.stopServices;
