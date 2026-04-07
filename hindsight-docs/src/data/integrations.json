@@ -301,6 +301,16 @@
       "icon": "/img/icons/vapi.png"
     },
     {
+      "id": "roo-code",
+      "name": "Roo Code",
+      "description": "Persistent memory for Roo Code via Hindsight MCP. Auto-recalls context before each task and retains learnings after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/roo-code",
+      "icon": "/img/icons/roo-code.png"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",

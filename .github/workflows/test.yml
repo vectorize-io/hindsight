@@ -52,6 +52,7 @@ jobs:
       integrations-gemini-spark: ${{ steps.filter.outputs.integrations-gemini-spark }}
       integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
+      integrations-roo-code: ${{ steps.filter.outputs.integrations-roo-code }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
       # Secrets are available for internal PRs and workflow_dispatch.
@@ -151,6 +152,8 @@ jobs:
             - 'hindsight-integrations/vapi/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
+          integrations-roo-code:
+            - 'hindsight-integrations/roo-code/**'
           dev:
             - 'hindsight-dev/**'
           ci:
@@ -736,6 +739,31 @@ jobs:
       working-directory: ./hindsight-integrations/gemini-spark
       run: uv run pytest tests -v
 
+  test-roo-code-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-roo-code == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/roo-code
+      run: python -m pytest tests/ -v
 
   build-control-plane:
     needs: [detect-changes]
@@ -3815,6 +3843,7 @@ jobs:
       - test-pipecat-integration
       - test-gemini-spark-integration
       - test-vapi-integration
+      - test-roo-code-integration
       - build-control-plane
       - build-docs
       - test-rust-cli
