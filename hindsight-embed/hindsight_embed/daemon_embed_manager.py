@@ -419,6 +419,8 @@ class DaemonEmbedManager(EmbedManager):
         """
         try:
             api_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_API_")}
+            if not api_config:
+                return
             self._profile_manager.create_profile(profile, port, api_config)
         except Exception as e:
             logger.debug(f"Failed to register profile '{profile}' in metadata: {e}")
