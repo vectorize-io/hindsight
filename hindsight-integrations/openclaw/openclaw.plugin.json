@@ -229,6 +229,21 @@
         "type": "number",
         "description": "How often to attempt flushing queued retains in ms. Default: 60000 (1 min).",
         "default": 60000
+      },
+      "ignoreSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session key glob patterns to skip entirely (no recall, no retain). E.g. [\"agent:main:**\", \"agent:*:cron:**\"]. * matches non-colon chars, ** matches anything."
+      },
+      "statelessSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session key glob patterns for read-only sessions: retain is always skipped, recall is skipped when skipStatelessSessions is true. E.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]."
+      },
+      "skipStatelessSessions": {
+        "type": "boolean",
+        "description": "When true (default), sessions matching statelessSessionPatterns also skip recall. When false, they can recall but never retain.",
+        "default": true
       }
     },
     "additionalProperties": false
@@ -375,6 +390,18 @@
     "retainQueueFlushIntervalMs": {
       "label": "Retain Queue Flush Interval (ms)",
       "placeholder": "60000"
+    },
+    "ignoreSessionPatterns": {
+      "label": "Ignore Session Patterns",
+      "placeholder": "e.g. [\"agent:main:**\", \"agent:*:cron:**\"]"
+    },
+    "statelessSessionPatterns": {
+      "label": "Stateless Session Patterns",
+      "placeholder": "e.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]"
+    },
+    "skipStatelessSessions": {
+      "label": "Skip Stateless Sessions",
+      "placeholder": "true (default)"
     }
   }
 }

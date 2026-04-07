@@ -2,6 +2,7 @@ import type { MoltbotPluginAPI, PluginConfig, PluginHookAgentContext, MemoryResu
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient, type HindsightClientOptions } from './client.js';
 import { RetainQueue } from './retain-queue.js';
+import { compileSessionPatterns, matchesSessionPattern } from './session-patterns.js';
 import { createHash } from 'crypto';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -804,6 +805,9 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
         : DEFAULT_RECALL_PROMPT_PREAMBLE,
     recallInjectionPosition: typeof config.recallInjectionPosition === 'string' && ['prepend', 'append', 'user'].includes(config.recallInjectionPosition) ? config.recallInjectionPosition as PluginConfig['recallInjectionPosition'] : undefined,
     recallTimeoutMs: typeof config.recallTimeoutMs === 'number' && config.recallTimeoutMs >= 1000 ? config.recallTimeoutMs : undefined,
+    ignoreSessionPatterns: Array.isArray(config.ignoreSessionPatterns) ? config.ignoreSessionPatterns : [],
+    statelessSessionPatterns: Array.isArray(config.statelessSessionPatterns) ? config.statelessSessionPatterns : [],
+    skipStatelessSessions: config.skipStatelessSessions !== false,
     debug: config.debug ?? false,
   };
 }
@@ -1167,6 +1171,24 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
+        // Session pattern filtering
+        const sessionKey = ctx?.sessionKey;
+        if (sessionKey) {
+          const ignorePatterns = compileSessionPatterns(pluginConfig.ignoreSessionPatterns ?? []);
+          if (ignorePatterns.length > 0 && matchesSessionPattern(sessionKey, ignorePatterns)) {
+            debug(`[Hindsight] Skipping recall: session '${sessionKey}' matches ignoreSessionPatterns`);
+            return;
+          }
+          const skipStateless = pluginConfig.skipStatelessSessions !== false;
+          if (skipStateless) {
+            const statelessPatterns = compileSessionPatterns(pluginConfig.statelessSessionPatterns ?? []);
+            if (statelessPatterns.length > 0 && matchesSessionPattern(sessionKey, statelessPatterns)) {
+              debug(`[Hindsight] Skipping recall: session '${sessionKey}' matches statelessSessionPatterns (skipStatelessSessions=true)`);
+              return;
+            }
+          }
+        }
+
         // Skip auto-recall when disabled (agent has its own recall tool)
         if (!pluginConfig.autoRecall) {
           debug('[Hindsight] Auto-recall disabled via config, skipping');
@@ -1317,6 +1339,21 @@ ${memoriesFormatted}
         if (effectiveCtx?.messageProvider && pluginConfig.excludeProviders?.includes(effectiveCtx.messageProvider)) {
           debug(`[Hindsight] Skipping retain for excluded provider: ${effectiveCtx.messageProvider}`);
           return;
+        }
+
+        // Session pattern filtering
+        const agentEndSessionKey = effectiveCtx?.sessionKey;
+        if (agentEndSessionKey) {
+          const ignorePatterns = compileSessionPatterns(pluginConfig.ignoreSessionPatterns ?? []);
+          if (ignorePatterns.length > 0 && matchesSessionPattern(agentEndSessionKey, ignorePatterns)) {
+            debug(`[Hindsight] Skipping retain: session '${agentEndSessionKey}' matches ignoreSessionPatterns`);
+            return;
+          }
+          const statelessPatterns = compileSessionPatterns(pluginConfig.statelessSessionPatterns ?? []);
+          if (statelessPatterns.length > 0 && matchesSessionPattern(agentEndSessionKey, statelessPatterns)) {
+            debug(`[Hindsight] Skipping retain: session '${agentEndSessionKey}' matches statelessSessionPatterns`);
+            return;
+          }
         }
 
         // Derive bank ID from context — enrich ctx.senderId from the session cache.
