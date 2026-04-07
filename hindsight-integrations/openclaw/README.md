@@ -64,6 +64,40 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `recallPromptPreamble` | built-in string | Prompt text placed above recalled memories in the injected `<hindsight_memories>` system-context block. |
 | `hindsightApiUrl` | — | External Hindsight API URL (skips local daemon) |
 | `hindsightApiToken` | — | Auth token for external API |
+| `ignoreSessionPatterns` | `[]` | Session key glob patterns to skip entirely — no recall, no retain (e.g. `["agent:*:cron:**"]`) |
+| `statelessSessionPatterns` | `[]` | Session key glob patterns for read-only sessions — retain is always skipped; recall is skipped when `skipStatelessSessions` is `true` (e.g. `["agent:*:subagent:**", "agent:*:heartbeat:**"]`) |
+| `skipStatelessSessions` | `true` | When `true`, sessions matching `statelessSessionPatterns` also skip recall. Set to `false` to allow recall but still skip retain. |
+
+### Session pattern filtering
+
+`ignoreSessionPatterns` and `statelessSessionPatterns` accept glob patterns matched against the session key (format: `agent:<agentId>:<type>:<uuid>`).
+
+Glob syntax:
+- `*` — matches any characters except `:` (single segment)
+- `**` — matches anything including `:` (multiple segments)
+
+| Pattern | Matches |
+|---|---|
+| `agent:*:cron:**` | All cron sessions for any agent |
+| `agent:*:subagent:**` | All subagent sessions for any agent |
+| `agent:main:**` | All sessions under the `main` agent |
+
+**Difference between the two options:**
+
+| | `ignoreSessionPatterns` | `statelessSessionPatterns` |
+|---|---|---|
+| Retain | Skipped | Always skipped |
+| Recall | Skipped | Skipped only when `skipStatelessSessions: true` |
+
+**Example config** — exclude cron jobs from memory entirely, allow subagents to read but not write memories:
+
+```json
+{
+  "ignoreSessionPatterns": ["agent:*:cron:**"],
+  "statelessSessionPatterns": ["agent:*:subagent:**"],
+  "skipStatelessSessions": false
+}
+```
 
 ## Documentation
 
