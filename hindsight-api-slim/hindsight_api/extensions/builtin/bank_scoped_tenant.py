@@ -100,7 +100,7 @@ def _parse_key_map(raw: str) -> dict[str, str]:
         if not key:
             raise ValueError("Empty API key in key_map")
         if not schema:
-            raise ValueError(f"Empty schema name for key in key_map")
+            raise ValueError("Empty schema name for key in key_map")
         if not _SCHEMA_RE.match(schema):
             raise ValueError(
                 f"Invalid schema name '{schema}'. "
@@ -140,16 +140,10 @@ class ApiKeySchemaTenantExtension(TenantExtension):
         self.key_map = _parse_key_map(raw_key_map)
 
         if not self.key_map:
-            raise ValueError(
-                "HINDSIGHT_API_TENANT_KEY_MAP is required. "
-                "Format: key1:schema1;key2:schema2"
-            )
+            raise ValueError("HINDSIGHT_API_TENANT_KEY_MAP is required. Format: key1:schema1;key2:schema2")
 
         if self.schema_prefix and not _SCHEMA_RE.match(self.schema_prefix):
-            raise ValueError(
-                f"Invalid schema_prefix '{self.schema_prefix}'. "
-                f"Must be a valid Postgres identifier."
-            )
+            raise ValueError(f"Invalid schema_prefix '{self.schema_prefix}'. Must be a valid Postgres identifier.")
 
         self.mcp_auth_disabled = config.get("mcp_auth_disabled", "").lower() in (
             "true",
@@ -188,9 +182,7 @@ class ApiKeySchemaTenantExtension(TenantExtension):
             AuthenticationError: If the API key is missing or not recognized.
         """
         if not context.api_key:
-            raise AuthenticationError(
-                "Missing API key. Pass via Authorization: Bearer <key>"
-            )
+            raise AuthenticationError("Missing API key. Pass via Authorization: Bearer <key>")
 
         schema_name = self._key_to_schema.get(context.api_key)
         if schema_name is None:
@@ -230,7 +222,5 @@ class ApiKeySchemaTenantExtension(TenantExtension):
             self._initialized_schemas.add(schema_name)
             logger.info("Schema ready: %s", schema_name)
         except Exception as e:
-            logger.error(
-                "Schema initialization failed for %s: %s", schema_name, e
-            )
+            logger.error("Schema initialization failed for %s: %s", schema_name, e)
             raise AuthenticationError(f"Failed to initialize tenant: {e!s}")
