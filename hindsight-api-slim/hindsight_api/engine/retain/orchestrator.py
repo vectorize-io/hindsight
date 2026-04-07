@@ -1522,7 +1522,12 @@ def _map_results_to_contents(
     """Map created unit IDs back to original content items."""
     facts_by_content: dict[int, list[int]] = {i: [] for i in range(len(contents))}
     for i, fact in enumerate(extracted_facts):
-        facts_by_content[fact.content_index].append(i)
+        # Normalize content_index: some LLM providers return 1-indexed values.
+        # Clamp to valid range to prevent KeyError.
+        idx = fact.content_index
+        if idx < 0 or idx >= len(contents):
+            idx = min(max(idx, 0), len(contents) - 1) if len(contents) > 0 else 0
+        facts_by_content[idx].append(i)
 
     result_unit_ids = []
     unit_idx = 0
