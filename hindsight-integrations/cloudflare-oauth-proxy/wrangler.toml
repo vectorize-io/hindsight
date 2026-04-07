@@ -1,0 +1,21 @@
+name = "hindsight-oauth-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "your-kv-namespace-id"
+
+[vars]
+HINDSIGHT_ORIGIN = "https://your-hindsight-origin.example.com"
+
+[[routes]]
+pattern = "hindsight.yourdomain.com/*"
+zone_name = "yourdomain.com"
+
+# Secrets (set via `npx wrangler secret put`):
+# - SESSION_SECRET (password for the login page)
+# - PROXY_SECRET (header value for WAF rule on origin)
+# - HINDSIGHT_API_TOKEN (Bearer token for Hindsight API)
+# - ALLOWED_EMAIL (your email, used as the OAuth user ID)
