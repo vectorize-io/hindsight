@@ -50,6 +50,7 @@ jobs:
       integrations-smolagents: ${{ steps.filter.outputs.integrations-smolagents }}
       integrations-dify: ${{ steps.filter.outputs.integrations-dify }}
       integrations-gemini-spark: ${{ steps.filter.outputs.integrations-gemini-spark }}
+      integrations-vapi: ${{ steps.filter.outputs.integrations-vapi }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
@@ -146,6 +147,8 @@ jobs:
             - 'hindsight-integrations/dify/**'
           integrations-gemini-spark:
             - 'hindsight-integrations/gemini-spark/**'
+          integrations-vapi:
+            - 'hindsight-integrations/vapi/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
           dev:
@@ -2768,6 +2771,43 @@ jobs:
       working-directory: ./hindsight-integrations/crewai
       run: uv run pytest tests -v
 
+  test-vapi-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-vapi == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build vapi integration
+      working-directory: ./hindsight-integrations/vapi
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/vapi
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/vapi
+      run: uv run pytest tests -v
+
   test-litellm-integration:
     needs: [detect-changes]
     if: >-
@@ -3774,6 +3814,7 @@ jobs:
       - test-paperclip-integration
       - test-pipecat-integration
       - test-gemini-spark-integration
+      - test-vapi-integration
       - build-control-plane
       - build-docs
       - test-rust-cli

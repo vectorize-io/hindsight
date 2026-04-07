@@ -1,0 +1,32 @@
+[project]
+name = "hindsight-vapi"
+version = "0.1.0"
+description = "Hindsight persistent memory integration for Vapi voice AI"
+requires-python = ">=3.10"
+dependencies = [
+    "hindsight-client>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hindsight_vapi"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
