@@ -268,26 +268,27 @@ const __dirname = dirname(__filename);
 // Default bank name (fallback when channel context not available)
 const DEFAULT_BANK_NAME = 'openclaw';
 
-function getConfiguredStaticBankId(pluginConfig: PluginConfig): string | undefined {
-  if (typeof pluginConfig.staticBankId !== 'string') {
+function getConfiguredBankId(pluginConfig: PluginConfig): string | undefined {
+  if (typeof pluginConfig.bankId !== 'string') {
     return undefined;
   }
 
-  const trimmed = pluginConfig.staticBankId.trim();
+  const trimmed = pluginConfig.bankId.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function usesStaticBank(pluginConfig: PluginConfig): boolean {
-  return !!getConfiguredStaticBankId(pluginConfig) || pluginConfig.dynamicBankId === false;
+  return pluginConfig.dynamicBankId === false;
 }
 
-function getDefaultStaticBankId(pluginConfig: PluginConfig): string {
-  const configuredStaticBankId = getConfiguredStaticBankId(pluginConfig);
-  if (configuredStaticBankId) {
-    return configuredStaticBankId;
-  }
-
+function getDefaultBankId(pluginConfig: PluginConfig): string {
   return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${DEFAULT_BANK_NAME}` : DEFAULT_BANK_NAME;
+}
+
+function getStaticBankId(pluginConfig: PluginConfig): string {
+  const configuredBankId = getConfiguredBankId(pluginConfig);
+  const baseBankId = configuredBankId || DEFAULT_BANK_NAME;
+  return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${baseBankId}` : baseBankId;
 }
 
 /**
@@ -536,18 +537,13 @@ function parseSessionKey(sessionKey: string): { agentId?: string; provider?: str
 }
 
 export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConfig: PluginConfig): string {
-  const configuredStaticBankId = getConfiguredStaticBankId(pluginConfig);
-  if (configuredStaticBankId) {
-    return configuredStaticBankId;
-  }
-
   if (pluginConfig.dynamicBankId === false) {
-    return getDefaultStaticBankId(pluginConfig);
+    return getStaticBankId(pluginConfig);
   }
 
   // When no context is available, fall back to the static default bank.
   if (!ctx) {
-    return getDefaultStaticBankId(pluginConfig);
+    return getDefaultBankId(pluginConfig);
   }
 
   const fields = pluginConfig.dynamicBankGranularity?.length ? pluginConfig.dynamicBankGranularity : ['agent', 'channel', 'user'];
@@ -795,6 +791,9 @@ async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null):
 function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   const config = api.config.plugins?.entries?.['hindsight-openclaw']?.config || {};
   const defaultMission = 'You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance.';
+  const envBankId = typeof process.env.HINDSIGHT_BANK_ID === 'string' && process.env.HINDSIGHT_BANK_ID.trim().length > 0
+    ? process.env.HINDSIGHT_BANK_ID.trim()
+    : undefined;
 
   return {
     bankMission: config.bankMission || defaultMission,
@@ -810,7 +809,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     apiPort: config.apiPort || 9077,
     // Dynamic bank ID options (default: enabled)
     dynamicBankId: config.dynamicBankId !== false,
-    staticBankId: typeof config.staticBankId === 'string' && config.staticBankId.trim().length > 0 ? config.staticBankId.trim() : undefined,
+    bankId: envBankId || (typeof config.bankId === 'string' && config.bankId.trim().length > 0 ? config.bankId.trim() : undefined),
     bankIdPrefix: config.bankIdPrefix,
     excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
     autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
@@ -884,13 +883,12 @@ export default function (api: MoltbotPluginAPI) {
         }
 
         // Log bank ID mode
-        if (getConfiguredStaticBankId(pluginConfig)) {
-          debug(`[Hindsight] Static bank override configured - using bank: ${getDefaultStaticBankId(pluginConfig)}`);
-        } else if (pluginConfig.dynamicBankId) {
+        if (pluginConfig.dynamicBankId) {
           const prefixInfo = pluginConfig.bankIdPrefix ? ` (prefix: ${pluginConfig.bankIdPrefix})` : '';
           debug(`[Hindsight] ✓ Dynamic bank IDs enabled${prefixInfo} - each channel gets isolated memory`);
         } else {
-          debug(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${getDefaultStaticBankId(pluginConfig)}`);
+          const sourceInfo = getConfiguredBankId(pluginConfig) ? 'configured' : 'default';
+          debug(`[Hindsight] Dynamic bank IDs disabled - using ${sourceInfo} static bank: ${getStaticBankId(pluginConfig)}`);
         }
 
         // Detect external API mode

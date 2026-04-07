@@ -91,15 +91,15 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('openclaw');
   });
 
-  it('should return staticBankId exactly when configured', () => {
+  it('should return configured bankId when dynamicBankId is false', () => {
     const config: PluginConfig = {
-      dynamicBankId: true,
-      staticBankId: 'shared-bank',
-      bankIdPrefix: 'ignored',
+      dynamicBankId: false,
+      bankId: 'shared-bank',
+      bankIdPrefix: 'prod',
       dynamicBankGranularity: ['provider', 'user'],
     };
     const bankId = deriveBankId(ctx, config);
-    expect(bankId).toBe('shared-bank');
+    expect(bankId).toBe('prod-shared-bank');
   });
 
   it('should encode segments to prevent separator collisions', () => {

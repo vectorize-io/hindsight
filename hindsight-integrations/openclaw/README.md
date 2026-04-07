@@ -46,7 +46,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `llmModel` | provider default | LLM model override used with `llmProvider` |
 | `llmApiKeyEnv` | provider standard env var | Custom env var name for the provider API key |
 | `dynamicBankId` | `true` | Enable per-context memory banks |
-| `staticBankId` | — | Exact bank ID to use for all memories. Overrides `dynamicBankId` and `bankIdPrefix` when set. |
+| `bankId` | — | Static bank ID used when `dynamicBankId` is `false`. Can also be set with `HINDSIGHT_BANK_ID`. |
 | `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
 | `excludeProviders` | `[]` | Message providers to skip for recall/retain (e.g. `slack`, `telegram`, `discord`) |

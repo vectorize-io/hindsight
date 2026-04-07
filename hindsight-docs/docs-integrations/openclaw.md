@@ -96,7 +96,8 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `embedVersion` - hindsight-embed version (default: `"latest"`)
 - `bankMission` - Agent identity/purpose stored on the memory bank. Helps the memory engine understand context for better fact extraction during retain. Set once per bank on first use — not a recall prompt.
 - `dynamicBankId` - Enable per-context memory banks (default: `true`)
-- `bankIdPrefix` - Optional prefix for bank IDs (e.g. `"prod"` → `"prod-slack-C123"`)
+- `bankId` - Static bank ID used when `dynamicBankId` is `false`. Can also be set with `HINDSIGHT_BANK_ID`.
+- `bankIdPrefix` - Optional prefix for bank IDs (e.g. `"prod"` → `"prod-slack-C123"` or `"prod-shared-bank"`)
 - `dynamicBankGranularity` - Fields used to derive bank ID: `agent`, `channel`, `user`, `provider` (default: `["agent", "channel", "user"]`)
 - `excludeProviders` - Message providers to skip for recall/retain (e.g. `["slack"]`, `["telegram"]`, `["discord"]`)
 - `autoRecall` - Auto-inject memories before each turn (default: `true`). Set to `false` when the agent has its own recall tool.
@@ -144,7 +145,7 @@ Available isolation fields:
 - `user` - The user interacting with the agent
 - `provider` - The message provider (e.g. Slack, Discord)
 
-Use `bankIdPrefix` to namespace bank IDs across environments (e.g. `"prod"`, `"staging"`). Set `dynamicBankId` to `false` to use a single shared bank for all conversations.
+Use `bankIdPrefix` to namespace bank IDs across environments (e.g. `"prod"`, `"staging"`). Set `dynamicBankId` to `false` to use a single shared bank for all conversations. In static mode, the plugin uses `bankId`, then `HINDSIGHT_BANK_ID`, then the default `openclaw` bank name.
 
 ### Retention Controls
 
