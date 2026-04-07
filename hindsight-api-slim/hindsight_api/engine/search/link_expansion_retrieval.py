@@ -6,25 +6,29 @@ stored in memory_links:
 
 1. Entity links  — query-time self-join through unit_entities. Score = number of distinct
                    shared entities between the seed set and each candidate, computed via
-                   COUNT(DISTINCT entity_id). More accurate than precomputed entity links.
+                   COUNT(DISTINCT entity_id). Uses LATERAL fanout cap to prevent hub
+                   entities (e.g. those with >5000 mentions) from exploding the join.
 2. Semantic links — precomputed kNN graph (each new fact linked to its top-5 most
                     similar existing facts at insert time, similarity >= 0.7). Checked
                     in both directions since the graph is not symmetric. Score = weight.
 3. Causal links  — explicit causal chains (causes/caused_by/enables/prevents).
                    Score = weight + 1.0 (boosted as highest-quality signal).
 
-All three signals are bounded at retain time, so no LATERAL fan-out caps are needed
-at query time. Each expansion is a simple aggregation over a small result set.
+Entity expansion is bounded by graph_max_entity_mentions (hub filter) and
+graph_per_entity_limit (LATERAL cap). A timeout fallback (graph_expansion_timeout)
+drops entity expansion if it still exceeds the budget.
 
 For non-observation fact types the three expansions are issued as a single CTE query
 (one roundtrip, one connection) with a `source` discriminator column so the Python
 merge step can apply per-signal score transformations.
 """
 
+import asyncio
 import logging
 import math
 import time
 
+from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from .graph_retrieval import GraphRetriever
@@ -255,6 +259,12 @@ class LinkExpansionRetriever(GraphRetriever):
         score transformations.  The three CTEs share one connection slot — important
         for asyncpg which does not allow concurrent queries on the same connection.
 
+        Entity expansion uses a LATERAL fanout cap to prevent high-frequency entities
+        (e.g. "Xsolla" with 15K links) from exploding the self-join intermediate rows.
+        Hub entities above graph_max_entity_mentions are excluded entirely.
+        If the full query exceeds graph_expansion_timeout, falls back to
+        semantic+causal only.
+
         Index coverage (requires migration d2e3f4a5b6c7):
           entity:   idx_memory_links_entity_covering (from_unit_id) INCLUDE (to_unit_id, entity_id)
                     WHERE link_type = 'entity'  → index-only scan, no heap reads
@@ -262,35 +272,46 @@ class LinkExpansionRetriever(GraphRetriever):
                     idx_memory_links_to_type_weight (to_unit_id, link_type, weight DESC)
                     → replaces costly BitmapAnd of two separate scans
         """
+        config = get_config()
         ml = fq_table("memory_links")
         mu = fq_table("memory_units")
         ue = fq_table("unit_entities")
+        entities = fq_table("entities")
 
+        max_entity_mentions = config.graph_max_entity_mentions
+        per_entity_limit = config.graph_per_entity_limit
+
+        # Entity CTE with fanout cap: filter out hub entities, cap per-entity expansion
         entity_cte = f"""
+            seed_entities AS (
+                SELECT DISTINCT ue.entity_id
+                FROM {ue} ue
+                JOIN {entities} e ON e.id = ue.entity_id
+                WHERE ue.unit_id = ANY($1::uuid[])
+                  AND (e.mention_count IS NULL OR e.mention_count <= {max_entity_mentions})
+            ),
             entity_expanded AS (
-                -- Entity co-occurrence via unit_entities self-join.
-                -- Finds units sharing entities with seeds at query time — more accurate
-                -- than precomputed entity links (no stale 50-neighbor cap).
-                -- Score = COUNT(DISTINCT shared entities), mapped to [0,1] via tanh.
                 SELECT mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
                        mu.fact_type, mu.document_id, mu.chunk_id, mu.tags,
-                       COUNT(DISTINCT ue_seed.entity_id)::float AS score,
+                       COUNT(DISTINCT se.entity_id)::float AS score,
                        'entity'::text AS source
-                FROM {ue} ue_seed
-                JOIN {ue} ue_target ON ue_seed.entity_id = ue_target.entity_id
-                JOIN {mu} mu ON mu.id = ue_target.unit_id
-                WHERE ue_seed.unit_id = ANY($1::uuid[])
-                  AND ue_target.unit_id != ALL($1::uuid[])
-                  AND mu.fact_type = $2
+                FROM seed_entities se
+                CROSS JOIN LATERAL (
+                    SELECT ue_target.unit_id
+                    FROM {ue} ue_target
+                    WHERE ue_target.entity_id = se.entity_id
+                      AND ue_target.unit_id != ALL($1::uuid[])
+                    LIMIT {per_entity_limit}
+                ) t
+                JOIN {mu} mu ON mu.id = t.unit_id
+                WHERE mu.fact_type = $2
                 GROUP BY mu.id
                 ORDER BY score DESC
                 LIMIT $3
             )"""
 
-        all_rows = await conn.fetch(
-            f"""
-            WITH {entity_cte},
+        semantic_causal_cte = f"""
             semantic_expanded AS (
                 -- Semantic kNN: both outgoing (seeds → their kNN at insert time) and
                 -- incoming (facts inserted after seeds that found seeds as kNN).
@@ -350,18 +371,38 @@ class LinkExpansionRetriever(GraphRetriever):
                   AND mu.fact_type = $2
                 ORDER BY mu.id, ml.weight DESC
                 LIMIT $3
-            )
+            )"""
+
+        full_query = f"""
+            WITH {entity_cte},
+            {semantic_causal_cte}
             SELECT * FROM entity_expanded
             UNION ALL
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
-            """,
-            seed_ids,
-            fact_type,
-            budget,
-            self.causal_weight_threshold,
-        )
+            """
+
+        params = [seed_ids, fact_type, budget, self.causal_weight_threshold]
+
+        try:
+            all_rows = await asyncio.wait_for(
+                conn.fetch(full_query, *params),
+                timeout=config.graph_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[LinkExpansion] Entity expansion timed out after {config.graph_expansion_timeout}s "
+                f"for fact_type={fact_type}, falling back to semantic+causal only"
+            )
+            # Fall back to semantic + causal only (skip entity expansion)
+            fallback_query = f"""
+                WITH {semantic_causal_cte}
+                SELECT * FROM semantic_expanded
+                UNION ALL
+                SELECT * FROM causal_expanded
+                """
+            all_rows = await conn.fetch(fallback_query, *params)
 
         entity_rows = [r for r in all_rows if r["source"] == "entity"]
         semantic_rows = [r for r in all_rows if r["source"] == "semantic"]

@@ -249,6 +249,9 @@ ENV_RECALL_MAX_CONCURRENT = "HINDSIGHT_API_RECALL_MAX_CONCURRENT"
 ENV_RECALL_CONNECTION_BUDGET = "HINDSIGHT_API_RECALL_CONNECTION_BUDGET"
 ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_MENTAL_MODEL_REFRESH_CONCURRENCY = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_CONCURRENCY"
+ENV_GRAPH_MAX_ENTITY_MENTIONS = "HINDSIGHT_API_GRAPH_MAX_ENTITY_MENTIONS"
+ENV_GRAPH_PER_ENTITY_LIMIT = "HINDSIGHT_API_GRAPH_PER_ENTITY_LIMIT"
+ENV_GRAPH_EXPANSION_TIMEOUT = "HINDSIGHT_API_GRAPH_EXPANSION_TIMEOUT"
 
 # OpenTelemetry tracing configuration
 ENV_OTEL_TRACES_ENABLED = "HINDSIGHT_API_OTEL_TRACES_ENABLED"
@@ -457,6 +460,9 @@ DEFAULT_RECALL_MAX_CONCURRENT = 32  # Max concurrent recall operations per worke
 DEFAULT_RECALL_CONNECTION_BUDGET = 4  # Max concurrent DB connections per recall operation
 DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY = 8  # Max concurrent mental model refreshes
+DEFAULT_GRAPH_MAX_ENTITY_MENTIONS = 5000  # Skip hub entities with more mentions (0 = no limit)
+DEFAULT_GRAPH_PER_ENTITY_LIMIT = 200  # Max target units per entity in graph expansion
+DEFAULT_GRAPH_EXPANSION_TIMEOUT = 10.0  # Timeout (seconds) for entity expansion query
 
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
@@ -751,6 +757,9 @@ class HindsightConfig:
     recall_connection_budget: int
     recall_max_query_tokens: int
     mental_model_refresh_concurrency: int
+    graph_max_entity_mentions: int
+    graph_per_entity_limit: int
+    graph_expansion_timeout: float
 
     # Retain settings
     retain_max_completion_tokens: int
@@ -1232,6 +1241,11 @@ class HindsightConfig:
             mental_model_refresh_concurrency=int(
                 os.getenv(ENV_MENTAL_MODEL_REFRESH_CONCURRENCY, str(DEFAULT_MENTAL_MODEL_REFRESH_CONCURRENCY))
             ),
+            graph_max_entity_mentions=int(
+                os.getenv(ENV_GRAPH_MAX_ENTITY_MENTIONS, str(DEFAULT_GRAPH_MAX_ENTITY_MENTIONS))
+            ),
+            graph_per_entity_limit=int(os.getenv(ENV_GRAPH_PER_ENTITY_LIMIT, str(DEFAULT_GRAPH_PER_ENTITY_LIMIT))),
+            graph_expansion_timeout=float(os.getenv(ENV_GRAPH_EXPANSION_TIMEOUT, str(DEFAULT_GRAPH_EXPANSION_TIMEOUT))),
             # Optimization flags
             skip_llm_verification=os.getenv(ENV_SKIP_LLM_VERIFICATION, "false").lower() == "true",
             lazy_reranker=os.getenv(ENV_LAZY_RERANKER, "false").lower() == "true",
