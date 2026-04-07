@@ -94,12 +94,12 @@ describe('deriveBankId', () => {
   it('should return staticBankId exactly when configured', () => {
     const config: PluginConfig = {
       dynamicBankId: true,
-      staticBankId: 'aldous-prod',
+      staticBankId: 'shared-bank',
       bankIdPrefix: 'ignored',
       dynamicBankGranularity: ['provider', 'user'],
     };
     const bankId = deriveBankId(ctx, config);
-    expect(bankId).toBe('aldous-prod');
+    expect(bankId).toBe('shared-bank');
   });
 
   it('should encode segments to prevent separator collisions', () => {
