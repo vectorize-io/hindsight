@@ -442,21 +442,36 @@ class LinkExpansionRetriever(GraphRetriever):
                 f"{len(source_ids_found)} source_memory_ids found"
             )
 
+        config = get_config()
         ue = fq_table("unit_entities")
+        entities_table = fq_table("entities")
+        max_entity_mentions = config.graph_max_entity_mentions
+        per_entity_limit = config.graph_per_entity_limit
 
         connected_sources_cte = f"""
-            connected_sources AS (
-                -- Find sources sharing entities with seed observation sources
-                -- via unit_entities self-join (query-time, no precomputed links needed).
-                SELECT DISTINCT ue_target.unit_id AS source_id
+            seed_source_entities AS (
+                -- Distinct entities from seed observation sources, excluding hubs
+                SELECT DISTINCT ue_seed.entity_id
                 FROM seed_sources ss
                 JOIN {ue} ue_seed ON ue_seed.unit_id = ss.source_id
-                JOIN {ue} ue_target ON ue_seed.entity_id = ue_target.entity_id
-                WHERE ue_target.unit_id != ss.source_id
+                JOIN {entities_table} e ON e.id = ue_seed.entity_id
+                WHERE e.mention_count IS NULL OR e.mention_count <= {max_entity_mentions}
+            ),
+            connected_sources AS (
+                -- Find sources sharing entities with seed observation sources
+                -- via LATERAL fan-out cap to prevent hub entity explosion.
+                SELECT DISTINCT t.unit_id AS source_id
+                FROM seed_source_entities sse
+                CROSS JOIN LATERAL (
+                    SELECT ue_target.unit_id
+                    FROM {ue} ue_target
+                    WHERE ue_target.entity_id = sse.entity_id
+                    LIMIT {per_entity_limit}
+                ) t
+                WHERE t.unit_id NOT IN (SELECT source_id FROM seed_sources)
             )"""
 
-        entity_rows = await conn.fetch(
-            f"""
+        entity_query = f"""
             WITH seed_sources AS (
                 SELECT DISTINCT unnest(source_memory_ids) AS source_id
                 FROM {fq_table("memory_units")}
@@ -479,10 +494,19 @@ class LinkExpansionRetriever(GraphRetriever):
               AND mu.source_memory_ids && ca.source_ids
             ORDER BY score DESC
             LIMIT $2
-            """,
-            seed_ids,
-            budget,
-        )
+            """
+
+        try:
+            entity_rows = await asyncio.wait_for(
+                conn.fetch(entity_query, seed_ids, budget),
+                timeout=config.graph_expansion_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[LinkExpansion] Observation entity expansion timed out after "
+                f"{config.graph_expansion_timeout}s, skipping entity results"
+            )
+            entity_rows = []
         logger.debug(f"[LinkExpansion] observation graph: found {len(entity_rows)} connected observations")
 
         # Semantic + causal for observations in one query
