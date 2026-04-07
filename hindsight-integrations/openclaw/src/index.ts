@@ -175,7 +175,7 @@ async function lazyReinit(): Promise<void> {
     const defaultBankId = deriveBankId(undefined, config);
     client.setBankId(defaultBankId);
 
-    if (config.bankMission && !config.dynamicBankId) {
+    if (config.bankMission && usesStaticBank(config)) {
       await client.setBankMission(config.bankMission);
     }
 
@@ -222,7 +222,7 @@ if (typeof global !== 'undefined') {
     getClientForContext: async (ctx: PluginHookAgentContext | undefined) => {
       if (!client) {return null;}
       const config = currentPluginConfig || {};
-      if (config.dynamicBankId === false) {
+      if (usesStaticBank(config)) {
         return client;
       }
       const bankId = deriveBankId(ctx, config);
@@ -244,7 +244,7 @@ if (typeof global !== 'undefined') {
       }
 
       // Set bank mission on first use of this bank (if configured)
-      if (config.bankMission && config.dynamicBankId && !banksWithMissionSet.has(bankId)) {
+      if (config.bankMission && !usesStaticBank(config) && !banksWithMissionSet.has(bankId)) {
         try {
           await bankClient.setBankMission(config.bankMission);
           banksWithMissionSet.add(bankId);
@@ -267,6 +267,28 @@ const __dirname = dirname(__filename);
 
 // Default bank name (fallback when channel context not available)
 const DEFAULT_BANK_NAME = 'openclaw';
+
+function getConfiguredStaticBankId(pluginConfig: PluginConfig): string | undefined {
+  if (typeof pluginConfig.staticBankId !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = pluginConfig.staticBankId.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function usesStaticBank(pluginConfig: PluginConfig): boolean {
+  return !!getConfiguredStaticBankId(pluginConfig) || pluginConfig.dynamicBankId === false;
+}
+
+function getDefaultStaticBankId(pluginConfig: PluginConfig): string {
+  const configuredStaticBankId = getConfiguredStaticBankId(pluginConfig);
+  if (configuredStaticBankId) {
+    return configuredStaticBankId;
+  }
+
+  return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-${DEFAULT_BANK_NAME}` : DEFAULT_BANK_NAME;
+}
 
 /**
  * Strip plugin-injected memory tags from content to prevent retain feedback loop.
@@ -514,13 +536,18 @@ function parseSessionKey(sessionKey: string): { agentId?: string; provider?: str
 }
 
 export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConfig: PluginConfig): string {
+  const configuredStaticBankId = getConfiguredStaticBankId(pluginConfig);
+  if (configuredStaticBankId) {
+    return configuredStaticBankId;
+  }
+
   if (pluginConfig.dynamicBankId === false) {
-    return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-openclaw` : 'openclaw';
+    return getDefaultStaticBankId(pluginConfig);
   }
 
   // When no context is available, fall back to the static default bank.
   if (!ctx) {
-    return pluginConfig.bankIdPrefix ? `${pluginConfig.bankIdPrefix}-openclaw` : 'openclaw';
+    return getDefaultStaticBankId(pluginConfig);
   }
 
   const fields = pluginConfig.dynamicBankGranularity?.length ? pluginConfig.dynamicBankGranularity : ['agent', 'channel', 'user'];
@@ -783,6 +810,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     apiPort: config.apiPort || 9077,
     // Dynamic bank ID options (default: enabled)
     dynamicBankId: config.dynamicBankId !== false,
+    staticBankId: typeof config.staticBankId === 'string' && config.staticBankId.trim().length > 0 ? config.staticBankId.trim() : undefined,
     bankIdPrefix: config.bankIdPrefix,
     excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
     autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
@@ -855,12 +883,14 @@ export default function (api: MoltbotPluginAPI) {
           debug(`[Hindsight] Custom bank mission configured: "${pluginConfig.bankMission.substring(0, 50)}..."`);
         }
 
-        // Log dynamic bank ID mode
-        if (pluginConfig.dynamicBankId) {
+        // Log bank ID mode
+        if (getConfiguredStaticBankId(pluginConfig)) {
+          debug(`[Hindsight] Static bank override configured - using bank: ${getDefaultStaticBankId(pluginConfig)}`);
+        } else if (pluginConfig.dynamicBankId) {
           const prefixInfo = pluginConfig.bankIdPrefix ? ` (prefix: ${pluginConfig.bankIdPrefix})` : '';
           debug(`[Hindsight] ✓ Dynamic bank IDs enabled${prefixInfo} - each channel gets isolated memory`);
         } else {
-          debug(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${DEFAULT_BANK_NAME}`);
+          debug(`[Hindsight] Dynamic bank IDs disabled - using static bank: ${getDefaultStaticBankId(pluginConfig)}`);
         }
 
         // Detect external API mode
@@ -933,7 +963,7 @@ export default function (api: MoltbotPluginAPI) {
 
               // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
               // For now, set it on the default bank
-              if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
+              if (pluginConfig.bankMission && usesStaticBank(pluginConfig)) {
                 debug(`[Hindsight] Setting bank mission...`);
                 await client.setBankMission(pluginConfig.bankMission);
               }
@@ -978,7 +1008,7 @@ export default function (api: MoltbotPluginAPI) {
 
               // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
               // For now, set it on the default bank
-              if (pluginConfig.bankMission && !pluginConfig.dynamicBankId) {
+              if (pluginConfig.bankMission && usesStaticBank(pluginConfig)) {
                 debug(`[Hindsight] Setting bank mission...`);
                 await client.setBankMission(pluginConfig.bankMission);
               }
@@ -1070,7 +1100,7 @@ export default function (api: MoltbotPluginAPI) {
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
-            if (reinitPluginConfig.bankMission && !reinitPluginConfig.dynamicBankId) {
+            if (reinitPluginConfig.bankMission && usesStaticBank(reinitPluginConfig)) {
               await client.setBankMission(reinitPluginConfig.bankMission);
             }
 
@@ -1098,7 +1128,7 @@ export default function (api: MoltbotPluginAPI) {
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
             client.setBankId(defaultBankId);
 
-            if (reinitPluginConfig.bankMission && !reinitPluginConfig.dynamicBankId) {
+            if (reinitPluginConfig.bankMission && usesStaticBank(reinitPluginConfig)) {
               await client.setBankMission(reinitPluginConfig.bankMission);
             }
 

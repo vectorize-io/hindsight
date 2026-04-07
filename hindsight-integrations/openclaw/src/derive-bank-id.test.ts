@@ -91,6 +91,17 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('openclaw');
   });
 
+  it('should return staticBankId exactly when configured', () => {
+    const config: PluginConfig = {
+      dynamicBankId: true,
+      staticBankId: 'aldous-prod',
+      bankIdPrefix: 'ignored',
+      dynamicBankGranularity: ['provider', 'user'],
+    };
+    const bankId = deriveBankId(ctx, config);
+    expect(bankId).toBe('aldous-prod');
+  });
+
   it('should encode segments to prevent separator collisions', () => {
     const ctxWithSeparator: PluginHookAgentContext = {
       agentId: 'a::b',

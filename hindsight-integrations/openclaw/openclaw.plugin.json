@@ -68,6 +68,10 @@
         "description": "Enable per-user memory banks. When true, memories are isolated by user per channel (e.g., slack-U123, telegram-456789). When false, all users share a single 'openclaw' bank.",
         "default": true
       },
+      "staticBankId": {
+        "type": "string",
+        "description": "Exact bank ID to use for all memories. Overrides dynamicBankId and bankIdPrefix when set."
+      },
       "bankIdPrefix": {
         "type": "string",
         "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
