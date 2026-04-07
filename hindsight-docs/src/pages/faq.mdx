@@ -21,6 +21,7 @@ import PageHero from '@site/src/components/PageHero';
 - [When should I use mental models?](#when-should-i-use-mental-models)
 - [Latency expectations](#whats-the-typical-latency-for-recall-operations)
 - [Tags, metadata, and entity labels](#does-hindsight-support-metadata-filtering)
+- [Controlling which memory types are recalled](#how-do-i-control-which-types-of-memories-are-recalled)
 - [Recommended format for conversations](#what-is-the-recommended-format-for-retaining-conversations)
 
 ---
@@ -245,6 +246,20 @@ Document metadata (the `metadata` key-value pairs on a retain item) serves a dif
 - **Returned with every recalled memory** as-is, so your application can link memories back to source systems (e.g. a URL, thread ID, or ticket number) without extra lookups.
 
 Metadata is not a filter — use tags when you need recall to be scoped to a subset of documents.
+
+---
+
+### How do I control which types of memories are recalled?
+
+If your bank mixes different shapes of memory (e.g., concise rules and detailed procedures) and recall surfaces the wrong shape for a given query, use **entity labels** with `tag: true` to classify facts during retain and hard-filter them during recall.
+
+1. Define a label group on the bank with `tag: true` and a controlled vocabulary (e.g., `rule` vs `procedure`)
+2. Retain normally — the LLM classifies each extracted fact automatically
+3. Pass `tags=["memory_type:rule"]` and `tags_match="any_strict"` at recall time to deterministically include only matching memories
+
+This is a SQL-level filter applied before ranking, not a scoring signal — the excluded memories never enter the retrieval pipeline. This is more reliable than adjusting ranking weights, which only nudge continuous scores and cannot guarantee ordering.
+
+See [Best Practices — Filtering by Memory Shape](/best-practices#filtering-by-memory-shape-with-entity-labels) for a full walkthrough, or [Entity Labels](/developer/api/memory-banks#entity-labels) for the configuration reference.
 
 ---
 
