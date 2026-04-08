@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   stripMemoryTags,
   extractRecallQuery,
@@ -10,6 +10,7 @@ import {
   buildRetainRequest,
 } from './index.js';
 import openclawPlugin from './index.js';
+import { HindsightClient } from './client.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -474,29 +475,95 @@ describe('ignored channels', () => {
   it('skips recall and retain for configured ignored channel ids', async () => {
     const beforePromptBuildHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
     const agentEndHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+    const recallMock = vi.fn().mockResolvedValue({ results: [{ text: 'memory' }] });
+    const retainMock = vi.fn().mockResolvedValue({ success: true });
+    const getClientForContextMock = vi.fn().mockResolvedValue({ recall: recallMock, retain: retainMock });
+    const waitForReadyMock = vi.fn().mockResolvedValue(undefined);
 
-    openclawPlugin({
-      config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['channel:ignored'] } } } } },
-      registerService: () => {},
-      on: (event: string, handler: any) => {
-        if (event === 'before_prompt_build') beforePromptBuildHandlers.push(handler);
-        if (event === 'agent_end') agentEndHandlers.push(handler);
-      },
-      logger: { info: () => {}, warn: () => {}, error: () => {} },
-    } as any);
+    const hindsight = (global as any).__hindsightClient;
+    expect(hindsight).toBeDefined();
+    const originalWaitForReady = hindsight.waitForReady;
+    const originalGetClientForContext = hindsight.getClientForContext;
+    hindsight.waitForReady = waitForReadyMock;
+    hindsight.getClientForContext = getClientForContextMock;
 
-    expect(beforePromptBuildHandlers).toHaveLength(1);
-    expect(agentEndHandlers).toHaveLength(1);
+    try {
+      openclawPlugin({
+        config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['channel:ignored'] } } } } },
+        registerService: () => {},
+        on: (event: string, handler: any) => {
+          if (event === 'before_prompt_build') beforePromptBuildHandlers.push(handler);
+          if (event === 'agent_end') agentEndHandlers.push(handler);
+        },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      } as any);
 
-    const ignoredCtx = { channelId: 'channel:ignored', messageProvider: 'discord' };
+      expect(beforePromptBuildHandlers).toHaveLength(1);
+      expect(agentEndHandlers).toHaveLength(1);
 
-    await expect(
-      beforePromptBuildHandlers[0]({ rawMessage: 'Remember this channel', prompt: 'Remember this channel' }, ignoredCtx),
-    ).resolves.toBeUndefined();
+      const ignoredCtx = { channelId: 'channel:ignored', messageProvider: 'discord', sessionKey: 'agent:main:discord:channel:ignored' };
 
-    await expect(
-      agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'ignored channel message' }] }, ignoredCtx),
-    ).resolves.toBeUndefined();
+      await expect(
+        beforePromptBuildHandlers[0]({ rawMessage: 'Remember this channel', prompt: 'Remember this channel' }, ignoredCtx),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'ignored channel message' }] }, ignoredCtx),
+      ).resolves.toBeUndefined();
+
+      expect(waitForReadyMock).not.toHaveBeenCalled();
+      expect(getClientForContextMock).not.toHaveBeenCalled();
+      expect(recallMock).not.toHaveBeenCalled();
+      expect(retainMock).not.toHaveBeenCalled();
+    } finally {
+      hindsight.waitForReady = originalWaitForReady;
+      hindsight.getClientForContext = originalGetClientForContext;
+    }
+  });
+
+  it('skips retain when the ignored channel is only available via sessionKey fallback', async () => {
+    const agentEndHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+    const retainMock = vi.fn().mockResolvedValue({ success: true });
+    const getClientForContextMock = vi.fn().mockResolvedValue({ retain: retainMock, recall: vi.fn() });
+    const waitForReadyMock = vi.fn().mockResolvedValue(undefined);
+
+    const hindsight = (global as any).__hindsightClient;
+    expect(hindsight).toBeDefined();
+    const originalWaitForReady = hindsight.waitForReady;
+    const originalGetClientForContext = hindsight.getClientForContext;
+    hindsight.waitForReady = waitForReadyMock;
+    hindsight.getClientForContext = getClientForContextMock;
+
+    try {
+      openclawPlugin({
+        config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['group:123:topic:7'] } } } } },
+        registerService: () => {},
+        on: (event: string, handler: any) => {
+          if (event === 'agent_end') agentEndHandlers.push(handler);
+        },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      } as any);
+
+      expect(agentEndHandlers).toHaveLength(1);
+
+      await expect(
+        agentEndHandlers[0](
+          {
+            success: true,
+            sessionKey: 'agent:main:telegram:group:123:topic:7',
+            messages: [{ role: 'user', content: 'ignored channel message' }],
+          },
+          undefined,
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(waitForReadyMock).not.toHaveBeenCalled();
+      expect(getClientForContextMock).not.toHaveBeenCalled();
+      expect(retainMock).not.toHaveBeenCalled();
+    } finally {
+      hindsight.waitForReady = originalWaitForReady;
+      hindsight.getClientForContext = originalGetClientForContext;
+    }
   });
 });
 
