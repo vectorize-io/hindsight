@@ -595,7 +595,7 @@ describe('ignored channels', () => {
       const heartbeatCtx = {
         channelId: 'heartbeat',
         messageProvider: 'discord',
-        sessionKey: 'agent:main:discord:channel:1491427369406304468',
+        sessionKey: 'agent:main:discord:channel:test-heartbeat-parent',
       };
 
       await expect(
