@@ -9,6 +9,7 @@ import {
   truncateRecallQuery,
   buildRetainRequest,
 } from './index.js';
+import openclawPlugin from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -468,6 +469,36 @@ describe('truncateRecallQuery', () => {
 // ---------------------------------------------------------------------------
 // waitForReady — CLI mode no-op (initPromise is null before service.start())
 // ---------------------------------------------------------------------------
+
+describe('ignored heartbeat channel', () => {
+  it('skips recall and retain for configured ignored channel ids', async () => {
+    const beforePromptBuildHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+    const agentEndHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+
+    openclawPlugin({
+      config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['channel:heartbeat-thread'] } } } } },
+      registerService: () => {},
+      on: (event: string, handler: any) => {
+        if (event === 'before_prompt_build') beforePromptBuildHandlers.push(handler);
+        if (event === 'agent_end') agentEndHandlers.push(handler);
+      },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    } as any);
+
+    expect(beforePromptBuildHandlers).toHaveLength(1);
+    expect(agentEndHandlers).toHaveLength(1);
+
+    const ignoredCtx = { channelId: 'channel:heartbeat-thread', messageProvider: 'discord' };
+
+    await expect(
+      beforePromptBuildHandlers[0]({ rawMessage: 'Remember this heartbeat', prompt: 'Remember this heartbeat' }, ignoredCtx),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'heartbeat' }] }, ignoredCtx),
+    ).resolves.toBeUndefined();
+  });
+});
 
 describe('waitForReady (CLI mode)', () => {
   it('returns without error when initPromise is null (service.start not called)', async () => {

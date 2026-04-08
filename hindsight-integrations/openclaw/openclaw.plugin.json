@@ -76,6 +76,14 @@
         "type": "string",
         "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
       },
+      "ignoreChannelIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Channel IDs to exclude from recall and retain. Match the ctx.channelId value recorded in retained metadata, such as a provider id like channel:123 or a logical id like heartbeat.",
+        "default": []
+      },
       "retainTags": {
         "type": "array",
         "items": {
@@ -305,6 +313,10 @@
     "bankIdPrefix": {
       "label": "Bank ID Prefix",
       "placeholder": "e.g., prod, staging (optional)"
+    },
+    "ignoreChannelIds": {
+      "label": "Ignored Channel IDs",
+      "placeholder": "e.g. heartbeat or channel:1234567890"
     },
     "retainTags": {
       "label": "Retain Tags",

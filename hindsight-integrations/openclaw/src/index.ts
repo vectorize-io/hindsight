@@ -788,6 +788,38 @@ async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null):
   }
 }
 
+function getIgnoredChannelIds(config: Record<string, unknown>): string[] {
+  if (!Array.isArray(config.ignoreChannelIds)) {
+    return [];
+  }
+
+  return config.ignoreChannelIds
+    .filter((value): value is string => typeof value === 'string')
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
+function isIgnoredValue(pluginConfig: PluginConfig, value?: string): boolean {
+  const normalized = value?.trim();
+  return Boolean(normalized && pluginConfig.ignoreChannelIds?.includes(normalized));
+}
+
+function shouldIgnoreChannel(pluginConfig: PluginConfig, ctx?: PluginHookAgentContext): boolean {
+  const sessionParsed = ctx?.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
+
+  if (isIgnoredValue(pluginConfig, ctx?.channelId) || isIgnoredValue(pluginConfig, sessionParsed.channel)) {
+    return true;
+  }
+
+  const heartbeatIgnored = pluginConfig.ignoreChannelIds?.includes('heartbeat');
+  if (!heartbeatIgnored) {
+    return false;
+  }
+
+  return [ctx?.channelId, sessionParsed.channel, ctx?.messageProvider, sessionParsed.provider]
+    .some(value => value?.trim() === 'heartbeat');
+}
+
 function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   const config = api.config.plugins?.entries?.['hindsight-openclaw']?.config || {};
   const defaultMission = 'You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance.';
@@ -811,6 +843,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     dynamicBankId: config.dynamicBankId !== false,
     bankId: envBankId || (typeof config.bankId === 'string' && config.bankId.trim().length > 0 ? config.bankId.trim() : undefined),
     bankIdPrefix: config.bankIdPrefix,
+    ignoreChannelIds: getIgnoredChannelIds(config),
     retainTags: Array.isArray(config.retainTags) ? config.retainTags.filter((tag): tag is string => typeof tag === 'string') : undefined,
     retainSource: typeof config.retainSource === 'string' && config.retainSource.trim().length > 0 ? config.retainSource.trim() : undefined,
     excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
@@ -1191,9 +1224,13 @@ export default function (api: MoltbotPluginAPI) {
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on('before_prompt_build', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
-        // Check if this provider is excluded
+        // Check if this provider or channel is excluded
         if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
           debug(`[Hindsight] Skipping recall for excluded provider: ${ctx.messageProvider}`);
+          return;
+        }
+        if (shouldIgnoreChannel(pluginConfig, ctx)) {
+          debug(`[Hindsight] Skipping recall for ignored channel: ${ctx?.channelId}`);
           return;
         }
 
@@ -1343,9 +1380,13 @@ ${memoriesFormatted}
         const eventSessionKey = typeof event?.sessionKey === 'string' ? event.sessionKey : undefined;
         const effectiveCtx = ctx || (eventSessionKey ? ({ sessionKey: eventSessionKey } as PluginHookAgentContext) : undefined);
 
-        // Check if this provider is excluded
+        // Check if this provider or channel is excluded
         if (effectiveCtx?.messageProvider && pluginConfig.excludeProviders?.includes(effectiveCtx.messageProvider)) {
           debug(`[Hindsight] Skipping retain for excluded provider: ${effectiveCtx.messageProvider}`);
+          return;
+        }
+        if (shouldIgnoreChannel(pluginConfig, effectiveCtx)) {
+          debug(`[Hindsight] Skipping retain for ignored channel: ${effectiveCtx?.channelId}`);
           return;
         }
 

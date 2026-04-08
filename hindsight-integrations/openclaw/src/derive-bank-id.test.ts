@@ -102,6 +102,15 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('prod-shared-bank');
   });
 
+  it('should allow ignored channel IDs without affecting bank derivation', () => {
+    const config: PluginConfig = {
+      ...baseConfig,
+      ignoreChannelIds: ['channel:heartbeat-thread'],
+    };
+    const bankId = deriveBankId(ctx, config);
+    expect(bankId).toBe('agent-123::channel-456::user-789');
+  });
+
   it('should encode segments to prevent separator collisions', () => {
     const ctxWithSeparator: PluginHookAgentContext = {
       agentId: 'a::b',

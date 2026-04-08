@@ -64,6 +64,7 @@ export interface PluginConfig {
   dynamicBankId?: boolean; // Enable per-channel memory banks (default: true)
   bankId?: string; // Static bank ID used when dynamicBankId is false. Can also be set via HINDSIGHT_BANK_ID.
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
+  ignoreChannelIds?: string[]; // Channel IDs to exclude from recall/retain.
   retainTags?: string[]; // Tags applied to all retained documents (e.g. ['source_system:openclaw', 'agent:agentname'])
   retainSource?: string; // Source written into retained document metadata (default: 'openclaw')
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])

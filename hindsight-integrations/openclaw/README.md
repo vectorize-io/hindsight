@@ -29,6 +29,7 @@ That's it! The plugin will automatically start capturing and recalling memories.
 - **Auto-capture** and **auto-recall** of memories each turn, injected into system prompt space so recalled memories stay out of the visible chat transcript
 - **Memory isolation** — configurable per agent, channel, user, or provider via `dynamicBankGranularity`
 - **Retention controls** — choose which message roles to retain, toggle auto-retain on/off, and stamp retained documents with consistent tags/source metadata
+- **Explicit channel exclusions** — skip recall/retain in any configured channels via `ignoreChannelIds`, including logical channel ids such as `heartbeat`, which also mutes heartbeat-classified runs that carry heartbeat metadata
 
 ## Configuration
 
@@ -48,6 +49,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankId` | `true` | Enable per-context memory banks |
 | `bankId` | — | Static bank ID used when `dynamicBankId` is `false`. Can also be set with `HINDSIGHT_BANK_ID`. |
 | `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
+| `ignoreChannelIds` | `[]` | Channel IDs to skip for recall/retain. Use the `ctx.channelId` value seen in retained metadata, which may be a provider id like `channel:123...` or a logical id like `heartbeat`. When `heartbeat` is included, heartbeat-classified runs are muted even if the session itself is bound to a real channel. |
 | `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`) |
 | `retainSource` | `"openclaw"` | `source` value written into retained document metadata |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
