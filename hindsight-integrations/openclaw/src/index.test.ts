@@ -565,6 +565,56 @@ describe('ignored channels', () => {
       hindsight.getClientForContext = originalGetClientForContext;
     }
   });
+
+  it('skips heartbeat-classified runs when heartbeat is ignored even if the session channel is different', async () => {
+    const beforePromptBuildHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+    const agentEndHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
+    const recallMock = vi.fn().mockResolvedValue({ results: [{ text: 'memory' }] });
+    const retainMock = vi.fn().mockResolvedValue({ success: true });
+    const getClientForContextMock = vi.fn().mockResolvedValue({ recall: recallMock, retain: retainMock });
+    const waitForReadyMock = vi.fn().mockResolvedValue(undefined);
+
+    const hindsight = (global as any).__hindsightClient;
+    expect(hindsight).toBeDefined();
+    const originalWaitForReady = hindsight.waitForReady;
+    const originalGetClientForContext = hindsight.getClientForContext;
+    hindsight.waitForReady = waitForReadyMock;
+    hindsight.getClientForContext = getClientForContextMock;
+
+    try {
+      openclawPlugin({
+        config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['heartbeat'] } } } } },
+        registerService: () => {},
+        on: (event: string, handler: any) => {
+          if (event === 'before_prompt_build') beforePromptBuildHandlers.push(handler);
+          if (event === 'agent_end') agentEndHandlers.push(handler);
+        },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      } as any);
+
+      const heartbeatCtx = {
+        channelId: 'heartbeat',
+        messageProvider: 'discord',
+        sessionKey: 'agent:main:discord:channel:1491427369406304468',
+      };
+
+      await expect(
+        beforePromptBuildHandlers[0]({ rawMessage: 'heartbeat wake', prompt: 'heartbeat wake' }, heartbeatCtx),
+      ).resolves.toBeUndefined();
+
+      await expect(
+        agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'heartbeat message' }] }, heartbeatCtx),
+      ).resolves.toBeUndefined();
+
+      expect(waitForReadyMock).not.toHaveBeenCalled();
+      expect(getClientForContextMock).not.toHaveBeenCalled();
+      expect(recallMock).not.toHaveBeenCalled();
+      expect(retainMock).not.toHaveBeenCalled();
+    } finally {
+      hindsight.waitForReady = originalWaitForReady;
+      hindsight.getClientForContext = originalGetClientForContext;
+    }
+  });
 });
 
 describe('waitForReady (CLI mode)', () => {
