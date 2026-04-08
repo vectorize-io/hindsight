@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import platform
+import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -80,6 +83,16 @@ class EmbeddedPostgres:
                 else:
                     logger.debug(f"pg0 start attempt {attempt}/{max_retries} failed: {last_error}")
 
+        # On Linux, check for missing shared libraries which produce misleading errors
+        # from initdb (e.g. "program postgres is needed by initdb but was not found").
+        missing_libs_hint = _check_postgres_missing_libs()
+        if missing_libs_hint:
+            raise RuntimeError(
+                f"Failed to start embedded PostgreSQL after {max_retries} attempts.\n"
+                f"{missing_libs_hint}\n"
+                f"Last error: {last_error}"
+            )
+
         raise RuntimeError(
             f"Failed to start embedded PostgreSQL after {max_retries} attempts. Last error: {last_error}"
         )
@@ -120,6 +133,61 @@ class EmbeddedPostgres:
         if await self.is_running():
             return await self.get_uri()
         return await self.start()
+
+
+def _check_postgres_missing_libs() -> str | None:
+    """Check if the embedded PostgreSQL binary is missing shared libraries.
+
+    On some Linux distributions (e.g., Arch Linux), the pre-built PostgreSQL binary
+    distributed by pg0-embedded may require libraries not installed by default
+    (e.g., libxml2-legacy). When a required library is missing, initdb reports a
+    misleading error: "program postgres is needed by initdb but was not found in the
+    same directory". This function detects that root cause and returns a human-readable
+    hint.
+
+    Returns:
+        A hint string describing the missing libraries and how to fix them,
+        or None if no missing libraries are detected or the check cannot run.
+    """
+    if platform.system() != "Linux":
+        return None
+
+    pg0_base = Path.home() / ".pg0" / "installation"
+    if not pg0_base.exists():
+        return None
+
+    postgres_binary: Path | None = None
+    for version_dir in pg0_base.iterdir():
+        candidate = version_dir / "bin" / "postgres"
+        if candidate.exists():
+            postgres_binary = candidate
+            break
+
+    if postgres_binary is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["ldd", str(postgres_binary)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        missing = [line.strip() for line in result.stdout.splitlines() if "not found" in line]
+        if not missing:
+            return None
+
+        hint = f"Missing shared libraries detected for {postgres_binary}:\n"
+        for lib in missing:
+            hint += f"  {lib}\n"
+        hint += (
+            "\nTo fix this on Arch Linux, install the required packages, e.g.:\n"
+            "  sudo pacman -S libxml2-legacy\n"
+            "On other distributions, install the equivalent packages for the missing libraries."
+        )
+        return hint
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
 
 
 _default_instance: EmbeddedPostgres | None = None
