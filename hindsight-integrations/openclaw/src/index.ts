@@ -788,7 +788,7 @@ async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null):
   }
 }
 
-function getIgnoredChannelIds(config: Record<string, unknown>): string[] {
+function getIgnoredChannelIds(config: PluginConfig): string[] {
   if (!Array.isArray(config.ignoreChannelIds)) {
     return [];
   }
