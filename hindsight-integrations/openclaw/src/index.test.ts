@@ -470,13 +470,13 @@ describe('truncateRecallQuery', () => {
 // waitForReady — CLI mode no-op (initPromise is null before service.start())
 // ---------------------------------------------------------------------------
 
-describe('ignored heartbeat channel', () => {
+describe('ignored channels', () => {
   it('skips recall and retain for configured ignored channel ids', async () => {
     const beforePromptBuildHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
     const agentEndHandlers: Array<(event: any, ctx?: any) => Promise<any>> = [];
 
     openclawPlugin({
-      config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['channel:heartbeat-thread'] } } } } },
+      config: { plugins: { entries: { 'hindsight-openclaw': { config: { ignoreChannelIds: ['channel:ignored'] } } } } },
       registerService: () => {},
       on: (event: string, handler: any) => {
         if (event === 'before_prompt_build') beforePromptBuildHandlers.push(handler);
@@ -488,14 +488,14 @@ describe('ignored heartbeat channel', () => {
     expect(beforePromptBuildHandlers).toHaveLength(1);
     expect(agentEndHandlers).toHaveLength(1);
 
-    const ignoredCtx = { channelId: 'channel:heartbeat-thread', messageProvider: 'discord' };
+    const ignoredCtx = { channelId: 'channel:ignored', messageProvider: 'discord' };
 
     await expect(
-      beforePromptBuildHandlers[0]({ rawMessage: 'Remember this heartbeat', prompt: 'Remember this heartbeat' }, ignoredCtx),
+      beforePromptBuildHandlers[0]({ rawMessage: 'Remember this channel', prompt: 'Remember this channel' }, ignoredCtx),
     ).resolves.toBeUndefined();
 
     await expect(
-      agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'heartbeat' }] }, ignoredCtx),
+      agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'ignored channel message' }] }, ignoredCtx),
     ).resolves.toBeUndefined();
   });
 });

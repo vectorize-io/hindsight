@@ -105,7 +105,7 @@ describe('deriveBankId', () => {
   it('should allow ignored channel IDs without affecting bank derivation', () => {
     const config: PluginConfig = {
       ...baseConfig,
-      ignoreChannelIds: ['channel:heartbeat-thread'],
+      ignoreChannelIds: ['channel:ignored'],
     };
     const bankId = deriveBankId(ctx, config);
     expect(bankId).toBe('agent-123::channel-456::user-789');
