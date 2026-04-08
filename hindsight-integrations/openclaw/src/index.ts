@@ -816,8 +816,14 @@ function shouldIgnoreChannel(pluginConfig: PluginConfig, ctx?: PluginHookAgentCo
     return false;
   }
 
-  return [ctx?.channelId, sessionParsed.channel, ctx?.messageProvider, sessionParsed.provider]
-    .some(value => value?.trim() === 'heartbeat');
+  const effectiveValues = [
+    ctx?.channelId,
+    sessionParsed.channel,
+    ctx?.messageProvider,
+    sessionParsed.provider,
+  ];
+
+  return effectiveValues.some(value => value?.trim() === 'heartbeat');
 }
 
 function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
@@ -1474,7 +1480,7 @@ ${memoriesFormatted}
 
 
         const retainNow = Date.now();
-        const retainRequest = buildRetainRequest(transcript, messageCount, effectiveCtx, pluginConfig, retainNow);
+        const retainRequest = buildRetainRequest(transcript, messageCount, effectiveCtxForRetain, pluginConfig, retainNow);
 
         // Retain to Hindsight
         debug(`[Hindsight] Retaining to bank ${bankId}, document: ${retainRequest.document_id}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? '\n...(truncated)' : ''}\n---`);

@@ -592,18 +592,24 @@ describe('ignored channels', () => {
         logger: { info: () => {}, warn: () => {}, error: () => {} },
       } as any);
 
-      const heartbeatCtx = {
-        channelId: 'heartbeat',
-        messageProvider: 'discord',
+      const recallCtx = {
+        channelId: 'discord:normal-channel',
+        messageProvider: 'heartbeat',
         sessionKey: 'agent:main:discord:channel:test-heartbeat-parent',
       };
 
+      const retainCtx = {
+        channelId: 'discord:normal-channel',
+        messageProvider: 'discord',
+        sessionKey: 'agent:main:heartbeat:channel:test-heartbeat-parent',
+      };
+
       await expect(
-        beforePromptBuildHandlers[0]({ rawMessage: 'heartbeat wake', prompt: 'heartbeat wake' }, heartbeatCtx),
+        beforePromptBuildHandlers[0]({ rawMessage: 'heartbeat wake', prompt: 'heartbeat wake' }, recallCtx),
       ).resolves.toBeUndefined();
 
       await expect(
-        agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'heartbeat message' }] }, heartbeatCtx),
+        agentEndHandlers[0]({ success: true, messages: [{ role: 'user', content: 'heartbeat message' }] }, retainCtx),
       ).resolves.toBeUndefined();
 
       expect(waitForReadyMock).not.toHaveBeenCalled();
