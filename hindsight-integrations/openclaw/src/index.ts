@@ -43,6 +43,7 @@ const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 // Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
 // blocks) so agent_end can look them up — event.messages in agent_end is clean history.
 const senderIdBySession = new Map<string, string>();
+const documentSequenceBySession = new Map<string, number>();
 
 // Guard against double hook registration on the same api instance
 // Uses a WeakSet so each api instance can only register hooks once
@@ -813,7 +814,9 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     bankIdPrefix: config.bankIdPrefix,
     retainTags: Array.isArray(config.retainTags) ? config.retainTags.filter((tag): tag is string => typeof tag === 'string') : undefined,
     retainSource: typeof config.retainSource === 'string' && config.retainSource.trim().length > 0 ? config.retainSource.trim() : undefined,
-    excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
+    excludeProviders: Array.isArray(config.excludeProviders)
+      ? Array.from(new Set(['heartbeat', ...config.excludeProviders.filter((provider): provider is string => typeof provider === 'string')]))
+      : ['heartbeat'],
     autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity) ? config.dynamicBankGranularity : undefined,
     autoRetain: config.autoRetain !== false, // Default: true
@@ -1433,7 +1436,17 @@ ${memoriesFormatted}
 
 
         const retainNow = Date.now();
-        const retainRequest = buildRetainRequest(transcript, messageCount, effectiveCtx, pluginConfig, retainNow);
+        const retainRequest = buildRetainRequest(
+          transcript,
+          messageCount,
+          effectiveCtxForRetain,
+          pluginConfig,
+          retainNow,
+          {
+            retentionScope: retainFullWindow ? 'window' : 'turn',
+            windowTurns: retainFullWindow ? (pluginConfig.retainEveryNTurns ?? 1) + (pluginConfig.retainOverlapTurns ?? 0) : undefined,
+          },
+        );
 
         // Retain to Hindsight
         debug(`[Hindsight] Retaining to bank ${bankId}, document: ${retainRequest.document_id}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? '\n...(truncated)' : ''}\n---`);
@@ -1473,23 +1486,74 @@ ${memoriesFormatted}
 
 // Export client getter for tools
 
+function sanitizeDocumentIdPart(value: string | undefined, fallback: string): string {
+  const normalized = (value || '').trim();
+  if (!normalized) return fallback;
+  return normalized
+    .replace(/[^a-zA-Z0-9:_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '') || fallback;
+}
+
+function getSessionDocumentBase(effectiveCtx: PluginHookAgentContext | undefined): string {
+  const sessionKeyPart = sanitizeDocumentIdPart(effectiveCtx?.sessionKey, 'session');
+  return `openclaw:${sessionKeyPart}`;
+}
+
+function nextDocumentSequence(effectiveCtx: PluginHookAgentContext | undefined): number {
+  const sequenceKey = effectiveCtx?.sessionKey || 'session';
+  const next = (documentSequenceBySession.get(sequenceKey) || 0) + 1;
+  documentSequenceBySession.set(sequenceKey, next);
+  if (documentSequenceBySession.size > MAX_TRACKED_SESSIONS) {
+    const oldestKey = documentSequenceBySession.keys().next().value;
+    if (oldestKey) {
+      documentSequenceBySession.delete(oldestKey);
+    }
+  }
+  return next;
+}
+
+function extractThreadId(channelId: string | undefined): string | undefined {
+  if (!channelId) return undefined;
+  const match = channelId.match(/(?:^|:)topic:([^:]+)$/);
+  return match?.[1];
+}
+
 export function buildRetainRequest(
   transcript: string,
   messageCount: number,
   effectiveCtx: PluginHookAgentContext | undefined,
   pluginConfig: PluginConfig,
   now = Date.now(),
+  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
 ): RetainRequest {
+  const parsedSession = effectiveCtx?.sessionKey ? parseSessionKey(effectiveCtx.sessionKey) : {};
+  const turnIndex = options?.turnIndex ?? nextDocumentSequence(effectiveCtx);
+  const retentionScope = options?.retentionScope || 'turn';
+  const documentBase = getSessionDocumentBase(effectiveCtx);
+  const documentKind = retentionScope === 'window' ? 'window' : 'turn';
+  const documentId = `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, '0')}`;
+  const channelId = effectiveCtx?.channelId || parsedSession.channel;
+  const provider = effectiveCtx?.messageProvider || parsedSession.provider;
+  const threadId = extractThreadId(channelId);
+
   return {
     content: transcript,
-    document_id: `${effectiveCtx?.sessionKey || 'session'}-${now}`,
+    document_id: documentId,
     metadata: {
       retained_at: new Date(now).toISOString(),
       message_count: String(messageCount),
       source: pluginConfig.retainSource || 'openclaw',
+      retention_scope: retentionScope,
+      turn_index: String(turnIndex),
+      session_key: effectiveCtx?.sessionKey,
+      agent_id: effectiveCtx?.agentId || parsedSession.agentId,
+      provider,
       channel_type: effectiveCtx?.messageProvider,
-      channel_id: effectiveCtx?.channelId,
+      channel_id: channelId,
+      thread_id: threadId,
       sender_id: effectiveCtx?.senderId,
+      ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
     tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
   };

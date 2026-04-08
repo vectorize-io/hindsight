@@ -98,7 +98,8 @@
         "items": {
           "type": "string"
         },
-        "description": "Message providers to exclude from recall and retain (e.g. ['telegram', 'discord'])"
+        "description": "Message providers to exclude from recall and retain (e.g. ['heartbeat', 'telegram', 'discord'])",
+        "default": ["heartbeat"]
       },
       "dynamicBankGranularity": {
         "type": "array",
@@ -320,7 +321,7 @@
     },
     "excludeProviders": {
       "label": "Excluded Providers",
-      "placeholder": "e.g. telegram, discord"
+      "placeholder": "e.g. heartbeat, telegram, discord"
     },
     "dynamicBankGranularity": {
       "label": "Bank Granularity",

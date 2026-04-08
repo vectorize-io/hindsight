@@ -51,12 +51,15 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`) |
 | `retainSource` | `"openclaw"` | `source` value written into retained document metadata |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
-| `excludeProviders` | `[]` | Message providers to skip for recall/retain (e.g. `slack`, `telegram`, `discord`) |
+| `excludeProviders` | `["heartbeat"]` | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`) |
 | `autoRecall` | `true` | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool. |
 | `autoRetain` | `true` | Auto-retain conversations after each turn |
 | `retainRoles` | `["user", "assistant"]` | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool` |
 | `retainEveryNTurns` | `1` | Retain every Nth turn. `1` = every turn (default). Values > 1 enable chunked retention with a sliding window. |
 | `retainOverlapTurns` | `0` | Extra prior turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns`. Only applies when `retainEveryNTurns > 1`. |
+
+Retained documents use stable session-scoped IDs like `openclaw:agent:agentname:discord:channel:123:turn:000001` (or `...:window:000002` for chunked retention), and include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`.
+
 | `recallBudget` | `"mid"` | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies. |
 | `recallMaxTokens` | `1024` | Max tokens for recall response. Controls how much memory context is injected per turn. |
 | `recallTypes` | `["world", "experience"]` | Memory types to recall. Options: `world`, `experience`, `observation`. Excludes verbose `observation` entries by default. |
