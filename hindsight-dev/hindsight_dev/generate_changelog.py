@@ -44,6 +44,8 @@ VALID_INTEGRATIONS = [
     "codex",
     "hermes",
     "autogen",
+    "paperclip",
+    "opencode",
 ]
 
 
@@ -529,6 +531,8 @@ def _get_package_name(integration: str) -> str:
         "codex": "hindsight-codex",
         "hermes": "hindsight-hermes",
         "autogen": "hindsight-autogen",
+        "paperclip": "@vectorize-io/hindsight-paperclip",
+        "opencode": "@vectorize-io/opencode-hindsight",
     }
     return packages[integration]
 
@@ -557,6 +561,8 @@ def _integration_display_name(integration: str) -> str:
         "codex": "Codex",
         "hermes": "Hermes",
         "autogen": "AutoGen",
+        "paperclip": "Paperclip",
+        "opencode": "OpenCode",
     }
     return names.get(integration, integration)
 

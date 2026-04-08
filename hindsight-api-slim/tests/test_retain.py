@@ -245,13 +245,12 @@ async def test_event_date_storage(memory, request_context):
 
         assert len(unit_ids) > 0, "Should have created at least one memory unit"
 
-        # Recall the fact
+        # Recall the fact (no fact_type filter — LLM may classify as world or experience)
         result = await memory.recall_async(
             bank_id=bank_id,
             query="When did Alice complete the product launch?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"],
             request_context=request_context,
         )
 
@@ -547,13 +546,12 @@ async def test_mentioned_at_from_context_string(memory, request_context):
 
         assert len(unit_ids) > 0, "Should create memory unit"
 
-        # Recall and verify mentioned_at is set
+        # Recall and verify mentioned_at is set (no fact_type filter — LLM may classify as world or experience)
         result = await memory.recall_async(
             bank_id=bank_id,
             query="What does Alice like?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"],
             request_context=request_context,
         )
 
@@ -738,13 +736,12 @@ async def test_context_preservation(memory, request_context):
 
         assert len(unit_ids) > 0, "Should create at least one memory unit"
 
-        # Recall and verify context is returned
+        # Recall and verify context is returned (no fact_type filter — LLM may classify as world or experience)
         result = await memory.recall_async(
             bank_id=bank_id,
             query="What did the team decide?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"],
             request_context=request_context,
         )
 
@@ -1106,13 +1103,12 @@ async def test_document_upsert_behavior(memory, request_context):
 
         assert len(v2_units) > 0, "Should create units for v2"
 
-        # Recall should return the updated information
+        # Recall should return the updated information (no fact_type filter — LLM may classify as world or experience)
         result = await memory.recall_async(
             bank_id=bank_id,
             query="What is the project status?",
             budget=Budget.MID,
             max_tokens=1000,
-            fact_type=["world"],
             request_context=request_context,
         )
 
@@ -2060,20 +2056,23 @@ async def test_semantic_links_phase1_ann_cross_batch(memory, request_context):
     bank_id = f"test_semantic_phase1_{datetime.now(timezone.utc).timestamp()}"
 
     try:
-        # First batch: store some facts about Python
+        # First batch: store some world facts about a topic
+        # Use clearly "world" content (general knowledge, not personal experience)
+        # to ensure consistent fact_type classification across batches,
+        # since ANN search filters by fact_type.
         await memory.retain_async(
             bank_id=bank_id,
-            content="Alice is an expert Python developer who builds web applications using FastAPI.",
-            context="team skills",
+            content="Python is a high-level programming language widely used for web development with frameworks like FastAPI.",
+            context="programming languages",
             request_context=request_context,
         )
 
-        # Second batch: store similar facts — Phase 1 ANN should find the first batch's
+        # Second batch: store similar world facts — Phase 1 ANN should find the first batch's
         # facts via HNSW index and create cross-batch semantic links
         unit_ids_2 = await memory.retain_async(
             bank_id=bank_id,
-            content="Bob specializes in Python programming and creates REST APIs with FastAPI.",
-            context="team skills",
+            content="FastAPI is a modern Python web framework known for its high performance and automatic API documentation.",
+            context="programming languages",
             request_context=request_context,
         )
 

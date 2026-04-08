@@ -252,6 +252,9 @@ class MetricsCollector(MetricsCollectorBase):
 
     def __init__(self):
         self.meter = get_meter()
+        from .config import get_config
+
+        self._include_bank_id = get_config().metrics_include_bank_id
 
         # Operation latency histogram (in seconds)
         # Records duration of retain, recall, reflect operations
@@ -332,10 +335,11 @@ class MetricsCollector(MetricsCollectorBase):
         start_time = time.time()
         attributes = {
             "operation": operation,
-            "bank_id": bank_id,
             "source": source,
             "tenant": _get_tenant(),
         }
+        if self._include_bank_id:
+            attributes["bank_id"] = bank_id
         if budget:
             attributes["budget"] = budget
         if max_tokens:

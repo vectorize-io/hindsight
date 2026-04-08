@@ -12,7 +12,7 @@ import PageHero from '@site/src/components/PageHero';
 - [Core Concepts](#core-concepts) — Memory banks, taxonomy, memory types
 - [Bank Configuration](#bank-configuration) — Missions, dispositions, entity labels
 - [Retaining Data](#retaining-data) — Content format, context, document_id, [tags](#tags-naming-conventions), observation scopes
-- [Recalling Memories](#recalling-memories) — Budget, tag filtering, include options, query_timestamp
+- [Recalling Memories](#recalling-memories) — Budget, tag filtering, entity label filtering, include options, query_timestamp
 - [Reflecting](#reflecting) — Recall vs reflect, response_schema, auditing
 - [Mental Models](#mental-models) — When to create, tag strategy, refresh
 - [Anti-patterns](#anti-patterns)
@@ -399,6 +399,50 @@ recall(
 | *(not set)* | All types |
 | `["observation"]` | Consolidated patterns only — faster for high-level questions |
 | `["world", "experience"]` | Raw facts only — for ground-truth or citation-sensitive queries |
+
+---
+
+### Filtering by Memory Shape with Entity Labels
+
+When a single bank contains semantically similar memories that serve different purposes (e.g., concise operating rules vs. detailed troubleshooting procedures), ranking alone cannot reliably distinguish them — two memories about "entrypoints" will score similarly regardless of whether one is a one-line rule and the other is a multi-step runbook.
+
+Use [entity labels](/developer/api/memory-banks#entity-labels) with `tag: true` to classify facts at retain time and hard-filter at recall time.
+
+**1. Define a label group on the bank:**
+
+```json
+{
+  "entity_labels": [
+    {
+      "key": "memory_type",
+      "description": "The type of knowledge: 'rule' for concise operating rules and canonical guidance, 'procedure' for step-by-step technical instructions and troubleshooting notes",
+      "type": "value",
+      "optional": false,
+      "tag": true,
+      "values": [
+        { "value": "rule",      "description": "Concise operating rule or canonical guidance" },
+        { "value": "procedure", "description": "Step-by-step technical instruction or troubleshooting note" }
+      ]
+    }
+  ]
+}
+```
+
+**2. Retain normally** — the LLM classifies each fact automatically and writes `memory_type:rule` or `memory_type:procedure` as a tag.
+
+**3. Filter at recall time:**
+
+```python
+# Only rules — procedures are excluded at the database level, not post-filtered
+result = client.recall(
+    bank_id="my-bank",
+    query="which entrypoint should I use?",
+    tags=["memory_type:rule"],
+    tags_match="any_strict"
+)
+```
+
+This is a hard SQL WHERE clause applied across all four retrieval strategies. The unwanted memories never enter the ranking pipeline.
 
 ---
 

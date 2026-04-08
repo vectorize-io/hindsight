@@ -952,8 +952,8 @@ class TestSyncTaskBackend:
         assert executed[0] == task_dict
 
     @pytest.mark.asyncio
-    async def test_sync_backend_handles_errors(self):
-        """Test that SyncTaskBackend handles executor errors gracefully."""
+    async def test_sync_backend_propagates_errors(self):
+        """Test that SyncTaskBackend propagates executor errors instead of swallowing them."""
 
         async def failing_executor(task_dict):
             raise ValueError("Test error")
@@ -962,8 +962,9 @@ class TestSyncTaskBackend:
         backend.set_executor(failing_executor)
         await backend.initialize()
 
-        # Should not raise, error is logged
-        await backend.submit_task({"type": "test"})
+        # Should raise so callers can handle or surface the failure
+        with pytest.raises(ValueError, match="Test error"):
+            await backend.submit_task({"type": "test"})
 
 
 class TestDynamicTenantDiscovery:

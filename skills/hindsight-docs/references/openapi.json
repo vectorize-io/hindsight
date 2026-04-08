@@ -972,6 +972,23 @@
             "description": "How to match tags"
           },
           {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "metadata",
+                "content",
+                "full"
+              ],
+              "type": "string",
+              "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+              "default": "full",
+              "title": "Detail"
+            },
+            "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)"
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -1128,6 +1145,23 @@
               "type": "string",
               "title": "Mental Model Id"
             }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "metadata",
+                "content",
+                "full"
+              ],
+              "type": "string",
+              "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+              "default": "full",
+              "title": "Detail"
+            },
+            "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)"
           },
           {
             "name": "authorization",
@@ -3066,6 +3100,156 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/import": {
+      "post": {
+        "tags": [
+          "Bank Templates"
+        ],
+        "summary": "Import bank template",
+        "description": "Import a bank template manifest to create or update a bank's configuration, mental models, and directives. If the bank does not exist it is created. Config fields are applied as per-bank overrides. Mental models are matched by id, directives by name \u2014 existing ones are updated, new ones are created. Use dry_run=true to validate the manifest without applying changes.",
+        "operationId": "import_bank_template",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Validate only, do not apply changes",
+              "default": false,
+              "title": "Dry Run"
+            },
+            "description": "Validate only, do not apply changes"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTemplateImportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/export": {
+      "get": {
+        "tags": [
+          "Bank Templates"
+        ],
+        "summary": "Export bank template",
+        "description": "Export a bank's current configuration, mental models, and directives as a template manifest. The exported manifest can be imported into another bank to replicate the setup.",
+        "operationId": "export_bank_template",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankTemplateManifest"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bank-template-schema": {
+      "get": {
+        "tags": [
+          "Bank Templates"
+        ],
+        "summary": "Get bank template JSON Schema",
+        "description": "Returns the JSON Schema for the bank template manifest format. Use this to validate template manifests before importing.",
+        "operationId": "get_bank_template_schema",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/observations": {
       "delete": {
         "tags": [
@@ -4959,6 +5143,412 @@
           "total_observations": 45
         }
       },
+      "BankTemplateConfig": {
+        "properties": {
+          "reflect_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Mission",
+            "description": "Mission/context for Reflect operations"
+          },
+          "retain_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Mission",
+            "description": "Steers what gets extracted during retain"
+          },
+          "retain_extraction_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Extraction Mode",
+            "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+          },
+          "retain_custom_instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Custom Instructions",
+            "description": "Custom extraction prompt (when mode='custom')"
+          },
+          "retain_chunk_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Size",
+            "description": "Max token size for each content chunk"
+          },
+          "enable_observations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Observations",
+            "description": "Toggle observation consolidation"
+          },
+          "observations_mission": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations Mission",
+            "description": "Controls what gets synthesised"
+          },
+          "disposition_skepticism": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Skepticism",
+            "description": "Skepticism trait (1-5)"
+          },
+          "disposition_literalism": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Literalism",
+            "description": "Literalism trait (1-5)"
+          },
+          "disposition_empathy": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Empathy",
+            "description": "Empathy trait (1-5)"
+          },
+          "entity_labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Labels",
+            "description": "Controlled vocabulary for entity labels"
+          },
+          "entities_allow_free_form": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities Allow Free Form",
+            "description": "Allow entities outside the label vocabulary"
+          }
+        },
+        "type": "object",
+        "title": "BankTemplateConfig",
+        "description": "Bank configuration fields within a template manifest.\n\nOnly includes configurable (per-bank) fields. Credential fields\n(API keys, base URLs) are intentionally excluded for security."
+      },
+      "BankTemplateDirective": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable name for the directive (used as match key on re-import)"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The directive text to inject into prompts"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "description": "Higher priority directives are injected first",
+            "default": 0
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "description": "Whether this directive is active",
+            "default": true
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Tags for filtering",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "BankTemplateDirective",
+        "description": "A directive definition within a bank template manifest.\n\nDirectives are matched by name on re-import: existing directives\nwith the same name are updated, new ones are created."
+      },
+      "BankTemplateImportResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Bank that was imported into"
+          },
+          "config_applied": {
+            "type": "boolean",
+            "title": "Config Applied",
+            "description": "Whether bank config was updated"
+          },
+          "mental_models_created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mental Models Created",
+            "description": "IDs of newly created mental models",
+            "default": []
+          },
+          "mental_models_updated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mental Models Updated",
+            "description": "IDs of updated mental models",
+            "default": []
+          },
+          "directives_created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directives Created",
+            "description": "Names of newly created directives",
+            "default": []
+          },
+          "directives_updated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directives Updated",
+            "description": "Names of updated directives",
+            "default": []
+          },
+          "operation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Operation Ids",
+            "description": "Operation IDs for mental model content generation (async)",
+            "default": []
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "True if this was a validation-only run",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "config_applied"
+        ],
+        "title": "BankTemplateImportResponse",
+        "description": "Response model for the bank template import endpoint."
+      },
+      "BankTemplateManifest": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Manifest schema version (currently '1')"
+          },
+          "bank": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BankTemplateConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bank configuration to apply. Omit to leave config unchanged."
+          },
+          "mental_models": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BankTemplateMentalModel"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mental Models",
+            "description": "Mental models to create or update (matched by id). Omit to leave unchanged."
+          },
+          "directives": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BankTemplateDirective"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directives",
+            "description": "Directives to create or update (matched by name). Omit to leave unchanged."
+          }
+        },
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "BankTemplateManifest",
+        "description": "A bank template manifest for import/export.\n\nVersion field enables forward-compatible schema evolution: the API\nauto-upgrades older manifest versions to the current schema on import.",
+        "example": {
+          "bank": {
+            "disposition_empathy": 5,
+            "enable_observations": true,
+            "reflect_mission": "You are helping a support agent remember customer interactions.",
+            "retain_mission": "Extract customer issues, resolutions, and sentiment."
+          },
+          "directives": [
+            {
+              "content": "Always respond with empathy and understanding.",
+              "name": "Always be empathetic",
+              "priority": 10
+            }
+          ],
+          "mental_models": [
+            {
+              "id": "sentiment-overview",
+              "name": "Customer Sentiment Overview",
+              "source_query": "What is the overall sentiment trend?",
+              "trigger": {
+                "refresh_after_consolidation": true
+              }
+            }
+          ],
+          "version": "1"
+        }
+      },
+      "BankTemplateMentalModel": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique ID for the mental model (alphanumeric lowercase with hyphens)"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable name for the mental model"
+          },
+          "source_query": {
+            "type": "string",
+            "title": "Source Query",
+            "description": "The query to run to generate content"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Tags for scoped visibility",
+            "default": []
+          },
+          "max_tokens": {
+            "type": "integer",
+            "maximum": 8192.0,
+            "minimum": 256.0,
+            "title": "Max Tokens",
+            "description": "Maximum tokens for generated content",
+            "default": 2048
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/MentalModelTrigger-Output",
+            "description": "Trigger settings",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "source_query"
+        ],
+        "title": "BankTemplateMentalModel",
+        "description": "A mental model definition within a bank template manifest."
+      },
       "Body_file_retain": {
         "properties": {
           "files": {
@@ -6706,11 +7296,25 @@
             "title": "Name"
           },
           "source_query": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Source Query"
           },
           "content": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Content",
             "description": "The mental model content as well-formatted markdown (auto-generated from reflect endpoint)"
           },
@@ -6723,13 +7327,25 @@
             "default": []
           },
           "max_tokens": {
-            "type": "integer",
-            "title": "Max Tokens",
-            "default": 2048
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
           },
           "trigger": {
-            "$ref": "#/components/schemas/MentalModelTrigger-Output",
-            "default": {}
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MentalModelTrigger-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_refreshed_at": {
             "anyOf": [
@@ -6771,9 +7387,7 @@
         "required": [
           "id",
           "bank_id",
-          "name",
-          "source_query",
-          "content"
+          "name"
         ],
         "title": "MentalModelResponse",
         "description": "Response model for a mental model (stored reflect response)."

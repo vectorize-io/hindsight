@@ -53,6 +53,9 @@ import type {
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
+  ExportBankTemplateData,
+  ExportBankTemplateErrors,
+  ExportBankTemplateResponses,
   FileRetainData,
   FileRetainErrors,
   FileRetainResponses,
@@ -65,6 +68,8 @@ import type {
   GetBankProfileData,
   GetBankProfileErrors,
   GetBankProfileResponses,
+  GetBankTemplateSchemaData,
+  GetBankTemplateSchemaResponses,
   GetChunkData,
   GetChunkErrors,
   GetChunkResponses,
@@ -99,6 +104,9 @@ import type {
   GetVersionResponses,
   HealthEndpointHealthGetData,
   HealthEndpointHealthGetResponses,
+  ImportBankTemplateData,
+  ImportBankTemplateErrors,
+  ImportBankTemplateResponses,
   ListAuditLogsData,
   ListAuditLogsErrors,
   ListAuditLogsResponses,
@@ -929,6 +937,48 @@ export const createOrUpdateBank = <ThrowOnError extends boolean = false>(
       ...options.headers,
     },
   });
+
+/**
+ * Import bank template
+ *
+ * Import a bank template manifest to create or update a bank's configuration, mental models, and directives. If the bank does not exist it is created. Config fields are applied as per-bank overrides. Mental models are matched by id, directives by name — existing ones are updated, new ones are created. Use dry_run=true to validate the manifest without applying changes.
+ */
+export const importBankTemplate = <ThrowOnError extends boolean = false>(
+  options: Options<ImportBankTemplateData, ThrowOnError>,
+) =>
+  (options.client ?? client).post<
+    ImportBankTemplateResponses,
+    ImportBankTemplateErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/import", ...options });
+
+/**
+ * Export bank template
+ *
+ * Export a bank's current configuration, mental models, and directives as a template manifest. The exported manifest can be imported into another bank to replicate the setup.
+ */
+export const exportBankTemplate = <ThrowOnError extends boolean = false>(
+  options: Options<ExportBankTemplateData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    ExportBankTemplateResponses,
+    ExportBankTemplateErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/export", ...options });
+
+/**
+ * Get bank template JSON Schema
+ *
+ * Returns the JSON Schema for the bank template manifest format. Use this to validate template manifests before importing.
+ */
+export const getBankTemplateSchema = <ThrowOnError extends boolean = false>(
+  options?: Options<GetBankTemplateSchemaData, ThrowOnError>,
+) =>
+  (options?.client ?? client).get<
+    GetBankTemplateSchemaResponses,
+    unknown,
+    ThrowOnError
+  >({ url: "/v1/bank-template-schema", ...options });
 
 /**
  * Clear all observations

@@ -38,7 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
+import { Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
@@ -182,6 +182,23 @@ export default function BankPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuItem
+                        onClick={async () => {
+                          if (!bankId) return;
+                          try {
+                            const manifest = await client.exportBankTemplate(bankId);
+                            const json = JSON.stringify(manifest, null, 2);
+                            await navigator.clipboard.writeText(json);
+                            toast.success("Template copied to clipboard");
+                          } catch {
+                            toast.error("Failed to export template");
+                          }
+                        }}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export Template
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onClick={handleTriggerConsolidation}
                         disabled={isConsolidating || !observationsEnabled}

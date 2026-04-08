@@ -165,6 +165,18 @@ const config: Config = {
     ],
   ],
 
+  plugins: [
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'integrations',
+        path: './docs-integrations',
+        routeBasePath: 'sdks/integrations',
+        sidebarPath: false,
+      },
+    ],
+  ],
+
   themes: [
     '@docusaurus/theme-mermaid',
     [
@@ -226,6 +238,11 @@ const config: Config = {
           position: 'left',
           className: 'navbar-item-resources',
           items: [
+            {
+              to: '/templates',
+              label: 'Bank Templates Hub',
+              customProps: { icon: 'lu-layout-template' },
+            },
             {
               to: '/best-practices',
               label: 'Best Practices',

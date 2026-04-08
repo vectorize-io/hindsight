@@ -1,6 +1,7 @@
 hindsight_client_api/__init__.py
 hindsight_client_api/api/__init__.py
 hindsight_client_api/api/audit_api.py
+hindsight_client_api/api/bank_templates_api.py
 hindsight_client_api/api/banks_api.py
 hindsight_client_api/api/directives_api.py
 hindsight_client_api/api/documents_api.py
@@ -29,6 +30,11 @@ hindsight_client_api/models/bank_list_item.py
 hindsight_client_api/models/bank_list_response.py
 hindsight_client_api/models/bank_profile_response.py
 hindsight_client_api/models/bank_stats_response.py
+hindsight_client_api/models/bank_template_config.py
+hindsight_client_api/models/bank_template_directive.py
+hindsight_client_api/models/bank_template_import_response.py
+hindsight_client_api/models/bank_template_manifest.py
+hindsight_client_api/models/bank_template_mental_model.py
 hindsight_client_api/models/budget.py
 hindsight_client_api/models/cancel_operation_response.py
 hindsight_client_api/models/child_operation_status.py

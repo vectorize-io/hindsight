@@ -82,20 +82,16 @@ class TaskBackend(ABC):
 
         Args:
             task_dict: Task dictionary to execute
+
+        Raises:
+            Exception: Re-raised from executor on failure.
         """
         if self._executor is None:
             task_type = task_dict.get("type", "unknown")
             logger.warning(f"No executor registered, skipping task {task_type}")
             return
 
-        try:
-            await self._executor(task_dict)
-        except Exception as e:
-            task_type = task_dict.get("type", "unknown")
-            logger.error(f"Error executing task {task_type}: {e}")
-            import traceback
-
-            traceback.print_exc()
+        await self._executor(task_dict)
 
 
 class SyncTaskBackend(TaskBackend):

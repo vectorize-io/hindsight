@@ -18,6 +18,7 @@ __version__ = "0.0.7"
 
 # import apis into sdk package
 from hindsight_client_api.api.audit_api import AuditApi
+from hindsight_client_api.api.bank_templates_api import BankTemplatesApi
 from hindsight_client_api.api.banks_api import BanksApi
 from hindsight_client_api.api.directives_api import DirectivesApi
 from hindsight_client_api.api.documents_api import DocumentsApi
@@ -54,6 +55,11 @@ from hindsight_client_api.models.bank_list_item import BankListItem
 from hindsight_client_api.models.bank_list_response import BankListResponse
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
 from hindsight_client_api.models.bank_stats_response import BankStatsResponse
+from hindsight_client_api.models.bank_template_config import BankTemplateConfig
+from hindsight_client_api.models.bank_template_directive import BankTemplateDirective
+from hindsight_client_api.models.bank_template_import_response import BankTemplateImportResponse
+from hindsight_client_api.models.bank_template_manifest import BankTemplateManifest
+from hindsight_client_api.models.bank_template_mental_model import BankTemplateMentalModel
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.cancel_operation_response import CancelOperationResponse
 from hindsight_client_api.models.child_operation_status import ChildOperationStatus

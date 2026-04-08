@@ -19,6 +19,7 @@ import httpx
 
 from ..config import (
     DEFAULT_EMBEDDINGS_COHERE_MODEL,
+    DEFAULT_EMBEDDINGS_GEMINI_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_MODEL,
     DEFAULT_EMBEDDINGS_LITELLM_SDK_MODEL,
     DEFAULT_EMBEDDINGS_LOCAL_FORCE_CPU,
@@ -28,6 +29,7 @@ from ..config import (
     DEFAULT_EMBEDDINGS_PROVIDER,
     DEFAULT_LITELLM_API_BASE,
     ENV_EMBEDDINGS_COHERE_API_KEY,
+    ENV_EMBEDDINGS_GEMINI_API_KEY,
     ENV_EMBEDDINGS_LITELLM_SDK_API_KEY,
     ENV_EMBEDDINGS_LOCAL_FORCE_CPU,
     ENV_EMBEDDINGS_LOCAL_MODEL,
@@ -884,6 +886,179 @@ class LiteLLMSDKEmbeddings(Embeddings):
         return all_embeddings
 
 
+class GeminiEmbeddings(Embeddings):
+    """
+    Google embeddings via the google.genai SDK.
+
+    Supports both:
+    1. Gemini API (api.generativeai.google.com) with API key authentication
+    2. Vertex AI with service account or Application Default Credentials (ADC)
+
+    Uses the embed_content API: client.models.embed_content(model, contents)
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_EMBEDDINGS_GEMINI_MODEL,
+        api_key: str | None = None,
+        vertexai_project_id: str | None = None,
+        vertexai_region: str | None = None,
+        vertexai_service_account_key: str | None = None,
+        output_dimensionality: int | None = None,
+        batch_size: int = 100,
+    ):
+        self.model = model
+        self.api_key = api_key
+        self.vertexai_project_id = vertexai_project_id
+        self.vertexai_region = vertexai_region or "us-central1"
+        self.vertexai_service_account_key = vertexai_service_account_key
+        self.output_dimensionality = output_dimensionality
+        self.batch_size = batch_size
+        self._client = None
+        self._dimension: int | None = None
+        self._is_vertexai = vertexai_project_id is not None
+        self._embed_config = None  # EmbedContentConfig, built during initialize()
+
+    @property
+    def provider_name(self) -> str:
+        return "google"
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+        return self._dimension
+
+    async def initialize(self) -> None:
+        """Initialize the Google genai client and detect embedding dimension."""
+        if self._client is not None:
+            return
+
+        from google import genai
+        from google.genai import types as genai_types
+
+        if self._is_vertexai:
+            self._init_vertexai(genai)
+        else:
+            self._init_gemini(genai)
+
+        # Build EmbedContentConfig if output_dimensionality is set
+        if self.output_dimensionality is not None:
+            self._embed_config = genai_types.EmbedContentConfig(
+                output_dimensionality=self.output_dimensionality,
+            )
+
+        # Detect dimension via a test embedding (respects output_dimensionality)
+        embed_kwargs = {"model": self.model, "contents": ["test"]}
+        if self._embed_config is not None:
+            embed_kwargs["config"] = self._embed_config
+
+        result = self._client.models.embed_content(**embed_kwargs)  # type: ignore[union-attr]
+        if result.embeddings and len(result.embeddings) > 0:
+            self._dimension = len(result.embeddings[0].values)
+
+        auth_mode = "vertex_ai" if self._is_vertexai else "api_key"
+        logger.info(
+            f"Embeddings: google provider initialized (auth: {auth_mode}, model: {self.model}, dim: {self._dimension})"
+        )
+
+    def _init_gemini(self, genai) -> None:
+        """Initialize Gemini API client with API key."""
+        if not self.api_key:
+            raise ValueError("Gemini embeddings provider requires an API key")
+
+        self._client = genai.Client(api_key=self.api_key)
+        logger.info(f"Embeddings: initializing Gemini provider with model {self.model}")
+
+    def _init_vertexai(self, genai) -> None:
+        """Initialize Vertex AI client with project, region, and credentials."""
+        if not self.vertexai_project_id:
+            raise ValueError(
+                "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID (or HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID) "
+                "is required for Vertex AI embeddings provider."
+            )
+
+        auth_method = "ADC"
+        credentials = None
+
+        if self.vertexai_service_account_key:
+            try:
+                from google.oauth2 import service_account
+            except ImportError:
+                raise ImportError(
+                    "Vertex AI service account auth requires 'google-auth' package. "
+                    "Install with: pip install google-auth"
+                )
+            credentials = service_account.Credentials.from_service_account_file(
+                self.vertexai_service_account_key,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            auth_method = "service_account"
+            logger.info(f"Embeddings: Vertex AI using service account key: {self.vertexai_service_account_key}")
+
+        # Strip google/ prefix from model name — native SDK uses bare names
+        if self.model.startswith("google/"):
+            self.model = self.model[len("google/") :]
+
+        client_kwargs = {
+            "vertexai": True,
+            "project": self.vertexai_project_id,
+            "location": self.vertexai_region,
+        }
+        if credentials is not None:
+            client_kwargs["credentials"] = credentials
+
+        self._client = genai.Client(**client_kwargs)
+        logger.info(
+            f"Embeddings: initializing Vertex AI provider "
+            f"(project={self.vertexai_project_id}, region={self.vertexai_region}, "
+            f"model={self.model}, auth={auth_method})"
+        )
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        """
+        Generate embeddings using the Google genai SDK.
+
+        Args:
+            texts: List of text strings to encode
+
+        Returns:
+            List of embedding vectors
+        """
+        if self._client is None:
+            raise RuntimeError("Embeddings not initialized. Call initialize() first.")
+
+        if not texts:
+            return []
+
+        all_embeddings = []
+
+        # Process in batches
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+
+            embed_kwargs = {"model": self.model, "contents": batch}
+            if self._embed_config is not None:
+                embed_kwargs["config"] = self._embed_config
+
+            result = self._client.models.embed_content(**embed_kwargs)
+
+            all_embeddings.extend([emb.values for emb in result.embeddings])
+
+        # L2-normalize when output_dimensionality is set — Gemini only returns
+        # normalized vectors at full 3072 dims; truncated dims need re-normalization
+        # for accurate cosine similarity.
+        if self.output_dimensionality is not None:
+            import numpy as np
+
+            arr = np.array(all_embeddings)
+            norms = np.linalg.norm(arr, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            all_embeddings = (arr / norms).tolist()
+
+        return all_embeddings
+
+
 def create_embeddings_from_env() -> Embeddings:
     """
     Create an Embeddings instance based on configuration.
@@ -947,8 +1122,27 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
         )
+    elif provider == "google":
+        vertexai_project_id = config.embeddings_vertexai_project_id
+        if vertexai_project_id:
+            api_key = None  # Vertex AI uses ADC or service account
+        else:
+            api_key = config.embeddings_gemini_api_key
+            if not api_key:
+                raise ValueError(
+                    f"{ENV_EMBEDDINGS_GEMINI_API_KEY} or {ENV_LLM_API_KEY} is required "
+                    f"when {ENV_EMBEDDINGS_PROVIDER} is 'google' (set VERTEXAI_PROJECT_ID for Vertex AI auth instead)"
+                )
+        return GeminiEmbeddings(
+            model=config.embeddings_gemini_model,
+            api_key=api_key,
+            vertexai_project_id=vertexai_project_id,
+            vertexai_region=config.embeddings_vertexai_region,
+            vertexai_service_account_key=config.embeddings_vertexai_service_account_key,
+            output_dimensionality=config.embeddings_gemini_output_dimensionality,
+        )
     else:
         raise ValueError(
             f"Unknown embeddings provider: {provider}. "
-            f"Supported: 'local', 'tei', 'openai', 'cohere', 'litellm', 'litellm-sdk'"
+            f"Supported: 'local', 'tei', 'openai', 'cohere', 'google', 'litellm', 'litellm-sdk'"
         )

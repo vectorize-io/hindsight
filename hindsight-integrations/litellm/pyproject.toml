@@ -32,7 +32,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "litellm>=1.40.0,<=1.82.6", # 1.82.7+ contains a supply chain attack (malicious .pth credential stealer)
+    "litellm>=1.83.0", # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789
     # Transitive dependency security fixes
     "aiohttp>=3.13.3",  # Multiple DoS vulnerabilities
     "filelock>=3.20.3",  # TOCTOU race condition

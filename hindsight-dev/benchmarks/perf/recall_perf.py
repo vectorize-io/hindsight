@@ -27,6 +27,10 @@ import statistics
 import time
 from typing import Any
 
+# Capture DB URL early before hindsight_api imports trigger dotenv override
+# (config.py uses load_dotenv(override=True) which stomps env vars)
+_EARLY_DB_URL = os.environ.get("HINDSIGHT_API_DATABASE_URL")
+
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -546,7 +550,7 @@ def _build_engine(*, disable_observations: bool = False) -> "Any":
     """Create a MemoryEngine using mock LLM and DB from env."""
     from hindsight_api import MemoryEngine
 
-    db_url = os.getenv("HINDSIGHT_API_DATABASE_URL", "pg0")
+    db_url = _EARLY_DB_URL or os.getenv("HINDSIGHT_API_DATABASE_URL", "pg0")
     if disable_observations:
         os.environ["HINDSIGHT_API_ENABLE_OBSERVATIONS"] = "false"
     engine = MemoryEngine(

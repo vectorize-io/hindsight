@@ -7,7 +7,6 @@ relevance score, independent of the cross-encoder model's score calibration.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,13 +22,18 @@ def _make_result(
     occurred_start: datetime | None = None,
     temporal_proximity: float | None = None,
 ) -> ScoredResult:
-    retrieval = MagicMock(spec=RetrievalResult)
-    retrieval.occurred_start = occurred_start
-    retrieval.temporal_proximity = temporal_proximity
+    retrieval = RetrievalResult(
+        id="test",
+        text="test",
+        fact_type="world",
+        occurred_start=occurred_start,
+        temporal_proximity=temporal_proximity,
+    )
 
-    candidate = MagicMock(spec=MergedCandidate)
-    candidate.retrieval = retrieval
-    candidate.rrf_score = 0.05
+    candidate = MergedCandidate(
+        retrieval=retrieval,
+        rrf_score=0.05,
+    )
 
     return ScoredResult(
         candidate=candidate,

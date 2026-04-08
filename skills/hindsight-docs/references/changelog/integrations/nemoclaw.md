@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="NemoClaw Changelog" subtitle="@vectorize-io/hindsight-nemoclaw — persistent memory for NemoClaw sandboxed agents." />
 
-[← NemoClaw integration](../../sdks/integrations/nemoclaw.md)
+← NemoClaw integration
 
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/nemoclaw/v0.1.1)
 

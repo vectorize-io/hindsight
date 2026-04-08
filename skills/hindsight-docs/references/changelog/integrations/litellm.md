@@ -6,7 +6,7 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="LiteLLM Changelog" subtitle="hindsight-litellm — universal LLM memory integration via LiteLLM." />
 
-[← LiteLLM integration](../../sdks/integrations/litellm.md)
+← LiteLLM integration
 
 ## [0.5.0](https://github.com/vectorize-io/hindsight/tree/integrations/litellm/v0.5.0)
 

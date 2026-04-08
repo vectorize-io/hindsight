@@ -97,6 +97,7 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     _SINGLE_BANK_TOOLS: frozenset[str] = frozenset(
         {
             "retain",
+            "sync_retain",
             "recall",
             "reflect",
             "list_mental_models",
@@ -156,24 +157,65 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
     return mcp
 
 
+def _get_mcp_tools(mcp: FastMCP) -> dict:
+    """Get tool name→object mapping, compatible with FastMCP 2.x and 3.x."""
+    # FastMCP 2.x: _tool_manager._tools
+    if hasattr(mcp, "_tool_manager"):
+        return mcp._tool_manager._tools  # type: ignore[union-attr]
+    # FastMCP 3.x: _local_provider._components with "tool:" prefix
+    if hasattr(mcp, "_local_provider"):
+        return {
+            k.split(":")[1].split("@")[0]: v
+            for k, v in mcp._local_provider._components.items()  # type: ignore[union-attr]
+            if k.startswith("tool:")
+        }
+    msg = "Cannot locate tools on FastMCP instance"
+    raise AttributeError(msg)
+
+
 def _make_tools_tolerant(mcp: FastMCP) -> None:
-    """Wrap all tool run methods to strip unknown arguments before validation.
+    """Wrap all tool run methods to strip unknown arguments and coerce string-encoded JSON.
 
     LLMs frequently add extra fields like "explanation" or "reasoning" to tool calls.
     FastMCP's Pydantic TypeAdapter rejects these with "Unexpected keyword argument".
-    This wraps each tool's run() to filter arguments to only known parameters.
+
+    LLMs also frequently serialize list/dict arguments as JSON strings instead of native
+    types (e.g., tags='["a","b"]' instead of tags=["a","b"]). This auto-coerces them.
+
+    This wraps each tool's run() to apply both fixes before validation.
     """
     try:
-        for name, tool in mcp._tool_manager._tools.items():  # type: ignore[unresolved-attribute]  # FastMCP 2.x internal; guarded by try/except
+        tools = _get_mcp_tools(mcp)
+        for name, tool in tools.items():
             if hasattr(tool, "parameters") and tool.parameters:
-                allowed = set(tool.parameters.get("properties", {}).keys())
+                properties = tool.parameters.get("properties", {})
+                allowed = set(properties.keys())
+
+                # Build sets of parameter names that expect array or object types.
+                # Handles both direct types {"type": "array"} and anyOf/oneOf unions
+                # like {"anyOf": [{"type": "array", ...}, {"type": "null"}]}.
+                array_params: set[str] = set()
+                object_params: set[str] = set()
+                for param_name, param_schema in properties.items():
+                    _collect_coercible_types(param_schema, param_name, array_params, object_params)
+
                 original_run = tool.run
 
-                async def _tolerant_run(arguments, _allowed=allowed, _orig=original_run):
+                async def _tolerant_run(
+                    arguments,
+                    _allowed=allowed,
+                    _orig=original_run,
+                    _array_params=array_params,
+                    _object_params=object_params,
+                ):
                     extra_keys = set(arguments.keys()) - _allowed
                     if extra_keys:
                         logger.debug(f"Stripping unknown arguments from tool call: {extra_keys}")
                         arguments = {k: v for k, v in arguments.items() if k in _allowed}
+
+                    # Coerce string-encoded JSON for list/dict parameters
+                    arguments = _coerce_string_json(arguments, _array_params, _object_params)
+
                     return await _orig(arguments)
 
                 # FunctionTool is a Pydantic model with extra='forbid', so use
@@ -181,6 +223,59 @@ def _make_tools_tolerant(mcp: FastMCP) -> None:
                 object.__setattr__(tool, "run", _tolerant_run)
     except (AttributeError, KeyError) as e:
         logger.warning(f"Could not make tools tolerant of extra arguments: {e}")
+
+
+def _collect_coercible_types(schema: dict, param_name: str, array_params: set[str], object_params: set[str]) -> None:
+    """Check a JSON Schema property and add param_name to array_params/object_params if applicable."""
+    # Direct type
+    schema_type = schema.get("type")
+    if schema_type == "array":
+        array_params.add(param_name)
+        return
+    if schema_type == "object":
+        object_params.add(param_name)
+        return
+
+    # anyOf / oneOf unions (e.g., list[str] | None → {"anyOf": [{"type": "array"}, {"type": "null"}]})
+    for variant in schema.get("anyOf", []) + schema.get("oneOf", []):
+        variant_type = variant.get("type")
+        if variant_type == "array":
+            array_params.add(param_name)
+            return
+        if variant_type == "object":
+            object_params.add(param_name)
+            return
+
+
+def _coerce_string_json(arguments: dict, array_params: set[str], object_params: set[str]) -> dict:
+    """Auto-coerce string-encoded JSON arrays/objects to native types.
+
+    LLM agents frequently serialize list and dict tool arguments as JSON strings.
+    This is backward-compatible: native arrays/objects pass through unchanged.
+    """
+    for param_name in array_params:
+        val = arguments.get(param_name)
+        if isinstance(val, str):
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    arguments = {**arguments, param_name: parsed}
+                    logger.debug(f"Coerced string to list for parameter '{param_name}'")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    for param_name in object_params:
+        val = arguments.get(param_name)
+        if isinstance(val, str):
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, dict):
+                    arguments = {**arguments, param_name: parsed}
+                    logger.debug(f"Coerced string to dict for parameter '{param_name}'")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return arguments
 
 
 class MCPMiddleware:

@@ -220,140 +220,140 @@
       "collapsible": false,
       "items": [
         {
-          "type": "doc",
-          "id": "sdks/integrations/local-mcp",
+          "type": "link",
           "label": "Local MCP Server",
           "customProps": {
             "icon": "/img/icons/mcp.png"
-          }
+          },
+          "href": "/sdks/integrations/local-mcp"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/litellm",
+          "type": "link",
           "label": "LiteLLM",
           "customProps": {
             "icon": "/img/icons/litellm.png"
-          }
+          },
+          "href": "/sdks/integrations/litellm"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/claude-code",
+          "type": "link",
           "label": "Claude Code",
           "customProps": {
             "icon": "/img/icons/claudecode.svg"
-          }
+          },
+          "href": "/sdks/integrations/claude-code"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/codex",
+          "type": "link",
           "label": "OpenAI Codex CLI",
           "customProps": {
             "icon": "/img/icons/terminal.svg"
-          }
+          },
+          "href": "/sdks/integrations/codex"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/openclaw",
+          "type": "link",
           "label": "OpenClaw",
           "customProps": {
             "icon": "/img/icons/openclaw.png"
-          }
+          },
+          "href": "/sdks/integrations/openclaw"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/ai-sdk",
+          "type": "link",
           "label": "Vercel AI SDK",
           "customProps": {
             "icon": "/img/icons/vercel.png"
-          }
+          },
+          "href": "/sdks/integrations/ai-sdk"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/chat",
+          "type": "link",
           "label": "Vercel Chat SDK",
           "customProps": {
             "icon": "/img/icons/vercel.png"
-          }
+          },
+          "href": "/sdks/integrations/chat"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/crewai",
+          "type": "link",
           "label": "CrewAI",
           "customProps": {
             "icon": "/img/icons/crewai.png"
-          }
+          },
+          "href": "/sdks/integrations/crewai"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/pydantic-ai",
+          "type": "link",
           "label": "Pydantic AI",
           "customProps": {
             "icon": "/img/icons/pydanticai.png"
-          }
+          },
+          "href": "/sdks/integrations/pydantic-ai"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/agno",
+          "type": "link",
           "label": "Agno",
           "customProps": {
             "icon": "/img/icons/agno.png"
-          }
+          },
+          "href": "/sdks/integrations/agno"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/hermes",
+          "type": "link",
           "label": "Hermes Agent",
           "customProps": {
             "icon": "/img/icons/hermes.png"
-          }
+          },
+          "href": "/sdks/integrations/hermes"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/langgraph",
+          "type": "link",
           "label": "LangGraph / LangChain",
           "customProps": {
             "icon": "/img/icons/langgraph.png"
-          }
+          },
+          "href": "/sdks/integrations/langgraph"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/nemoclaw",
+          "type": "link",
           "label": "NemoClaw",
           "customProps": {
             "icon": "/img/icons/nemoclaw.png"
-          }
+          },
+          "href": "/sdks/integrations/nemoclaw"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/strands",
+          "type": "link",
           "label": "Strands Agents",
           "customProps": {
             "icon": "/img/icons/strands.png"
-          }
+          },
+          "href": "/sdks/integrations/strands"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/ag2",
+          "type": "link",
           "label": "AG2",
           "customProps": {
             "icon": "/img/icons/ag2.svg"
-          }
+          },
+          "href": "/sdks/integrations/ag2"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/llamaindex",
+          "type": "link",
           "label": "LlamaIndex",
           "customProps": {
             "icon": "/img/icons/llamaindex.png"
-          }
+          },
+          "href": "/sdks/integrations/llamaindex"
         },
         {
-          "type": "doc",
-          "id": "sdks/integrations/skills",
+          "type": "link",
           "label": "Skills",
           "customProps": {
             "icon": "/img/icons/skills.png"
-          }
+          },
+          "href": "/sdks/integrations/skills"
         }
       ]
     },

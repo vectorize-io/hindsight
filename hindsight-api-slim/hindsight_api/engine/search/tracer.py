@@ -319,7 +319,7 @@ class SearchTracer:
             duration_seconds: Time taken for this retrieval
             score_field: Field name containing the score in data dict
             metadata: Optional metadata about this retrieval method
-            fact_type: Fact type this retrieval was for (world, experience, opinion)
+            fact_type: Fact type this retrieval was for (world, experience)
         """
         retrieval_results = []
         for rank, (doc_id, data) in enumerate(results, start=1):

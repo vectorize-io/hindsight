@@ -8,12 +8,13 @@ the FastAPI application with all API endpoints.
 import asyncio
 import json
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.extensions import AuthenticationError
@@ -748,7 +749,7 @@ class ReflectFact(BaseModel):
     text: str = Field(
         description="Fact text. When type='observation', this contains markdown-formatted consolidated knowledge"
     )
-    type: str | None = None  # fact type: world, experience, observation
+    type: str | None = None  # fact type: world, experience, opinion, observation
     context: str | None = None
     occurred_start: str | None = None
     occurred_end: str | None = None
@@ -1534,13 +1535,14 @@ class MentalModelResponse(BaseModel):
     id: str
     bank_id: str
     name: str
-    source_query: str
-    content: str = Field(
-        description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)"
+    source_query: str | None = None
+    content: str | None = Field(
+        default=None,
+        description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)",
     )
     tags: list[str] = FieldWithDefault(list)
-    max_tokens: int = Field(default=2048)
-    trigger: MentalModelTrigger = FieldWithDefault(MentalModelTrigger)
+    max_tokens: int | None = Field(default=None)
+    trigger: MentalModelTrigger | None = Field(default=None)
     last_refreshed_at: str | None = None
     created_at: str | None = None
     reflect_response: dict | None = Field(
@@ -1608,6 +1610,188 @@ class UpdateMentalModelRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=256, le=8192, description="Maximum tokens for generated content")
     tags: list[str] | None = Field(default=None, description="Tags for scoped visibility")
     trigger: MentalModelTrigger | None = Field(default=None, description="Trigger settings")
+
+
+# =========================================================================
+# Bank Templates (import/export)
+# =========================================================================
+
+# Current manifest schema version. Bump when making breaking changes.
+BANK_TEMPLATE_CURRENT_VERSION = "1"
+
+
+class BankTemplateMentalModel(BaseModel):
+    """A mental model definition within a bank template manifest."""
+
+    id: str = Field(description="Unique ID for the mental model (alphanumeric lowercase with hyphens)")
+    name: str = Field(description="Human-readable name for the mental model")
+    source_query: str = Field(description="The query to run to generate content")
+    tags: list[str] = FieldWithDefault(list, description="Tags for scoped visibility")
+    max_tokens: int = Field(default=2048, ge=256, le=8192, description="Maximum tokens for generated content")
+    trigger: MentalModelTrigger = FieldWithDefault(MentalModelTrigger, description="Trigger settings")
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", v):
+            raise ValueError(
+                f"Mental model id '{v}' must be alphanumeric lowercase with hyphens, starting with a letter or digit."
+            )
+        return v
+
+
+class BankTemplateConfig(BaseModel):
+    """Bank configuration fields within a template manifest.
+
+    Only includes configurable (per-bank) fields. Credential fields
+    (API keys, base URLs) are intentionally excluded for security.
+    """
+
+    reflect_mission: str | None = Field(default=None, description="Mission/context for Reflect operations")
+    retain_mission: str | None = Field(default=None, description="Steers what gets extracted during retain")
+    retain_extraction_mode: str | None = Field(
+        default=None, description="Fact extraction mode: 'concise' (default), 'verbose', or 'custom'"
+    )
+    retain_custom_instructions: str | None = Field(
+        default=None, description="Custom extraction prompt (when mode='custom')"
+    )
+    retain_chunk_size: int | None = Field(default=None, description="Max token size for each content chunk")
+    enable_observations: bool | None = Field(default=None, description="Toggle observation consolidation")
+    observations_mission: str | None = Field(default=None, description="Controls what gets synthesised")
+    disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
+    disposition_literalism: int | None = Field(default=None, ge=1, le=5, description="Literalism trait (1-5)")
+    disposition_empathy: int | None = Field(default=None, ge=1, le=5, description="Empathy trait (1-5)")
+    entity_labels: list[dict[str, Any]] | None = Field(
+        default=None, description="Controlled vocabulary for entity labels"
+    )
+    entities_allow_free_form: bool | None = Field(
+        default=None, description="Allow entities outside the label vocabulary"
+    )
+
+    def get_config_updates(self) -> dict[str, Any]:
+        """Return only the fields that were explicitly set (non-None)."""
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class BankTemplateDirective(BaseModel):
+    """A directive definition within a bank template manifest.
+
+    Directives are matched by name on re-import: existing directives
+    with the same name are updated, new ones are created.
+    """
+
+    name: str = Field(description="Human-readable name for the directive (used as match key on re-import)")
+    content: str = Field(description="The directive text to inject into prompts")
+    priority: int = Field(default=0, description="Higher priority directives are injected first")
+    is_active: bool = Field(default=True, description="Whether this directive is active")
+    tags: list[str] = FieldWithDefault(list, description="Tags for filtering")
+
+
+class BankTemplateManifest(BaseModel):
+    """A bank template manifest for import/export.
+
+    Version field enables forward-compatible schema evolution: the API
+    auto-upgrades older manifest versions to the current schema on import.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "version": "1",
+                "bank": {
+                    "reflect_mission": "You are helping a support agent remember customer interactions.",
+                    "retain_mission": "Extract customer issues, resolutions, and sentiment.",
+                    "disposition_empathy": 5,
+                    "enable_observations": True,
+                },
+                "mental_models": [
+                    {
+                        "id": "sentiment-overview",
+                        "name": "Customer Sentiment Overview",
+                        "source_query": "What is the overall sentiment trend?",
+                        "trigger": {"refresh_after_consolidation": True},
+                    }
+                ],
+                "directives": [
+                    {
+                        "name": "Always be empathetic",
+                        "content": "Always respond with empathy and understanding.",
+                        "priority": 10,
+                    }
+                ],
+            }
+        }
+    )
+
+    version: str = Field(description="Manifest schema version (currently '1')")
+    bank: BankTemplateConfig | None = Field(
+        default=None, description="Bank configuration to apply. Omit to leave config unchanged."
+    )
+    mental_models: list[BankTemplateMentalModel] | None = Field(
+        default=None, description="Mental models to create or update (matched by id). Omit to leave unchanged."
+    )
+    directives: list[BankTemplateDirective] | None = Field(
+        default=None, description="Directives to create or update (matched by name). Omit to leave unchanged."
+    )
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, v: str) -> str:
+        try:
+            ver = int(v)
+        except ValueError:
+            raise ValueError(f"version must be a numeric string, got '{v}'")
+        if ver < 1:
+            raise ValueError("version must be >= 1")
+        if ver > int(BANK_TEMPLATE_CURRENT_VERSION):
+            raise ValueError(
+                f"version '{v}' is not supported by this server "
+                f"(max supported: {BANK_TEMPLATE_CURRENT_VERSION}). Please upgrade Hindsight."
+            )
+        return v
+
+    @field_validator("mental_models")
+    @classmethod
+    def validate_unique_mental_model_ids(
+        cls,
+        v: list[BankTemplateMentalModel] | None,
+    ) -> list[BankTemplateMentalModel] | None:
+        if v is None:
+            return v
+        ids = [m.id for m in v]
+        duplicates = [mid for mid in ids if ids.count(mid) > 1]
+        if duplicates:
+            raise ValueError(f"Duplicate mental model ids: {sorted(set(duplicates))}")
+        return v
+
+    @field_validator("directives")
+    @classmethod
+    def validate_unique_directive_names(
+        cls,
+        v: list[BankTemplateDirective] | None,
+    ) -> list[BankTemplateDirective] | None:
+        if v is None:
+            return v
+        names = [d.name for d in v]
+        duplicates = [n for n in names if names.count(n) > 1]
+        if duplicates:
+            raise ValueError(f"Duplicate directive names: {sorted(set(duplicates))}")
+        return v
+
+
+class BankTemplateImportResponse(BaseModel):
+    """Response model for the bank template import endpoint."""
+
+    bank_id: str = Field(description="Bank that was imported into")
+    config_applied: bool = Field(description="Whether bank config was updated")
+    mental_models_created: list[str] = FieldWithDefault(list, description="IDs of newly created mental models")
+    mental_models_updated: list[str] = FieldWithDefault(list, description="IDs of updated mental models")
+    directives_created: list[str] = FieldWithDefault(list, description="Names of newly created directives")
+    directives_updated: list[str] = FieldWithDefault(list, description="Names of updated directives")
+    operation_ids: list[str] = FieldWithDefault(
+        list, description="Operation IDs for mental model content generation (async)"
+    )
+    dry_run: bool = Field(default=False, description="True if this was a validation-only run")
 
 
 class OperationResponse(BaseModel):
@@ -2495,6 +2679,8 @@ def _register_routes(app: FastAPI):
             return data
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -3041,6 +3227,10 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
         tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
+        detail: Literal["metadata", "content", "full"] = Query(
+            "full",
+            description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+        ),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         request_context: RequestContext = Depends(get_request_context),
@@ -3051,6 +3241,7 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 tags=tags_filter,
                 tags_match=tags_match,
+                detail=detail,
                 limit=limit,
                 offset=offset,
                 request_context=request_context,
@@ -3078,6 +3269,10 @@ def _register_routes(app: FastAPI):
     async def api_get_mental_model(
         bank_id: str,
         mental_model_id: str,
+        detail: Literal["metadata", "content", "full"] = Query(
+            "full",
+            description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get a mental model by ID."""
@@ -3085,6 +3280,7 @@ def _register_routes(app: FastAPI):
             mental_model = await app.state.memory.get_mental_model(
                 bank_id=bank_id,
                 mental_model_id=mental_model_id,
+                detail=detail,
                 request_context=request_context,
             )
             if mental_model is None:
@@ -3095,6 +3291,8 @@ def _register_routes(app: FastAPI):
             raise
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             import traceback
 
@@ -3128,6 +3326,8 @@ def _register_routes(app: FastAPI):
             raise
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             import traceback
 
@@ -3292,6 +3492,8 @@ def _register_routes(app: FastAPI):
             return {"status": "deleted"}
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -4164,6 +4366,304 @@ def _register_routes(app: FastAPI):
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in DELETE /v1/default/banks/{bank_id}: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    # =====================================================================
+    # Bank Template Import / Export
+    # =====================================================================
+
+    def _validate_template(manifest: BankTemplateManifest) -> list[str]:
+        """Validate a parsed manifest beyond Pydantic's structural checks.
+
+        Returns a list of human-readable error strings (e.g. invalid
+        extraction mode values, conflicting settings).
+        """
+        errors: list[str] = []
+        if manifest.bank:
+            bank = manifest.bank
+            if bank.retain_extraction_mode is not None:
+                valid_modes = ("concise", "verbose", "custom", "chunks")
+                if bank.retain_extraction_mode not in valid_modes:
+                    errors.append(
+                        f"bank.retain_extraction_mode: must be one of {valid_modes}, "
+                        f"got '{bank.retain_extraction_mode}'"
+                    )
+            if bank.retain_custom_instructions and bank.retain_extraction_mode != "custom":
+                errors.append("bank.retain_custom_instructions: requires retain_extraction_mode='custom'")
+        if manifest.mental_models:
+            for i, mm in enumerate(manifest.mental_models):
+                if not mm.name.strip():
+                    errors.append(f"mental_models[{i}].name: must not be empty")
+                if not mm.source_query.strip():
+                    errors.append(f"mental_models[{i}].source_query: must not be empty")
+        if manifest.directives:
+            for i, d in enumerate(manifest.directives):
+                if not d.name.strip():
+                    errors.append(f"directives[{i}].name: must not be empty")
+                if not d.content.strip():
+                    errors.append(f"directives[{i}].content: must not be empty")
+        return errors
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/import",
+        response_model=BankTemplateImportResponse,
+        summary="Import bank template",
+        description="Import a bank template manifest to create or update a bank's configuration, mental models, "
+        "and directives. If the bank does not exist it is created. Config fields are applied as per-bank overrides. "
+        "Mental models are matched by id, directives by name — existing ones are updated, new ones are created. "
+        "Use dry_run=true to validate the manifest without applying changes.",
+        operation_id="import_bank_template",
+        tags=["Bank Templates"],
+    )
+    @audited("import_bank_template", request_param=None)
+    async def api_import_bank_template(
+        bank_id: str,
+        request: Request,
+        dry_run: bool = Query(default=False, description="Validate only, do not apply changes"),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Import a bank template manifest."""
+        try:
+            # Parse raw JSON and validate against the Pydantic model manually
+            # so we can return clean error messages instead of raw 422s.
+            raw_body = await request.json()
+            from pydantic import ValidationError
+
+            try:
+                body = BankTemplateManifest.model_validate(raw_body)
+            except ValidationError as e:
+                errors = [f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()]
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Template schema validation failed: {'; '.join(errors)}",
+                )
+
+            # Semantic validation beyond Pydantic structural checks
+            validation_errors = _validate_template(body)
+            if validation_errors:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Template validation failed: {'; '.join(validation_errors)}",
+                )
+            if dry_run:
+                return BankTemplateImportResponse(
+                    bank_id=bank_id,
+                    config_applied=body.bank is not None,
+                    mental_models_created=[m.id for m in (body.mental_models or [])],
+                    directives_created=[d.name for d in (body.directives or [])],
+                    dry_run=True,
+                )
+
+            # Ensure bank exists (auto-creates with defaults if needed)
+            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+
+            config_applied = False
+            if body.bank:
+                config_updates = body.bank.get_config_updates()
+                if config_updates:
+                    await app.state.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+                    config_applied = True
+
+            created_ids: list[str] = []
+            updated_ids: list[str] = []
+            operation_ids: list[str] = []
+
+            if body.mental_models:
+                # Fetch existing mental models to decide create vs update
+                existing = await app.state.memory.list_mental_models(bank_id=bank_id, request_context=request_context)
+                existing_by_id = {m["id"]: m for m in existing}
+
+                for mm in body.mental_models:
+                    if mm.id in existing_by_id:
+                        # Update existing mental model metadata
+                        await app.state.memory.update_mental_model(
+                            bank_id=bank_id,
+                            mental_model_id=mm.id,
+                            name=mm.name,
+                            source_query=mm.source_query,
+                            max_tokens=mm.max_tokens,
+                            tags=mm.tags if mm.tags else None,
+                            trigger=mm.trigger.model_dump() if mm.trigger else None,
+                            request_context=request_context,
+                        )
+                        # Schedule a refresh to regenerate content with updated query
+                        result = await app.state.memory.submit_async_refresh_mental_model(
+                            bank_id=bank_id,
+                            mental_model_id=mm.id,
+                            request_context=request_context,
+                        )
+                        operation_ids.append(result["operation_id"])
+                        updated_ids.append(mm.id)
+                    else:
+                        # Create new mental model
+                        mental_model = await app.state.memory.create_mental_model(
+                            bank_id=bank_id,
+                            name=mm.name,
+                            source_query=mm.source_query,
+                            content="Generating content...",
+                            mental_model_id=mm.id,
+                            tags=mm.tags if mm.tags else None,
+                            max_tokens=mm.max_tokens,
+                            trigger=mm.trigger.model_dump() if mm.trigger else None,
+                            request_context=request_context,
+                        )
+                        result = await app.state.memory.submit_async_refresh_mental_model(
+                            bank_id=bank_id,
+                            mental_model_id=mental_model["id"],
+                            request_context=request_context,
+                        )
+                        operation_ids.append(result["operation_id"])
+                        created_ids.append(mm.id)
+
+            directives_created: list[str] = []
+            directives_updated: list[str] = []
+
+            if body.directives:
+                # Fetch existing directives to decide create vs update (matched by name)
+                existing_directives = await app.state.memory.list_directives(
+                    bank_id=bank_id, active_only=False, request_context=request_context
+                )
+                existing_by_name = {d["name"]: d for d in existing_directives}
+
+                for directive in body.directives:
+                    if directive.name in existing_by_name:
+                        await app.state.memory.update_directive(
+                            bank_id=bank_id,
+                            directive_id=existing_by_name[directive.name]["id"],
+                            content=directive.content,
+                            priority=directive.priority,
+                            is_active=directive.is_active,
+                            tags=directive.tags if directive.tags else None,
+                            request_context=request_context,
+                        )
+                        directives_updated.append(directive.name)
+                    else:
+                        await app.state.memory.create_directive(
+                            bank_id=bank_id,
+                            name=directive.name,
+                            content=directive.content,
+                            priority=directive.priority,
+                            is_active=directive.is_active,
+                            tags=directive.tags if directive.tags else None,
+                            request_context=request_context,
+                        )
+                        directives_created.append(directive.name)
+
+            return BankTemplateImportResponse(
+                bank_id=bank_id,
+                config_applied=config_applied,
+                mental_models_created=created_ids,
+                mental_models_updated=updated_ids,
+                directives_created=directives_created,
+                directives_updated=directives_updated,
+                operation_ids=operation_ids,
+                dry_run=False,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/import: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/export",
+        response_model=BankTemplateManifest,
+        summary="Export bank template",
+        description="Export a bank's current configuration, mental models, and directives as a template manifest. "
+        "The exported manifest can be imported into another bank to replicate the setup.",
+        operation_id="export_bank_template",
+        tags=["Bank Templates"],
+    )
+    async def api_export_bank_template(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Export a bank's config and mental models as a template manifest."""
+        try:
+            # Authenticate and ensure bank exists
+            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
+
+            # Get bank-specific config overrides (not the fully resolved config,
+            # so the template only contains what was explicitly set on this bank)
+            await app.state.memory._authenticate_tenant(request_context)
+            bank_overrides = await app.state.memory._config_resolver._load_bank_config(bank_id)
+
+            # Filter to only BankTemplateConfig fields (exclude credentials, static fields)
+            template_config_fields = set(BankTemplateConfig.model_fields.keys())
+            filtered_overrides = {k: v for k, v in bank_overrides.items() if k in template_config_fields}
+            bank_config = BankTemplateConfig(**filtered_overrides) if filtered_overrides else None
+
+            # Get mental models
+            mental_models_raw = await app.state.memory.list_mental_models(
+                bank_id=bank_id, request_context=request_context
+            )
+            template_mental_models: list[BankTemplateMentalModel] = []
+            for mm in mental_models_raw:
+                trigger_data = mm.get("trigger", {})
+                trigger = MentalModelTrigger(**trigger_data) if trigger_data else MentalModelTrigger()
+                template_mental_models.append(
+                    BankTemplateMentalModel(
+                        id=mm["id"],
+                        name=mm["name"],
+                        source_query=mm["source_query"],
+                        tags=mm.get("tags", []),
+                        max_tokens=mm.get("max_tokens", 2048),
+                        trigger=trigger,
+                    )
+                )
+
+            # Get directives
+            directives_raw = await app.state.memory.list_directives(
+                bank_id=bank_id, active_only=False, request_context=request_context
+            )
+            template_directives: list[BankTemplateDirective] = []
+            for d in directives_raw:
+                template_directives.append(
+                    BankTemplateDirective(
+                        name=d["name"],
+                        content=d["content"],
+                        priority=d.get("priority", 0),
+                        is_active=d.get("is_active", True),
+                        tags=d.get("tags", []),
+                    )
+                )
+
+            return BankTemplateManifest(
+                version=BANK_TEMPLATE_CURRENT_VERSION,
+                bank=bank_config,
+                mental_models=template_mental_models if template_mental_models else None,
+                directives=template_directives if template_directives else None,
+            )
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in GET /v1/default/banks/{bank_id}/export: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get(
+        "/v1/bank-template-schema",
+        summary="Get bank template JSON Schema",
+        description="Returns the JSON Schema for the bank template manifest format. "
+        "Use this to validate template manifests before importing.",
+        operation_id="get_bank_template_schema",
+        tags=["Bank Templates"],
+    )
+    async def api_get_bank_template_schema():
+        """Return the JSON Schema for the bank template manifest."""
+        return BankTemplateManifest.model_json_schema()
 
     @app.delete(
         "/v1/default/banks/{bank_id}/observations",
@@ -5098,7 +5598,9 @@ def _register_routes(app: FastAPI):
     ):
         """Clear memories for a memory bank, optionally filtered by type."""
         try:
-            await app.state.memory.delete_bank(bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context)
+            await app.state.memory.delete_bank(
+                bank_id, fact_type=type, delete_bank_profile=False, request_context=request_context
+            )
 
             return DeleteResponse(success=True)
         except OperationValidationError as e:

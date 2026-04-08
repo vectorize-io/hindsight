@@ -393,6 +393,7 @@ class BenchmarkRunner:
         self.dataset = dataset
         self.answer_generator = answer_generator
         self.answer_evaluator = answer_evaluator
+        self.template_path: Optional[str] = None
         self.memory = memory or MemoryEngine(
             db_url=os.getenv("HINDSIGHT_API_DATABASE_URL", "pg0"),
             memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
@@ -431,6 +432,58 @@ class BenchmarkRunner:
             "min_session_length": min(session_lengths) if session_lengths else 0,
             "max_session_length": max(session_lengths) if session_lengths else 0,
         }
+
+    async def apply_template(self, bank_id: str, manifest_path: str) -> None:
+        """Apply a bank template manifest to a bank before ingestion.
+
+        Reads the manifest JSON file and applies config overrides, creates
+        mental models and directives — same logic as the /import API endpoint.
+        """
+        from hindsight_api.api.http import BankTemplateManifest
+        from hindsight_api.models import RequestContext
+
+        raw = json.loads(Path(manifest_path).read_text())
+        manifest = BankTemplateManifest.model_validate(raw)
+
+        request_context = RequestContext()
+        await self.memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Apply bank config overrides
+        if manifest.bank:
+            config_updates = manifest.bank.get_config_updates()
+            if config_updates:
+                await self.memory._config_resolver.update_bank_config(bank_id, config_updates, request_context)
+
+        # Create directives
+        for directive in manifest.directives or []:
+            await self.memory.create_directive(
+                bank_id=bank_id,
+                name=directive.name,
+                content=directive.content,
+                priority=directive.priority,
+                is_active=directive.is_active,
+                tags=directive.tags if directive.tags else None,
+                request_context=request_context,
+            )
+
+        # Create mental models (async content generation)
+        for mm in manifest.mental_models or []:
+            mental_model = await self.memory.create_mental_model(
+                bank_id=bank_id,
+                name=mm.name,
+                source_query=mm.source_query,
+                content="Generating content...",
+                mental_model_id=mm.id,
+                tags=mm.tags if mm.tags else None,
+                max_tokens=mm.max_tokens,
+                trigger=mm.trigger.model_dump() if mm.trigger else None,
+                request_context=request_context,
+            )
+            await self.memory.submit_async_refresh_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mental_model["id"],
+                request_context=request_context,
+            )
 
     async def ingest_conversation(
         self, item: Dict[str, Any], agent_id: str, wait_for_consolidation: bool = False
@@ -872,6 +925,13 @@ class BenchmarkRunner:
                 await self.memory.delete_bank(agent_id, request_context=RequestContext())
                 console.print(f"      [green]✓[/green] Cleared '{agent_id}' agent data")
 
+            # Apply template if configured
+            if self.template_path:
+                step += 1
+                console.print(f"  [{step}] Applying bank template...")
+                await self.apply_template(agent_id, self.template_path)
+                console.print("      [green]✓[/green] Template applied")
+
             # Ingest conversation
             step += 1
             console.print(f"  [{step}] Ingesting conversation (batch mode)...")
@@ -930,6 +990,7 @@ class BenchmarkRunner:
         output_path: Optional[Path] = None,  # Path to save results incrementally
         merge_with_existing: bool = False,  # Whether to merge with existing results
         wait_consolidation: bool = False,  # Wait for consolidation to complete before evaluating QA
+        template_path: Optional[str] = None,  # Path to a bank template manifest to apply before ingestion
     ) -> Dict[str, Any]:
         """
         Run the full benchmark evaluation.
@@ -975,6 +1036,9 @@ class BenchmarkRunner:
 
         # Initialize memory system
         console.print("\n[2] Initializing memory system...")
+        if template_path:
+            self.template_path = template_path
+            console.print(f"    Bank template: {template_path}")
         console.print("    [green]✓[/green] Memory system initialized")
 
         if separate_ingestion_phase:
@@ -1287,6 +1351,12 @@ class BenchmarkRunner:
             console.print("    [yellow]Clearing previous agent data...[/yellow]")
             await self.memory.delete_bank(agent_id, request_context=RequestContext())
             console.print("    [green]✓[/green] Cleared agent data")
+
+            # Apply template if configured
+            if self.template_path:
+                console.print("    [yellow]Applying bank template...[/yellow]")
+                await self.apply_template(agent_id, self.template_path)
+                console.print("    [green]✓[/green] Template applied")
 
             # Collect all sessions and send in one batch (with auto-chunking)
             console.print("    [yellow]Collecting sessions from all items...[/yellow]")

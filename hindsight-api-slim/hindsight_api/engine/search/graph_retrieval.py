@@ -53,7 +53,7 @@ class GraphRetriever(ABC):
             pool: Database connection pool
             query_embedding_str: Query embedding as string (for finding entry points)
             bank_id: Memory bank identifier
-            fact_type: Fact type to filter ('world', 'experience', 'opinion', 'observation')
+            fact_type: Fact type to filter ('world', 'experience', 'observation')
             budget: Maximum number of nodes to explore/return
             query_text: Original query text (optional, for some strategies)
             semantic_seeds: Pre-computed semantic entry points (from semantic retrieval)

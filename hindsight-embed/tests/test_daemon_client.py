@@ -5,9 +5,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import httpx
 import pytest
 
 from hindsight_embed import daemon_client
+from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
 
 @pytest.fixture
 def config():
@@ -177,4 +179,94 @@ class TestRunCli:
 
             # Verify exit code
             assert exit_code == 0
+
+
+class TestClearPort:
+    """Tests for DaemonEmbedManager._clear_port."""
+
+    def test_port_free(self):
+        """Port not in use — returns True immediately."""
+        manager = DaemonEmbedManager()
+        with patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=False):
+            assert manager._clear_port(9555) is True
+
+    def test_port_occupied_by_hindsight_stops_it(self):
+        """Port occupied by a hindsight daemon — kills it and returns True."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=200)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is True
+
+    def test_port_occupied_by_non_hindsight_returns_false(self):
+        """Port occupied by non-hindsight process — returns False."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is False
+
+    def test_port_occupied_health_non_200_returns_false(self):
+        """Port responds but not with 200 — treated as non-hindsight."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=404)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is False
+
+    def test_pid_not_found_returns_false(self):
+        """Hindsight daemon on port but can't find PID — returns False."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=None),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=200)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is False
+
+    def test_kill_fails_returns_false(self):
+        """Hindsight daemon found but won't die — returns False."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=False),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=200)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is False
 

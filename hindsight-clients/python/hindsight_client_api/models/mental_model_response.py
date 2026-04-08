@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.mental_model_trigger_output import MentalModelTriggerOutput
 from typing import Optional, Set
@@ -30,10 +30,10 @@ class MentalModelResponse(BaseModel):
     id: StrictStr
     bank_id: StrictStr
     name: StrictStr
-    source_query: StrictStr
-    content: StrictStr = Field(description="The mental model content as well-formatted markdown (auto-generated from reflect endpoint)")
+    source_query: Optional[StrictStr] = None
+    content: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
-    max_tokens: Optional[StrictInt] = 2048
+    max_tokens: Optional[StrictInt] = None
     trigger: Optional[MentalModelTriggerOutput] = None
     last_refreshed_at: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
@@ -82,6 +82,26 @@ class MentalModelResponse(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of trigger
         if self.trigger:
             _dict['trigger'] = self.trigger.to_dict()
+        # set to None if source_query (nullable) is None
+        # and model_fields_set contains the field
+        if self.source_query is None and "source_query" in self.model_fields_set:
+            _dict['source_query'] = None
+
+        # set to None if content (nullable) is None
+        # and model_fields_set contains the field
+        if self.content is None and "content" in self.model_fields_set:
+            _dict['content'] = None
+
+        # set to None if max_tokens (nullable) is None
+        # and model_fields_set contains the field
+        if self.max_tokens is None and "max_tokens" in self.model_fields_set:
+            _dict['max_tokens'] = None
+
+        # set to None if trigger (nullable) is None
+        # and model_fields_set contains the field
+        if self.trigger is None and "trigger" in self.model_fields_set:
+            _dict['trigger'] = None
+
         # set to None if last_refreshed_at (nullable) is None
         # and model_fields_set contains the field
         if self.last_refreshed_at is None and "last_refreshed_at" in self.model_fields_set:
@@ -115,7 +135,7 @@ class MentalModelResponse(BaseModel):
             "source_query": obj.get("source_query"),
             "content": obj.get("content"),
             "tags": obj.get("tags"),
-            "max_tokens": obj.get("max_tokens") if obj.get("max_tokens") is not None else 2048,
+            "max_tokens": obj.get("max_tokens"),
             "trigger": MentalModelTriggerOutput.from_dict(obj["trigger"]) if obj.get("trigger") is not None else None,
             "last_refreshed_at": obj.get("last_refreshed_at"),
             "created_at": obj.get("created_at"),

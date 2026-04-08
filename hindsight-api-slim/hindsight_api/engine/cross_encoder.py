@@ -20,6 +20,7 @@ from ..config import (
     DEFAULT_RERANKER_COHERE_MODEL,
     DEFAULT_RERANKER_FLASHRANK_CACHE_DIR,
     DEFAULT_RERANKER_FLASHRANK_MODEL,
+    DEFAULT_RERANKER_GOOGLE_MODEL,
     DEFAULT_RERANKER_LITELLM_MAX_TOKENS_PER_DOC,
     DEFAULT_RERANKER_LITELLM_MODEL,
     DEFAULT_RERANKER_LITELLM_SDK_MODEL,
@@ -36,6 +37,7 @@ from ..config import (
     ENV_RERANKER_COHERE_MODEL,
     ENV_RERANKER_FLASHRANK_CACHE_DIR,
     ENV_RERANKER_FLASHRANK_MODEL,
+    ENV_RERANKER_GOOGLE_PROJECT_ID,
     ENV_RERANKER_LITELLM_SDK_API_KEY,
     ENV_RERANKER_LOCAL_FORCE_CPU,
     ENV_RERANKER_LOCAL_MAX_CONCURRENT,
@@ -1266,6 +1268,164 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         return await loop.run_in_executor(None, self._predict_sync, pairs)
 
 
+class GoogleCrossEncoder(CrossEncoderModel):
+    """
+    Google Discovery Engine cross-encoder using the Ranking REST API.
+
+    Uses httpx + google-auth for lightweight REST calls (no gRPC/protobuf).
+    Supports ADC (Application Default Credentials) or service account key file.
+
+    Available models:
+    - semantic-ranker-default-004: Best quality, 1024 tokens/record (recommended)
+    - semantic-ranker-fast-004: Lower latency, 1024 tokens/record
+
+    Max 200 records per API request. Location is always "global".
+    """
+
+    MAX_RECORDS_PER_REQUEST = 200
+    API_BASE = "https://discoveryengine.googleapis.com/v1"
+    SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    def __init__(
+        self,
+        project_id: str,
+        model: str = DEFAULT_RERANKER_GOOGLE_MODEL,
+        service_account_key: str | None = None,
+        location: str = "global",
+        timeout: float = 60.0,
+    ):
+        """
+        Initialize Google Discovery Engine cross-encoder.
+
+        Args:
+            project_id: Google Cloud project ID
+            model: Ranking model name (default: semantic-ranker-default-004)
+            service_account_key: Path to service account JSON key file.
+                                If None, uses Application Default Credentials (ADC).
+            location: API location (default: "global")
+            timeout: Request timeout in seconds (default: 60.0)
+        """
+        self.project_id = project_id
+        self.model = model
+        self.service_account_key = service_account_key
+        self.location = location
+        self.timeout = timeout
+        self._credentials = None
+        self._client: httpx.Client | None = None
+        self._rank_url: str | None = None
+
+    @property
+    def provider_name(self) -> str:
+        return "google"
+
+    def _get_auth_headers(self) -> dict[str, str]:
+        """Get Authorization header with a fresh access token."""
+        import google.auth.transport.requests
+
+        if not self._credentials.valid:
+            self._credentials.refresh(google.auth.transport.requests.Request())
+        return {"Authorization": f"Bearer {self._credentials.token}"}
+
+    async def initialize(self) -> None:
+        """Initialize credentials and HTTP client."""
+        if self._client is not None:
+            return
+
+        auth_method = "ADC" if not self.service_account_key else "service_account"
+        logger.info(
+            f"Reranker: initializing Google Discovery Engine provider "
+            f"(project={self.project_id}, model={self.model}, auth={auth_method})"
+        )
+        if self.service_account_key:
+            try:
+                from google.oauth2 import service_account
+            except ImportError:
+                raise ImportError(
+                    "google-auth is required for GoogleCrossEncoder. Install it with: pip install google-auth"
+                )
+            self._credentials = service_account.Credentials.from_service_account_file(
+                self.service_account_key,
+                scopes=self.SCOPES,
+            )
+        else:
+            try:
+                import google.auth
+            except ImportError:
+                raise ImportError(
+                    "google-auth is required for GoogleCrossEncoder. Install it with: pip install google-auth"
+                )
+            self._credentials, _ = google.auth.default(scopes=self.SCOPES)
+
+        ranking_config = f"projects/{self.project_id}/locations/{self.location}/rankingConfigs/default_ranking_config"
+        self._rank_url = f"{self.API_BASE}/{ranking_config}:rank"
+        self._client = httpx.Client(timeout=self.timeout)
+
+        logger.info("Reranker: Google Discovery Engine provider initialized")
+
+    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Synchronous predict via REST API."""
+        if not pairs:
+            return []
+
+        # Group pairs by query
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            if query not in query_groups:
+                query_groups[query] = []
+            query_groups[query].append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            texts = [text for _, text in indexed_texts]
+            indices = [idx for idx, _ in indexed_texts]
+
+            # Process in batches of MAX_RECORDS_PER_REQUEST
+            for batch_start in range(0, len(texts), self.MAX_RECORDS_PER_REQUEST):
+                batch_texts = texts[batch_start : batch_start + self.MAX_RECORDS_PER_REQUEST]
+                batch_indices = indices[batch_start : batch_start + self.MAX_RECORDS_PER_REQUEST]
+
+                records = [{"id": str(i), "content": text} for i, text in enumerate(batch_texts)]
+
+                response = self._client.post(
+                    self._rank_url,
+                    headers=self._get_auth_headers(),
+                    json={
+                        "model": self.model,
+                        "query": query,
+                        "records": records,
+                        "topN": len(records),
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                for record in result.get("records", []):
+                    local_idx = int(record["id"])
+                    all_scores[batch_indices[local_idx]] = record["score"]
+
+        return all_scores
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """
+        Score query-document pairs using Google Discovery Engine Ranking API.
+
+        Args:
+            pairs: List of (query, document) tuples to score
+
+        Returns:
+            List of relevance scores (0-1, higher = more relevant)
+        """
+        if self._client is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        if not pairs:
+            return []
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._predict_sync, pairs)
+
+
 def create_cross_encoder_from_env() -> CrossEncoderModel:
     """
     Create a CrossEncoderModel instance based on configuration.
@@ -1341,11 +1501,23 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=api_key,
             model=config.reranker_zeroentropy_model,
         )
+    elif provider == "google":
+        project_id = config.reranker_google_project_id
+        if not project_id:
+            raise ValueError(
+                f"{ENV_RERANKER_GOOGLE_PROJECT_ID} (or HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID) "
+                f"is required when {ENV_RERANKER_PROVIDER} is 'google'"
+            )
+        return GoogleCrossEncoder(
+            project_id=project_id,
+            model=config.reranker_google_model,
+            service_account_key=config.reranker_google_service_account_key,
+        )
     elif provider == "rrf":
         return RRFPassthroughCrossEncoder()
     elif provider == "jina-mlx":
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )

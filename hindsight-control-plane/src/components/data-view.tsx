@@ -40,7 +40,7 @@ import { MemoryDetailPanel } from "./memory-detail-panel";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { Graph2D, convertHindsightGraphData, GraphNode } from "./graph-2d";
 import { Constellation } from "./constellation";
-import { ScatterChart } from "lucide-react";
+import { ScatterChart, Plus, FileText } from "lucide-react";
 
 type FactType = "world" | "experience" | "observation";
 type ViewMode = "graph" | "table" | "timeline" | "constellation";
@@ -272,6 +272,26 @@ export function DataView({ factType }: DataViewProps) {
         <div className="text-center py-12">
           <RefreshCw className="w-8 h-8 mx-auto mb-3 text-muted-foreground animate-spin" />
           <p className="text-muted-foreground">Loading memories...</p>
+        </div>
+      ) : data && data.total_units === 0 ? (
+        <div className="text-center py-20">
+          <FileText className="w-10 h-10 mx-auto mb-4 text-muted-foreground/50" />
+          <h3 className="text-base font-medium text-foreground mb-1">No memories yet</h3>
+          <p className="text-sm text-muted-foreground mb-6">
+            Add a document to start building this memory bank.
+          </p>
+          <Button
+            variant="default"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => {
+              const btn = document.querySelector<HTMLButtonElement>("[data-add-document]");
+              btn?.click();
+            }}
+          >
+            <Plus className="w-4 h-4" />
+            Add Document
+          </Button>
         </div>
       ) : data ? (
         <>

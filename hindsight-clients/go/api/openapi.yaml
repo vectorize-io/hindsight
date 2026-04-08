@@ -656,6 +656,23 @@ paths:
           title: Tags Match
           type: string
         style: form
+      - description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
+          \ content/config), 'full' (includes reflect_response)"
+        explode: true
+        in: query
+        name: detail
+        required: false
+        schema:
+          default: full
+          description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
+            \ content/config), 'full' (includes reflect_response)"
+          enum:
+          - metadata
+          - content
+          - full
+          title: Detail
+          type: string
+        style: form
       - explode: true
         in: query
         name: limit
@@ -810,6 +827,23 @@ paths:
           title: Mental Model Id
           type: string
         style: simple
+      - description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
+          \ content/config), 'full' (includes reflect_response)"
+        explode: true
+        in: query
+        name: detail
+        required: false
+        schema:
+          default: full
+          description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
+            \ content/config), 'full' (includes reflect_response)"
+          enum:
+          - metadata
+          - content
+          - full
+          title: Detail
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -2068,6 +2102,111 @@ paths:
       summary: Create or update memory bank
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/import:
+    post:
+      description: "Import a bank template manifest to create or update a bank's configuration,\
+        \ mental models, and directives. If the bank does not exist it is created.\
+        \ Config fields are applied as per-bank overrides. Mental models are matched\
+        \ by id, directives by name — existing ones are updated, new ones are created.\
+        \ Use dry_run=true to validate the manifest without applying changes."
+      operationId: import_bank_template
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "Validate only, do not apply changes"
+        explode: true
+        in: query
+        name: dry_run
+        required: false
+        schema:
+          default: false
+          description: "Validate only, do not apply changes"
+          title: Dry Run
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankTemplateImportResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Import bank template
+      tags:
+      - Bank Templates
+  /v1/default/banks/{bank_id}/export:
+    get:
+      description: "Export a bank's current configuration, mental models, and directives\
+        \ as a template manifest. The exported manifest can be imported into another\
+        \ bank to replicate the setup."
+      operationId: export_bank_template
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankTemplateManifest'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export bank template
+      tags:
+      - Bank Templates
+  /v1/bank-template-schema:
+    get:
+      description: Returns the JSON Schema for the bank template manifest format.
+        Use this to validate template manifests before importing.
+      operationId: get_bank_template_schema
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      summary: Get bank template JSON Schema
+      tags:
+      - Bank Templates
   /v1/default/banks/{bank_id}/observations:
     delete:
       description: Delete all observations for a memory bank. This is useful for resetting
@@ -3386,6 +3525,242 @@ components:
       - total_links
       - total_nodes
       title: BankStatsResponse
+    BankTemplateConfig:
+      description: |-
+        Bank configuration fields within a template manifest.
+
+        Only includes configurable (per-bank) fields. Credential fields
+        (API keys, base URLs) are intentionally excluded for security.
+      properties:
+        reflect_mission:
+          nullable: true
+          type: string
+        retain_mission:
+          nullable: true
+          type: string
+        retain_extraction_mode:
+          nullable: true
+          type: string
+        retain_custom_instructions:
+          nullable: true
+          type: string
+        retain_chunk_size:
+          nullable: true
+          type: integer
+        enable_observations:
+          nullable: true
+          type: boolean
+        observations_mission:
+          nullable: true
+          type: string
+        disposition_skepticism:
+          maximum: 5.0
+          minimum: 1.0
+          nullable: true
+          type: integer
+        disposition_literalism:
+          maximum: 5.0
+          minimum: 1.0
+          nullable: true
+          type: integer
+        disposition_empathy:
+          maximum: 5.0
+          minimum: 1.0
+          nullable: true
+          type: integer
+        entity_labels:
+          items:
+            additionalProperties: {}
+          nullable: true
+          type: array
+        entities_allow_free_form:
+          nullable: true
+          type: boolean
+      title: BankTemplateConfig
+    BankTemplateDirective:
+      description: |-
+        A directive definition within a bank template manifest.
+
+        Directives are matched by name on re-import: existing directives
+        with the same name are updated, new ones are created.
+      properties:
+        name:
+          description: Human-readable name for the directive (used as match key on
+            re-import)
+          title: Name
+          type: string
+        content:
+          description: The directive text to inject into prompts
+          title: Content
+          type: string
+        priority:
+          default: 0
+          description: Higher priority directives are injected first
+          title: Priority
+          type: integer
+        is_active:
+          default: true
+          description: Whether this directive is active
+          title: Is Active
+          type: boolean
+        tags:
+          default: []
+          description: Tags for filtering
+          items:
+            type: string
+          type: array
+      required:
+      - content
+      - name
+      title: BankTemplateDirective
+    BankTemplateImportResponse:
+      description: Response model for the bank template import endpoint.
+      example:
+        operation_ids:
+        - operation_ids
+        - operation_ids
+        directives_created:
+        - directives_created
+        - directives_created
+        bank_id: bank_id
+        mental_models_updated:
+        - mental_models_updated
+        - mental_models_updated
+        directives_updated:
+        - directives_updated
+        - directives_updated
+        config_applied: true
+        mental_models_created:
+        - mental_models_created
+        - mental_models_created
+        dry_run: false
+      properties:
+        bank_id:
+          description: Bank that was imported into
+          title: Bank Id
+          type: string
+        config_applied:
+          description: Whether bank config was updated
+          title: Config Applied
+          type: boolean
+        mental_models_created:
+          default: []
+          description: IDs of newly created mental models
+          items:
+            type: string
+          type: array
+        mental_models_updated:
+          default: []
+          description: IDs of updated mental models
+          items:
+            type: string
+          type: array
+        directives_created:
+          default: []
+          description: Names of newly created directives
+          items:
+            type: string
+          type: array
+        directives_updated:
+          default: []
+          description: Names of updated directives
+          items:
+            type: string
+          type: array
+        operation_ids:
+          default: []
+          description: Operation IDs for mental model content generation (async)
+          items:
+            type: string
+          type: array
+        dry_run:
+          default: false
+          description: True if this was a validation-only run
+          title: Dry Run
+          type: boolean
+      required:
+      - bank_id
+      - config_applied
+      title: BankTemplateImportResponse
+    BankTemplateManifest:
+      description: |-
+        A bank template manifest for import/export.
+
+        Version field enables forward-compatible schema evolution: the API
+        auto-upgrades older manifest versions to the current schema on import.
+      example:
+        bank:
+          disposition_empathy: 5
+          enable_observations: true
+          reflect_mission: You are helping a support agent remember customer interactions.
+          retain_mission: "Extract customer issues, resolutions, and sentiment."
+        directives:
+        - content: Always respond with empathy and understanding.
+          name: Always be empathetic
+          priority: 10
+        mental_models:
+        - id: sentiment-overview
+          name: Customer Sentiment Overview
+          source_query: What is the overall sentiment trend?
+          trigger:
+            refresh_after_consolidation: true
+        version: "1"
+      properties:
+        version:
+          description: Manifest schema version (currently '1')
+          title: Version
+          type: string
+        bank:
+          $ref: '#/components/schemas/BankTemplateConfig'
+        mental_models:
+          items:
+            $ref: '#/components/schemas/BankTemplateMentalModel'
+          nullable: true
+          type: array
+        directives:
+          items:
+            $ref: '#/components/schemas/BankTemplateDirective'
+          nullable: true
+          type: array
+      required:
+      - version
+      title: BankTemplateManifest
+    BankTemplateMentalModel:
+      description: A mental model definition within a bank template manifest.
+      properties:
+        id:
+          description: Unique ID for the mental model (alphanumeric lowercase with
+            hyphens)
+          title: Id
+          type: string
+        name:
+          description: Human-readable name for the mental model
+          title: Name
+          type: string
+        source_query:
+          description: The query to run to generate content
+          title: Source Query
+          type: string
+        tags:
+          default: []
+          description: Tags for scoped visibility
+          items:
+            type: string
+          type: array
+        max_tokens:
+          default: 2048
+          description: Maximum tokens for generated content
+          maximum: 8192.0
+          minimum: 256.0
+          title: Max Tokens
+          type: integer
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Output'
+      required:
+      - id
+      - name
+      - source_query
+      title: BankTemplateMentalModel
     Body_file_retain:
       properties:
         files:
@@ -4534,12 +4909,10 @@ components:
           title: Name
           type: string
         source_query:
-          title: Source Query
+          nullable: true
           type: string
         content:
-          description: The mental model content as well-formatted markdown (auto-generated
-            from reflect endpoint)
-          title: Content
+          nullable: true
           type: string
         tags:
           default: []
@@ -4547,8 +4920,7 @@ components:
             type: string
           type: array
         max_tokens:
-          default: 2048
-          title: Max Tokens
+          nullable: true
           type: integer
         trigger:
           $ref: '#/components/schemas/MentalModelTrigger-Output'
@@ -4563,10 +4935,8 @@ components:
           nullable: true
       required:
       - bank_id
-      - content
       - id
       - name
-      - source_query
       title: MentalModelResponse
     MentalModelTrigger-Input:
       description: Trigger settings for a mental model.

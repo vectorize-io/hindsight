@@ -157,7 +157,16 @@ If any files in `hindsight-integrations/` were added or changed, verify:
 - **Release process** — check that the integration name is in the `VALID_INTEGRATIONS` array in `scripts/release-integration.sh`. If missing, flag it.
 - **Code standards** — the integration code must follow all Python style rules (type hints, no raw dicts, no tuple returns, etc.).
 
-### 10. Review against other coding standards
+### 10. Check MCP tool registration completeness
+
+If any new MCP tools were added or existing tools renamed in `hindsight-api-slim/hindsight_api/mcp_tools.py`:
+- **`_ALL_TOOLS` set** in `mcp_tools.py` — must include the new tool name
+- **`tools_to_register` default set** in `register_mcp_tools()` in `mcp_tools.py` — must include the new tool name
+- **`_SINGLE_BANK_TOOLS` set** in `hindsight-api-slim/hindsight_api/api/mcp.py` — must include the new tool if it is bank-scoped (not a bank-management tool like `list_banks`/`create_bank`)
+- **`MCP_TOOL_GROUPS`** in `hindsight-control-plane/src/components/bank-config-view.tsx` — must include the new tool in the appropriate group for the UI tool selector
+- **Tool count assertions** in tests (e.g., `test_mcp_tools.py`) — must be updated to reflect the new count
+
+### 11. Review against other coding standards
 
 Check the diff for violations of the standards listed above:
 - Python files at project root (not allowed)
@@ -169,7 +178,7 @@ Check the diff for violations of the standards listed above:
 - Premature abstractions or speculative helpers
 - Backwards-compatibility hacks (unused vars, re-exports, "removed" comments)
 
-### 11. Report findings
+### 12. Report findings
 
 Present a clear summary organized by severity:
 

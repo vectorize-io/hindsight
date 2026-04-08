@@ -1,0 +1,569 @@
+{
+  "$defs": {
+    "BankTemplateConfig": {
+      "description": "Bank configuration fields within a template manifest.\n\nOnly includes configurable (per-bank) fields. Credential fields\n(API keys, base URLs) are intentionally excluded for security.",
+      "properties": {
+        "reflect_mission": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Mission/context for Reflect operations",
+          "title": "Reflect Mission"
+        },
+        "retain_mission": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Steers what gets extracted during retain",
+          "title": "Retain Mission"
+        },
+        "retain_extraction_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fact extraction mode: 'concise' (default), 'verbose', or 'custom'",
+          "title": "Retain Extraction Mode"
+        },
+        "retain_custom_instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom extraction prompt (when mode='custom')",
+          "title": "Retain Custom Instructions"
+        },
+        "retain_chunk_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max token size for each content chunk",
+          "title": "Retain Chunk Size"
+        },
+        "enable_observations": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Toggle observation consolidation",
+          "title": "Enable Observations"
+        },
+        "observations_mission": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Controls what gets synthesised",
+          "title": "Observations Mission"
+        },
+        "disposition_skepticism": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Skepticism trait (1-5)",
+          "title": "Disposition Skepticism"
+        },
+        "disposition_literalism": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Literalism trait (1-5)",
+          "title": "Disposition Literalism"
+        },
+        "disposition_empathy": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Empathy trait (1-5)",
+          "title": "Disposition Empathy"
+        },
+        "entity_labels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Controlled vocabulary for entity labels",
+          "title": "Entity Labels"
+        },
+        "entities_allow_free_form": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Allow entities outside the label vocabulary",
+          "title": "Entities Allow Free Form"
+        }
+      },
+      "title": "BankTemplateConfig",
+      "type": "object"
+    },
+    "BankTemplateDirective": {
+      "description": "A directive definition within a bank template manifest.\n\nDirectives are matched by name on re-import: existing directives\nwith the same name are updated, new ones are created.",
+      "properties": {
+        "name": {
+          "description": "Human-readable name for the directive (used as match key on re-import)",
+          "title": "Name",
+          "type": "string"
+        },
+        "content": {
+          "description": "The directive text to inject into prompts",
+          "title": "Content",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Higher priority directives are injected first",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "is_active": {
+          "default": true,
+          "description": "Whether this directive is active",
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "tags": {
+          "default": [],
+          "description": "Tags for filtering",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "content"
+      ],
+      "title": "BankTemplateDirective",
+      "type": "object"
+    },
+    "BankTemplateMentalModel": {
+      "description": "A mental model definition within a bank template manifest.",
+      "properties": {
+        "id": {
+          "description": "Unique ID for the mental model (alphanumeric lowercase with hyphens)",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable name for the mental model",
+          "title": "Name",
+          "type": "string"
+        },
+        "source_query": {
+          "description": "The query to run to generate content",
+          "title": "Source Query",
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "description": "Tags for scoped visibility",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "max_tokens": {
+          "default": 2048,
+          "description": "Maximum tokens for generated content",
+          "maximum": 8192,
+          "minimum": 256,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "trigger": {
+          "$ref": "#/$defs/MentalModelTrigger",
+          "default": {},
+          "description": "Trigger settings"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source_query"
+      ],
+      "title": "BankTemplateMentalModel",
+      "type": "object"
+    },
+    "MentalModelTrigger": {
+      "description": "Trigger settings for a mental model.",
+      "properties": {
+        "refresh_after_consolidation": {
+          "default": false,
+          "description": "If true, refresh this mental model after observations consolidation (real-time mode)",
+          "title": "Refresh After Consolidation",
+          "type": "boolean"
+        },
+        "fact_types": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "world",
+                  "experience",
+                  "observation"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter which fact types are retrieved during reflect. None means all types (world, experience, observation).",
+          "title": "Fact Types"
+        },
+        "exclude_mental_models": {
+          "default": false,
+          "description": "If true, exclude all mental models from the reflect loop (skip search_mental_models tool).",
+          "title": "Exclude Mental Models",
+          "type": "boolean"
+        },
+        "exclude_mental_model_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Exclude specific mental models by ID from the reflect loop.",
+          "title": "Exclude Mental Model Ids"
+        },
+        "tags_match": {
+          "anyOf": [
+            {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override how the model's tags filter memories during refresh. If not set, defaults to 'all_strict' when the model has tags (security isolation) or 'any' when the model has no tags. Set to 'any' to include untagged memories alongside tagged ones during refresh.",
+          "title": "Tags Match"
+        },
+        "tag_groups": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TagGroupLeaf"
+                  },
+                  {
+                    "$ref": "#/$defs/TagGroupAnd"
+                  },
+                  {
+                    "$ref": "#/$defs/TagGroupOr"
+                  },
+                  {
+                    "$ref": "#/$defs/TagGroupNot"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.",
+          "title": "Tag Groups"
+        }
+      },
+      "title": "MentalModelTrigger",
+      "type": "object"
+    },
+    "TagGroupAnd": {
+      "description": "Compound AND group: all child filters must match.",
+      "properties": {
+        "and": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TagGroupLeaf"
+              },
+              {
+                "$ref": "#/$defs/TagGroupAnd"
+              },
+              {
+                "$ref": "#/$defs/TagGroupOr"
+              },
+              {
+                "$ref": "#/$defs/TagGroupNot"
+              }
+            ]
+          },
+          "title": "And",
+          "type": "array"
+        }
+      },
+      "required": [
+        "and"
+      ],
+      "title": "TagGroupAnd",
+      "type": "object"
+    },
+    "TagGroupLeaf": {
+      "description": "A leaf tag filter: matches memories by tag list and match mode.",
+      "properties": {
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "match": {
+          "default": "any_strict",
+          "enum": [
+            "any",
+            "all",
+            "any_strict",
+            "all_strict"
+          ],
+          "title": "Match",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "TagGroupLeaf",
+      "type": "object"
+    },
+    "TagGroupNot": {
+      "description": "Compound NOT group: child filter must NOT match.",
+      "properties": {
+        "not": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TagGroupLeaf"
+            },
+            {
+              "$ref": "#/$defs/TagGroupAnd"
+            },
+            {
+              "$ref": "#/$defs/TagGroupOr"
+            },
+            {
+              "$ref": "#/$defs/TagGroupNot"
+            }
+          ],
+          "title": "Not"
+        }
+      },
+      "required": [
+        "not"
+      ],
+      "title": "TagGroupNot",
+      "type": "object"
+    },
+    "TagGroupOr": {
+      "description": "Compound OR group: at least one child filter must match.",
+      "properties": {
+        "or": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TagGroupLeaf"
+              },
+              {
+                "$ref": "#/$defs/TagGroupAnd"
+              },
+              {
+                "$ref": "#/$defs/TagGroupOr"
+              },
+              {
+                "$ref": "#/$defs/TagGroupNot"
+              }
+            ]
+          },
+          "title": "Or",
+          "type": "array"
+        }
+      },
+      "required": [
+        "or"
+      ],
+      "title": "TagGroupOr",
+      "type": "object"
+    }
+  },
+  "description": "A bank template manifest for import/export.\n\nVersion field enables forward-compatible schema evolution: the API\nauto-upgrades older manifest versions to the current schema on import.",
+  "example": {
+    "bank": {
+      "disposition_empathy": 5,
+      "enable_observations": true,
+      "reflect_mission": "You are helping a support agent remember customer interactions.",
+      "retain_mission": "Extract customer issues, resolutions, and sentiment."
+    },
+    "directives": [
+      {
+        "content": "Always respond with empathy and understanding.",
+        "name": "Always be empathetic",
+        "priority": 10
+      }
+    ],
+    "mental_models": [
+      {
+        "id": "sentiment-overview",
+        "name": "Customer Sentiment Overview",
+        "source_query": "What is the overall sentiment trend?",
+        "trigger": {
+          "refresh_after_consolidation": true
+        }
+      }
+    ],
+    "version": "1"
+  },
+  "properties": {
+    "version": {
+      "description": "Manifest schema version (currently '1')",
+      "title": "Version",
+      "type": "string"
+    },
+    "bank": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BankTemplateConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Bank configuration to apply. Omit to leave config unchanged."
+    },
+    "mental_models": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/BankTemplateMentalModel"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Mental models to create or update (matched by id). Omit to leave unchanged.",
+      "title": "Mental Models"
+    },
+    "directives": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/BankTemplateDirective"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Directives to create or update (matched by name). Omit to leave unchanged.",
+      "title": "Directives"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "BankTemplateManifest",
+  "type": "object"
+}

@@ -76,7 +76,10 @@ class TestMetricsCollector:
     @pytest.fixture
     def collector(self, mock_meter):
         """Create a MetricsCollector with a mock meter."""
-        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter):
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter), \
+             patch("hindsight_api.config.get_config", return_value=mock_config):
             return MetricsCollector()
 
     def test_record_operation_records_duration(self, collector):
@@ -95,7 +98,7 @@ class TestMetricsCollector:
         # Second arg is attributes dict
         attributes = call_args[0][1]
         assert attributes["operation"] == "recall"
-        assert attributes["bank_id"] == "test_bank"
+        assert "bank_id" not in attributes  # excluded by default to avoid high-cardinality OTel growth
         assert attributes["source"] == "api"
         assert attributes["success"] == "true"
 
@@ -165,6 +168,21 @@ class TestMetricsCollector:
         reflect_attrs = calls[1][0][1]
         assert reflect_attrs["operation"] == "reflect"
         assert reflect_attrs["source"] == "api"
+
+    def test_record_operation_includes_bank_id_when_enabled(self):
+        """Test that bank_id is included in attributes when metrics_include_bank_id is enabled."""
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = True
+        with patch("hindsight_api.metrics.get_meter") as mock_get_meter, \
+             patch("hindsight_api.config.get_config", return_value=mock_config):
+            mock_get_meter.return_value = MagicMock()
+            collector = MetricsCollector()
+
+        with collector.record_operation("recall", bank_id="test_bank", source="api"):
+            pass
+
+        attributes = collector.operation_duration.record.call_args[0][1]
+        assert attributes["bank_id"] == "test_bank"
 
 
 class TestGetMetricsCollector:
@@ -269,7 +287,10 @@ class TestLLMMetrics:
     @pytest.fixture
     def collector(self, mock_meter):
         """Create a MetricsCollector with a mock meter."""
-        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter):
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        with patch("hindsight_api.metrics.get_meter", return_value=mock_meter), \
+             patch("hindsight_api.config.get_config", return_value=mock_config):
             return MetricsCollector()
 
     def test_record_llm_call_records_duration(self, collector):

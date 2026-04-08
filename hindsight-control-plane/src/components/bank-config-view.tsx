@@ -112,7 +112,7 @@ const DEFAULT_GEMINI_SAFETY_SETTINGS: GeminiSafetySetting[] = GEMINI_HARM_CATEGO
 // ─── MCP tool catalogue ───────────────────────────────────────────────────────
 
 const MCP_TOOL_GROUPS: { label: string; tools: string[] }[] = [
-  { label: "Core", tools: ["retain", "recall", "reflect"] },
+  { label: "Core", tools: ["retain", "sync_retain", "recall", "reflect"] },
   {
     label: "Bank management",
     tools: [

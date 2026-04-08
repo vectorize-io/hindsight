@@ -288,7 +288,14 @@ type ApiGetMentalModelRequest struct {
 	ApiService *MentalModelsAPIService
 	bankId string
 	mentalModelId string
+	detail *string
 	authorization *string
+}
+
+// Detail level: &#39;metadata&#39; (names/tags only), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response)
+func (r ApiGetMentalModelRequest) Detail(detail string) ApiGetMentalModelRequest {
+	r.detail = &detail
+	return r
 }
 
 func (r ApiGetMentalModelRequest) Authorization(authorization string) ApiGetMentalModelRequest {
@@ -342,6 +349,12 @@ func (a *MentalModelsAPIService) GetMentalModelExecute(r ApiGetMentalModelReques
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.detail != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "detail", r.detail, "form", "")
+	} else {
+		var defaultValue string = "full"
+		r.detail = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -541,6 +554,7 @@ type ApiListMentalModelsRequest struct {
 	bankId string
 	tags *[]string
 	tagsMatch *string
+	detail *string
 	limit *int32
 	offset *int32
 	authorization *string
@@ -555,6 +569,12 @@ func (r ApiListMentalModelsRequest) Tags(tags []string) ApiListMentalModelsReque
 // How to match tags
 func (r ApiListMentalModelsRequest) TagsMatch(tagsMatch string) ApiListMentalModelsRequest {
 	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Detail level: &#39;metadata&#39; (names/tags only), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response)
+func (r ApiListMentalModelsRequest) Detail(detail string) ApiListMentalModelsRequest {
+	r.detail = &detail
 	return r
 }
 
@@ -632,6 +652,12 @@ func (a *MentalModelsAPIService) ListMentalModelsExecute(r ApiListMentalModelsRe
 	} else {
 		var defaultValue string = "any"
 		r.tagsMatch = &defaultValue
+	}
+	if r.detail != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "detail", r.detail, "form", "")
+	} else {
+		var defaultValue string = "full"
+		r.detail = &defaultValue
 	}
 	if r.limit != nil {
 		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")

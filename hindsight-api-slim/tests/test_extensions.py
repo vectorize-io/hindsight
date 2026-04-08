@@ -303,7 +303,6 @@ class TestOperationHooksParameters:
             contents=contents,
             document_id=document_id,
             fact_type_override="world",
-            confidence_score=0.9,
             request_context=ctx,
         )
 
@@ -317,7 +316,6 @@ class TestOperationHooksParameters:
         assert pre_ctx.contents[0]["content"] == contents[0]["content"]
         assert pre_ctx.document_id == document_id
         assert pre_ctx.fact_type_override == "world"
-        assert pre_ctx.confidence_score == 0.9
         assert pre_ctx.request_context == ctx
 
     @pytest.mark.asyncio
@@ -334,7 +332,6 @@ class TestOperationHooksParameters:
             contents=contents,
             document_id=document_id,
             fact_type_override="experience",
-            confidence_score=0.8,
             request_context=ctx,
         )
 
@@ -345,7 +342,6 @@ class TestOperationHooksParameters:
         assert post_result.bank_id == bank_id
         assert post_result.document_id == document_id
         assert post_result.fact_type_override == "experience"
-        assert post_result.confidence_score == 0.8
         assert post_result.request_context == ctx
 
         # Verify result data

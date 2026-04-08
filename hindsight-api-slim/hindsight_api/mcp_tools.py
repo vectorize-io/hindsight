@@ -29,6 +29,7 @@ from hindsight_api.models import RequestContext
 _ALL_TOOLS: frozenset[str] = frozenset(
     {
         "retain",
+        "sync_retain",
         "recall",
         "reflect",
         "list_banks",
@@ -202,6 +203,7 @@ def register_mcp_tools(
     """
     tools_to_register = config.tools or {
         "retain",
+        "sync_retain",
         "recall",
         "reflect",
         "list_banks",
@@ -234,6 +236,9 @@ def register_mcp_tools(
 
     if "retain" in tools_to_register:
         _register_retain(mcp, memory, config)
+
+    if "sync_retain" in tools_to_register:
+        _register_sync_retain(mcp, memory, config)
 
     if "recall" in tools_to_register:
         _register_recall(mcp, memory, config)
@@ -630,6 +635,124 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 return {"status": "error", "message": str(e)}
 
 
+def _register_sync_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the sync_retain tool (synchronous retain that waits for completion)."""
+
+    if config.include_bank_id_param:
+
+        @mcp.tool()
+        async def sync_retain(
+            content: str,
+            context: str = "general",
+            timestamp: str | None = None,
+            tags: list[str] | None = None,
+            metadata: dict[str, str] | None = None,
+            document_id: str | None = None,
+            bank_id: str | None = None,
+            strategy: str | None = None,
+        ) -> dict:
+            """Store information to long-term memory and wait for completion.
+
+            Unlike retain (which is asynchronous), this tool blocks until the memory
+            is fully stored and immediately available for recall.
+
+            Args:
+                content: The fact/memory to store (be specific and include relevant details)
+                context: Category for the memory (e.g., 'preferences', 'work', 'hobbies', 'family'). Default: 'general'
+                timestamp: When this event/fact occurred (ISO format, e.g., '2024-01-15T10:30:00Z'). Useful for timeline tracking.
+                tags: Optional tags for scoped visibility filtering (e.g., ['project:alpha', 'user:123'])
+                metadata: Optional key-value metadata to attach (e.g., {'source': 'slack', 'channel': 'general'})
+                document_id: Optional document ID to associate this memory with
+                bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
+                strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+            """
+            target_bank = bank_id or config.bank_id_resolver()
+            if target_bank is None:
+                return {"status": "error", "message": "No bank_id configured"}
+
+            content_dict, error = build_content_dict(content, context, timestamp, tags, metadata, document_id, strategy)
+            if error:
+                return {"status": "error", "message": error}
+
+            request_context = _get_request_context(config)
+
+            try:
+                result = await memory.retain_batch_async(
+                    bank_id=target_bank,
+                    contents=[content_dict],
+                    request_context=request_context,
+                    strategy=content_dict.pop("strategy", None),
+                )
+                memory_ids = [uid for batch in result for uid in batch]
+                return {
+                    "status": "completed",
+                    "message": "Memory stored successfully",
+                    "memory_ids": memory_ids,
+                }
+            except OperationValidationError as e:
+                logger.warning(f"Sync retain rejected: {e}")
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                logger.error(f"Error in sync retain: {e}", exc_info=True)
+                return {"status": "error", "message": str(e)}
+
+    else:
+
+        @mcp.tool()
+        async def sync_retain(
+            content: str,
+            context: str = "general",
+            timestamp: str | None = None,
+            tags: list[str] | None = None,
+            metadata: dict[str, str] | None = None,
+            document_id: str | None = None,
+            strategy: str | None = None,
+        ) -> dict:
+            """Store information to long-term memory and wait for completion.
+
+            Unlike retain (which is asynchronous), this tool blocks until the memory
+            is fully stored and immediately available for recall.
+
+            Args:
+                content: The fact/memory to store (be specific and include relevant details)
+                context: Category for the memory (e.g., 'preferences', 'work', 'hobbies', 'family'). Default: 'general'
+                timestamp: When this event/fact occurred (ISO format, e.g., '2024-01-15T10:30:00Z'). Useful for timeline tracking.
+                tags: Optional tags for scoped visibility filtering (e.g., ['project:alpha', 'user:123'])
+                metadata: Optional key-value metadata to attach (e.g., {'source': 'slack', 'channel': 'general'})
+                document_id: Optional document ID to associate this memory with
+                strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+            """
+            target_bank = config.bank_id_resolver()
+            if target_bank is None:
+                return {"status": "error", "message": "No bank_id configured"}
+
+            content_dict, error = build_content_dict(content, context, timestamp, tags, metadata, document_id, strategy)
+            if error:
+                return {"status": "error", "message": error}
+
+            request_context = _get_request_context(config)
+
+            try:
+                result = await memory.retain_batch_async(
+                    bank_id=target_bank,
+                    contents=[content_dict],
+                    request_context=request_context,
+                    strategy=content_dict.pop("strategy", None),
+                )
+                memory_ids = [uid for batch in result for uid in batch]
+                return {
+                    "status": "completed",
+                    "message": "Memory stored successfully",
+                    "memory_ids": memory_ids,
+                }
+            except OperationValidationError as e:
+                logger.warning(f"Sync retain rejected: {e}")
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                logger.error(f"Error in sync retain: {e}", exc_info=True)
+                return {"status": "error", "message": str(e)}
+
+
 def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the recall tool."""
     description = config.recall_description or DEFAULT_MCP_RECALL_DESCRIPTION
@@ -1002,6 +1125,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool()
         async def list_mental_models(
             tags: list[str] | None = None,
+            detail: str = "full",
             bank_id: str | None = None,
         ) -> str:
             """
@@ -1013,6 +1137,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
+                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 bank_id: Optional bank to list from (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1023,6 +1148,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 models = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
+                    detail=detail,
                     request_context=_get_request_context(config),
                 )
                 return json.dumps({"items": models}, indent=2, default=str)
@@ -1038,6 +1164,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool()
         async def list_mental_models(
             tags: list[str] | None = None,
+            detail: str = "full",
         ) -> dict:
             """
             List mental models (pinned reflections) for this memory bank.
@@ -1048,6 +1175,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
             Args:
                 tags: Optional tags to filter by (returns models matching any tag)
+                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1057,6 +1185,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 models = await memory.list_mental_models(
                     bank_id=target_bank,
                     tags=tags,
+                    detail=detail,
                     request_context=_get_request_context(config),
                 )
                 return {"items": models}
@@ -1076,16 +1205,18 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
         @mcp.tool()
         async def get_mental_model(
             mental_model_id: str,
+            detail: str = "full",
             bank_id: str | None = None,
         ) -> str:
             """
             Get a specific mental model by ID.
 
-            Returns the full mental model including its generated content, source query,
-            and metadata. Use list_mental_models first to discover available model IDs.
+            Returns the mental model with the requested detail level. Use list_mental_models
+            first to discover available model IDs.
 
             Args:
                 mental_model_id: The ID of the mental model to retrieve
+                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
                 bank_id: Optional bank (defaults to session bank). Use for cross-bank operations.
             """
             try:
@@ -1096,6 +1227,7 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 model = await memory.get_mental_model(
                     bank_id=target_bank,
                     mental_model_id=mental_model_id,
+                    detail=detail,
                     request_context=_get_request_context(config),
                 )
                 if model is None:
@@ -1113,15 +1245,17 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
         @mcp.tool()
         async def get_mental_model(
             mental_model_id: str,
+            detail: str = "full",
         ) -> dict:
             """
             Get a specific mental model by ID.
 
-            Returns the full mental model including its generated content, source query,
-            and metadata. Use list_mental_models first to discover available model IDs.
+            Returns the mental model with the requested detail level. Use list_mental_models
+            first to discover available model IDs.
 
             Args:
                 mental_model_id: The ID of the mental model to retrieve
+                detail: Detail level - 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response). Default: 'full'
             """
             try:
                 target_bank = config.bank_id_resolver()
@@ -1131,6 +1265,7 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 model = await memory.get_mental_model(
                     bank_id=target_bank,
                     mental_model_id=mental_model_id,
+                    detail=detail,
                     request_context=_get_request_context(config),
                 )
                 if model is None:

@@ -139,3 +139,76 @@ async def test_retain_llm_max_retries_overrides_global():
     assert facts == []
     # Verify it retried exactly retain_llm_max_retries times
     assert llm_config.call.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_none_event_date_with_empty_facts_no_crash():
+    """
+    When event_date is None and the LLM returns an empty facts list,
+    the debug log should not crash with AttributeError on .isoformat().
+
+    Regression test for https://github.com/vectorize-io/hindsight/issues/874
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1)
+
+    # LLM returns a valid dict but with no facts — triggers the debug log path
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="A plain text document with no timestamp.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=None,
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert facts == []
+
+
+@pytest.mark.asyncio
+async def test_none_event_date_with_valid_facts_no_crash():
+    """
+    When event_date is None but the LLM returns valid facts,
+    extraction should succeed without errors.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1)
+
+    llm_config = _make_llm_config(mock_response={
+        "facts": [
+            {
+                "what": "Alice visited Paris",
+                "when": "2023",
+                "who": "Alice",
+                "why": "vacation",
+            }
+        ]
+    })
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=None,
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert "Alice visited Paris" in facts[0].fact

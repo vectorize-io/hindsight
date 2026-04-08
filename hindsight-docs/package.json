@@ -5,7 +5,7 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "node scripts/check-code-parity.mjs && node scripts/check-integration-seo.mjs && docusaurus build",
+    "build": "node scripts/check-code-parity.mjs && node scripts/check-integration-seo.mjs && node scripts/check-templates.mjs && docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",

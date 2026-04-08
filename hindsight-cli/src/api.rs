@@ -550,14 +550,14 @@ impl ApiClient {
 
     pub fn list_mental_models(&self, bank_id: &str, _verbose: bool) -> Result<types::MentalModelListResponse> {
         self.runtime.block_on(async {
-            let response = self.client.list_mental_models(bank_id, None, None, None, None, None).await?;
+            let response = self.client.list_mental_models(bank_id, None, None, None, None, None, None).await?;
             Ok(response.into_inner())
         })
     }
 
     pub fn get_mental_model(&self, bank_id: &str, mental_model_id: &str, _verbose: bool) -> Result<types::MentalModelResponse> {
         self.runtime.block_on(async {
-            let response = self.client.get_mental_model(bank_id, mental_model_id, None).await?;
+            let response = self.client.get_mental_model(bank_id, mental_model_id, None, None).await?;
             Ok(response.into_inner())
         })
     }

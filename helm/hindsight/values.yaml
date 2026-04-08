@@ -67,6 +67,33 @@ api:
   # Pod affinity/anti-affinity (overrides global affinity for this component)
   # affinity: {}
 
+  # Persistent volume for local model cache (reranker, embeddings)
+  # Models are downloaded to /home/hindsight/.cache on first use.
+  # Without persistence, models are re-downloaded on every pod restart.
+  persistence:
+    modelCache:
+      enabled: false
+      size: 5Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      annotations: {}
+
+  # Extra volume mounts for the api container
+  # e.g.
+  # extraVolumeMounts:
+  #   - name: my-volume
+  #     mountPath: /mnt/my-volume
+  extraVolumeMounts: []
+
+  # Extra volumes for the api pod
+  # e.g.
+  # extraVolumes:
+  #   - name: my-volume
+  #     configMap:
+  #       name: my-configmap
+  extraVolumes: []
+
   # Environment variables
   env:
     #HINDSIGHT_API_LLM_PROVIDER: "groq"
@@ -139,6 +166,32 @@ worker:
 
   # Pod affinity/anti-affinity (overrides global affinity for this component)
   # affinity: {}
+
+  # Persistent volume for local model cache (reranker, embeddings)
+  # Uses volumeClaimTemplates since worker is a StatefulSet.
+  persistence:
+    modelCache:
+      enabled: false
+      size: 5Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      annotations: {}
+
+  # Extra volume mounts for the worker container
+  # e.g.
+  # extraVolumeMounts:
+  #   - name: my-volume
+  #     mountPath: /mnt/my-volume
+  extraVolumeMounts: []
+
+  # Extra volumes for the worker pod
+  # e.g.
+  # extraVolumes:
+  #   - name: my-volume
+  #     configMap:
+  #       name: my-configmap
+  extraVolumes: []
 
   # Secret environment variables (inherited from api.secrets if not specified)
   secrets: {}

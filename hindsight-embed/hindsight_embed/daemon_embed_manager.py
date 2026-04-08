@@ -101,12 +101,113 @@ class DaemonEmbedManager(EmbedManager):
         api_version = os.getenv("HINDSIGHT_EMBED_API_VERSION", __version__)
         return ["uvx", f"hindsight-api@{api_version}"]
 
+    @staticmethod
+    def _is_port_in_use(port: int) -> bool:
+        """Check if a port is in use using a socket connection (cross-platform)."""
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+
+    @staticmethod
+    def _find_pid_on_port(port: int) -> int | None:
+        """Find the PID of the process listening on a port."""
+        import platform
+
+        try:
+            if platform.system() == "Windows":
+                # Use netstat on Windows
+                result = subprocess.run(
+                    ["netstat", "-ano", "-p", "TCP"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        if f"127.0.0.1:{port}" in line and "LISTENING" in line:
+                            return int(line.strip().split()[-1])
+            else:
+                # Use lsof on macOS/Linux
+                result = subprocess.run(
+                    ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return int(result.stdout.strip().split()[0])
+        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError):
+            pass
+        return None
+
+    @staticmethod
+    def _kill_process(pid: int) -> bool:
+        """Kill a process by PID and wait for it to exit. Returns True if process is gone."""
+        import signal
+
+        try:
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(50):
+                time.sleep(0.1)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    return True
+        except OSError:
+            return True  # Already gone
+        return False
+
+    def _clear_port(self, port: int) -> bool:
+        """
+        Ensure the port is free before starting a daemon.
+
+        If the port is occupied by a hindsight daemon, stop it gracefully.
+        If occupied by something else, return False.
+
+        Returns:
+            True if port is free (or was freed), False if occupied by non-hindsight process.
+        """
+        if not self._is_port_in_use(port):
+            return True
+
+        # Port is occupied — check if it's a hindsight daemon via /health
+        try:
+            with httpx.Client(timeout=2) as client:
+                response = client.get(f"http://127.0.0.1:{port}/health")
+                if response.status_code != 200:
+                    logger.warning(f"Port {port} is in use by another process")
+                    return False
+        except Exception:
+            logger.warning(f"Port {port} is in use by another process")
+            return False
+
+        # It's a hindsight daemon — find its PID and stop it
+        pid = self._find_pid_on_port(port)
+        if pid is None:
+            logger.warning(f"Port {port} has a hindsight daemon but could not find its PID")
+            return False
+
+        logger.info(f"Stopping existing daemon on port {port} (PID {pid})")
+        if self._kill_process(pid):
+            logger.info(f"Old daemon (PID {pid}) stopped")
+            return True
+
+        logger.warning(f"Old daemon (PID {pid}) did not stop in time")
+        return False
+
     def _start_daemon(self, config: dict, profile: str) -> bool:
         """Start the daemon in background."""
         paths = self._profile_manager.resolve_profile_paths(profile)
         profile_label = f"profile '{profile}'" if profile else "default profile"
         daemon_log = paths.log
         port = paths.port
+
+        # Ensure port is free before starting (handles stale daemons from version upgrades)
+        if not self._clear_port(port):
+            logger.error(f"Cannot start daemon: port {port} is in use by a non-hindsight process")
+            return False
 
         # Load profile's .env file and merge with provided config
         # This fixes issue #305 where profile env vars were ignored
@@ -318,6 +419,8 @@ class DaemonEmbedManager(EmbedManager):
         """
         try:
             api_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_API_")}
+            if not api_config:
+                return
             self._profile_manager.create_profile(profile, port, api_config)
         except Exception as e:
             logger.debug(f"Failed to register profile '{profile}' in metadata: {e}")
@@ -502,30 +605,12 @@ class DaemonEmbedManager(EmbedManager):
             logger.debug(f"UI not running for profile '{profile}'")
             return True
 
-        # Find PID by port
-        try:
-            result = subprocess.run(
-                ["lsof", "-ti", f":{ui_port}", "-sTCP:LISTEN"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                pid = int(result.stdout.strip().split()[0])
-                logger.debug(f"Found UI PID {pid} on port {ui_port}")
-                os.kill(pid, 15)
-
-                # Wait for process to exit
-                for _ in range(50):
-                    time.sleep(0.1)
-                    try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        break
-            else:
-                logger.warning(f"Could not find PID for UI port {ui_port}")
-        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError) as e:
-            logger.warning(f"Could not find/kill UI by port: {e}")
+        pid = self._find_pid_on_port(ui_port)
+        if pid is not None:
+            logger.debug(f"Found UI PID {pid} on port {ui_port}")
+            self._kill_process(pid)
+        else:
+            logger.warning(f"Could not find PID for UI port {ui_port}")
 
         # Wait for health check to fail
         for _ in range(30):
@@ -572,32 +657,12 @@ class DaemonEmbedManager(EmbedManager):
         paths = self._profile_manager.resolve_profile_paths(profile)
         port = paths.port
 
-        # Find PID by port
-        try:
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                pid = int(result.stdout.strip().split()[0])
-                logger.debug(f"Found daemon PID {pid} on port {port}")
-
-                # Send SIGTERM
-                os.kill(pid, 15)
-
-                # Wait for process to exit
-                for _ in range(50):
-                    time.sleep(0.1)
-                    try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        break
-            else:
-                logger.warning(f"Could not find PID for port {port}")
-        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError) as e:
-            logger.warning(f"Could not find/kill daemon by port: {e}")
+        pid = self._find_pid_on_port(port)
+        if pid is not None:
+            logger.debug(f"Found daemon PID {pid} on port {port}")
+            self._kill_process(pid)
+        else:
+            logger.warning(f"Could not find PID for port {port}")
 
         # Wait for health check to fail
         for _ in range(30):

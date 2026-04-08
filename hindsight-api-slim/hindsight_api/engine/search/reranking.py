@@ -2,6 +2,7 @@
 Cross-encoder neural reranking for search results.
 """
 
+import math
 from datetime import datetime, timezone
 
 from .types import MergedCandidate, ScoredResult
@@ -13,6 +14,7 @@ UTC = timezone.utc
 # so the max combined boost is (1 + alpha/2)^2 ≈ +21% and min is (1 - alpha/2)^2 ≈ -19%.
 _RECENCY_ALPHA: float = 0.2
 _TEMPORAL_ALPHA: float = 0.2
+_PROOF_COUNT_ALPHA: float = 0.1  # Conservative: max ±5% for evidence strength
 
 
 def apply_combined_scoring(
@@ -20,28 +22,40 @@ def apply_combined_scoring(
     now: datetime,
     recency_alpha: float = _RECENCY_ALPHA,
     temporal_alpha: float = _TEMPORAL_ALPHA,
+    proof_count_alpha: float = _PROOF_COUNT_ALPHA,
 ) -> None:
     """Apply combined scoring to a list of ScoredResults in-place.
 
-    Uses the cross-encoder score as the primary relevance signal, with recency
-    and temporal proximity applied as multiplicative boosts. This ensures the
-    influence of these secondary signals is always proportional to the base
-    relevance score, regardless of the cross-encoder model's score calibration.
+    Uses the cross-encoder score as the primary relevance signal, with recency,
+    temporal proximity, and proof count applied as multiplicative boosts. This
+    ensures the influence of these secondary signals is always proportional to
+    the base relevance score, regardless of the cross-encoder model's score
+    calibration.
 
     Formula::
 
-        recency_boost  = 1 + recency_alpha  * (recency  - 0.5)   # in [1-α/2, 1+α/2]
-        temporal_boost = 1 + temporal_alpha * (temporal - 0.5)   # in [1-α/2, 1+α/2]
-        combined_score = cross_encoder_score_normalized * recency_boost * temporal_boost
+        recency_boost     = 1 + recency_alpha     * (recency     - 0.5)   # in [1-α/2, 1+α/2]
+        temporal_boost    = 1 + temporal_alpha    * (temporal    - 0.5)   # in [1-α/2, 1+α/2]
+        proof_count_boost = 1 + proof_count_alpha * (proof_norm  - 0.5)   # in [1-α/2, 1+α/2]
+        combined_score    = CE_normalized * recency_boost * temporal_boost * proof_count_boost
+
+    proof_norm maps proof_count using a smooth logarithmic curve centered at 0.5,
+    clamped to [0, 1]:
+      proof_count=1 → 0.5 + 0 = 0.5 (neutral multiplier)
+      proof_count=150 → clamped to 1.0 (max +5% boost)
 
     Temporal proximity is treated as neutral (0.5) when not set by temporal retrieval,
     so temporal_boost collapses to 1.0 for non-temporal queries.
+
+    Proof count is treated as neutral (0.5) when not available (non-observation facts),
+    so proof_count_boost collapses to 1.0 for world/experience/opinion facts.
 
     Args:
         scored_results: Results from the cross-encoder reranker. Mutated in place.
         now: Current UTC datetime for recency calculation.
         recency_alpha: Max relative recency adjustment (default 0.2 → ±10%).
         temporal_alpha: Max relative temporal adjustment (default 0.2 → ±10%).
+        proof_count_alpha: Max relative proof count adjustment (default 0.1 → ±5%).
     """
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
@@ -59,13 +73,23 @@ def apply_combined_scoring(
         # Temporal proximity: meaningful only for temporal queries; neutral otherwise.
         sr.temporal = sr.retrieval.temporal_proximity if sr.retrieval.temporal_proximity is not None else 0.5
 
+        # Proof count: log-normalized evidence strength; neutral for non-observations.
+        proof_count = sr.retrieval.proof_count
+        if proof_count is not None and proof_count >= 1:
+            # Clamp to [0, 1] so extreme counts stay within documented ±5% range
+            proof_norm = min(1.0, max(0.0, 0.5 + (math.log(proof_count) / 10.0)))
+        else:
+            # Neutral baseline is precisely 0.5, ensuring neutral multiplier (1.0)
+            proof_norm = 0.5
+
         # RRF: kept at 0.0 for trace continuity but excluded from scoring.
         # RRF is batch-relative (min-max normalised) and redundant after reranking.
         sr.rrf_normalized = 0.0
 
         recency_boost = 1.0 + recency_alpha * (sr.recency - 0.5)
         temporal_boost = 1.0 + temporal_alpha * (sr.temporal - 0.5)
-        sr.combined_score = sr.cross_encoder_score_normalized * recency_boost * temporal_boost
+        proof_count_boost = 1.0 + proof_count_alpha * (proof_norm - 0.5)
+        sr.combined_score = sr.cross_encoder_score_normalized * recency_boost * temporal_boost * proof_count_boost
         sr.weight = sr.combined_score
 
 

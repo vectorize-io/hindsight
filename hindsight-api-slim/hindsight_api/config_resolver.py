@@ -239,6 +239,15 @@ class ConfigResolver:
                 logger.warning(f"Failed to check permissions for bank {bank_id}: {e}")
                 # Continue without permission check (fail open for backward compatibility)
 
+        # Validate entity_labels structure
+        if "entity_labels" in normalized_updates and normalized_updates["entity_labels"] is not None:
+            from .engine.retain.entity_labels import parse_entity_labels
+
+            try:
+                parse_entity_labels(normalized_updates["entity_labels"])
+            except Exception as e:
+                raise ValueError(f"Invalid entity_labels format: {e}")
+
         # Validate retain_strategies: reject empty string keys
         if "retain_strategies" in normalized_updates and normalized_updates["retain_strategies"]:
             empty_keys = [k for k in normalized_updates["retain_strategies"] if not str(k).strip()]

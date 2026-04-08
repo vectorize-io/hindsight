@@ -648,6 +648,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -670,6 +671,8 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -697,6 +700,7 @@ class MentalModelsApi:
         _param = self._get_mental_model_serialize(
             bank_id=bank_id,
             mental_model_id=mental_model_id,
+            detail=detail,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -724,6 +728,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -746,6 +751,8 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -773,6 +780,7 @@ class MentalModelsApi:
         _param = self._get_mental_model_serialize(
             bank_id=bank_id,
             mental_model_id=mental_model_id,
+            detail=detail,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -800,6 +808,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -822,6 +831,8 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -849,6 +860,7 @@ class MentalModelsApi:
         _param = self._get_mental_model_serialize(
             bank_id=bank_id,
             mental_model_id=mental_model_id,
+            detail=detail,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -871,6 +883,7 @@ class MentalModelsApi:
         self,
         bank_id,
         mental_model_id,
+        detail,
         authorization,
         _request_auth,
         _content_type,
@@ -898,6 +911,10 @@ class MentalModelsApi:
         if mental_model_id is not None:
             _path_params['mental_model_id'] = mental_model_id
         # process the query parameters
+        if detail is not None:
+            
+            _query_params.append(('detail', detail))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization
@@ -1235,6 +1252,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1261,6 +1279,8 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1293,6 +1313,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             tags=tags,
             tags_match=tags_match,
+            detail=detail,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1323,6 +1344,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1349,6 +1371,8 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1381,6 +1405,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             tags=tags,
             tags_match=tags_match,
+            detail=detail,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1411,6 +1436,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
@@ -1437,6 +1463,8 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
+        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :type detail: str
         :param limit:
         :type limit: int
         :param offset:
@@ -1469,6 +1497,7 @@ class MentalModelsApi:
             bank_id=bank_id,
             tags=tags,
             tags_match=tags_match,
+            detail=detail,
             limit=limit,
             offset=offset,
             authorization=authorization,
@@ -1494,6 +1523,7 @@ class MentalModelsApi:
         bank_id,
         tags,
         tags_match,
+        detail,
         limit,
         offset,
         authorization,
@@ -1529,6 +1559,10 @@ class MentalModelsApi:
         if tags_match is not None:
             
             _query_params.append(('tags_match', tags_match))
+            
+        if detail is not None:
+            
+            _query_params.append(('detail', detail))
             
         if limit is not None:
             

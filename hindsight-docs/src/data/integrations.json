@@ -181,6 +181,16 @@
       "icon": "/img/icons/autogen.svg"
     },
     {
+      "id": "opencode",
+      "name": "OpenCode",
+      "description": "Persistent long-term memory plugin for OpenCode. Auto-retains conversations, recalls context on session start, and provides retain/recall/reflect tools.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/opencode",
+      "icon": "/img/icons/opencode.svg"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",

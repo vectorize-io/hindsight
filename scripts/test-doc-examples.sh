@@ -42,6 +42,9 @@ fi
 echo "======================================"
 echo ""
 
+# Number of retry attempts for each example (handles transient LLM timeouts)
+MAX_RETRIES=2
+
 # Function to run a single example
 run_example() {
     local file="$1"
@@ -54,19 +57,30 @@ run_example() {
     echo -n "Running $basename... "
 
     pushd "$workdir" > /dev/null 2>&1
-    if $runner "$file" > "$logfile" 2>&1; then
-        echo -e "${GREEN}✓ PASS${NC}"
-        TOTAL_PASSED=$((TOTAL_PASSED + 1))
-        rm -f "$logfile"  # Clean up successful test logs
-        popd > /dev/null 2>&1
-        return 0
-    else
-        echo -e "${RED}✗ FAIL${NC}"
-        TOTAL_FAILED=$((TOTAL_FAILED + 1))
-        FAILED_EXAMPLES+=("$basename:$logfile")
-        popd > /dev/null 2>&1
-        return 1
-    fi
+    local attempt=1
+    while [ $attempt -le $MAX_RETRIES ]; do
+        if $runner "$file" > "$logfile" 2>&1; then
+            if [ $attempt -gt 1 ]; then
+                echo -e "${GREEN}✓ PASS${NC} (passed on retry $attempt)"
+            else
+                echo -e "${GREEN}✓ PASS${NC}"
+            fi
+            TOTAL_PASSED=$((TOTAL_PASSED + 1))
+            rm -f "$logfile"  # Clean up successful test logs
+            popd > /dev/null 2>&1
+            return 0
+        fi
+        if [ $attempt -lt $MAX_RETRIES ]; then
+            echo -e -n "${YELLOW}(attempt $attempt failed, retrying)${NC} "
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    echo -e "${RED}✗ FAIL${NC} (after $MAX_RETRIES attempts)"
+    TOTAL_FAILED=$((TOTAL_FAILED + 1))
+    FAILED_EXAMPLES+=("$basename:$logfile")
+    popd > /dev/null 2>&1
+    return 1
 }
 
 # Run Python examples

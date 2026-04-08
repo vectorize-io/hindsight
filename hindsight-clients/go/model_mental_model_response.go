@@ -24,12 +24,11 @@ type MentalModelResponse struct {
 	Id string `json:"id"`
 	BankId string `json:"bank_id"`
 	Name string `json:"name"`
-	SourceQuery string `json:"source_query"`
-	// The mental model content as well-formatted markdown (auto-generated from reflect endpoint)
-	Content string `json:"content"`
+	SourceQuery NullableString `json:"source_query,omitempty"`
+	Content NullableString `json:"content,omitempty"`
 	Tags []string `json:"tags,omitempty"`
-	MaxTokens *int32 `json:"max_tokens,omitempty"`
-	Trigger *MentalModelTriggerOutput `json:"trigger,omitempty"`
+	MaxTokens NullableInt32 `json:"max_tokens,omitempty"`
+	Trigger NullableMentalModelTriggerOutput `json:"trigger,omitempty"`
 	LastRefreshedAt NullableString `json:"last_refreshed_at,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
 	ReflectResponse map[string]interface{} `json:"reflect_response,omitempty"`
@@ -41,15 +40,11 @@ type _MentalModelResponse MentalModelResponse
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMentalModelResponse(id string, bankId string, name string, sourceQuery string, content string) *MentalModelResponse {
+func NewMentalModelResponse(id string, bankId string, name string) *MentalModelResponse {
 	this := MentalModelResponse{}
 	this.Id = id
 	this.BankId = bankId
 	this.Name = name
-	this.SourceQuery = sourceQuery
-	this.Content = content
-	var maxTokens int32 = 2048
-	this.MaxTokens = &maxTokens
 	return &this
 }
 
@@ -58,8 +53,6 @@ func NewMentalModelResponse(id string, bankId string, name string, sourceQuery s
 // but it doesn't guarantee that properties required by API are set
 func NewMentalModelResponseWithDefaults() *MentalModelResponse {
 	this := MentalModelResponse{}
-	var maxTokens int32 = 2048
-	this.MaxTokens = &maxTokens
 	return &this
 }
 
@@ -135,52 +128,88 @@ func (o *MentalModelResponse) SetName(v string) {
 	o.Name = v
 }
 
-// GetSourceQuery returns the SourceQuery field value
+// GetSourceQuery returns the SourceQuery field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetSourceQuery() string {
-	if o == nil {
+	if o == nil || IsNil(o.SourceQuery.Get()) {
 		var ret string
 		return ret
 	}
-
-	return o.SourceQuery
+	return *o.SourceQuery.Get()
 }
 
-// GetSourceQueryOk returns a tuple with the SourceQuery field value
+// GetSourceQueryOk returns a tuple with the SourceQuery field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *MentalModelResponse) GetSourceQueryOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return &o.SourceQuery, true
+	return o.SourceQuery.Get(), o.SourceQuery.IsSet()
 }
 
-// SetSourceQuery sets field value
+// HasSourceQuery returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasSourceQuery() bool {
+	if o != nil && o.SourceQuery.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSourceQuery gets a reference to the given NullableString and assigns it to the SourceQuery field.
 func (o *MentalModelResponse) SetSourceQuery(v string) {
-	o.SourceQuery = v
+	o.SourceQuery.Set(&v)
+}
+// SetSourceQueryNil sets the value for SourceQuery to be an explicit nil
+func (o *MentalModelResponse) SetSourceQueryNil() {
+	o.SourceQuery.Set(nil)
 }
 
-// GetContent returns the Content field value
+// UnsetSourceQuery ensures that no value is present for SourceQuery, not even an explicit nil
+func (o *MentalModelResponse) UnsetSourceQuery() {
+	o.SourceQuery.Unset()
+}
+
+// GetContent returns the Content field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetContent() string {
-	if o == nil {
+	if o == nil || IsNil(o.Content.Get()) {
 		var ret string
 		return ret
 	}
-
-	return o.Content
+	return *o.Content.Get()
 }
 
-// GetContentOk returns a tuple with the Content field value
+// GetContentOk returns a tuple with the Content field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *MentalModelResponse) GetContentOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
-	return &o.Content, true
+	return o.Content.Get(), o.Content.IsSet()
 }
 
-// SetContent sets field value
+// HasContent returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasContent() bool {
+	if o != nil && o.Content.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetContent gets a reference to the given NullableString and assigns it to the Content field.
 func (o *MentalModelResponse) SetContent(v string) {
-	o.Content = v
+	o.Content.Set(&v)
+}
+// SetContentNil sets the value for Content to be an explicit nil
+func (o *MentalModelResponse) SetContentNil() {
+	o.Content.Set(nil)
+}
+
+// UnsetContent ensures that no value is present for Content, not even an explicit nil
+func (o *MentalModelResponse) UnsetContent() {
+	o.Content.Unset()
 }
 
 // GetTags returns the Tags field value if set, zero value otherwise.
@@ -215,68 +244,88 @@ func (o *MentalModelResponse) SetTags(v []string) {
 	o.Tags = v
 }
 
-// GetMaxTokens returns the MaxTokens field value if set, zero value otherwise.
+// GetMaxTokens returns the MaxTokens field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetMaxTokens() int32 {
-	if o == nil || IsNil(o.MaxTokens) {
+	if o == nil || IsNil(o.MaxTokens.Get()) {
 		var ret int32
 		return ret
 	}
-	return *o.MaxTokens
+	return *o.MaxTokens.Get()
 }
 
 // GetMaxTokensOk returns a tuple with the MaxTokens field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *MentalModelResponse) GetMaxTokensOk() (*int32, bool) {
-	if o == nil || IsNil(o.MaxTokens) {
+	if o == nil {
 		return nil, false
 	}
-	return o.MaxTokens, true
+	return o.MaxTokens.Get(), o.MaxTokens.IsSet()
 }
 
 // HasMaxTokens returns a boolean if a field has been set.
 func (o *MentalModelResponse) HasMaxTokens() bool {
-	if o != nil && !IsNil(o.MaxTokens) {
+	if o != nil && o.MaxTokens.IsSet() {
 		return true
 	}
 
 	return false
 }
 
-// SetMaxTokens gets a reference to the given int32 and assigns it to the MaxTokens field.
+// SetMaxTokens gets a reference to the given NullableInt32 and assigns it to the MaxTokens field.
 func (o *MentalModelResponse) SetMaxTokens(v int32) {
-	o.MaxTokens = &v
+	o.MaxTokens.Set(&v)
+}
+// SetMaxTokensNil sets the value for MaxTokens to be an explicit nil
+func (o *MentalModelResponse) SetMaxTokensNil() {
+	o.MaxTokens.Set(nil)
 }
 
-// GetTrigger returns the Trigger field value if set, zero value otherwise.
+// UnsetMaxTokens ensures that no value is present for MaxTokens, not even an explicit nil
+func (o *MentalModelResponse) UnsetMaxTokens() {
+	o.MaxTokens.Unset()
+}
+
+// GetTrigger returns the Trigger field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetTrigger() MentalModelTriggerOutput {
-	if o == nil || IsNil(o.Trigger) {
+	if o == nil || IsNil(o.Trigger.Get()) {
 		var ret MentalModelTriggerOutput
 		return ret
 	}
-	return *o.Trigger
+	return *o.Trigger.Get()
 }
 
 // GetTriggerOk returns a tuple with the Trigger field value if set, nil otherwise
 // and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
 func (o *MentalModelResponse) GetTriggerOk() (*MentalModelTriggerOutput, bool) {
-	if o == nil || IsNil(o.Trigger) {
+	if o == nil {
 		return nil, false
 	}
-	return o.Trigger, true
+	return o.Trigger.Get(), o.Trigger.IsSet()
 }
 
 // HasTrigger returns a boolean if a field has been set.
 func (o *MentalModelResponse) HasTrigger() bool {
-	if o != nil && !IsNil(o.Trigger) {
+	if o != nil && o.Trigger.IsSet() {
 		return true
 	}
 
 	return false
 }
 
-// SetTrigger gets a reference to the given MentalModelTriggerOutput and assigns it to the Trigger field.
+// SetTrigger gets a reference to the given NullableMentalModelTriggerOutput and assigns it to the Trigger field.
 func (o *MentalModelResponse) SetTrigger(v MentalModelTriggerOutput) {
-	o.Trigger = &v
+	o.Trigger.Set(&v)
+}
+// SetTriggerNil sets the value for Trigger to be an explicit nil
+func (o *MentalModelResponse) SetTriggerNil() {
+	o.Trigger.Set(nil)
+}
+
+// UnsetTrigger ensures that no value is present for Trigger, not even an explicit nil
+func (o *MentalModelResponse) UnsetTrigger() {
+	o.Trigger.Unset()
 }
 
 // GetLastRefreshedAt returns the LastRefreshedAt field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -409,16 +458,20 @@ func (o MentalModelResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["id"] = o.Id
 	toSerialize["bank_id"] = o.BankId
 	toSerialize["name"] = o.Name
-	toSerialize["source_query"] = o.SourceQuery
-	toSerialize["content"] = o.Content
+	if o.SourceQuery.IsSet() {
+		toSerialize["source_query"] = o.SourceQuery.Get()
+	}
+	if o.Content.IsSet() {
+		toSerialize["content"] = o.Content.Get()
+	}
 	if !IsNil(o.Tags) {
 		toSerialize["tags"] = o.Tags
 	}
-	if !IsNil(o.MaxTokens) {
-		toSerialize["max_tokens"] = o.MaxTokens
+	if o.MaxTokens.IsSet() {
+		toSerialize["max_tokens"] = o.MaxTokens.Get()
 	}
-	if !IsNil(o.Trigger) {
-		toSerialize["trigger"] = o.Trigger
+	if o.Trigger.IsSet() {
+		toSerialize["trigger"] = o.Trigger.Get()
 	}
 	if o.LastRefreshedAt.IsSet() {
 		toSerialize["last_refreshed_at"] = o.LastRefreshedAt.Get()
@@ -440,8 +493,6 @@ func (o *MentalModelResponse) UnmarshalJSON(data []byte) (err error) {
 		"id",
 		"bank_id",
 		"name",
-		"source_query",
-		"content",
 	}
 
 	allProperties := make(map[string]interface{})

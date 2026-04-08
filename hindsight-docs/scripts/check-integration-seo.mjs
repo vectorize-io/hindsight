@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const integrationsDir = join(__dirname, '..', 'docs', 'sdks', 'integrations');
+const integrationsDir = join(__dirname, '..', 'docs-integrations');
 
 const IGNORED_FILES = ['_template.md', '_category_.json'];
 
@@ -55,7 +55,7 @@ for (const filename of files) {
 if (violations.length > 0) {
   console.error('[integration-seo] ❌ The following integration pages are missing required frontmatter:\n');
   for (const { filename, missing } of violations) {
-    console.error(`  docs/sdks/integrations/${filename} — missing: ${missing.join(', ')}`);
+    console.error(`  docs-integrations/${filename} — missing: ${missing.join(', ')}`);
   }
   console.error('\nAll integration pages must have both `title` and `description` in their frontmatter.');
   console.error('Example:\n');

@@ -3,15 +3,16 @@ import DropdownNavbarItem from '@theme-original/NavbarItem/DropdownNavbarItem';
 import type DropdownNavbarItemType from '@theme/NavbarItem/DropdownNavbarItem';
 import type {WrapperProps} from '@docusaurus/types';
 import type {IconType} from 'react-icons';
-import {LuLayoutGrid, LuBook, LuRss, LuBookOpen} from 'react-icons/lu';
+import {LuLayoutGrid, LuLayoutTemplate, LuBook, LuRss, LuBookOpen} from 'react-icons/lu';
 import {SiSlack} from 'react-icons/si';
 
 const ICON_MAP: Record<string, IconType> = {
-  'lu-layout-grid': LuLayoutGrid,
-  'lu-book':        LuBook,
-  'lu-rss':         LuRss,
-  'lu-book-open':   LuBookOpen,
-  'si-slack':       SiSlack,
+  'lu-layout-grid':     LuLayoutGrid,
+  'lu-layout-template': LuLayoutTemplate,
+  'lu-book':            LuBook,
+  'lu-rss':             LuRss,
+  'lu-book-open':       LuBookOpen,
+  'si-slack':           SiSlack,
 };
 
 type Props = WrapperProps<typeof DropdownNavbarItemType>;

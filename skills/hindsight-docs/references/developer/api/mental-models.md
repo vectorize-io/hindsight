@@ -293,19 +293,50 @@ console.log(`Last refreshed: ${mentalModel.last_refreshed_at}`);
 # Section 'get-mental-model' not found in api/mental-models.go
 ```
 
+### Detail Levels
+
+Both **List** and **Get** endpoints accept an optional `detail` query parameter that controls how much data is returned. This is useful for reducing response size, especially in agent boot flows or MCP clients where context budget is limited.
+
+| Level | Fields Returned | Use Case |
+|-------|----------------|----------|
+| `metadata` | `id`, `bank_id`, `name`, `tags`, `last_refreshed_at`, `created_at` | Inventory — "what models exist?" |
+| `content` | All metadata fields + `source_query`, `content`, `max_tokens`, `trigger` | Agent boot — "what do the models say?" |
+| `full` (default) | All fields including `reflect_response` | Deep inspection — "what evidence backs this model?" |
+
+```bash
+# List only names and tags (smallest response)
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=metadata"
+
+# List with content but without provenance chains
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+
+# Get full detail (default behavior)
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID?detail=full"
+```
+
+The `detail` parameter is also available in the MCP tools:
+
+```json
+{"bank_id": "my-bank", "detail": "metadata"}
+```
+
+:::tip
+Use `detail=content` for agent orientation flows. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
 ### Response Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique mental model ID |
-| `bank_id` | string | Memory bank ID |
-| `name` | string | Human-readable name |
-| `source_query` | string | The query used to generate content |
-| `content` | string | The generated mental model text |
-| `tags` | list | Tags for filtering |
-| `last_refreshed_at` | string | When the mental model was last updated |
-| `created_at` | string | When the mental model was created |
-| `reflect_response` | object | Full reflect response including `based_on` facts |
+| Field | Type | Detail Level | Description |
+|-------|------|-------------|-------------|
+| `id` | string | metadata | Unique mental model ID |
+| `bank_id` | string | metadata | Memory bank ID |
+| `name` | string | metadata | Human-readable name |
+| `tags` | list | metadata | Tags for filtering |
+| `last_refreshed_at` | string | metadata | When the mental model was last updated |
+| `created_at` | string | metadata | When the mental model was created |
+| `source_query` | string | content | The query used to generate content |
+| `content` | string | content | The generated mental model text |
+| `max_tokens` | int | content | Maximum tokens for the mental model content |
+| `trigger` | object | content | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
+| `reflect_response` | object | full | Full reflect response including `based_on` provenance facts |
 
 ---
 

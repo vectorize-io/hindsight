@@ -376,6 +376,7 @@ Converts text into dense vector representations for semantic similarity search.
 | `local` | SentenceTransformers (default) | Development, low latency |
 | `openai` | OpenAI embeddings API | Production, high quality |
 | `cohere` | Cohere embeddings API | Production, multilingual |
+| `google` | Google embeddings (Gemini API or Vertex AI) | Production, multilingual, high quality |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
 
@@ -393,6 +394,14 @@ Converts text into dense vector representations for semantic similarity search.
 | `text-embedding-3-small` | 1536 | Default OpenAI, cost-effective |
 | `text-embedding-3-large` | 3072 | Higher quality, more expensive |
 | `text-embedding-ada-002` | 1536 | Legacy model |
+
+### Google Models
+
+| Model | Dimensions | Use Case |
+|-------|------------|----------|
+| `gemini-embedding-001` | 768 (configurable) | Default Google, general purpose |
+
+Google's `gemini-embedding-001` supports configurable output dimensionality via truncation, google recommend using: 768, 1536, 3072, via `HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY`. Default is 768.
 
 ### Cohere Models
 
@@ -421,6 +430,16 @@ export HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL=text-embedding-3-small
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere
 export HINDSIGHT_API_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0
+
+# Google (API key auth)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=google
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY=xxxxxxxxxxxx
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL=gemini-embedding-001
+
+# Google (Vertex AI auth - auto-detected when project ID is set)
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=google
+export HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL=gemini-embedding-001
+export HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID=your-gcp-project-id
 
 # TEI (self-hosted)
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei

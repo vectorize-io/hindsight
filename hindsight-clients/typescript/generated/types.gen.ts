@@ -386,6 +386,263 @@ export type BankStatsResponse = {
 };
 
 /**
+ * BankTemplateConfig
+ *
+ * Bank configuration fields within a template manifest.
+ *
+ * Only includes configurable (per-bank) fields. Credential fields
+ * (API keys, base URLs) are intentionally excluded for security.
+ */
+export type BankTemplateConfig = {
+  /**
+   * Reflect Mission
+   *
+   * Mission/context for Reflect operations
+   */
+  reflect_mission?: string | null;
+  /**
+   * Retain Mission
+   *
+   * Steers what gets extracted during retain
+   */
+  retain_mission?: string | null;
+  /**
+   * Retain Extraction Mode
+   *
+   * Fact extraction mode: 'concise' (default), 'verbose', or 'custom'
+   */
+  retain_extraction_mode?: string | null;
+  /**
+   * Retain Custom Instructions
+   *
+   * Custom extraction prompt (when mode='custom')
+   */
+  retain_custom_instructions?: string | null;
+  /**
+   * Retain Chunk Size
+   *
+   * Max token size for each content chunk
+   */
+  retain_chunk_size?: number | null;
+  /**
+   * Enable Observations
+   *
+   * Toggle observation consolidation
+   */
+  enable_observations?: boolean | null;
+  /**
+   * Observations Mission
+   *
+   * Controls what gets synthesised
+   */
+  observations_mission?: string | null;
+  /**
+   * Disposition Skepticism
+   *
+   * Skepticism trait (1-5)
+   */
+  disposition_skepticism?: number | null;
+  /**
+   * Disposition Literalism
+   *
+   * Literalism trait (1-5)
+   */
+  disposition_literalism?: number | null;
+  /**
+   * Disposition Empathy
+   *
+   * Empathy trait (1-5)
+   */
+  disposition_empathy?: number | null;
+  /**
+   * Entity Labels
+   *
+   * Controlled vocabulary for entity labels
+   */
+  entity_labels?: Array<{
+    [key: string]: unknown;
+  }> | null;
+  /**
+   * Entities Allow Free Form
+   *
+   * Allow entities outside the label vocabulary
+   */
+  entities_allow_free_form?: boolean | null;
+};
+
+/**
+ * BankTemplateDirective
+ *
+ * A directive definition within a bank template manifest.
+ *
+ * Directives are matched by name on re-import: existing directives
+ * with the same name are updated, new ones are created.
+ */
+export type BankTemplateDirective = {
+  /**
+   * Name
+   *
+   * Human-readable name for the directive (used as match key on re-import)
+   */
+  name: string;
+  /**
+   * Content
+   *
+   * The directive text to inject into prompts
+   */
+  content: string;
+  /**
+   * Priority
+   *
+   * Higher priority directives are injected first
+   */
+  priority?: number;
+  /**
+   * Is Active
+   *
+   * Whether this directive is active
+   */
+  is_active?: boolean;
+  /**
+   * Tags
+   *
+   * Tags for filtering
+   */
+  tags?: Array<string>;
+};
+
+/**
+ * BankTemplateImportResponse
+ *
+ * Response model for the bank template import endpoint.
+ */
+export type BankTemplateImportResponse = {
+  /**
+   * Bank Id
+   *
+   * Bank that was imported into
+   */
+  bank_id: string;
+  /**
+   * Config Applied
+   *
+   * Whether bank config was updated
+   */
+  config_applied: boolean;
+  /**
+   * Mental Models Created
+   *
+   * IDs of newly created mental models
+   */
+  mental_models_created?: Array<string>;
+  /**
+   * Mental Models Updated
+   *
+   * IDs of updated mental models
+   */
+  mental_models_updated?: Array<string>;
+  /**
+   * Directives Created
+   *
+   * Names of newly created directives
+   */
+  directives_created?: Array<string>;
+  /**
+   * Directives Updated
+   *
+   * Names of updated directives
+   */
+  directives_updated?: Array<string>;
+  /**
+   * Operation Ids
+   *
+   * Operation IDs for mental model content generation (async)
+   */
+  operation_ids?: Array<string>;
+  /**
+   * Dry Run
+   *
+   * True if this was a validation-only run
+   */
+  dry_run?: boolean;
+};
+
+/**
+ * BankTemplateManifest
+ *
+ * A bank template manifest for import/export.
+ *
+ * Version field enables forward-compatible schema evolution: the API
+ * auto-upgrades older manifest versions to the current schema on import.
+ */
+export type BankTemplateManifest = {
+  /**
+   * Version
+   *
+   * Manifest schema version (currently '1')
+   */
+  version: string;
+  /**
+   * Bank configuration to apply. Omit to leave config unchanged.
+   */
+  bank?: BankTemplateConfig | null;
+  /**
+   * Mental Models
+   *
+   * Mental models to create or update (matched by id). Omit to leave unchanged.
+   */
+  mental_models?: Array<BankTemplateMentalModel> | null;
+  /**
+   * Directives
+   *
+   * Directives to create or update (matched by name). Omit to leave unchanged.
+   */
+  directives?: Array<BankTemplateDirective> | null;
+};
+
+/**
+ * BankTemplateMentalModel
+ *
+ * A mental model definition within a bank template manifest.
+ */
+export type BankTemplateMentalModel = {
+  /**
+   * Id
+   *
+   * Unique ID for the mental model (alphanumeric lowercase with hyphens)
+   */
+  id: string;
+  /**
+   * Name
+   *
+   * Human-readable name for the mental model
+   */
+  name: string;
+  /**
+   * Source Query
+   *
+   * The query to run to generate content
+   */
+  source_query: string;
+  /**
+   * Tags
+   *
+   * Tags for scoped visibility
+   */
+  tags?: Array<string>;
+  /**
+   * Max Tokens
+   *
+   * Maximum tokens for generated content
+   */
+  max_tokens?: number;
+  /**
+   * Trigger settings
+   */
+  trigger?: MentalModelTriggerOutput;
+};
+
+/**
  * Body_file_retain
  */
 export type BodyFileRetain = {
@@ -1435,13 +1692,13 @@ export type MentalModelResponse = {
   /**
    * Source Query
    */
-  source_query: string;
+  source_query?: string | null;
   /**
    * Content
    *
    * The mental model content as well-formatted markdown (auto-generated from reflect endpoint)
    */
-  content: string;
+  content?: string | null;
   /**
    * Tags
    */
@@ -1449,8 +1706,8 @@ export type MentalModelResponse = {
   /**
    * Max Tokens
    */
-  max_tokens?: number;
-  trigger?: MentalModelTriggerOutput;
+  max_tokens?: number | null;
+  trigger?: MentalModelTriggerOutput | null;
   /**
    * Last Refreshed At
    */
@@ -3332,6 +3589,12 @@ export type ListMentalModelsData = {
      */
     tags_match?: "any" | "all" | "exact";
     /**
+     * Detail
+     *
+     * Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+     */
+    detail?: "metadata" | "content" | "full";
+    /**
      * Limit
      */
     limit?: number;
@@ -3458,7 +3721,14 @@ export type GetMentalModelData = {
      */
     mental_model_id: string;
   };
-  query?: never;
+  query?: {
+    /**
+     * Detail
+     *
+     * Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+     */
+    detail?: "metadata" | "content" | "full";
+  };
   url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
 
@@ -4522,6 +4792,103 @@ export type CreateOrUpdateBankResponses = {
 
 export type CreateOrUpdateBankResponse =
   CreateOrUpdateBankResponses[keyof CreateOrUpdateBankResponses];
+
+export type ImportBankTemplateData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Dry Run
+     *
+     * Validate only, do not apply changes
+     */
+    dry_run?: boolean;
+  };
+  url: "/v1/default/banks/{bank_id}/import";
+};
+
+export type ImportBankTemplateErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ImportBankTemplateError =
+  ImportBankTemplateErrors[keyof ImportBankTemplateErrors];
+
+export type ImportBankTemplateResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankTemplateImportResponse;
+};
+
+export type ImportBankTemplateResponse =
+  ImportBankTemplateResponses[keyof ImportBankTemplateResponses];
+
+export type ExportBankTemplateData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/export";
+};
+
+export type ExportBankTemplateErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ExportBankTemplateError =
+  ExportBankTemplateErrors[keyof ExportBankTemplateErrors];
+
+export type ExportBankTemplateResponses = {
+  /**
+   * Successful Response
+   */
+  200: BankTemplateManifest;
+};
+
+export type ExportBankTemplateResponse =
+  ExportBankTemplateResponses[keyof ExportBankTemplateResponses];
+
+export type GetBankTemplateSchemaData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/bank-template-schema";
+};
+
+export type GetBankTemplateSchemaResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
 
 export type ClearObservationsData = {
   body?: never;

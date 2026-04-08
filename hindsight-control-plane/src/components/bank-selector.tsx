@@ -49,6 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 function BankSelectorInner() {
@@ -61,6 +62,9 @@ function BankSelectorInner() {
   const [newBankId, setNewBankId] = React.useState("");
   const [isCreating, setIsCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState<string | null>(null);
+  const [useTemplate, setUseTemplate] = React.useState(false);
+  const [templateJson, setTemplateJson] = React.useState("");
+  const [templateError, setTemplateError] = React.useState<string | null>(null);
 
   // Document creation state
   const [docDialogOpen, setDocDialogOpen] = React.useState(false);
@@ -137,12 +141,39 @@ function BankSelectorInner() {
 
     setIsCreating(true);
     setCreateError(null);
+    setTemplateError(null);
 
     try {
+      // Create the bank first
       await client.createBank(newBankId.trim());
+
+      // If template JSON is provided, import it
+      if (templateJson.trim()) {
+        let manifest: Record<string, unknown>;
+        try {
+          manifest = JSON.parse(templateJson.trim());
+        } catch {
+          setTemplateError("Invalid JSON. Please check the template syntax.");
+          setIsCreating(false);
+          return;
+        }
+
+        try {
+          await client.importBankTemplate(newBankId.trim(), manifest);
+        } catch (importError) {
+          setTemplateError(
+            importError instanceof Error ? importError.message : "Failed to import template"
+          );
+          setIsCreating(false);
+          return;
+        }
+      }
+
       await loadBanks();
       setCreateDialogOpen(false);
       setNewBankId("");
+      setTemplateJson("");
+      setTemplateError(null);
       // Navigate to the new bank
       setCurrentBank(newBankId.trim());
       router.push(`/banks/${newBankId.trim()}?view=data`);
@@ -475,6 +506,7 @@ function BankSelectorInner() {
             className="h-9 gap-1.5"
             onClick={() => setDocDialogOpen(true)}
             title="Add document to current bank"
+            data-add-document
           >
             <Plus className="h-4 w-4" />
             <span>Add Document</span>
@@ -511,23 +543,68 @@ function BankSelectorInner() {
         </Button>
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[550px]">
             <DialogHeader>
               <DialogTitle>Create New Memory Bank</DialogTitle>
             </DialogHeader>
-            <div className="py-4">
+            <div className="py-4 space-y-4">
               <Input
                 placeholder="Enter bank ID..."
                 value={newBankId}
                 onChange={(e) => setNewBankId(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !isCreating) {
+                  if (e.key === "Enter" && !isCreating && !useTemplate) {
                     handleCreateBank();
                   }
                 }}
                 autoFocus
               />
-              {createError && <p className="text-sm text-destructive mt-2">{createError}</p>}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={useTemplate}
+                    onCheckedChange={(checked) => {
+                      setUseTemplate(checked);
+                      if (!checked) {
+                        setTemplateJson("");
+                        setTemplateError(null);
+                      }
+                    }}
+                  />
+                  <label className="text-sm font-medium">Import from template</label>
+                </div>
+                {useTemplate && (
+                  <a
+                    href="https://hindsight.vectorize.io/templates"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Browse templates &rarr;
+                  </a>
+                )}
+              </div>
+              {useTemplate && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Paste a template manifest JSON to pre-configure the bank with settings, mental
+                    models, and directives.
+                  </p>
+                  <Textarea
+                    placeholder='{"version": "1", "bank": {...}, "mental_models": [...]}'
+                    value={templateJson}
+                    onChange={(e) => {
+                      setTemplateJson(e.target.value);
+                      setTemplateError(null);
+                    }}
+                    className="font-mono text-xs min-h-[120px]"
+                  />
+                </div>
+              )}
+              {templateError && (
+                <p className="text-sm text-destructive whitespace-pre-wrap">{templateError}</p>
+              )}
+              {createError && <p className="text-sm text-destructive">{createError}</p>}
             </div>
             <DialogFooter>
               <Button
@@ -535,7 +612,10 @@ function BankSelectorInner() {
                 onClick={() => {
                   setCreateDialogOpen(false);
                   setNewBankId("");
+                  setUseTemplate(false);
+                  setTemplateJson("");
                   setCreateError(null);
+                  setTemplateError(null);
                 }}
               >
                 Cancel

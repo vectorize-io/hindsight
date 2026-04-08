@@ -95,6 +95,16 @@ spec:
           {{- toYaml .Values.worker.readinessProbe | nindent 10 }}
         resources:
           {{- toYaml .Values.worker.resources | nindent 10 }}
+        {{- if or .Values.worker.persistence.modelCache.enabled .Values.worker.extraVolumeMounts }}
+        volumeMounts:
+        {{- if .Values.worker.persistence.modelCache.enabled }}
+        - name: model-cache
+          mountPath: /home/hindsight/.cache
+        {{- end }}
+        {{- with .Values.worker.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -107,4 +117,26 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.worker.extraVolumes }}
+      volumes:
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  {{- if .Values.worker.persistence.modelCache.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: model-cache
+      {{- with .Values.worker.persistence.modelCache.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        {{- toYaml .Values.worker.persistence.modelCache.accessModes | nindent 8 }}
+      {{- if .Values.worker.persistence.modelCache.storageClass }}
+      storageClassName: {{ .Values.worker.persistence.modelCache.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.worker.persistence.modelCache.size }}
+  {{- end }}
 {{- end }}

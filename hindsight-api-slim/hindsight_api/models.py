@@ -97,7 +97,6 @@ class MemoryUnit(Base):
     occurred_end: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))  # When fact occurred (range end)
     mentioned_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))  # When fact was mentioned
     fact_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="world")
-    confidence_score: Mapped[float | None] = mapped_column(Float)
     unit_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, server_default=sql_text("'{}'::jsonb")
     )  # User-defined metadata (str->str)
@@ -121,14 +120,7 @@ class MemoryUnit(Base):
             name="memory_units_document_fkey",
             ondelete="CASCADE",
         ),
-        CheckConstraint("fact_type IN ('world', 'experience', 'opinion', 'observation')"),
-        CheckConstraint("confidence_score IS NULL OR (confidence_score >= 0.0 AND confidence_score <= 1.0)"),
-        CheckConstraint(
-            "(fact_type = 'opinion' AND confidence_score IS NOT NULL) OR "
-            "(fact_type = 'observation') OR "
-            "(fact_type NOT IN ('opinion', 'observation') AND confidence_score IS NULL)",
-            name="confidence_score_fact_type_check",
-        ),
+        CheckConstraint("fact_type IN ('world', 'experience', 'observation')"),
         Index("idx_memory_units_bank_id", "bank_id"),
         Index("idx_memory_units_document_id", "document_id"),
         Index("idx_memory_units_event_date", "event_date", postgresql_ops={"event_date": "DESC"}),
@@ -140,20 +132,6 @@ class MemoryUnit(Base):
             "bank_id",
             "fact_type",
             "event_date",
-            postgresql_ops={"event_date": "DESC"},
-        ),
-        Index(
-            "idx_memory_units_opinion_confidence",
-            "bank_id",
-            "confidence_score",
-            postgresql_where=sql_text("fact_type = 'opinion'"),
-            postgresql_ops={"confidence_score": "DESC"},
-        ),
-        Index(
-            "idx_memory_units_opinion_date",
-            "bank_id",
-            "event_date",
-            postgresql_where=sql_text("fact_type = 'opinion'"),
             postgresql_ops={"event_date": "DESC"},
         ),
         Index(

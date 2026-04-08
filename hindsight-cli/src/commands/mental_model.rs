@@ -43,9 +43,11 @@ pub fn list(
                         );
 
                         // Show content preview
-                        let preview: String = mental_model.content.chars().take(80).collect();
-                        let ellipsis = if mental_model.content.len() > 80 { "..." } else { "" };
-                        println!("    {}{}", ui::dim(&preview), ellipsis);
+                        if let Some(ref content) = mental_model.content {
+                            let preview: String = content.chars().take(80).collect();
+                            let ellipsis = if content.len() > 80 { "..." } else { "" };
+                            println!("    {}{}", ui::dim(&preview), ellipsis);
+                        }
 
                         println!();
                     }
@@ -326,11 +328,15 @@ fn print_mental_model_detail(mental_model: &types::MentalModelResponse) {
     ui::print_section_header(&mental_model.name);
 
     println!("  {} {}", ui::dim("ID:"), ui::gradient_start(&mental_model.id));
-    println!("  {} {}", ui::dim("Source Query:"), &mental_model.source_query);
+    if let Some(ref source_query) = mental_model.source_query {
+        println!("  {} {}", ui::dim("Source Query:"), source_query);
+    }
 
-    println!();
-    println!("{}", ui::gradient_text("─── Content ───"));
-    println!();
-    println!("{}", &mental_model.content);
-    println!();
+    if let Some(ref content) = mental_model.content {
+        println!();
+        println!("{}", ui::gradient_text("─── Content ───"));
+        println!();
+        println!("{}", content);
+        println!();
+    }
 }

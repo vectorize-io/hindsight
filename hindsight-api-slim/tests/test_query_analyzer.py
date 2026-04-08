@@ -283,3 +283,37 @@ def test_query_analyzer_couple_weeks_ago(query_analyzer):
     assert analysis.temporal_constraint.end_date.month == 1  # Jan 8 (1 week before Jan 15)
 
 
+def test_query_analyzer_dateparser_crash_returns_no_constraint(query_analyzer, monkeypatch, caplog):
+    """
+    dateparser has been observed to crash with internal errors (e.g.,
+    IndexError from locale.translate_search) on certain query inputs.
+    A parser bug should not propagate up the search/consolidation pipeline —
+    the analyzer should treat any failure as "no temporal constraint found".
+    """
+    import logging
+
+    reference_date = datetime(2025, 1, 15, 12, 0, 0)
+
+    # Make sure the lazy loader has run so we can monkey-patch the cached call.
+    query_analyzer.load()
+
+    def boom(*args, **kwargs):
+        raise IndexError("list index out of range")
+
+    monkeypatch.setattr(query_analyzer, "_search_dates", boom)
+
+    # Use a query that doesn't match any of the period regex patterns so the
+    # code path actually reaches the dateparser call.
+    query = "tell me what happened recently with the project"
+
+    with caplog.at_level(logging.WARNING):
+        analysis = query_analyzer.analyze(query, reference_date)
+
+    assert analysis.temporal_constraint is None, (
+        "dateparser failures should be treated as no temporal constraint, not propagated"
+    )
+    assert any("dateparser" in rec.message for rec in caplog.records), (
+        "Should log a warning when dateparser fails"
+    )
+
+

@@ -306,6 +306,7 @@ async def run_benchmark(
     only_invalid: bool = False,
     question_index: int = None,
     wait_consolidation: bool = False,
+    template_path: str = None,
 ):
     """
     Run the LoComo benchmark.
@@ -473,6 +474,7 @@ async def run_benchmark(
         output_path=output_path,  # Save results incrementally
         merge_with_existing=merge_with_existing,
         wait_consolidation=wait_consolidation,
+        template_path=template_path,
     )
 
     # Display results (final save already happened incrementally)
@@ -608,6 +610,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Wait for consolidation to complete after ingestion (or immediately when using --skip-ingestion) before evaluating QA.",
     )
+    parser.add_argument(
+        "--template",
+        type=str,
+        default=None,
+        help="Path to a bank template manifest JSON to apply before ingestion (sets config, mental models, directives)",
+    )
 
     args = parser.parse_args()
 
@@ -628,5 +636,6 @@ if __name__ == "__main__":
             only_invalid=args.only_invalid,
             question_index=args.question_index,
             wait_consolidation=args.wait_consolidation,
+            template_path=args.template,
         )
     )

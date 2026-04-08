@@ -137,7 +137,21 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
             "RETURN_AS_TIMEZONE_AWARE": False,
         }
 
-        results = self._search_dates(query, settings=settings)
+        # Wrap dateparser in a defensive try/except. dateparser has been
+        # observed to crash with internal errors (e.g., IndexError from
+        # locale.translate_search) on certain query inputs. A parser bug
+        # should not bring down the whole search/consolidation pipeline —
+        # treat any failure as "no temporal constraint found" so the caller
+        # can fall back to non-temporal retrieval.
+        try:
+            results = self._search_dates(query, settings=settings)
+        except Exception as e:
+            logger.warning(
+                "dateparser raised %s on query (treating as no temporal constraint): %s",
+                type(e).__name__,
+                e,
+            )
+            return QueryAnalysis(temporal_constraint=None)
 
         if not results:
             return QueryAnalysis(temporal_constraint=None)

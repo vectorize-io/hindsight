@@ -191,6 +191,23 @@ class OpenAICompatibleLLM(LLMInterface):
 
         return None
 
+    def _max_tokens_param_name(self) -> str:
+        """Return the correct parameter name for limiting response tokens.
+
+        Native OpenAI and Groq accept 'max_completion_tokens'. Mistral and other
+        OpenAI-compatible endpoints that haven't adopted the newer parameter name
+        require 'max_tokens'. Using a custom base_url with the openai provider
+        signals a third-party compatible API, so fall back to 'max_tokens'.
+        """
+        # Native OpenAI (no custom base URL) and Groq use max_completion_tokens
+        if self.provider == "groq":
+            return "max_completion_tokens"
+        if self.provider == "openai" and not self.base_url:
+            return "max_completion_tokens"
+        # openai with custom base_url, ollama, lmstudio, minimax, volcano —
+        # use the widely-supported max_tokens
+        return "max_tokens"
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -263,9 +280,7 @@ class OpenAICompatibleLLM(LLMInterface):
             # For reasoning models, enforce minimum to ensure space for reasoning + output
             if is_reasoning_model and max_completion_tokens < 16000:
                 max_completion_tokens = 16000
-            call_params["max_completion_tokens"] = max_completion_tokens
-
-        # Temperature - reasoning models don't support custom temperature
+            call_params[self._max_tokens_param_name()] = max_completion_tokens
         if temperature is not None and not is_reasoning_model:
             # MiniMax requires temperature in (0.0, 1.0] — clamp accordingly
             if self.provider == "minimax":
@@ -577,7 +592,7 @@ class OpenAICompatibleLLM(LLMInterface):
         }
 
         if max_completion_tokens is not None:
-            call_params["max_completion_tokens"] = max_completion_tokens
+            call_params[self._max_tokens_param_name()] = max_completion_tokens
         if temperature is not None:
             # MiniMax requires temperature in (0.0, 1.0] — clamp accordingly
             if self.provider == "minimax":
