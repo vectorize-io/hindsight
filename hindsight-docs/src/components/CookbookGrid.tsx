@@ -24,9 +24,6 @@ function sdkIcon(sdk: string): string | null {
   if (sdk.includes('-go') || sdk === 'go') {
     return '/img/icons/golang.png';
   }
-  if (sdk.includes('hermes')) {
-    return '/img/icons/hermes.png';
-  }
   if (sdk.includes('agno')) {
     return '/img/icons/agno.png';
   }

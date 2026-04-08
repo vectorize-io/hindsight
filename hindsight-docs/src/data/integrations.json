@@ -64,8 +64,8 @@
       "id": "hermes",
       "name": "Hermes",
       "description": "Use Hindsight as the memory backend for the Hermes multi-agent messaging framework.",
-      "type": "official",
-      "by": "hindsight",
+      "type": "native",
+      "by": "hermes",
       "category": "framework",
       "link": "/sdks/integrations/hermes",
       "icon": "/img/icons/hermes.png"
