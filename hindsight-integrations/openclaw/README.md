@@ -28,7 +28,7 @@ That's it! The plugin will automatically start capturing and recalling memories.
 
 - **Auto-capture** and **auto-recall** of memories each turn, injected into system prompt space so recalled memories stay out of the visible chat transcript
 - **Memory isolation** — configurable per agent, channel, user, or provider via `dynamicBankGranularity`
-- **Retention controls** — choose which message roles to retain and toggle auto-retain on/off
+- **Retention controls** — choose which message roles to retain, toggle auto-retain on/off, and stamp retained documents with consistent tags/source metadata
 
 ## Configuration
 
@@ -48,6 +48,8 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankId` | `true` | Enable per-context memory banks |
 | `bankId` | — | Static bank ID used when `dynamicBankId` is `false`. Can also be set with `HINDSIGHT_BANK_ID`. |
 | `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
+| `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`) |
+| `retainSource` | `"openclaw"` | `source` value written into retained document metadata |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
 | `excludeProviders` | `[]` | Message providers to skip for recall/retain (e.g. `slack`, `telegram`, `discord`) |
 | `autoRecall` | `true` | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool. |

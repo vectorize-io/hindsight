@@ -76,6 +76,18 @@
         "type": "string",
         "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
       },
+      "retainTags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags applied to every retained document (e.g. ['source_system:openclaw', 'agent:agentname'])."
+      },
+      "retainSource": {
+        "type": "string",
+        "description": "Source value written into retained document metadata. Defaults to 'openclaw'.",
+        "default": "openclaw"
+      },
       "autoRecall": {
         "type": "boolean",
         "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",
@@ -293,6 +305,14 @@
     "bankIdPrefix": {
       "label": "Bank ID Prefix",
       "placeholder": "e.g., prod, staging (optional)"
+    },
+    "retainTags": {
+      "label": "Retain Tags",
+      "placeholder": "e.g. ['source_system:openclaw', 'agent:agentname']"
+    },
+    "retainSource": {
+      "label": "Retain Source",
+      "placeholder": "openclaw"
     },
     "autoRecall": {
       "label": "Auto-Recall",

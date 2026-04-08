@@ -7,6 +7,7 @@ import {
   sliceLastTurnsByUserBoundary,
   composeRecallQuery,
   truncateRecallQuery,
+  buildRetainRequest,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -218,6 +219,44 @@ describe('formatMemories', () => {
 
   it('returns empty string for empty memories', () => {
     expect(formatMemories([])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareRetentionTranscript
+// ---------------------------------------------------------------------------
+
+describe('buildRetainRequest', () => {
+  it('adds configured source metadata and retain tags', () => {
+    const request = buildRetainRequest('hello world', 2, {
+      sessionKey: 'agent:main:main',
+      messageProvider: 'discord',
+      channelId: 'channel:123',
+      senderId: 'user:456',
+    }, {
+      retainSource: 'openclaw',
+      retainTags: ['source_system:openclaw', 'agent:agentname'],
+    }, 1700000000000);
+
+    expect(request).toEqual({
+      content: 'hello world',
+      document_id: 'agent:main:main-1700000000000',
+      metadata: {
+        retained_at: expect.any(String),
+        message_count: '2',
+        source: 'openclaw',
+        channel_type: 'discord',
+        channel_id: 'channel:123',
+        sender_id: 'user:456',
+      },
+      tags: ['source_system:openclaw', 'agent:agentname'],
+    });
+  });
+
+  it('defaults source metadata to openclaw when unset', () => {
+    const request = buildRetainRequest('hello world', 1, {}, {}, 1700000000000);
+    expect(request.metadata?.source).toBe('openclaw');
+    expect(request.tags).toBeUndefined();
   });
 });
 

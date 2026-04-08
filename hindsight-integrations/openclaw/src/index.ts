@@ -1,4 +1,4 @@
-import type { MoltbotPluginAPI, PluginConfig, PluginHookAgentContext, MemoryResult } from './types.js';
+import type { MoltbotPluginAPI, PluginConfig, PluginHookAgentContext, MemoryResult, RetainRequest } from './types.js';
 import { HindsightEmbedManager } from './embed-manager.js';
 import { HindsightClient, type HindsightClientOptions } from './client.js';
 import { RetainQueue } from './retain-queue.js';
@@ -811,6 +811,8 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     dynamicBankId: config.dynamicBankId !== false,
     bankId: envBankId || (typeof config.bankId === 'string' && config.bankId.trim().length > 0 ? config.bankId.trim() : undefined),
     bankIdPrefix: config.bankIdPrefix,
+    retainTags: Array.isArray(config.retainTags) ? config.retainTags.filter((tag): tag is string => typeof tag === 'string') : undefined,
+    retainSource: typeof config.retainSource === 'string' && config.retainSource.trim().length > 0 ? config.retainSource.trim() : undefined,
     excludeProviders: Array.isArray(config.excludeProviders) ? config.excludeProviders : [],
     autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity) ? config.dynamicBankGranularity : undefined,
@@ -1430,28 +1432,16 @@ ${memoriesFormatted}
         }
 
 
-        // Use unique document ID per conversation (sessionKey + timestamp)
-        // Static sessionKey (e.g. "agent:main:main") causes CASCADE delete of old memories
-        const documentId = `${effectiveCtx?.sessionKey || 'session'}-${Date.now()}`;
+        const retainNow = Date.now();
+        const retainRequest = buildRetainRequest(transcript, messageCount, effectiveCtx, pluginConfig, retainNow);
 
         // Retain to Hindsight
-        debug(`[Hindsight] Retaining to bank ${bankId}, document: ${documentId}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? '\n...(truncated)' : ''}\n---`);
-        const retainRequest = {
-          content: transcript,
-          document_id: documentId,
-          metadata: {
-            retained_at: new Date().toISOString(),
-            message_count: String(messageCount),
-            channel_type: effectiveCtx?.messageProvider,
-            channel_id: effectiveCtx?.channelId,
-            sender_id: effectiveCtx?.senderId,
-          },
-        };
+        debug(`[Hindsight] Retaining to bank ${bankId}, document: ${retainRequest.document_id}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? '\n...(truncated)' : ''}\n---`);
 
         try {
           await client.retain(retainRequest);
           log.trackRetain(bankId, messageCount);
-          debug(`[Hindsight] Retained ${messageCount} messages to bank ${bankId} for session ${documentId}`);
+          debug(`[Hindsight] Retained ${messageCount} messages to bank ${bankId} for session ${retainRequest.document_id}`);
 
           // After a successful retain, try flushing any queued items
           if (retainQueue && retainQueue.size() > 0) {
@@ -1482,6 +1472,28 @@ ${memoriesFormatted}
 }
 
 // Export client getter for tools
+
+export function buildRetainRequest(
+  transcript: string,
+  messageCount: number,
+  effectiveCtx: PluginHookAgentContext | undefined,
+  pluginConfig: PluginConfig,
+  now = Date.now(),
+): RetainRequest {
+  return {
+    content: transcript,
+    document_id: `${effectiveCtx?.sessionKey || 'session'}-${now}`,
+    metadata: {
+      retained_at: new Date(now).toISOString(),
+      message_count: String(messageCount),
+      source: pluginConfig.retainSource || 'openclaw',
+      channel_type: effectiveCtx?.messageProvider,
+      channel_id: effectiveCtx?.channelId,
+      sender_id: effectiveCtx?.senderId,
+    },
+    tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
+  };
+}
 
 export function prepareRetentionTranscript(
   messages: any[],
