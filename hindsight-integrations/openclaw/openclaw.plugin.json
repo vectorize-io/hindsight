@@ -325,9 +325,6 @@
     "retainSource": {
       "label": "Retain Source",
       "placeholder": "openclaw"
-=======
-      "placeholder": "e.g. channel:ignored"
->>>>>>> 29ffebab (chore(openclaw): generalize channel ignore wording)
     },
     "autoRecall": {
       "label": "Auto-Recall",
