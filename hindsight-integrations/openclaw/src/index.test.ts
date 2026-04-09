@@ -363,15 +363,15 @@ describe('prepareRetentionTranscript', () => {
     expect(result?.transcript).not.toContain('Old user');
   });
 
-  it('uses configured prefixes for user and assistant turns', () => {
+  it('retains structured role markers even when prefixes are configured', () => {
     const config: PluginConfig = { ...baseConfig, retainUserPrefix: 'Operator', retainAssistantPrefix: 'Aldous' };
     const messages = [
       { role: 'user', content: 'Hello there' },
       { role: 'assistant', content: 'General Kenobi' }
     ];
     const result = prepareRetentionTranscript(messages, config);
-    expect(result?.transcript).toContain('Operator: Hello there');
-    expect(result?.transcript).toContain('Aldous: General Kenobi');
+    expect(result?.transcript).toContain('[role: user]\nHello there\n[user:end]');
+    expect(result?.transcript).toContain('[role: assistant]\nGeneral Kenobi\n[assistant:end]');
   });
 
   it('filters out excluded roles', () => {

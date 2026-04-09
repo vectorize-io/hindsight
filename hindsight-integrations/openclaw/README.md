@@ -93,6 +93,8 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
 | `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`) |
 | `retainSource` | `"openclaw"` | `source` value written into retained document metadata |
+| `retainUserPrefix` | `"User"` | Reserved for future transcript-label parity work. Current retained transcripts still use structured role markers. |
+| `retainAssistantPrefix` | `"Assistant"` | Reserved for future transcript-label parity work. Current retained transcripts still use structured role markers. |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
 | `excludeProviders` | `["heartbeat"]` | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`) |
 | `autoRecall` | `true` | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool. |
