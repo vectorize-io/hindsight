@@ -57,9 +57,6 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `retainRoles` | `["user", "assistant"]` | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool` |
 | `retainEveryNTurns` | `1` | Retain every Nth turn. `1` = every turn (default). Values > 1 enable chunked retention with a sliding window. |
 | `retainOverlapTurns` | `0` | Extra prior turns included when chunked retention fires. Window = `retainEveryNTurns + retainOverlapTurns`. Only applies when `retainEveryNTurns > 1`. |
-
-Retained documents use stable session-scoped IDs like `openclaw:agent:agentname:discord:channel:123:turn:000001` (or `...:window:000002` for chunked retention), and include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`.
-
 | `recallBudget` | `"mid"` | Recall effort: `low`, `mid`, or `high`. Higher budgets use more retrieval strategies. |
 | `recallMaxTokens` | `1024` | Max tokens for recall response. Controls how much memory context is injected per turn. |
 | `recallTypes` | `["world", "experience"]` | Memory types to recall. Options: `world`, `experience`, `observation`. Excludes verbose `observation` entries by default. |
@@ -70,6 +67,10 @@ Retained documents use stable session-scoped IDs like `openclaw:agent:agentname:
 | `recallPromptPreamble` | built-in string | Prompt text placed above recalled memories in the injected `<hindsight_memories>` system-context block. |
 | `hindsightApiUrl` | — | External Hindsight API URL (skips local daemon) |
 | `hindsightApiToken` | — | Auth token for external API |
+
+## Retention details
+
+Retained documents use stable session-scoped IDs like `openclaw:agent:agentname:discord:channel:123:turn:000001` (or `...:window:000002` for chunked retention), and include richer metadata such as `session_key`, `agent_id`, `provider`, `channel_id`, `thread_id`, `sender_id`, `turn_index`, and `retention_scope`.
 
 ## Documentation
 
