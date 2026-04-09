@@ -295,6 +295,19 @@ describe('buildRetainRequest', () => {
     });
   });
 
+  it('merges configured retain tags with per-call tags', () => {
+    const request = buildRetainRequest('hello world', 1, {
+      sessionKey: 'agent:main:discord:channel:123',
+    }, {
+      retainTags: ['source_system:openclaw', 'agent:main'],
+    }, 1700000000000, {
+      turnIndex: 1,
+      tags: ['agent:main', 'kind:manual'],
+    });
+
+    expect(request.tags).toEqual(['source_system:openclaw', 'agent:main', 'kind:manual']);
+  });
+
   it('defaults source metadata to openclaw when unset', () => {
     const request = buildRetainRequest('hello world', 1, {}, {}, 1700000000000, { turnIndex: 1 });
     expect(request.metadata?.source).toBe('openclaw');
@@ -323,6 +336,8 @@ describe('prepareRetentionTranscript', () => {
   const baseConfig: PluginConfig = {
     dynamicBankId: true,
     retainRoles: ['user', 'assistant'],
+    retainUserPrefix: 'User',
+    retainAssistantPrefix: 'Assistant',
   };
 
   it('returns null if no user message found (turn boundary)', () => {
@@ -346,6 +361,17 @@ describe('prepareRetentionTranscript', () => {
     expect(result?.transcript).toContain('New user');
     expect(result?.transcript).toContain('New assistant');
     expect(result?.transcript).not.toContain('Old user');
+  });
+
+  it('uses configured prefixes for user and assistant turns', () => {
+    const config: PluginConfig = { ...baseConfig, retainUserPrefix: 'Operator', retainAssistantPrefix: 'Aldous' };
+    const messages = [
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'General Kenobi' }
+    ];
+    const result = prepareRetentionTranscript(messages, config);
+    expect(result?.transcript).toContain('Operator: Hello there');
+    expect(result?.transcript).toContain('Aldous: General Kenobi');
   });
 
   it('filters out excluded roles', () => {

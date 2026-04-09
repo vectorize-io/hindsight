@@ -1013,6 +1013,26 @@ async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null):
   }
 }
 
+function normalizeRetainTags(value: unknown): string[] {
+  if (value == null) return [];
+
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [value];
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of rawItems) {
+    const tag = String(item ?? '').trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    normalized.push(tag);
+  }
+  return normalized;
+}
+
 function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   const config = api.config.plugins?.entries?.['hindsight-openclaw']?.config || {};
   const defaultMission = 'You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance.';
@@ -1034,8 +1054,10 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     dynamicBankId: config.dynamicBankId !== false,
     bankId: typeof config.bankId === 'string' && config.bankId.trim().length > 0 ? config.bankId.trim() : undefined,
     bankIdPrefix: config.bankIdPrefix,
-    retainTags: Array.isArray(config.retainTags) ? config.retainTags.filter((tag): tag is string => typeof tag === 'string') : undefined,
+    retainTags: normalizeRetainTags(config.retainTags),
     retainSource: typeof config.retainSource === 'string' && config.retainSource.trim().length > 0 ? config.retainSource.trim() : undefined,
+    retainUserPrefix: typeof config.retainUserPrefix === 'string' && config.retainUserPrefix.trim().length > 0 ? config.retainUserPrefix.trim() : 'User',
+    retainAssistantPrefix: typeof config.retainAssistantPrefix === 'string' && config.retainAssistantPrefix.trim().length > 0 ? config.retainAssistantPrefix.trim() : 'Assistant',
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(new Set(['heartbeat', ...config.excludeProviders.filter((provider): provider is string => typeof provider === 'string')]))
       : ['heartbeat'],
@@ -1874,7 +1896,7 @@ export function buildRetainRequest(
   effectiveCtx: PluginHookAgentContext | undefined,
   pluginConfig: PluginConfig,
   now = Date.now(),
-  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
+  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number; tags?: string[] },
 ): RetainRequest {
   const resolvedCtx = resolveSessionIdentity(effectiveCtx);
   const parsedSession = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
@@ -1887,6 +1909,8 @@ export function buildRetainRequest(
   const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
   const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
+
+  const mergedTags = normalizeRetainTags([...(pluginConfig.retainTags || []), ...((options?.tags || []).filter(Boolean))]);
 
   return {
     content: transcript,
@@ -1906,7 +1930,7 @@ export function buildRetainRequest(
       sender_id: resolvedCtx?.senderId,
       ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
-    tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
+    tags: mergedTags.length > 0 ? mergedTags : undefined,
   };
 }
 
