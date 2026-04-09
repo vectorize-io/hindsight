@@ -45,9 +45,9 @@ const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 const senderIdBySession = new Map<string, string>();
 const documentSequenceBySession = new Map<string, number>();
 
-// Guard against double hook registration on the same api instance
-// Uses a WeakSet so each api instance can only register hooks once
-const registeredApis = new WeakSet<object>();
+// Guard against duplicate hook registration within a single runtime load.
+// Do not tie this to api instance identity, which can be brittle across loader phases.
+let hooksRegistered = false;
 
 // Cooldown + guard to prevent concurrent reinit attempts
 let lastReinitAttempt = 0;
@@ -1183,11 +1183,11 @@ export default function (api: MoltbotPluginAPI) {
     debug('[Hindsight] Plugin loaded successfully');
 
     // Register agent hooks for auto-recall and auto-retention
-    if (registeredApis.has(api)) {
-      debug('[Hindsight] Hooks already registered for this api instance, skipping duplicate registration');
+    if (hooksRegistered) {
+      debug('[Hindsight] Hooks already registered in this runtime, skipping duplicate hook registration');
       return;
     }
-    registeredApis.add(api);
+    hooksRegistered = true;
     debug('[Hindsight] Registering agent hooks...');
 
     // Auto-recall: Inject relevant memories before agent processes the message
