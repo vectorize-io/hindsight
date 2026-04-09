@@ -531,6 +531,23 @@ def do_daemon(args, config: dict, logger):
             return 0
 
         if daemon_client.ensure_daemon_running(config, profile):
+            # Start UI if --ui flag was passed
+            if getattr(args, "ui", False):
+                from .daemon_embed_manager import DaemonEmbedManager
+                from .profile_manager import resolve_active_profile
+
+                # Use the same profile resolution as the daemon
+                resolved_profile = profile if profile is not None else resolve_active_profile()
+                manager = DaemonEmbedManager()
+                ui_started = manager.start_ui(resolved_profile, None, "0.0.0.0")
+                if not ui_started:
+                    console.print(
+                        Panel(
+                            Text("Daemon is running but UI failed to start", style="yellow"),
+                            title="[bold yellow]UI Warning[/bold yellow]",
+                            border_style="yellow",
+                        )
+                    )
             return 0
         else:
             console.print(
@@ -591,7 +608,6 @@ def do_daemon(args, config: dict, logger):
             return 1
 
     elif args.daemon_command == "status":
-        import os
         from pathlib import Path
 
         from rich.console import Console
@@ -1393,7 +1409,8 @@ def main():
             # Parse daemon subcommand (profile already extracted globally)
             parser = argparse.ArgumentParser(prog="hindsight-embed daemon")
             subparsers = parser.add_subparsers(dest="daemon_command")
-            subparsers.add_parser("start", help="Start the daemon")
+            start_parser = subparsers.add_parser("start", help="Start the daemon")
+            start_parser.add_argument("--ui", action="store_true", help="Also start the web UI after daemon is ready")
             subparsers.add_parser("stop", help="Stop the daemon")
             subparsers.add_parser("status", help="Check daemon status")
             logs_parser = subparsers.add_parser("logs", help="View daemon logs")
@@ -1450,7 +1467,7 @@ def main():
 
         # Check for LLM API key (not required for vertexai which uses GCP credentials)
         llm_provider = config.get("llm_provider", "openai")
-        providers_without_api_key = ("ollama", "vertexai")
+        providers_without_api_key = ("ollama", "vertexai", "llamacpp")
         if not config["llm_api_key"] and llm_provider not in providers_without_api_key:
             print("Error: LLM API key is required.", file=sys.stderr)
             print("Run 'hindsight-embed configure' to set up.", file=sys.stderr)

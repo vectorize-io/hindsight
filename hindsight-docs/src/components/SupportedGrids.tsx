@@ -37,6 +37,7 @@ export function LLMProvidersGrid() {
       { label: 'Groq',          icon: LuZap },
       { label: 'Ollama',        icon: SiOllama },
       { label: 'LM Studio',     icon: LuBrainCog },
+      { label: 'llama.cpp',     icon: LuTerminal },
       { label: 'MiniMax',            icon: LuSparkles },
       { label: 'Volcano Engine',    icon: LuZap },
       { label: 'OpenAI Compatible', icon: OpenAICompatibleIcon },

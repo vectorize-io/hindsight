@@ -100,7 +100,7 @@ class OpenAICompatibleLLM(LLMInterface):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
         # Validate provider
-        valid_providers = ["openai", "groq", "ollama", "lmstudio", "minimax", "volcano"]
+        valid_providers = ["openai", "groq", "ollama", "lmstudio", "llamacpp", "minimax", "volcano", "openrouter"]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
 
@@ -114,13 +114,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "http://localhost:1234/v1"
             elif self.provider == "minimax":
                 self.base_url = "https://api.minimax.io/v1"
+            elif self.provider == "openrouter":
+                self.base_url = "https://openrouter.ai/api/v1"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in ("openai", "groq", "minimax") and not self.api_key:
+        if self.provider in ("openai", "groq", "minimax", "openrouter") and not self.api_key:
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)
@@ -199,8 +201,8 @@ class OpenAICompatibleLLM(LLMInterface):
         require 'max_tokens'. Using a custom base_url with the openai provider
         signals a third-party compatible API, so fall back to 'max_tokens'.
         """
-        # Native OpenAI (no custom base URL) and Groq use max_completion_tokens
-        if self.provider == "groq":
+        # Native OpenAI (no custom base URL), Groq, and llamacpp use max_completion_tokens
+        if self.provider in ("groq", "llamacpp"):
             return "max_completion_tokens"
         if self.provider == "openai" and not self.base_url:
             return "max_completion_tokens"
@@ -335,8 +337,13 @@ class OpenAICompatibleLLM(LLMInterface):
                         first_msg = call_params["messages"][0]
                         if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
                             first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
-                if self.provider not in ("lmstudio", "ollama", "volcano"):
-                    # LM Studio, Ollama and Volcano don't support json_object response format reliably
+                # Providers that skip json_object grammar enforcement
+                skip_grammar = self.provider in ("lmstudio", "ollama", "volcano")
+                if self.provider == "llamacpp":
+                    from hindsight_api.config import get_config
+
+                    skip_grammar = get_config().llamacpp_no_grammar
+                if not skip_grammar:
                     call_params["response_format"] = {"type": "json_object"}
 
         last_exception = None

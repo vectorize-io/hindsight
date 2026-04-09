@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-api-slim"
-version = "0.4.22"
+version = "0.5.0"
 description = "Hindsight: Agent Memory That Works Like Human Memory"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
     "sqlalchemy>=2.0.44",
     "alembic>=1.17.1",
     "pgvector>=0.4.1",
-    "greenlet>=3.2.4",
+    "greenlet>=3.2.4,<3.4.0",  # 3.4.0 lacks arm64 wheels for manylinux_2_41
     "psycopg2-binary>=2.9.11",
     "tiktoken>=0.12.0",
     "httpx>=0.27.0",
@@ -77,6 +77,11 @@ local-ml = [
     "mlx>=0.31.0",
     "mlx-lm>=0.31.1",
     "safetensors>=0.6.2",
+]
+local-llm = [
+    # Built-in llama.cpp inference for fully offline operation
+    "llama-cpp-python[server]>=0.3.0",
+    "huggingface-hub>=0.20.0",
 ]
 embedded-db = [
     "pg0-embedded>=0.11.0",

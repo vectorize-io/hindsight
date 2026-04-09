@@ -463,6 +463,12 @@ class MemoryItem(BaseModel):
         description="Named retain strategy for this item. Overrides the bank's default strategy for this item only. "
         "Strategies are defined in the bank config under 'retain_strategies'.",
     )
+    update_mode: Literal["replace", "append"] | None = Field(
+        default=None,
+        description="How to handle an existing document with the same document_id. "
+        "'replace' (default) deletes old data and reprocesses from scratch. "
+        "'append' concatenates new content to the existing document text and reprocesses.",
+    )
 
     @field_validator("timestamp", mode="before")
     @classmethod
@@ -5307,6 +5313,8 @@ def _register_routes(app: FastAPI):
                     content_dict["tags"] = item.tags
                 if item.observation_scopes is not None:
                     content_dict["observation_scopes"] = item.observation_scopes
+                if item.update_mode is not None:
+                    content_dict["update_mode"] = item.update_mode
                 strategy_groups[effective].append(content_dict)
 
             if request.async_:

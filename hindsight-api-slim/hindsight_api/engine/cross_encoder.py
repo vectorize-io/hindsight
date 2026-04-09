@@ -1468,6 +1468,18 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             model=config.reranker_cohere_model,
             base_url=config.reranker_cohere_base_url,
         )
+    elif provider == "openrouter":
+        api_key = config.reranker_openrouter_api_key
+        if not api_key:
+            raise ValueError(
+                "HINDSIGHT_API_RERANKER_OPENROUTER_API_KEY, HINDSIGHT_API_OPENROUTER_API_KEY, "
+                f"or HINDSIGHT_API_LLM_API_KEY is required when {ENV_RERANKER_PROVIDER} is 'openrouter'"
+            )
+        return CohereCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_openrouter_model,
+            base_url="https://openrouter.ai/api/v1/rerank",
+        )
     elif provider == "flashrank":
         model = os.environ.get(ENV_RERANKER_FLASHRANK_MODEL, DEFAULT_RERANKER_FLASHRANK_MODEL)
         cache_dir = os.environ.get(ENV_RERANKER_FLASHRANK_CACHE_DIR, DEFAULT_RERANKER_FLASHRANK_CACHE_DIR)

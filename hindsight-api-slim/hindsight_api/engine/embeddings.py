@@ -757,6 +757,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         output_dimensions: int | None = None,
         batch_size: int = 100,
         timeout: float = 60.0,
+        encoding_format: str | None = "float",
     ):
         """
         Initialize LiteLLM SDK embeddings client.
@@ -768,6 +769,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
             output_dimensions: Optional output embedding dimensions (provider-dependent)
             batch_size: Maximum batch size for embedding requests (default: 100)
             timeout: Request timeout in seconds (default: 60.0)
+            encoding_format: Encoding format for embeddings (default: "float").
+                Set to None or empty string to omit (needed for Voyage AI, Gemini).
         """
         self.api_key = api_key
         self.model = model
@@ -775,6 +778,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
         self.output_dimensions = output_dimensions
         self.batch_size = batch_size
         self.timeout = timeout
+        self.encoding_format = encoding_format or None
         self._litellm = None  # Will be set during initialization
         self._dimension: int | None = None
 
@@ -810,8 +814,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 "model": self.model,
                 "input": ["test"],
                 "api_key": self.api_key,
-                "encoding_format": "float",
             }
+            if self.encoding_format:
+                embed_kwargs["encoding_format"] = self.encoding_format
             if self.api_base:
                 embed_kwargs["api_base"] = self.api_base
             if self.output_dimensions is not None:
@@ -859,8 +864,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
                     "model": self.model,
                     "input": batch,
                     "api_key": self.api_key,
-                    "encoding_format": "float",
                 }
+                if self.encoding_format:
+                    embed_kwargs["encoding_format"] = self.encoding_format
                 if self.api_base:
                     embed_kwargs["api_base"] = self.api_base
                 if self.output_dimensions is not None:
@@ -1095,6 +1101,18 @@ def create_embeddings_from_env() -> Embeddings:
         model = os.environ.get(ENV_EMBEDDINGS_OPENAI_MODEL, DEFAULT_EMBEDDINGS_OPENAI_MODEL)
         base_url = os.environ.get(ENV_EMBEDDINGS_OPENAI_BASE_URL) or None
         return OpenAIEmbeddings(api_key=api_key, model=model, base_url=base_url)
+    elif provider == "openrouter":
+        api_key = config.embeddings_openrouter_api_key
+        if not api_key:
+            raise ValueError(
+                "HINDSIGHT_API_EMBEDDINGS_OPENROUTER_API_KEY, HINDSIGHT_API_OPENROUTER_API_KEY, "
+                f"or {ENV_LLM_API_KEY} is required when {ENV_EMBEDDINGS_PROVIDER} is 'openrouter'"
+            )
+        return OpenAIEmbeddings(
+            api_key=api_key,
+            model=config.embeddings_openrouter_model,
+            base_url="https://openrouter.ai/api/v1",
+        )
     elif provider == "cohere":
         api_key = config.embeddings_cohere_api_key
         if not api_key:
@@ -1121,6 +1139,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_litellm_sdk_model,
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
+            encoding_format=config.embeddings_litellm_sdk_encoding_format,
         )
     elif provider == "google":
         vertexai_project_id = config.embeddings_vertexai_project_id

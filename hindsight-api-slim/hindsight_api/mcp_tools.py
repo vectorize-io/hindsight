@@ -140,6 +140,7 @@ def build_content_dict(
     metadata: dict[str, str] | None = None,
     document_id: str | None = None,
     strategy: str | None = None,
+    update_mode: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Build a content dict for retain operations.
 
@@ -151,6 +152,7 @@ def build_content_dict(
         metadata: Optional key-value metadata to attach to the memory
         document_id: Optional document ID to associate the memory with
         strategy: Optional named retain strategy override (e.g., 'exact', 'verbose')
+        update_mode: How to handle existing documents ('replace' or 'append')
 
     Returns:
         Tuple of (content_dict, error_message). error_message is None if successful.
@@ -185,6 +187,8 @@ def build_content_dict(
         content_dict["document_id"] = document_id
     if strategy is not None:
         content_dict["strategy"] = strategy
+    if update_mode is not None:
+        content_dict["update_mode"] = update_mode
 
     return content_dict, None
 
@@ -544,6 +548,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             document_id: str | None = None,
             bank_id: str | None = None,
             strategy: str | None = None,
+            update_mode: str | None = None,
         ) -> dict:
             """
             Args:
@@ -555,12 +560,15 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 document_id: Optional document ID to associate this memory with
                 bank_id: Optional bank to store in (defaults to session bank). Use for cross-bank operations.
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+                update_mode: How to handle existing documents with the same document_id. 'replace' (default) or 'append' (concatenates new content to existing).
             """
             target_bank = bank_id or config.bank_id_resolver()
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
-            content_dict, error = build_content_dict(content, context, timestamp, tags, metadata, document_id, strategy)
+            content_dict, error = build_content_dict(
+                content, context, timestamp, tags, metadata, document_id, strategy, update_mode
+            )
             if error:
                 return {"status": "error", "message": error}
 
@@ -595,6 +603,7 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             metadata: dict[str, str] | None = None,
             document_id: str | None = None,
             strategy: str | None = None,
+            update_mode: str | None = None,
         ) -> dict:
             """
             Args:
@@ -605,12 +614,15 @@ def _register_retain(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 metadata: Optional key-value metadata to attach (e.g., {'source': 'slack', 'channel': 'general'})
                 document_id: Optional document ID to associate this memory with
                 strategy: Optional named retain strategy (e.g., 'exact' for verbatim storage). Strategies are defined in the bank config.
+                update_mode: How to handle existing documents with the same document_id. 'replace' (default) or 'append' (concatenates new content to existing).
             """
             target_bank = config.bank_id_resolver()
             if target_bank is None:
                 return {"status": "error", "message": "No bank_id configured"}
 
-            content_dict, error = build_content_dict(content, context, timestamp, tags, metadata, document_id, strategy)
+            content_dict, error = build_content_dict(
+                content, context, timestamp, tags, metadata, document_id, strategy, update_mode
+            )
             if error:
                 return {"status": "error", "message": error}
 

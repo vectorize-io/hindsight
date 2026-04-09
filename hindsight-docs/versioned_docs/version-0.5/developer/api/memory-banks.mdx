@@ -1,0 +1,433 @@
+---
+sidebar_position: 6
+---
+
+# Memory Banks
+
+Memory banks are isolated containers that store all memory-related data for a specific context or use case.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import memoryBanksPy from '!!raw-loader!@site/examples/api/memory-banks.py';
+import memoryBanksMjs from '!!raw-loader!@site/examples/api/memory-banks.mjs';
+import memoryBanksSh from '!!raw-loader!@site/examples/api/memory-banks.sh';
+import memoryBanksGo from '!!raw-loader!@site/examples/api/memory-banks.go';
+import directivesPy from '!!raw-loader!@site/examples/api/directives.py';
+import directivesMjs from '!!raw-loader!@site/examples/api/directives.mjs';
+import directivesSh from '!!raw-loader!@site/examples/api/directives.sh';
+import directivesGo from '!!raw-loader!@site/examples/api/directives.go';
+
+## What is a Memory Bank?
+
+A memory bank is a complete, isolated storage unit containing:
+
+- **Memories** — Facts and information retained from conversations
+- **Documents** — Files and content indexed for retrieval
+- **Entities** — People, places, concepts extracted from memories
+- **Relationships** — Connections between entities in the knowledge graph
+- **Directives** — Hard rules the agent must follow during reflect operations
+
+Banks are completely isolated from each other — memories stored in one bank are not visible to another.
+
+You don't need to pre-create a bank. Hindsight will automatically create it with default settings when you first use it.
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Creating a Memory Bank
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="create-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="create-bank" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="create-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="create-bank" language="go" />
+</TabItem>
+</Tabs>
+
+## Bank Configuration
+
+Each memory bank can be configured independently per operation. Configuration can be set via the [bank config API](#updating-configuration), the [Control Plane UI](/), or [server-wide environment variables](/developer/configuration).
+
+### retain_mission {#retain-configuration}
+
+A plain-language description of what this bank should pay attention to during extraction. The mission is injected into the extraction prompt alongside the built-in rules — it steers focus without replacing the extraction logic.
+
+```
+e.g. Always include technical decisions, API design choices, and architectural trade-offs.
+     Ignore meeting logistics, greetings, and social exchanges.
+```
+
+Works alongside any extraction mode. Leave blank for general-purpose extraction.
+
+### retain_extraction_mode
+
+Controls how aggressively facts are extracted:
+
+| Mode | Description |
+|------|-------------|
+| `concise` *(default)* | Selective — only facts worth remembering long-term |
+| `verbose` | Captures more detail per fact; slower and uses more tokens |
+| `custom` | Write your own extraction rules via `retain_custom_instructions` |
+
+### retain_custom_instructions
+
+Only active when `retain_extraction_mode` is `custom`. Replaces the built-in extraction rules entirely with your own instructions.
+
+### retain_chunk_size
+
+Maximum number of characters per chunk when splitting content for fact extraction. Larger chunks mean fewer LLM calls but may reduce extraction quality on long inputs; smaller chunks improve granularity at the cost of more calls.
+
+Default: `3000`
+
+See [Retain configuration](/developer/configuration#retain) for environment variable names and defaults.
+
+### entity_labels {#entity-labels}
+
+Defines a controlled vocabulary of `key:value` classification labels extracted at retain time and stored as entities. Because labels become entities, they automatically link memories in the knowledge graph (two memories with `pedagogy:scaffolding` are linked), improve semantic and BM25 retrieval, and optionally filter memories via the standard `tags`/`tags_match` API when `tag: true` is set on a group.
+
+Each entry in `entity_labels` is a **label group** — one classification dimension:
+
+```json
+{
+  "entity_labels": [
+    {
+      "key": "engagement",
+      "description": "Student engagement level during the session",
+      "type": "value",
+      "optional": true,
+      "values": [
+        { "value": "active",  "description": "Student is actively participating" },
+        { "value": "passive", "description": "Student is listening but not participating" }
+      ]
+    },
+    {
+      "key": "pedagogy",
+      "description": "Teaching strategies used",
+      "type": "multi-values",
+      "values": [
+        { "value": "scaffolding",          "description": "Breaking complex tasks into smaller steps" },
+        { "value": "direct_instruction",   "description": "Explicit explanation by the teacher" },
+        { "value": "socratic_questioning", "description": "Guiding through questions rather than answers" }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `key` | — | Label group identifier. Becomes the prefix in `key:value` entities. |
+| `description` | `""` | Shown to the LLM to guide label assignment. |
+| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string. |
+| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"`. |
+| `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` groups (always optional). |
+| `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. |
+
+**Enum groups** (`type: "value"` or `type: "multi-values"`): the LLM picks from the predefined `values` list; anything outside the list is silently dropped. Vocabulary stays stable and graph links stay tight. Use `"multi-values"` when a fact can belong to several values at once.
+
+**Free-text groups** (`type: "text"`): the LLM writes any string. Use the `description` field to provide examples and guidance. Graph clustering is less reliable than with enum groups because the model may phrase the same concept differently across sessions.
+
+```json
+{
+  "key": "topic",
+  "description": "Specific subject being discussed. Examples: algebra, quadratic equations, geometry.",
+  "type": "text",
+  "optional": true,
+  "values": []
+}
+```
+
+### entities_allow_free_form
+
+By default, entity labels are extracted **alongside** regular named entities (people, places, concepts). Set to `false` to disable free-form extraction so only label entities are stored:
+
+```json
+{
+  "entity_labels": [...],
+  "entities_allow_free_form": false
+}
+```
+
+### enable_observations {#observations-configuration}
+
+Toggles automatic observation consolidation on or off. Defaults to `true` when the observations feature is enabled on the server.
+
+### observations_mission
+
+Defines what this bank should synthesise into durable observations. Replaces the built-in consolidation rules entirely — leave blank to use the server default.
+
+```
+e.g. Observations are stable facts about people and projects.
+     Always include preferences, skills, and recurring patterns.
+     Ignore one-off events and ephemeral state.
+```
+
+### consolidation_llm_batch_size
+
+Number of facts sent to the LLM in a single consolidation call. Higher values reduce LLM calls and improve throughput at the cost of larger prompts. Set to `1` to disable batching. Leave unset to use the server default (`8`).
+
+### consolidation_source_facts_max_tokens
+
+Total token budget for source facts included with observations in the consolidation prompt. Source facts give the LLM evidence to compare new facts against existing observations. `-1` = unlimited. Leave unset to use the server default (`-1`).
+
+### consolidation_source_facts_max_tokens_per_observation
+
+Per-observation token cap for source facts in the consolidation prompt. Each observation independently gets at most this many tokens of source facts, preventing a single observation with many source facts from consuming the entire budget. `-1` = unlimited. Leave unset to use the server default (`256`).
+
+See [Observations configuration](/developer/configuration#observations) for environment variable names and defaults.
+
+### reflect_mission
+
+A first-person narrative that provides identity and framing context for `reflect`. The agent uses this to ground its reasoning and apply a consistent perspective.
+
+```
+e.g. You are a senior engineering assistant.
+     Always ground answers in documented decisions and rationale.
+     Ignore speculation. Be direct and precise.
+```
+
+### disposition_skepticism
+
+How skeptical vs trusting the bank is when evaluating claims during `reflect`. Scale 1–5.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="bank-with-disposition" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="bank-with-disposition" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="bank-with-disposition" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="bank-with-disposition" language="go" />
+</TabItem>
+</Tabs>
+
+| Value | Behaviour |
+|-------|-----------|
+| `1` | Trusting — accepts information at face value |
+| `3` *(default)* | Balanced |
+| `5` | Skeptical — questions and doubts claims |
+
+### disposition_literalism
+
+How literally to interpret information during `reflect`. Scale 1–5.
+
+| Value | Behaviour |
+|-------|-----------|
+| `1` | Flexible — reads between the lines, considers context |
+| `3` *(default)* | Balanced |
+| `5` | Literal — takes things exactly as stated |
+
+### disposition_empathy
+
+How much to weight emotional context when reasoning during `reflect`. Scale 1–5.
+
+| Value | Behaviour |
+|-------|-----------|
+| `1` | Detached — focuses on facts and logic |
+| `3` *(default)* | Balanced |
+| `5` | Empathetic — considers emotional context |
+
+:::info
+Disposition traits and `reflect_mission` only affect the `reflect` operation. `retain_mission` and `observations_mission` are separate per-operation settings.
+:::
+
+### mcp_enabled_tools
+
+An allowlist of MCP tool names that are enabled for this bank. When set, only the listed tools can be invoked; any tool not in the list returns an error (tools still appear in the MCP tools list for protocol compatibility). Set to `null` (or omit) to allow all tools.
+
+```json
+["recall", "reflect"]
+```
+
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `delete_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`.
+
+### llm_gemini_safety_settings
+
+Controls content filtering thresholds for Gemini and VertexAI providers. Accepts a list of safety setting objects in the [Google AI safety settings format](https://ai.google.dev/api/generate-content#v1beta.SafetySetting). When `null` (default), Gemini's built-in safety defaults are used.
+
+```json
+[
+  {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+  {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"}
+]
+```
+
+Only applies when `HINDSIGHT_API_LLM_PROVIDER` is `gemini` or `vertexai`.
+
+---
+
+## Updating Configuration
+
+Bank configuration fields (retain mission, extraction mode, observations mission, etc.) are managed via a **separate config API**, not the `create_bank` call. This lets you change operational settings independently from the bank's identity and disposition.
+
+### Setting Configuration Overrides
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="update-bank-config" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="update-bank-config" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="update-bank-config" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="update-bank-config" language="go" />
+</TabItem>
+</Tabs>
+
+You can update any subset of fields — only the keys you provide are changed.
+
+### Reading the Current Configuration
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="get-bank-config" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="get-bank-config" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="get-bank-config" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="get-bank-config" language="go" />
+</TabItem>
+</Tabs>
+
+The response distinguishes:
+- **`config`** — the fully resolved configuration (server defaults merged with bank overrides)
+- **`overrides`** — only the fields explicitly overridden for this bank
+
+### Resetting to Defaults
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={memoryBanksPy} section="reset-bank-config" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={memoryBanksMjs} section="reset-bank-config" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={memoryBanksSh} section="reset-bank-config" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={memoryBanksGo} section="reset-bank-config" language="go" />
+</TabItem>
+</Tabs>
+
+This removes all bank-level overrides. The bank reverts to server-wide defaults (set via environment variables).
+
+You can also update configuration directly from the [Control Plane UI](/) — navigate to a bank and open the **Configuration** tab.
+
+---
+
+## Directives
+
+Directives are hard rules that the agent must follow during [reflect](./reflect) operations. Unlike disposition traits which influence *how* the agent reasons, directives are explicit instructions that are *always* enforced.
+
+:::info
+Directives only affect the `reflect` operation. They are injected into prompts and the agent is required to comply with them in all responses.
+:::
+
+### When to Use Directives
+
+Use directives for rules that must never be violated:
+
+- **Language/style constraints**: "Always respond in formal English"
+- **Privacy rules**: "Never share personal data with third parties"
+- **Domain constraints**: "Prefer conservative investment recommendations"
+- **Behavioral guardrails**: "Always cite sources when making claims"
+
+### Creating Directives
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={directivesPy} section="create-directive" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={directivesMjs} section="create-directive" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={directivesSh} section="create-directive" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={directivesGo} section="create-directive" language="go" />
+</TabItem>
+</Tabs>
+
+### Listing Directives
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={directivesPy} section="list-directives" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={directivesMjs} section="list-directives" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={directivesSh} section="list-directives" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={directivesGo} section="list-directives" language="go" />
+</TabItem>
+</Tabs>
+
+### Updating Directives
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={directivesPy} section="update-directive" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={directivesMjs} section="update-directive" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={directivesSh} section="update-directive" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={directivesGo} section="update-directive" language="go" />
+</TabItem>
+</Tabs>
+
+### Deleting Directives
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={directivesPy} section="delete-directive" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={directivesMjs} section="delete-directive" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={directivesSh} section="delete-directive" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={directivesGo} section="delete-directive" language="go" />
+</TabItem>
+</Tabs>
+
+### Directives vs Disposition
+
+| Aspect | Directives | Disposition |
+|--------|------------|-------------|
+| **Nature** | Hard rules, must be followed | Soft influence on reasoning style |
+| **Enforcement** | Strict — responses are rejected if violated | Flexible — shapes interpretation |
+| **Use case** | Compliance, guardrails, constraints | Personality, character, tone |
+| **Example** | "Never recommend specific stocks" | High skepticism: questions claims |

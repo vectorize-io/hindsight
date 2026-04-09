@@ -197,7 +197,7 @@ class DaemonEmbedManager(EmbedManager):
         logger.warning(f"Old daemon (PID {pid}) did not stop in time")
         return False
 
-    def _start_daemon(self, config: dict, profile: str) -> bool:
+    def _start_daemon(self, config: dict, profile: str, extra_args: list[str] | None = None) -> bool:
         """Start the daemon in background."""
         paths = self._profile_manager.resolve_profile_paths(profile)
         profile_label = f"profile '{profile}'" if profile else "default profile"
@@ -252,15 +252,6 @@ class DaemonEmbedManager(EmbedManager):
         if "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT" not in env:
             env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(DEFAULT_DAEMON_IDLE_TIMEOUT)
 
-        # On macOS, force CPU for embeddings/reranker to avoid MPS issues
-        import platform
-
-        if platform.system() == "Darwin":
-            if "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU" not in env:
-                env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
-            if "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU" not in env:
-                env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
-
         # Get idle timeout from env
         idle_timeout = int(env.get("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
 
@@ -276,6 +267,8 @@ class DaemonEmbedManager(EmbedManager):
             "--port",
             str(port),
         ]
+        if extra_args:
+            cmd.extend(extra_args)
 
         try:
             # Start daemon
@@ -620,13 +613,14 @@ class DaemonEmbedManager(EmbedManager):
 
         return not self.is_ui_running(profile, ui_port)
 
-    def ensure_running(self, config: dict, profile: str) -> bool:
+    def ensure_running(self, config: dict, profile: str, extra_args: list[str] | None = None) -> bool:
         """
         Ensure daemon is running, starting it if needed.
 
         Args:
             config: Environment configuration dict (HINDSIGHT_API_* vars)
             profile: Profile name for isolation
+            extra_args: Extra CLI arguments to pass to hindsight-api (e.g. ["--offline"])
 
         Returns:
             True if daemon is running (started or already running), False on failure
@@ -637,7 +631,7 @@ class DaemonEmbedManager(EmbedManager):
                 paths = self._profile_manager.resolve_profile_paths(profile)
                 self._register_profile(profile, paths.port, config)
             return True
-        return self._start_daemon(config, profile)
+        return self._start_daemon(config, profile, extra_args=extra_args)
 
     def stop(self, profile: str) -> bool:
         """

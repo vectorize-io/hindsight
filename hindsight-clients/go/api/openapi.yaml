@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.4.22
+  version: 0.5.0
 servers:
 - url: /
 paths:
@@ -4782,6 +4782,12 @@ components:
         observation_scopes:
           $ref: '#/components/schemas/ObservationScopes'
         strategy:
+          nullable: true
+          type: string
+        update_mode:
+          enum:
+          - replace
+          - append
           nullable: true
           type: string
       required:

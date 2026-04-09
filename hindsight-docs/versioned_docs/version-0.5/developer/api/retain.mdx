@@ -1,0 +1,309 @@
+---
+sidebar_position: 2
+---
+
+# Ingest Data
+
+Store documents, conversations, and raw content into Hindsight to automatically extract and create memories.
+
+When you **retain** content, Hindsight doesn't just store the raw text—it intelligently analyzes the content to extract meaningful facts, identify entities, and build a connected knowledge graph. This process transforms unstructured information into structured, queryable memories.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import retainPy from '!!raw-loader!@site/examples/api/retain.py';
+import retainMjs from '!!raw-loader!@site/examples/api/retain.mjs';
+import retainSh from '!!raw-loader!@site/examples/api/retain.sh';
+import retainGo from '!!raw-loader!@site/examples/api/retain.go';
+
+:::info How Retain Works
+Learn about fact extraction, entity resolution, and graph construction in the [Retain Architecture](/developer/retain) guide.
+:::
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Store a Document
+
+A single retain call accepts one or more **items**. Each item is a piece of raw content — a conversation, a document, a note — that Hindsight will analyze and decompose into one or many memories. The content itself is never stored verbatim; what gets stored are the structured facts the LLM extracts from it.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-basic" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-basic" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-basic" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-basic" language="go" />
+</TabItem>
+</Tabs>
+
+### Retaining a Conversation
+
+A full conversation should be retained as a single item. The LLM can parse any format — plain text, JSON, Markdown, or any structured representation — as long as it clearly conveys who said what and when. The example below uses a simple `Name (timestamp): text` format.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-conversation" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-conversation" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-conversation" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-conversation" language="go" />
+</TabItem>
+</Tabs>
+
+When the conversation grows — a new message arrives — just retain again with the full updated content and the same `document_id`. Hindsight will delete the previous version and reprocess from scratch, so memories always reflect the latest state of the conversation.
+
+---
+
+## Parameters
+
+### content
+
+The raw text to store. This is the only required field. Hindsight chunks the content, sends each chunk to the LLM for fact extraction, and stores the resulting structured facts — not the original text. A single `content` value can produce many memories depending on how much information it contains.
+
+### timestamp
+
+When the event described in the content actually occurred. Three forms are accepted:
+
+| Value | Behaviour |
+|-------|-----------|
+| Omitted / `null` | Defaults to the current time at ingestion. |
+| ISO 8601 string (e.g. `"2024-01-15T10:30:00Z"`) | Uses the provided datetime. |
+| `"unset"` | Stores the content **without any timestamp**. Use this for timeless material such as reference documents, books, or fictional content where no real event time exists. |
+
+The timestamp is injected into the LLM fact-extraction prompt so the model can resolve relative temporal references in the content — for example, if the content says "last Monday", the model uses the provided timestamp as the anchor to pin down the actual date. When `"unset"` is passed the prompt shows `Event Date: Unknown`, allowing the model to correctly return `N/A` for the `when` field of every extracted fact. Providing a real timestamp also enables temporal recall queries like "What happened last spring?" to work correctly.
+
+### context
+
+A short label describing the source or situation — for example `"team meeting"`, `"slack"`, or `"support ticket"`. It is injected directly into the LLM prompt, so it actively shapes how facts are extracted. The same sentence can mean something very different depending on context: "the project was terminated" in a `"performance review"` context versus a `"product roadmap"` context produces different memories.
+
+Providing context consistently is one of the highest-leverage things you can do to improve memory quality.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-with-context" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-with-context" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-with-context" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-with-context" language="go" />
+</TabItem>
+</Tabs>
+
+### metadata
+
+Arbitrary key-value string pairs that provide context about this item. For example: `{"source": "slack", "channel": "engineering", "thread_id": "T123"}`. Metadata is included in the fact extraction prompt, so the LLM can use it as additional context when extracting facts — for instance, knowing the document title or source can improve accuracy. It is also stored on each memory unit and returned with every recalled memory, letting you do client-side filtering or static enrichment without extra lookups — for example, linking a memory back to its source URL, thread ID, or any application-specific identifier.
+
+### document_id
+
+A caller-supplied string that groups one or more items under a logical document. This field is the key to making retain **idempotent**.
+
+When you provide a `document_id`, Hindsight upserts the document: if a document with that ID already exists in the bank, it and all its associated memories are deleted before the new content is processed and inserted. This means you can safely re-run retain on updated content — for example, a chat thread that grew since last time — without accumulating duplicate memories.
+
+If you omit `document_id`, Hindsight assigns a random UUID per request, so re-ingesting the same content will create duplicate memories.
+
+### entities
+
+A list of entities you want to guarantee are recognized, merged with any entities the LLM extracts automatically. Each entry has a `text` field (the entity name) and an optional `type` (e.g., `"PERSON"`, `"ORG"`, `"CONCEPT"` — defaults to `"CONCEPT"` if omitted).
+
+Use this when you know certain entities are important but the LLM might miss them or refer to them inconsistently across different parts of the content. Providing entities explicitly ensures they are always linked in the knowledge graph.
+
+### tags and document_tags
+
+Tags control **visibility scoping** — which memories are visible during recall. A memory is only returned if its tags intersect with the tags filter provided in the recall request. This makes tags useful when a single memory bank serves multiple users or sessions and each should only see their own memories.
+
+Use consistent naming patterns to keep tag filtering predictable. Common conventions: `user:<id>` for per-user scoping, `session:<id>` for session isolation, `room:<id>` for chat rooms, `topic:<name>` for category filtering. The bank also exposes a list-tags endpoint that returns all tags with their memory counts, useful for UI autocomplete or wildcard expansion.
+
+See [Recall API](./recall#tags) for filtering by tags during retrieval.
+
+### observation_scopes
+
+Controls which [observations](../observations) this memory contributes to during consolidation. Each scope runs an independent pass, creating or updating observations tagged with only that scope's tags.
+
+:::info Scope isolation
+During consolidation, Hindsight uses `all_strict` matching to find existing observations to update — only observations whose tags exactly match the current scope are considered. This keeps scopes isolated: a memory consolidated under `["student:alice"]` will never bleed into an observation tagged `["student:alice", "teacher:bob"]`.
+:::
+
+The examples below use a lesson transcript retained with `tags: ["student:alice", "teacher:bob", "session-id:s1"]`.
+
+#### combined *(default)*
+
+One consolidation pass using all tags together. The resulting observation is tagged with the full set.
+
+- Observations created: `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✗ *"What does Alice struggle with across all her sessions?"* — no match, because no observation was ever built for `student:alice` alone
+- ✗ *"How does Bob teach?"* — no match for `teacher:bob` alone
+- ✓ *"What happened in session s1 with Alice and Bob?"* — exact match
+
+**Use when** the memory is meaningful only as a whole and you never need to query any single tag in isolation.
+
+#### per_tag
+
+One consolidation pass per individual tag. Each tag gets its own isolated observation that grows with every new memory sharing that tag.
+
+- Observations created: `["student:alice"]` · `["teacher:bob"]` · `["session-id:s1"]`
+- ✓ *"What does Alice struggle with across all her sessions?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"What happened in session s1?"*
+- ✗ *"How does Alice perform specifically with Bob?"* — no observation for the `["student:alice", "teacher:bob"]` combination
+- ✗ *"How does Bob teach in online sessions?"* — no observation for `["teacher:bob", "session-id:s1"]`
+
+**Use when** content involves multiple tags that each represent an independent subject — the most common choice for multi-party content like conversations, lessons, or support sessions.
+
+#### all_combinations
+
+One pass per subset of tags — singles, pairs, triples, and so on. For 3 tags that is 7 passes.
+
+- Observations created: all `"per_tag"` scopes above, plus `["student:alice", "teacher:bob"]` · `["student:alice", "session-id:s1"]` · `["teacher:bob", "session-id:s1"]` · `["student:alice", "teacher:bob", "session-id:s1"]`
+- ✓ All questions from `"per_tag"` above
+- ✓ *"How does Alice perform specifically with Bob?"* — matched by `["student:alice", "teacher:bob"]`
+
+**Use when** you need observations at every granularity — per tag, per pair, per group.
+
+#### custom
+
+Pass an explicit list of tag sets. Each inner list is one scope.
+
+```json
+[["student:alice"], ["teacher:bob"], ["teacher:bob", "session-id:s1"]]
+```
+
+- Observations created: exactly those three scopes — nothing more
+- ✓ *"What does Alice struggle with?"*
+- ✓ *"How does Bob teach?"*
+- ✓ *"How does Bob teach in session s1 specifically?"*
+- ✗ *"What happened in session s1 regardless of teacher?"* — `["session-id:s1"]` alone was not included
+
+**Use when** you know exactly which combinations are meaningful and want to avoid unnecessary passes.
+
+### Response
+
+The synchronous retain response includes:
+
+- `success` — whether the operation completed without errors
+- `bank_id` — the memory bank that received the content
+- `items_count` — number of items processed
+- `async` — whether processing ran asynchronously
+- `usage` — token usage for the LLM calls (`input_tokens`, `output_tokens`, `total_tokens`), only present for synchronous operations
+
+---
+
+## Batch Ingestion
+
+Multiple items can be submitted in a single request. Batch ingestion is the recommended approach — it reduces network overhead and lets Hindsight optimize extraction across related content.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-batch" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-batch" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-batch" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-batch" language="go" />
+</TabItem>
+</Tabs>
+
+
+---
+
+## Files
+
+Upload files directly — Hindsight converts them to text and extracts memories automatically. File processing always runs asynchronously and returns operation IDs for tracking.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, images (JPG, PNG, GIF, etc. — OCR), audio (MP3, WAV, FLAC, etc. — transcription), HTML, and plain text formats (TXT, MD, CSV, JSON, YAML, etc.)
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-files" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-files" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-files" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-files" language="go" />
+</TabItem>
+</Tabs>
+
+The file retain endpoint always returns asynchronously. The response contains `operation_ids` — one per uploaded file — which you can poll via `GET /v1/default/banks/{bank_id}/operations` to track progress.
+
+Upload up to 10 files per request (max 100 MB total). Each file becomes a separate document with optional per-file metadata:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-files-batch" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-files-batch" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-files" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-files" language="go" />
+</TabItem>
+</Tabs>
+
+:::info File Storage
+Uploaded files are stored server-side (PostgreSQL by default, or S3/GCS/Azure for production). Configure storage via `HINDSIGHT_API_FILE_STORAGE_TYPE`. See [Configuration](../configuration#file-processing) for details.
+:::
+
+---
+
+## Async Ingestion
+
+For large batches, use async ingestion to avoid blocking your application:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={retainPy} section="retain-async" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={retainMjs} section="retain-async" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={retainSh} section="retain-async" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={retainGo} section="retain-async" language="go" />
+</TabItem>
+</Tabs>
+
+When `async: true`, the call returns immediately with an `operation_id`. Processing runs in the background via the worker service. No `usage` metrics are returned for async operations.
+
+### Cut Costs 50% with Provider Batch APIs
+
+When using async retain, enable the provider Batch API to reduce LLM fact-extraction costs by 50%. OpenAI and Groq both offer this discount in exchange for a processing window of up to 24 hours — a trade-off that's typically invisible when retain already runs in the background.
+
+```bash
+export HINDSIGHT_API_RETAIN_BATCH_ENABLED=true
+```
+
+Hindsight submits fact extraction calls as a batch job to the provider, polls for completion, and processes results automatically. No changes to your API calls are needed.
+
+:::note
+Batch API cost savings require `async=true` in your retain request and a compatible provider (OpenAI or Groq).
+:::

@@ -345,6 +345,65 @@ class TestLiteLLMSDKEmbeddings:
             assert encode_call_args.kwargs["api_base"] == "https://custom.api.com"
             assert encode_call_args.kwargs["dimensions"] == 768
 
+    async def test_encoding_format_default_is_float(self, mock_litellm):
+        """Test that encoding_format defaults to 'float' for backwards compatibility."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="cohere/embed-english-v3.0",
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert init_call_args.kwargs["encoding_format"] == "float"
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert encode_call_args.kwargs["encoding_format"] == "float"
+
+    async def test_encoding_format_omitted_when_none(self, mock_litellm):
+        """Test that encoding_format is omitted when set to None (for Voyage AI, Gemini)."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="voyage/voyage-4-large",
+                encoding_format=None,
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert "encoding_format" not in init_call_args.kwargs
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert "encoding_format" not in encode_call_args.kwargs
+
+    async def test_encoding_format_omitted_when_empty_string(self, mock_litellm):
+        """Test that encoding_format is omitted when set to empty string."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="gemini/gemini-embedding-2-preview",
+                encoding_format="",
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert "encoding_format" not in init_call_args.kwargs
+
     async def test_openai_invalid_output_dimensions_raises(self, mock_litellm):
         """Invalid dimensions fail during initialize() (probe call), not per HTTP request.
 

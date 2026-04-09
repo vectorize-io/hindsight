@@ -1657,6 +1657,12 @@ export type MemoryItem = {
    * Named retain strategy for this item. Overrides the bank's default strategy for this item only. Strategies are defined in the bank config under 'retain_strategies'.
    */
   strategy?: string | null;
+  /**
+   * Update Mode
+   *
+   * How to handle an existing document with the same document_id. 'replace' (default) deletes old data and reprocesses from scratch. 'append' concatenates new content to the existing document text and reprocesses.
+   */
+  update_mode?: "replace" | "append" | null;
 };
 
 /**

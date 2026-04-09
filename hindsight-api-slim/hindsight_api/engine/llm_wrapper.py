@@ -122,6 +122,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
     {
         "ollama",
         "lmstudio",
+        "llamacpp",
         "openai-codex",
         "claude-code",
         "mock",
@@ -178,6 +179,7 @@ def create_llm_provider(
         CodexLLM,
         GeminiLLM,
         LiteLLMLLM,
+        LlamaCppLLM,
         MockLLM,
         NoneLLM,
         OpenAICompatibleLLM,
@@ -263,7 +265,25 @@ def create_llm_provider(
             reasoning_effort=reasoning_effort,
         )
 
-    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "volcano"):
+    elif provider_lower == "llamacpp":
+        from ..config import get_config
+
+        config = get_config()
+        return LlamaCppLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            model_path=config.llamacpp_model_path,
+            gpu_layers=config.llamacpp_gpu_layers,
+            context_size=config.llamacpp_context_size,
+            chat_format=config.llamacpp_chat_format,
+            no_grammar=config.llamacpp_no_grammar,
+            extra_args=config.llamacpp_extra_args,
+        )
+
+    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "volcano", "openrouter"):
         return OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -333,6 +353,7 @@ class LLMProvider:
             "gemini",
             "anthropic",
             "lmstudio",
+            "llamacpp",
             "vertexai",
             "openai-codex",
             "claude-code",
@@ -342,6 +363,7 @@ class LLMProvider:
             "litellm",
             "bedrock",
             "volcano",
+            "openrouter",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -356,6 +378,8 @@ class LLMProvider:
                 self.base_url = "http://localhost:1234/v1"
             elif self.provider == "minimax":
                 self.base_url = "https://api.minimax.io/v1"
+            elif self.provider == "openrouter":
+                self.base_url = "https://openrouter.ai/api/v1"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
@@ -711,8 +735,9 @@ class LLMProvider:
         return ConfiguredLLMProvider(self, config.llm_gemini_safety_settings)
 
     async def cleanup(self) -> None:
-        """Clean up resources."""
-        pass
+        """Clean up resources (e.g. stop llamacpp subprocess)."""
+        if self._provider_impl:
+            await self._provider_impl.cleanup()
 
     @classmethod
     def from_env(cls) -> "LLMProvider":

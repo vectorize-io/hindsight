@@ -7,6 +7,7 @@ import {
   sliceLastTurnsByUserBoundary,
   composeRecallQuery,
   truncateRecallQuery,
+  buildRetainRequest,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -218,6 +219,80 @@ describe('formatMemories', () => {
 
   it('returns empty string for empty memories', () => {
     expect(formatMemories([])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareRetentionTranscript
+// ---------------------------------------------------------------------------
+
+describe('buildRetainRequest', () => {
+  it('adds configured source metadata and retain tags', () => {
+    const request = buildRetainRequest('hello world', 2, {
+      agentId: 'main',
+      sessionKey: 'agent:main:main',
+      messageProvider: 'discord',
+      channelId: 'channel:123',
+      senderId: 'user:456',
+    }, {
+      retainSource: 'openclaw',
+      retainTags: ['source_system:openclaw', 'agent:agentname'],
+    }, 1700000000000);
+
+    expect(request).toEqual({
+      content: 'hello world',
+      document_id: 'openclaw:agent:main:main:turn:000001',
+      metadata: {
+        retained_at: expect.any(String),
+        message_count: '2',
+        source: 'openclaw',
+        retention_scope: 'turn',
+        turn_index: '1',
+        session_key: 'agent:main:main',
+        agent_id: 'main',
+        provider: 'discord',
+        channel_type: 'discord',
+        channel_id: 'channel:123',
+        thread_id: undefined,
+        sender_id: 'user:456',
+      },
+      tags: ['source_system:openclaw', 'agent:agentname'],
+    });
+  });
+
+  it('uses window ids and metadata for chunked retention', () => {
+    const request = buildRetainRequest('hello world', 4, {
+      agentId: 'agentname',
+      sessionKey: 'agent:agentname:discord:group:123:topic:456',
+      messageProvider: 'discord',
+      senderId: 'user:456',
+    }, {
+      retainSource: 'openclaw',
+    }, 1700000000000, {
+      retentionScope: 'window',
+      turnIndex: 2,
+      windowTurns: 2,
+    });
+
+    expect(request.document_id).toBe('openclaw:agent:agentname:discord:group:123:topic:456:window:000002');
+    expect(request.metadata).toMatchObject({
+      source: 'openclaw',
+      retention_scope: 'window',
+      turn_index: '2',
+      agent_id: 'agentname',
+      provider: 'discord',
+      channel_type: 'discord',
+      channel_id: 'group:123:topic:456',
+      thread_id: '456',
+      sender_id: 'user:456',
+      window_turns: '2',
+    });
+  });
+
+  it('defaults source metadata to openclaw when unset', () => {
+    const request = buildRetainRequest('hello world', 1, {}, {}, 1700000000000, { turnIndex: 1 });
+    expect(request.metadata?.source).toBe('openclaw');
+    expect(request.tags).toBeUndefined();
   });
 });
 

@@ -47,11 +47,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@vitest/ui": "^4.0.18",
+    "@vitest/ui": "^4.1.2",
     "ai": "^6.0.2",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.2",
     "zod": "^4.2.0"
   },
   "engines": {
@@ -59,6 +59,7 @@
   },
   "overrides": {
     "rollup": "^4.59.0",
-    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4"
+    "picomatch": ">=2.3.2 <3.0.0 || >=4.0.4",
+    "vite": ">=8.0.5"
   }
 }

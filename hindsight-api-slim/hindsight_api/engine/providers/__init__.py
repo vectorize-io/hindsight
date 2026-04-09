@@ -9,6 +9,7 @@ from .claude_code_llm import ClaudeCodeLLM
 from .codex_llm import CodexLLM
 from .gemini_llm import GeminiLLM
 from .litellm_llm import LiteLLMLLM
+from .llamacpp_llm import LlamaCppLLM
 from .mock_llm import MockLLM
 from .none_llm import NoneLLM
 from .openai_compatible_llm import OpenAICompatibleLLM
@@ -18,6 +19,7 @@ __all__ = [
     "ClaudeCodeLLM",
     "CodexLLM",
     "GeminiLLM",
+    "LlamaCppLLM",
     "LiteLLMLLM",
     "MockLLM",
     "NoneLLM",

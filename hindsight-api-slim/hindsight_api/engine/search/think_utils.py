@@ -62,13 +62,14 @@ def format_facts_for_prompt(facts: list[MemoryFact]) -> str:
         if fact.context:
             fact_obj["context"] = fact.context
 
-        # Add occurred_start if available (when the fact occurred)
-        if fact.occurred_start:
-            occurred_start = fact.occurred_start
-            if isinstance(occurred_start, str):
-                fact_obj["occurred_start"] = occurred_start
-            elif isinstance(occurred_start, datetime):
-                fact_obj["occurred_start"] = occurred_start.strftime("%Y-%m-%d %H:%M:%S")
+        # Add temporal fields if available
+        for field_name in ("occurred_start", "occurred_end", "mentioned_at"):
+            value = getattr(fact, field_name, None)
+            if value:
+                if isinstance(value, str):
+                    fact_obj[field_name] = value
+                elif isinstance(value, datetime):
+                    fact_obj[field_name] = value.strftime("%Y-%m-%d %H:%M:%S")
 
         formatted.append(fact_obj)
 

@@ -43,7 +43,6 @@ jobs:
       integrations-litellm: ${{ steps.filter.outputs.integrations-litellm }}
       integrations-pydantic-ai: ${{ steps.filter.outputs.integrations-pydantic-ai }}
       integrations-ag2: ${{ steps.filter.outputs.integrations-ag2 }}
-      integrations-hermes: ${{ steps.filter.outputs.integrations-hermes }}
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
@@ -115,8 +114,6 @@ jobs:
             - 'hindsight-integrations/pydantic-ai/**'
           integrations-ag2:
             - 'hindsight-integrations/ag2/**'
-          integrations-hermes:
-            - 'hindsight-integrations/hermes/**'
           integrations-llamaindex:
             - 'hindsight-integrations/llamaindex/**'
           integrations-paperclip:
@@ -1823,43 +1820,6 @@ jobs:
       working-directory: ./hindsight-integrations/pydantic-ai
       run: uv run pytest tests -v
 
-  test-hermes-integration:
-    needs: [detect-changes]
-    if: >-
-      github.event_name != 'pull_request_review' &&
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.integrations-hermes == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        prune-cache: false
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version-file: ".python-version"
-
-    - name: Build hermes integration
-      working-directory: ./hindsight-integrations/hermes
-      run: uv build
-
-    - name: Install dependencies
-      working-directory: ./hindsight-integrations/hermes
-      run: uv sync --frozen
-
-    - name: Run tests
-      working-directory: ./hindsight-integrations/hermes
-      run: uv run pytest tests -v
-
   test-llamaindex-integration:
     needs: [detect-changes]
     if: >-
@@ -2516,7 +2476,6 @@ jobs:
       - test-crewai-integration
       - test-litellm-integration
       - test-pydantic-ai-integration
-      - test-hermes-integration
       - test-llamaindex-integration
       - test-pip-slim
       - test-embed

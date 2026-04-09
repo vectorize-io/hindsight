@@ -175,6 +175,7 @@ export class HindsightClient {
         document_id: request.document_id || 'conversation',
         metadata: request.metadata,
       }],
+      document_tags: request.tags,
       async: true,
     };
 

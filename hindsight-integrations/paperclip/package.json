@@ -48,5 +48,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "vite": ">=8.0.5"
   }
 }

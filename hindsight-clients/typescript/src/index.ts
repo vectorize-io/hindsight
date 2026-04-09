@@ -83,6 +83,7 @@ export interface MemoryItemInput {
     tags?: string[];
     observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
     strategy?: string;
+    update_mode?: "replace" | "append";
 }
 
 export class HindsightClient {
@@ -137,6 +138,8 @@ export class HindsightClient {
             entities?: EntityInput[];
             /** Optional list of tags for this memory */
             tags?: string[];
+            /** How to handle existing documents: 'replace' (default) or 'append' */
+            updateMode?: "replace" | "append";
         }
     ): Promise<RetainResponse> {
         const item: {
@@ -147,6 +150,7 @@ export class HindsightClient {
             document_id?: string;
             entities?: EntityInput[];
             tags?: string[];
+            update_mode?: "replace" | "append";
         } = { content };
         if (options?.timestamp) {
             item.timestamp =
@@ -168,6 +172,9 @@ export class HindsightClient {
         }
         if (options?.tags) {
             item.tags = options.tags;
+        }
+        if (options?.updateMode) {
+            item.update_mode = options.updateMode;
         }
 
         const response = await sdk.retainMemories({
@@ -192,6 +199,7 @@ export class HindsightClient {
             tags: item.tags,
             observation_scopes: item.observation_scopes,
             strategy: item.strategy,
+            update_mode: item.update_mode,
             timestamp:
                 item.timestamp instanceof Date
                     ? item.timestamp.toISOString()
@@ -740,6 +748,51 @@ export class HindsightClient {
 
         return this.validateResponse(response, 'getMentalModelHistory');
     }
+}
+
+/**
+ * Serialize a RecallResponse to a string suitable for LLM prompts.
+ *
+ * Builds a prompt containing:
+ * - Facts: each result as a JSON object with text, context, temporal fields,
+ *   and source_chunk (if the result's chunk_id matches a chunk in the response).
+ * - Entities: entity summaries from observations, formatted as sections.
+ *
+ * Mirrors the format used internally by Hindsight's reflect operation.
+ */
+export function recallResponseToPromptString(response: RecallResponse): string {
+    const chunksMap = response.chunks ?? {};
+    const sections: string[] = [];
+
+    // Facts
+    const formattedFacts = (response.results ?? []).map((result) => {
+        const obj: Record<string, string> = { text: result.text };
+        if (result.context) obj.context = result.context;
+        if (result.occurred_start) obj.occurred_start = result.occurred_start;
+        if (result.occurred_end) obj.occurred_end = result.occurred_end;
+        if (result.mentioned_at) obj.mentioned_at = result.mentioned_at;
+        if (result.chunk_id && chunksMap[result.chunk_id]) {
+            obj.source_chunk = chunksMap[result.chunk_id].text;
+        }
+        return obj;
+    });
+    sections.push('FACTS:\n' + JSON.stringify(formattedFacts, null, 2));
+
+    // Entities
+    const entities = response.entities;
+    if (entities) {
+        const entityParts: string[] = [];
+        for (const [name, state] of Object.entries(entities)) {
+            if (state.observations?.length) {
+                entityParts.push(`## ${name}\n${state.observations[0].text}`);
+            }
+        }
+        if (entityParts.length) {
+            sections.push('ENTITIES:\n' + entityParts.join('\n\n'));
+        }
+    }
+
+    return sections.join('\n\n');
 }
 
 // Re-export types for convenience

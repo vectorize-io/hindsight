@@ -91,6 +91,53 @@ def _recall_response_getitem(self, index):
     return self.results[index]
 
 
+def _recall_response_to_prompt_string(self) -> str:
+    """Serialize the recall response to a string suitable for LLM prompts.
+
+    Builds a prompt containing:
+    - Facts: each result as a JSON object with ``text``, ``context``, and
+      temporal fields (``occurred_start``, ``occurred_end``, ``mentioned_at``).
+      If the result has a ``chunk_id`` matching a chunk in the response, the
+      chunk text is included as ``source_chunk``.
+    - Entities: entity summaries from observations, formatted as sections.
+
+    This mirrors the format used internally by Hindsight's reflect operation.
+    """
+    import json
+
+    chunks_map = self.chunks or {}
+    sections: list[str] = []
+
+    # Facts
+    formatted_facts: list[dict] = []
+    for result in self.results or []:
+        fact_obj: dict = {"text": result.text}
+        if result.context:
+            fact_obj["context"] = result.context
+        for field in ("occurred_start", "occurred_end", "mentioned_at"):
+            value = getattr(result, field, None)
+            if value:
+                fact_obj[field] = value
+        if result.chunk_id and result.chunk_id in chunks_map:
+            fact_obj["source_chunk"] = chunks_map[result.chunk_id].text
+        formatted_facts.append(fact_obj)
+    sections.append("FACTS:\n" + json.dumps(formatted_facts, indent=2))
+
+    # Entities
+    if self.entities:
+        entity_parts: list[str] = []
+        for name, state in self.entities.items():
+            if state.observations:
+                obs_text = state.observations[0].text
+                entity_parts.append(f"## {name}\n{obs_text}")
+        if entity_parts:
+            sections.append("ENTITIES:\n" + "\n\n".join(entity_parts))
+
+    return "\n\n".join(sections)
+
+
+_RecallResponse.to_prompt_string = _recall_response_to_prompt_string
+
 _RecallResult.__repr__ = _recall_result_repr
 _RecallResponse.__repr__ = _recall_response_repr
 _RecallResponse.__iter__ = _recall_response_iter

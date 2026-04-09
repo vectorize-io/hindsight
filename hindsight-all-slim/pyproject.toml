@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hindsight-all-slim"
-version = "0.4.22"
+version = "0.5.0"
 description = "Hindsight: Agent Memory That Works Like Human Memory - Slim All-in-One Bundle"
 readme = "README.md"
 requires-python = ">=3.11"

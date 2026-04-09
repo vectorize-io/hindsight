@@ -1,0 +1,414 @@
+---
+sidebar_position: 2
+---
+
+# Recall Memories
+
+Retrieve memories from a bank using multi-strategy recall.
+
+When you **recall**, Hindsight runs four retrieval strategies in parallel — semantic similarity, keyword (BM25), graph traversal, and temporal — then fuses and reranks the results into a single ranked list. The response contains structured facts, not raw documents.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import recallPy from '!!raw-loader!@site/examples/api/recall.py';
+import recallMjs from '!!raw-loader!@site/examples/api/recall.mjs';
+import recallSh from '!!raw-loader!@site/examples/api/recall.sh';
+import recallGo from '!!raw-loader!@site/examples/api/recall.go';
+
+:::info How Recall Works
+Learn about the four retrieval strategies (semantic, keyword, graph, temporal) and RRF fusion in the [Recall Architecture](/developer/retrieval) guide.
+:::
+
+:::tip Prerequisites
+Make sure you've completed the [Quick Start](./quickstart) to install the client and start the server.
+:::
+
+## Basic Recall
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-basic" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-basic" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-basic" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-basic" language="go" />
+</TabItem>
+</Tabs>
+
+---
+
+## Parameters
+
+### query
+
+The natural language question or statement to search for. This is the only required field. The query drives all four retrieval strategies simultaneously: it is embedded for semantic search, tokenized for BM25 keyword search, used to seed graph traversal, and parsed for temporal expressions. After retrieval, the raw query text is also passed to the cross-encoder reranker to re-score every candidate. Queries exceeding 500 tokens are rejected.
+
+### types
+
+Controls which categories of memory facts are searched. Accepted values are `world` (objective facts), `experience` (events and conversations), and `observation` (consolidated knowledge synthesized over time). When omitted, all three types are searched.
+
+Each type runs the full four-strategy retrieval pipeline independently, so narrowing `types` reduces both the result set and query cost.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-world-only" language="python" />
+<CodeSnippet code={recallPy} section="recall-experience-only" language="python" />
+<CodeSnippet code={recallPy} section="recall-observations-only" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-world-only" language="javascript" />
+<CodeSnippet code={recallMjs} section="recall-experience-only" language="javascript" />
+<CodeSnippet code={recallMjs} section="recall-observations-only" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-fact-type" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-world-only" language="go" />
+<CodeSnippet code={recallGo} section="recall-experience-only" language="go" />
+<CodeSnippet code={recallGo} section="recall-observations-only" language="go" />
+</TabItem>
+</Tabs>
+
+:::tip About Observations
+Observations are consolidated knowledge synthesized from multiple facts over time — patterns, preferences, and learnings the memory bank has built up. They are created automatically in the background after retain operations.
+:::
+
+### budget
+
+Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-budget-levels" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-budget-levels" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-budget-levels" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-budget-levels" language="go" />
+</TabItem>
+</Tabs>
+
+### max_tokens
+
+The maximum number of tokens the returned facts can collectively occupy. Defaults to `4096`. Only the `text` field of each fact is counted toward this budget — metadata, tags, entities, and other fields are not included. After reranking, facts are included in relevance order until this budget is exhausted — so you always get the most relevant memories that fit. Hindsight is designed for agents, which think in tokens rather than result counts: set `max_tokens` to however much of your context window you want to allocate to memories.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-token-budget" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-token-budget" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-token-budget" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-token-budget" language="go" />
+</TabItem>
+</Tabs>
+
+### query_timestamp
+
+An ISO 8601 datetime representing when the query is being asked, from the user's perspective. When provided, it is used as the anchor for resolving relative temporal expressions in the query — for example, if the query says "last month" and `query_timestamp` is `2023-05-30`, the temporal search window becomes approximately April 2023. Without it, the server's current time is used as the anchor. This field matters most for replaying historical conversations or building agents that need time-anchored recall.
+
+### include
+
+An optional object controlling supplementary data returned alongside the main facts.
+
+#### chunks
+
+When enabled, the response includes the raw source text chunks from which each fact was extracted. Chunks are fetched before the `max_tokens` filter, so setting `max_tokens=0` returns no facts but can still return chunks. The `max_tokens` sub-option (default `8192`) controls the total chunk token budget independently of the main fact budget. This is useful when agents need surrounding context beyond the extracted fact text.
+
+:::note
+When `include_chunks` is enabled, chunks are fetched based on the top-scored reranked results before token filtering. The last chunk is truncated (not dropped) to fit exactly within the budget, and each chunk carries a `truncated` flag indicating whether it was cut.
+:::
+
+#### source_facts
+
+When enabled and `types` includes `observation`, each observation result is accompanied by the original contributing facts it was synthesized from. Source facts are returned in a top-level `source_facts` dict keyed by fact ID, and each observation result carries a `source_fact_ids` list for cross-referencing. Facts are deduplicated across observations. The `max_tokens` sub-option (default `4096`) limits the total token budget for source facts.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-source-facts" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-source-facts" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-source-facts" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-source-facts" language="go" />
+</TabItem>
+</Tabs>
+
+#### entities
+
+Enabled by default. When active, each returned fact includes the canonical names of entities associated with it. Set to `null` to skip the entity JOIN query and reduce response size. The `max_tokens` sub-option (default `500`) is a future-facing guard for entity data.
+
+### tags
+
+Filters recall to only memories that match the specified tags. When omitted, all memories regardless of tags are eligible. Tag filtering is applied at the database level across all four retrieval strategies, not as a post-processing step.
+
+The `tags_match` parameter controls the filtering logic:
+
+| Mode | Untagged memories | Match condition |
+|------|-------------------|-----------------|
+| `any` (default) | Included | Memory has **at least one** of the specified tags |
+| `any_strict` | Excluded | Memory has **at least one** of the specified tags |
+| `all` | Included | Memory has **all** of the specified tags |
+| `all_strict` | Excluded | Memory has **all** of the specified tags |
+
+#### Scenario setup
+
+Consider a bank with these four memories:
+
+| Memory | Tags |
+|--------|------|
+| "Alice prefers async communication" | `["user:alice"]` |
+| "Bob dislikes long meetings" | `["user:bob"]` |
+| "Team uses Slack for announcements" | `["user:alice", "team"]` |
+| "Company policy: no meetings on Fridays" | *(untagged)* |
+
+#### `any` — OR matching, includes untagged (default)
+
+Returns memories that have **at least one** matching tag, plus untagged memories.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-any" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-tags-any" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-tags-any" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-with-tags" language="go" />
+</TabItem>
+</Tabs>
+
+Use this for **shared global knowledge + user-specific** patterns, where untagged memories represent information everyone should see.
+
+#### `any_strict` — OR matching, excludes untagged
+
+Same as `any` but untagged memories are excluded.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-any-strict" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-tags-any-strict" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-tags-any-strict" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-tags-strict" language="go" />
+</TabItem>
+</Tabs>
+
+Use this when memories are **fully partitioned by tags** and untagged memories should never be visible.
+
+#### `all` — AND matching, includes untagged
+
+Returns memories that have **every** specified tag, plus untagged memories.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-all-mode" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-tags-all-mode" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-tags-all-mode" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-tags-all-mode" language="go" />
+</TabItem>
+</Tabs>
+
+Use this when memories must belong to a **specific intersection** of scopes (e.g., only memories relevant to both a user and a project), while still surfacing shared global knowledge.
+
+#### `all_strict` — AND matching, excludes untagged
+
+Returns memories that have **every** specified tag, and excludes untagged memories.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={recallPy} section="recall-tags-all-strict" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={recallMjs} section="recall-tags-all-strict" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={recallSh} section="recall-tags-all-strict" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={recallGo} section="recall-tags-all" language="go" />
+</TabItem>
+</Tabs>
+
+Use this for strict scope enforcement where a memory must explicitly belong to **all** specified contexts.
+
+:::tip Extra tags are fine
+A memory with tags `["user:alice", "team", "project:x"]` will still match a filter of `["user:alice", "team"]` under `all_strict` — extra tags on the memory are not a problem. The filter only requires the memory to contain **at least** the specified tags.
+:::
+
+### tag_groups
+
+`tag_groups` is a list of compound boolean tag filters. The groups in the list are AND-ed together at the top level. Each group is a recursive boolean expression: a **leaf** node `{tags, match}`, or a **compound** node `{and: [...]}`, `{or: [...]}`, or `{not: ...}`.
+
+`tag_groups` and `tags` / `tags_match` can be used simultaneously — they are AND-ed together.
+
+#### Leaf node
+
+```json
+{ "tags": ["step:5", "step:8"], "match": "any_strict" }
+```
+
+`match` accepts the same values as `tags_match`: `any`, `all`, `any_strict`, `all_strict`. Defaults to `any_strict`.
+
+#### Compound nodes
+
+```json
+{ "and": [ <TagGroup>, <TagGroup>, ... ] }
+{ "or":  [ <TagGroup>, <TagGroup>, ... ] }
+{ "not": <TagGroup> }
+```
+
+#### Examples
+
+**Step filter AND user scope** — two top-level groups AND-ed:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["step:5", "step:8", "step:12"], "match": "any_strict" },
+    { "tags": ["user:ep_42"], "match": "all_strict" }
+  ]
+}
+```
+
+**Nested OR inside AND** — user must match, plus either step OR priority:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["user:alice"], "match": "all_strict" },
+    { "or": [
+        { "tags": ["step:5"], "match": "any_strict" },
+        { "tags": ["priority:high"], "match": "all_strict" }
+    ]}
+  ]
+}
+```
+
+**Exclusion** — user must match, but archived memories are excluded:
+
+```json
+{
+  "tag_groups": [
+    { "tags": ["user:alice"], "match": "all_strict" },
+    { "not": { "tags": ["archived"], "match": "any_strict" } }
+  ]
+}
+```
+
+### trace
+
+When set to `true`, the response includes a detailed debug trace covering the query embedding, entry points, per-strategy retrieval results, RRF fusion candidates, reranked results, temporal constraints detected, and per-phase timings. Has no effect on the retrieval logic itself. Useful for understanding why specific memories were or were not returned.
+
+---
+
+## Response
+
+### results
+
+The main list of recalled facts, ordered by relevance. Relevance is computed by running four retrieval strategies in parallel — semantic similarity, BM25 keyword, graph traversal, and temporal — fusing their rankings with Reciprocal Rank Fusion (RRF), then re-scoring the merged candidates with a cross-encoder reranker against the original query.
+
+Results do not include a numeric score. Raw retrieval scores are not meaningful on an absolute scale — a score of 0.8 from one query tells you nothing useful compared to a score of 0.8 from another. What matters is the relative ordering, which is already reflected in the list order. Agents should consume memories in order and let `max_tokens` determine how many fit, rather than filtering by score.
+
+Each item in `results` has the following fields:
+
+#### id
+
+The unique identifier of this fact. Use it to cross-reference with `source_facts` or for application-level deduplication.
+
+#### text
+
+The extracted fact text as stored in the memory bank.
+
+#### type
+
+The fact category: `world` for objective information, `experience` for events and conversations, or `observation` for consolidated knowledge synthesized over time.
+
+#### context
+
+The context label provided when the fact was retained (e.g., `"team meeting"`, `"slack"`). `null` if none was set.
+
+#### metadata
+
+The key-value string pairs attached when the fact was retained. `null` if none were set.
+
+#### tags
+
+The visibility-scoping tags attached to this fact.
+
+#### entities
+
+A list of canonical entity name strings linked to this fact. Only populated when `include.entities` is enabled (the default). `null` otherwise.
+
+#### occurred_start / occurred_end
+
+ISO 8601 datetimes representing when the described event started and ended. Extracted by the LLM from the content during retain. `null` if the content had no temporal information.
+
+#### mentioned_at
+
+ISO 8601 datetime of when this fact was retained into the bank.
+
+#### document_id
+
+The document ID this fact belongs to, as set during retain.
+
+#### chunk_id
+
+The ID of the source text chunk this fact was extracted from. Used to cross-reference with `chunks` in the response when `include.chunks` is enabled.
+
+#### source_fact_ids
+
+For `observation`-type results only: the IDs of the original facts this observation was synthesized from. Cross-references with `source_facts` in the response. `null` for other types or when `include.source_facts` is not enabled.
+
+---
+
+### source_facts
+
+A dict keyed by fact ID containing full `RecallResult` objects for the source facts that contributed to observation results. Only present when `include.source_facts` is enabled. Facts are deduplicated — if two observations share a source fact, it appears once.
+
+### chunks
+
+A dict keyed by chunk ID containing the raw source text chunks associated with the returned facts. Only present when `include.chunks` is enabled. Each chunk has `id`, `text`, `chunk_index`, and `truncated` (whether the text was cut to fit the token budget).
+
+### entities
+
+A dict keyed by canonical entity name containing entity state objects. Only present when `include.entities` is enabled. Each entry has `entity_id`, `canonical_name`, and `observations`.
+
+### trace
+
+A debug object present only when `trace: true` was set in the request. Contains per-phase timings, retrieval breakdowns, and RRF fusion details.

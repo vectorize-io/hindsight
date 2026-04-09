@@ -26,6 +26,7 @@ const __dirname = dirname(__filename);
 // ---------------------------------------------------------------------------
 
 const HINDSIGHT_API_URL = process.env.HINDSIGHT_API_URL || 'http://localhost:8888';
+const HINDSIGHT_API_TOKEN = process.env.HINDSIGHT_API_TOKEN || '';
 const LLM_PROVIDER = process.env.HINDSIGHT_API_LLM_PROVIDER || '';
 const LLM_API_KEY = process.env.HINDSIGHT_API_LLM_API_KEY || '';
 const LLM_MODEL = process.env.HINDSIGHT_API_LLM_MODEL || '';
@@ -81,6 +82,7 @@ describe('HindsightClient – HTTP Mode', () => {
       llmApiKey: LLM_API_KEY || 'test-key',
       llmModel: LLM_MODEL || undefined,
       apiUrl: HINDSIGHT_API_URL,
+      apiToken: HINDSIGHT_API_TOKEN || undefined,
     });
   });
 

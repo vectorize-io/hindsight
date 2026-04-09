@@ -909,6 +909,7 @@ def _build_user_message(
     event_date: datetime | None,
     context: str,
     metadata: dict[str, str] | None = None,
+    agent_name: str | None = None,
 ) -> str:
     """Build user message for fact extraction."""
     from .orchestrator import parse_datetime_flexible
@@ -927,11 +928,15 @@ def _build_user_message(
         metadata_lines = "\n".join(f"  {k}: {v}" for k, v in metadata.items())
         metadata_section = f"\nMetadata:\n{metadata_lines}"
 
+    narrator_section = ""
+    if agent_name:
+        narrator_section = f'\nNarrator: {agent_name} (AI agent — first-person statements like "I did X" are the agent\'s own actions; classify as "assistant")'
+
     return f"""Extract facts from the following text chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
 Event Date: {event_date_str}
-Context: {sanitized_context}{metadata_section}
+Context: {sanitized_context}{metadata_section}{narrator_section}
 
 Text:
 {sanitized_chunk}"""
@@ -995,7 +1000,7 @@ async def _extract_facts_from_chunk(
     extract_causal_links = config.retain_extract_causal_links
 
     # Build user message using helper function
-    user_message = _build_user_message(chunk, chunk_index, total_chunks, event_date, context, metadata)
+    user_message = _build_user_message(chunk, chunk_index, total_chunks, event_date, context, metadata, agent_name)
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config
@@ -1632,7 +1637,13 @@ async def extract_facts_from_contents_batch_api(
 
             # Build user message using helper function
             user_message = _build_user_message(
-                chunk, chunk_index_in_content, len(chunks), item.event_date, item.context, item.metadata or None
+                chunk,
+                chunk_index_in_content,
+                len(chunks),
+                item.event_date,
+                item.context,
+                item.metadata or None,
+                agent_name,
             )
 
             # Build request body using helper function

@@ -76,6 +76,18 @@
         "type": "string",
         "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-U123'). Useful for separating environments."
       },
+      "retainTags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags applied to every retained document (e.g. ['source_system:openclaw', 'agent:agentname'])."
+      },
+      "retainSource": {
+        "type": "string",
+        "description": "Source value written into retained document metadata. Defaults to 'openclaw'.",
+        "default": "openclaw"
+      },
       "autoRecall": {
         "type": "boolean",
         "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",
@@ -86,7 +98,8 @@
         "items": {
           "type": "string"
         },
-        "description": "Message providers to exclude from recall and retain (e.g. ['telegram', 'discord'])"
+        "description": "Message providers to exclude from recall and retain (e.g. ['heartbeat', 'telegram', 'discord'])",
+        "default": ["heartbeat"]
       },
       "dynamicBankGranularity": {
         "type": "array",
@@ -233,6 +246,21 @@
         "type": "number",
         "description": "How often to attempt flushing queued retains in ms. Default: 60000 (1 min).",
         "default": 60000
+      },
+      "ignoreSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session key glob patterns to skip entirely (no recall, no retain). E.g. [\"agent:main:**\", \"agent:*:cron:**\"]. * matches non-colon chars, ** matches anything."
+      },
+      "statelessSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Session key glob patterns for read-only sessions: retain is always skipped, recall is skipped when skipStatelessSessions is true. E.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]."
+      },
+      "skipStatelessSessions": {
+        "type": "boolean",
+        "description": "When true (default), sessions matching statelessSessionPatterns also skip recall. When false, they can recall but never retain.",
+        "default": true
       }
     },
     "additionalProperties": false
@@ -294,13 +322,21 @@
       "label": "Bank ID Prefix",
       "placeholder": "e.g., prod, staging (optional)"
     },
+    "retainTags": {
+      "label": "Retain Tags",
+      "placeholder": "e.g. ['source_system:openclaw', 'agent:agentname']"
+    },
+    "retainSource": {
+      "label": "Retain Source",
+      "placeholder": "openclaw"
+    },
     "autoRecall": {
       "label": "Auto-Recall",
       "placeholder": "true (inject memories on every prompt)"
     },
     "excludeProviders": {
       "label": "Excluded Providers",
-      "placeholder": "e.g. telegram, discord"
+      "placeholder": "e.g. heartbeat, telegram, discord"
     },
     "dynamicBankGranularity": {
       "label": "Bank Granularity",
@@ -383,6 +419,18 @@
     "retainQueueFlushIntervalMs": {
       "label": "Retain Queue Flush Interval (ms)",
       "placeholder": "60000"
+    },
+    "ignoreSessionPatterns": {
+      "label": "Ignore Session Patterns",
+      "placeholder": "e.g. [\"agent:main:**\", \"agent:*:cron:**\"]"
+    },
+    "statelessSessionPatterns": {
+      "label": "Stateless Session Patterns",
+      "placeholder": "e.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]"
+    },
+    "skipStatelessSessions": {
+      "label": "Skip Stateless Sessions",
+      "placeholder": "true (default)"
     }
   }
 }

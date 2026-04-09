@@ -1,0 +1,383 @@
+---
+sidebar_position: 4
+---
+
+# Mental Models
+
+User-curated summaries that provide high-quality, pre-computed answers for common queries.
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+
+{/* Import raw source files */}
+import mentalModelsPy from '!!raw-loader!@site/examples/api/mental-models.py';
+import mentalModelsMjs from '!!raw-loader!@site/examples/api/mental-models.mjs';
+import mentalModelsSh from '!!raw-loader!@site/examples/api/mental-models.sh';
+import mentalModelsGo from '!!raw-loader!@site/examples/api/mental-models.go';
+
+## What Are Mental Models?
+
+Mental models are **saved reflect responses** that you curate for your memory bank. When you create a mental model, Hindsight runs a reflect operation with your source query and stores the result. During future reflect calls, these pre-computed summaries are checked first — providing faster, more consistent answers.
+
+```mermaid
+graph LR
+    A[Create Mental Model] --> B[Run Reflect]
+    B --> C[Store Result]
+    C --> D[Future Queries]
+    D --> E{Match Found?}
+    E -->|Yes| F[Return Mental Model]
+    E -->|No| G[Run Full Reflect]
+```
+
+### Why Use Mental Models?
+
+| Benefit | Description |
+|---------|-------------|
+| **Consistency** | Same answer every time for common questions |
+| **Speed** | Pre-computed responses are returned instantly |
+| **Quality** | Manually curated summaries you've reviewed |
+| **Control** | Define exactly how key topics should be answered |
+
+### Hierarchical Retrieval
+
+During reflect, the agent checks sources in priority order:
+
+1. **Mental Models** — User-curated summaries (highest priority)
+2. **Observations** — Consolidated knowledge
+3. **Raw Facts** — Ground truth memories
+
+Mental models are checked first because they represent your explicitly curated knowledge.
+
+---
+
+## Create a Mental Model
+
+Creating a mental model runs a reflect operation in the background and saves the result:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="create-mental-model" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model" language="go" />
+</TabItem>
+</Tabs>
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Human-readable name for the mental model |
+| `source_query` | string | Yes | The query to run to generate content |
+| `id` | string | No | Custom ID for the mental model (alphanumeric lowercase with hyphens). Auto-generated if omitted. |
+| `tags` | list | No | Tags for filtering during retrieval |
+| `max_tokens` | int | No | Maximum tokens for the mental model content |
+| `trigger` | object | No | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
+
+---
+
+## Create with Custom ID
+
+Assign a stable, human-readable ID to a mental model so you can retrieve or update it by name instead of relying on the auto-generated UUID:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="create-mental-model-with-id" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model-with-id" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model-with-id" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model-with-id" language="go" />
+</TabItem>
+</Tabs>
+
+:::tip
+Custom IDs must be lowercase alphanumeric and may contain hyphens (e.g. `team-policies`, `q4-status`). If a mental model with that ID already exists, the request is rejected.
+:::
+
+---
+
+## Automatic Refresh
+
+Mental models can be configured to **automatically refresh** when observations are updated. This keeps them in sync with the latest knowledge without manual intervention.
+
+### Trigger Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
+
+When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="create-mental-model-with-trigger" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="create-mental-model-with-trigger" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="create-mental-model-with-trigger" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="create-mental-model-with-trigger" language="go" />
+</TabItem>
+</Tabs>
+
+### When to Use Automatic Refresh
+
+| Use Case | Automatic Refresh | Why |
+|----------|-------------------|-----|
+| **Real-time dashboards** | ✅ Enabled | Status should always be current |
+| **Policy summaries** | ❌ Disabled | Policies change infrequently, manual refresh preferred |
+| **User preferences** | ✅ Enabled | Preferences evolve with new interactions |
+| **FAQ answers** | ❌ Disabled | Answers are curated, should be reviewed before updating |
+
+:::tip
+Enable automatic refresh for mental models that need to stay current. Disable it for curated content where you want to review changes before they go live.
+:::
+
+---
+
+## List Mental Models
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="list-mental-models" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="list-mental-models" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="list-mental-models" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="list-mental-models" language="go" />
+</TabItem>
+</Tabs>
+
+---
+
+## Get a Mental Model
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="get-mental-model" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="get-mental-model" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="get-mental-model" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="get-mental-model" language="go" />
+</TabItem>
+</Tabs>
+
+### Detail Levels
+
+Both **List** and **Get** endpoints accept an optional `detail` query parameter that controls how much data is returned. This is useful for reducing response size, especially in agent boot flows or MCP clients where context budget is limited.
+
+| Level | Fields Returned | Use Case |
+|-------|----------------|----------|
+| `metadata` | `id`, `bank_id`, `name`, `tags`, `last_refreshed_at`, `created_at` | Inventory — "what models exist?" |
+| `content` | All metadata fields + `source_query`, `content`, `max_tokens`, `trigger` | Agent boot — "what do the models say?" |
+| `full` (default) | All fields including `reflect_response` | Deep inspection — "what evidence backs this model?" |
+
+```bash
+# List only names and tags (smallest response)
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=metadata"
+
+# List with content but without provenance chains
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models?detail=content"
+
+# Get full detail (default behavior)
+curl "$BASE_URL/v1/default/banks/$BANK_ID/mental-models/$MODEL_ID?detail=full"
+```
+
+The `detail` parameter is also available in the MCP tools:
+
+```json
+{"bank_id": "my-bank", "detail": "metadata"}
+```
+
+:::tip
+Use `detail=content` for agent orientation flows. It includes everything the agent needs to understand the models without the heavyweight `reflect_response` provenance chains, which can exceed 200KB for banks with many models.
+:::
+
+### Response Fields
+
+| Field | Type | Detail Level | Description |
+|-------|------|-------------|-------------|
+| `id` | string | metadata | Unique mental model ID |
+| `bank_id` | string | metadata | Memory bank ID |
+| `name` | string | metadata | Human-readable name |
+| `tags` | list | metadata | Tags for filtering |
+| `last_refreshed_at` | string | metadata | When the mental model was last updated |
+| `created_at` | string | metadata | When the mental model was created |
+| `source_query` | string | content | The query used to generate content |
+| `content` | string | content | The generated mental model text |
+| `max_tokens` | int | content | Maximum tokens for the mental model content |
+| `trigger` | object | content | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
+| `reflect_response` | object | full | Full reflect response including `based_on` provenance facts |
+
+---
+
+## Refresh a Mental Model
+
+Re-run the source query to update the mental model with current knowledge:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="refresh-mental-model" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="refresh-mental-model" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="refresh-mental-model" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="refresh-mental-model" language="go" />
+</TabItem>
+</Tabs>
+
+Refreshing is useful when:
+- New memories have been retained that affect the topic
+- Observations have been updated
+- You want to ensure the mental model reflects current knowledge
+
+---
+
+## Update a Mental Model
+
+Update the mental model's name:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="update-mental-model" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="update-mental-model" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="update-mental-model" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="update-mental-model" language="go" />
+</TabItem>
+</Tabs>
+
+---
+
+## Delete a Mental Model
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="delete-mental-model" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="delete-mental-model" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="delete-mental-model" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="delete-mental-model" language="go" />
+</TabItem>
+</Tabs>
+
+---
+
+## Tags and Visibility
+
+Mental models support the same tag system as memories. When you assign tags to a mental model, those tags control both **which memories it reads** during refresh and **when it is surfaced** during reflect.
+
+### How tags affect mental model refresh
+
+When a mental model is refreshed (manually or automatically), it runs an internal reflect call to regenerate its content. If the mental model has tags, that reflect call uses `all_strict` tag matching — meaning it will only read memories that carry **all** of the mental model's tags. Untagged memories are excluded.
+
+```
+Mental model tags: ["user:alice"]
+
+During refresh, it reads:
+  ✅ "Alice prefers async communication"     — has "user:alice"
+  ✅ "Team uses Slack for announcements"      — has "user:alice" (plus other tags)
+  ❌ "Company policy: no meetings on Fridays" — untagged, excluded
+  ❌ "Bob dislikes long meetings"             — no "user:alice" tag
+```
+
+This means a mental model tagged `["user:alice"]` will also pick up memories tagged `["user:alice", "team"]` — extra tags on a memory don't disqualify it. Only the mental model's own tags are required to be present.
+
+### How tags affect mental model lookup during reflect
+
+When you call `reflect` with tags, those same tags are used to filter which mental models the agent can see. A mental model is visible only if its tags overlap with the tags on the reflect request.
+
+For more details on tag matching modes (`any`, `any_strict`, `all`, `all_strict`) and worked examples, see the [Recall tags reference](./recall#tags).
+
+---
+
+## History
+
+Every time a mental model's content changes (via refresh or manual update), the previous version is saved with a timestamp. You can retrieve the full change log with the history endpoint:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={mentalModelsPy} section="get-mental-model-history" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={mentalModelsMjs} section="get-mental-model-history" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={mentalModelsSh} section="get-mental-model-history" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={mentalModelsGo} section="get-mental-model-history" language="go" />
+</TabItem>
+</Tabs>
+
+### Response
+
+The endpoint returns a list of history entries, most recent first:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `previous_content` | string \| null | The content before this change (`null` if not available) |
+| `changed_at` | string | ISO 8601 timestamp of when the change occurred |
+
+Each entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
+
+:::note
+History tracking is enabled by default. Set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` to disable it.
+:::
+
+---
+
+## Use Cases
+
+| Use Case | Example |
+|----------|---------|
+| **FAQ Answers** | Pre-compute answers to common customer questions |
+| **Onboarding Summaries** | "What should new team members know?" |
+| **Status Reports** | "What's the current project status?" refreshed weekly |
+| **Policy Summaries** | "What are our security policies?" |
+
+---
+
+## Next Steps
+
+- [**Reflect**](./reflect) — How the agentic loop uses mental models
+- [**Observations**](/developer/observations) — How knowledge is consolidated
+- [**Operations**](./operations) — Track async mental model creation

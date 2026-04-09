@@ -17,6 +17,23 @@ from .types import ProcessedFact
 logger = logging.getLogger(__name__)
 
 
+async def get_document_content(
+    conn,
+    bank_id: str,
+    document_id: str,
+) -> str | None:
+    """Fetch the original_text of an existing document.
+
+    Returns None if the document does not exist.
+    """
+    row = await conn.fetchval(
+        f"SELECT original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+        document_id,
+        bank_id,
+    )
+    return row
+
+
 async def insert_facts_batch(
     conn, bank_id: str, facts: list[ProcessedFact], document_id: str | None = None
 ) -> list[str]:

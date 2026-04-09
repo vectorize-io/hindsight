@@ -1923,6 +1923,18 @@ class MemoryEngine(MemoryEngineInterface):
 
         self._initialized = False
 
+        # Clean up LLM providers (e.g. stop llamacpp subprocess)
+        for llm_config in (
+            self._llm_config,
+            self._retain_llm_config,
+            self._reflect_llm_config,
+            self._consolidation_llm_config,
+        ):
+            try:
+                await llm_config.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up LLM provider: {e}")
+
         # Stop pg0 if we started it
         if self._pg0 is not None:
             logger.info("Stopping pg0...")
@@ -2145,6 +2157,11 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Batch contains duplicate document_ids: {duplicates}. "
                 f"Each content item in a batch must have a unique document_id to avoid race conditions."
             )
+
+        # Validate update_mode=append requires document_id
+        for item in contents:
+            if item.get("update_mode") == "append" and not item.get("document_id"):
+                raise ValueError("update_mode='append' requires a document_id")
 
         # Auto-chunk large batches by token count to avoid timeouts and memory issues
         # Calculate total token count

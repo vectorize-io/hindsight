@@ -19,6 +19,7 @@ import type { MoltbotPluginAPI, PluginConfig } from '../src/types.js';
 import type { RecallResponse, RetainResponse } from '../src/types.js';
 
 const HINDSIGHT_API_URL = process.env.HINDSIGHT_API_URL || 'http://localhost:8888';
+const HINDSIGHT_API_TOKEN = process.env.HINDSIGHT_API_TOKEN || '';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,7 +146,12 @@ beforeAll(async () => {
     recallContextTurns: 3,
     recallMaxQueryChars: 180,
     recallRoles: ['user'],
+    // Session pattern filtering — only affects keys matching these patterns
+    ignoreSessionPatterns: ['agent:main:**', 'agent:*:cron:**'],
+    statelessSessionPatterns: ['agent:*:subagent:**', 'agent:*:heartbeat:**'],
+    skipStatelessSessions: true,
     // No bankMission — keeps init lean
+    ...(HINDSIGHT_API_TOKEN ? { hindsightApiUrl: HINDSIGHT_API_URL, hindsightApiToken: HINDSIGHT_API_TOKEN } : {}),
   });
   triggerHook = handle.trigger;
   stopServicesFn = handle.stopServices;
@@ -567,5 +573,83 @@ describe('agent_end hook', () => {
     // Earlier turns are excluded by turn boundary detection
     expect(req.content).not.toContain('My name is Carol.');
     expect(req.metadata?.message_count).toBe('2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session pattern filtering
+// ---------------------------------------------------------------------------
+
+describe('session pattern filtering', () => {
+  it('skips retain when session key matches ignoreSessionPatterns', async () => {
+    if (!apiReachable) return;
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I love TypeScript.' }],
+      },
+      { messageProvider: 'telegram', senderId: 'U100', sessionKey: 'agent:mybot:cron:sess-cron-001' },
+    );
+
+    expect(retainSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips retain when session key matches statelessSessionPatterns', async () => {
+    if (!apiReachable) return;
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I prefer Python.' }],
+      },
+      { messageProvider: 'telegram', senderId: 'U101', sessionKey: 'agent:mybot:subagent:sess-sub-001' },
+    );
+
+    expect(retainSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips recall when session key matches ignoreSessionPatterns', async () => {
+    if (!apiReachable) return;
+
+    const result = await triggerHook(
+      'before_prompt_build',
+      { rawMessage: 'What programming language do I like?', prompt: '', messages: [] },
+      { messageProvider: 'telegram', senderId: 'U102', sessionKey: 'agent:mybot:cron:sess-cron-002' },
+    );
+
+    expect(recallSpy).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it('skips recall for stateless session when skipStatelessSessions is true (default)', async () => {
+    if (!apiReachable) return;
+
+    const result = await triggerHook(
+      'before_prompt_build',
+      { rawMessage: 'What programming language do I like?', prompt: '', messages: [] },
+      { messageProvider: 'telegram', senderId: 'U103', sessionKey: 'agent:mybot:heartbeat:sess-hb-001' },
+    );
+
+    expect(recallSpy).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it('does not skip a main session that matches no pattern', async () => {
+    if (!apiReachable) return;
+    retainSpy.mockResolvedValue(OK_RETAIN);
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I enjoy hiking.' }],
+      },
+      { messageProvider: 'telegram', senderId: 'U104', sessionKey: 'agent:mybot:main:sess-main-001' },
+    );
+
+    expect(retainSpy).toHaveBeenCalledOnce();
   });
 });

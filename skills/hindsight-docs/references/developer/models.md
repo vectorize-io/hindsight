@@ -33,6 +33,11 @@ See [Configuration](./configuration#llm-provider) for setup examples.
 Set `HINDSIGHT_API_LLM_PROVIDER=bedrock` to use AWS Bedrock models directly. Model names use Bedrock model IDs (e.g., `us.amazon.nova-2-lite-v1:0`). No API key is required — authentication uses AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME`) or IAM roles.
 
 See [Configuration](./configuration#llm-provider) for setup examples.
+> **💡 Built-in llama.cpp (fully local, no API key)**
+> 
+Set `HINDSIGHT_API_LLM_PROVIDER=llamacpp` to run a built-in llama.cpp server with no external dependencies. A Gemma 4 E2B GGUF model (~3.5 GB) is auto-downloaded on first run. Requires the `local-llm` extra: `pip install 'hindsight-api-slim[local-llm]'`.
+
+See [Configuration](./configuration#built-in-llamacpp) for all options.
 > **💡 LiteLLM Provider (Azure, Together AI, and more)**
 > 
 Set `HINDSIGHT_API_LLM_PROVIDER=litellm` to use any model supported by [LiteLLM](https://docs.litellm.ai/docs/providers), including **Azure OpenAI**, **Together AI**, **Fireworks AI**, and many more. Model names use LiteLLM's provider prefix format (e.g., `azure/gpt-4o`).
@@ -77,6 +82,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `groq` | `openai/gpt-oss-120b` |
 | `minimax` | `MiniMax-M2.7` |
 | `ollama` | `gemma3:12b` |
+| `llamacpp` | `gemma-4-e2b-it` (auto-downloaded GGUF) |
 | `lmstudio` | `local-model` |
 | `vertexai` | `gemini-2.0-flash-001` |
 | `openai-codex` | `gpt-5.2-codex` |

@@ -7232,6 +7232,22 @@
             ],
             "title": "Strategy",
             "description": "Named retain strategy for this item. Overrides the bank's default strategy for this item only. Strategies are defined in the bank config under 'retain_strategies'."
+          },
+          "update_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "replace",
+                  "append"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Update Mode",
+            "description": "How to handle an existing document with the same document_id. 'replace' (default) deletes old data and reprocesses from scratch. 'append' concatenates new content to the existing document text and reprocesses."
           }
         },
         "type": "object",

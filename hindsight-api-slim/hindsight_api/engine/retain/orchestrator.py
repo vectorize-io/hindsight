@@ -523,6 +523,35 @@ async def retain_batch(
             except Exception:
                 logger.warning("Failed to persist generated document_id", exc_info=True)
 
+    # --- Append mode: prepend existing document content to new content ---
+    # When update_mode="append", fetch the existing document text and prepend it
+    # so the full document is reprocessed (delta retain will skip unchanged chunks).
+    update_mode = None
+    for item in contents_dicts:
+        item_mode = item.get("update_mode")
+        if item_mode:
+            update_mode = item_mode
+            break
+
+    if update_mode == "append" and effective_doc_id and is_first_batch:
+        async with acquire_with_retry(pool) as conn:
+            existing_text = await fact_storage.get_document_content(conn, bank_id, effective_doc_id)
+        if existing_text:
+            # Prepend existing text as a new content item at the beginning
+            existing_content: RetainContentDict = {"content": existing_text}
+            # Copy context/tags from first item for consistency
+            first = contents_dicts[0]
+            if first.get("context"):
+                existing_content["context"] = first["context"]
+            if first.get("tags"):
+                existing_content["tags"] = first["tags"]
+            contents_dicts = [existing_content, *contents_dicts]
+            # Rebuild contents list to match
+            contents = _build_contents(contents_dicts, document_tags)
+            log_buffer.append(
+                f"[append] Prepended {len(existing_text):,} chars from existing document {effective_doc_id}"
+            )
+
     # --- Delta retain: check if we can skip unchanged chunks ---
     if is_first_batch:
         delta_result = await _try_delta_retain(
@@ -1522,7 +1551,12 @@ def _map_results_to_contents(
     """Map created unit IDs back to original content items."""
     facts_by_content: dict[int, list[int]] = {i: [] for i in range(len(contents))}
     for i, fact in enumerate(extracted_facts):
-        facts_by_content[fact.content_index].append(i)
+        # Normalize content_index: some LLM providers return 1-indexed values.
+        # Clamp to valid range to prevent KeyError.
+        idx = fact.content_index
+        if idx < 0 or idx >= len(contents):
+            idx = min(max(idx, 0), len(contents) - 1) if len(contents) > 0 else 0
+        facts_by_content[idx].append(i)
 
     result_unit_ids = []
     unit_idx = 0

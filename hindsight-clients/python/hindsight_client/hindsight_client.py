@@ -238,6 +238,7 @@ class Hindsight:
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
         tags: list[str] | None = None,
+        update_mode: str | None = None,
     ) -> RetainResponse:
         """
         Store a single memory (sync wrapper — prefer :meth:`aretain` in async code).
@@ -251,22 +252,24 @@ class Hindsight:
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
             tags: Optional list of tags for filtering memories during recall/reflect
+            update_mode: How to handle existing documents ('replace' or 'append')
 
         Returns:
             RetainResponse with success status
         """
+        item: dict[str, Any] = {
+            "content": content,
+            "timestamp": timestamp,
+            "context": context,
+            "metadata": metadata,
+            "entities": entities,
+            "tags": tags,
+        }
+        if update_mode is not None:
+            item["update_mode"] = update_mode
         return self.retain_batch(
             bank_id=bank_id,
-            items=[
-                {
-                    "content": content,
-                    "timestamp": timestamp,
-                    "context": context,
-                    "metadata": metadata,
-                    "entities": entities,
-                    "tags": tags,
-                }
-            ],
+            items=[item],
             document_id=document_id,
         )
 
@@ -727,6 +730,7 @@ class Hindsight:
                     tags=item.get("tags"),
                     observation_scopes=obs_scopes,
                     strategy=item.get("strategy"),
+                    update_mode=item.get("update_mode"),
                 )
             )
 
@@ -748,6 +752,7 @@ class Hindsight:
         metadata: dict[str, str] | None = None,
         entities: list[dict[str, str]] | None = None,
         tags: list[str] | None = None,
+        update_mode: str | None = None,
     ) -> RetainResponse:
         """
         Store a single memory (async — preferred over :meth:`retain`).
@@ -761,22 +766,24 @@ class Hindsight:
             metadata: Optional user-defined metadata
             entities: Optional list of entities [{"text": "...", "type": "..."}]
             tags: Optional list of tags for filtering memories during recall/reflect
+            update_mode: How to handle existing documents ('replace' or 'append')
 
         Returns:
             RetainResponse with success status
         """
+        item: dict[str, Any] = {
+            "content": content,
+            "timestamp": timestamp,
+            "context": context,
+            "metadata": metadata,
+            "entities": entities,
+            "tags": tags,
+        }
+        if update_mode is not None:
+            item["update_mode"] = update_mode
         return await self.aretain_batch(
             bank_id=bank_id,
-            items=[
-                {
-                    "content": content,
-                    "timestamp": timestamp,
-                    "context": context,
-                    "metadata": metadata,
-                    "entities": entities,
-                    "tags": tags,
-                }
-            ],
+            items=[item],
             document_id=document_id,
         )
 
