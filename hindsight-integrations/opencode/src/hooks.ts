@@ -58,7 +58,7 @@ interface SystemTransformOutput {
 
 type OpencodeClient = {
     session: {
-        messages: (opts: { path: { id: string } }) => Promise<{ data?: Array<{ role: string; parts?: Array<{ type: string; text?: string }> }> }>;
+        messages: (opts: { path: { id: string } }) => Promise<{ data?: Array<{ info: { role: string }; parts?: Array<{ type: string; text?: string }> }> }>;
     };
 };
 
@@ -123,7 +123,7 @@ export function createHooks(
             const rawMessages = response.data || [];
             const messages: Message[] = [];
             for (const msg of rawMessages) {
-                const role = msg.role;
+                const role = msg.info.role;
                 if (role !== 'user' && role !== 'assistant') continue;
                 const textParts = (msg.parts || [])
                     .filter((p: { type: string; text?: string }) => p.type === 'text' && p.text)
