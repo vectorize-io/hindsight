@@ -135,23 +135,23 @@ function formatCurrentTimeForRecall(date = new Date()): string {
  * Throttled to one attempt per 30s to avoid hammering a down service.
  * Only works if initialization was attempted at least once (isInitialized guard).
  */
-async function lazyReinit(): Promise<void> {
+async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
   const now = Date.now();
   if (now - lastReinitAttempt < REINIT_COOLDOWN_MS || isReinitInProgress) {
     return;
   }
 
-  // Only attempt lazy reinit if we've already done initial setup
-  // (i.e., service.start() was called at least once)
-  if (!currentPluginConfig) {
-    debug('[Hindsight] lazyReinit skipped - no plugin config (service.start() not called yet)');
+  const config = configOverride ?? currentPluginConfig;
+  if (!config) {
+    debug('[Hindsight] lazyReinit skipped - no plugin config available');
     return;
   }
 
+  // Persist config if we only have it from the live hook registration path.
+  currentPluginConfig = config;
+
   isReinitInProgress = true;
   lastReinitAttempt = now;
-
-  const config = currentPluginConfig;
   const externalApi = detectExternalApi(config);
   if (!externalApi.apiUrl) {
     isReinitInProgress = false;
@@ -201,6 +201,11 @@ if (typeof global !== 'undefined') {
       // If initPromise is null, it means service.start() hasn't been called yet
       // (CLI mode, not gateway mode). Hooks should gracefully no-op.
       if (!initPromise) {
+        if (currentPluginConfig) {
+          log.warn('waitForReady called before service.start() — attempting lazy initialization fallback');
+          await lazyReinit(currentPluginConfig);
+          return;
+        }
         log.warn('waitForReady called before service.start() — hooks will no-op (expected in CLI mode)');
         return;
       }
@@ -842,6 +847,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
 
 export default function (api: MoltbotPluginAPI) {
   try {
+    log.info('plugin entry invoked');
     debug('[Hindsight] Plugin loading...');
 
     // Get plugin config first (needed for debug flag and service registration)
@@ -866,9 +872,11 @@ export default function (api: MoltbotPluginAPI) {
     // happens in service.start() which is ONLY called on gateway start,
     // not on every CLI command.
     debug('[Hindsight] Registering service...');
+    log.info('registering plugin service');
     api.registerService({
       id: 'hindsight-memory',
       async start() {
+        log.info('service.start invoked');
         debug('[Hindsight] Service start called - beginning heavy initialization...');
 
         // Detect LLM configuration (env vars > plugin config > auto-detect)
@@ -1189,6 +1197,7 @@ export default function (api: MoltbotPluginAPI) {
     }
     hooksRegistered = true;
     debug('[Hindsight] Registering agent hooks...');
+    log.info('registering agent hooks');
 
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
@@ -1475,6 +1484,7 @@ ${memoriesFormatted}
       }
     });
     debug('[Hindsight] Hooks registered');
+    log.info('agent hooks registered');
   } catch (error) {
     log.error('plugin loading error', error);
     if (error instanceof Error) {
