@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import {
+import openclawPlugin, {
   stripMemoryTags,
   extractRecallQuery,
   formatMemories,
   prepareRetentionTranscript,
+  countUserTurns,
+  getRetentionTurnIndex,
   sliceLastTurnsByUserBoundary,
   composeRecallQuery,
   truncateRecallQuery,
@@ -229,8 +231,35 @@ describe('formatMemories', () => {
 });
 
 // ---------------------------------------------------------------------------
-// prepareRetentionTranscript
+// retention helpers
 // ---------------------------------------------------------------------------
+
+describe('countUserTurns', () => {
+  it('counts user messages across a resumed conversation history', () => {
+    expect(countUserTurns([
+      { role: 'user', content: 'turn 1' },
+      { role: 'assistant', content: 'reply 1' },
+      { role: 'system', content: 'meta' },
+      { role: 'user', content: 'turn 2' },
+      { role: 'assistant', content: 'reply 2' },
+      { role: 'user', content: 'turn 3' },
+    ])).toBe(3);
+  });
+});
+
+describe('getRetentionTurnIndex', () => {
+  it('uses the full conversation turn count for per-turn retention', () => {
+    expect(getRetentionTurnIndex(7, 1)).toBe(7);
+  });
+
+  it('derives a stable window sequence for chunked retention', () => {
+    expect(getRetentionTurnIndex(6, 3)).toBe(2);
+  });
+
+  it('returns null when a chunk boundary has not been reached', () => {
+    expect(getRetentionTurnIndex(5, 3)).toBeNull();
+  });
+});
 
 describe('buildRetainRequest', () => {
   it('adds configured source metadata and retain tags', () => {
@@ -312,6 +341,21 @@ describe('buildRetainRequest', () => {
       channel_id: 'direct:12345',
       sender_id: '12345',
     });
+  });
+
+  it('supports resumed conversations by accepting an explicit later turn index', () => {
+    const request = buildRetainRequest('hello world', 2, {
+      agentId: 'main',
+      sessionKey: 'agent:main:discord:channel:123',
+      messageProvider: 'discord',
+      channelId: 'channel:123',
+      senderId: 'user:456',
+    }, {
+      retainSource: 'openclaw',
+    }, 1700000000000, { turnIndex: 7 });
+
+    expect(request.documentId).toBe('openclaw:agent:main:discord:channel:123:turn:000007');
+    expect(request.metadata?.turn_index).toBe('7');
   });
 });
 
@@ -753,6 +797,94 @@ describe('session identity helpers', () => {
 // ---------------------------------------------------------------------------
 // waitForReady — CLI mode no-op (initPromise is null before service.start())
 // ---------------------------------------------------------------------------
+
+describe('agent_end retention hook', () => {
+  it('uses resumed conversation history to number retained turns', async () => {
+    const handlers = new Map<string, (event: any, ctx?: any) => Promise<unknown>>();
+    const api = {
+      config: {
+        plugins: {
+          entries: {
+            hindsight: {
+              config: {
+                autoRecall: false,
+                autoRetain: true,
+                dynamicBankId: true,
+              },
+            },
+          },
+        },
+      },
+      registerService: () => {},
+      on: (event: string, handler: (event: any, ctx?: any) => Promise<unknown>) => {
+        handlers.set(event, handler);
+      },
+      logger: {
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
+    };
+
+    openclawPlugin(api as any);
+    const agentEnd = handlers.get('agent_end');
+    expect(agentEnd).toBeDefined();
+
+    const retained: any[] = [];
+    const hindsight = (global as any).__hindsightClient;
+    const originalWaitForReady = hindsight.waitForReady;
+    const originalGetClientForContext = hindsight.getClientForContext;
+
+    hindsight.waitForReady = async () => {};
+    hindsight.getClientForContext = async () => ({
+      retain: async (request: any) => {
+        retained.push(request);
+      },
+    });
+
+    try {
+      await agentEnd?.(
+        {
+          success: true,
+          context: {
+            sessionEntry: {
+              messages: [
+                { role: 'user', content: 'turn 1' },
+                { role: 'assistant', content: 'reply 1' },
+                { role: 'user', content: 'turn 2' },
+                { role: 'assistant', content: 'reply 2' },
+                { role: 'user', content: 'turn 3' },
+                { role: 'assistant', content: 'reply 3' },
+                { role: 'user', content: 'turn 4' },
+                { role: 'assistant', content: 'reply 4' },
+                { role: 'user', content: 'turn 5' },
+                { role: 'assistant', content: 'reply 5' },
+                { role: 'user', content: 'turn 6' },
+                { role: 'assistant', content: 'reply 6' },
+                { role: 'user', content: 'turn 7' },
+                { role: 'assistant', content: 'reply 7' },
+              ],
+            },
+          },
+        },
+        {
+          agentId: 'main',
+          sessionKey: 'agent:main:discord:channel:123',
+          messageProvider: 'discord',
+          channelId: 'channel:123',
+          senderId: 'user:456',
+        },
+      );
+    } finally {
+      hindsight.waitForReady = originalWaitForReady;
+      hindsight.getClientForContext = originalGetClientForContext;
+    }
+
+    expect(retained).toHaveLength(1);
+    expect(retained[0].documentId).toBe('openclaw:agent:main:discord:channel:123:turn:000007');
+    expect(retained[0].metadata?.turn_index).toBe('7');
+  });
+});
 
 describe('waitForReady (CLI mode)', () => {
   it('returns without error when initPromise is null (service.start not called)', async () => {

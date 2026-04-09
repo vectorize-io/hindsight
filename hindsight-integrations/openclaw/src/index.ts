@@ -125,7 +125,6 @@ function toStringMetadata(
   }
   return out;
 }
-const turnCountBySession = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 10_000;
 const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
@@ -1739,17 +1738,24 @@ ${memoriesFormatted}
         let messagesToRetain = allMessages;
         let retainFullWindow = false;
 
+        const conversationTurnCount = countUserTurns(allMessages);
+        if (conversationTurnCount <= 0) {
+          debug('[Hindsight Hook] No user turns found, skipping retain');
+          return;
+        }
+
+        const retainTurnIndex = getRetentionTurnIndex(conversationTurnCount, retainEveryN);
+        if (retainTurnIndex === null) {
+          const nextRetainAt = Math.ceil(conversationTurnCount / retainEveryN) * retainEveryN;
+          debug(`[Hindsight Hook] Turn ${conversationTurnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`);
+          return;
+        }
+
         if (retainEveryN > 1) {
-          const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || 'session'}`;
-          const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
-          setCappedMapValue(turnCountBySession, sessionTrackingKey, turnCount);
-
-          if (turnCount % retainEveryN !== 0) {
-            const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
-            debug(`[Hindsight Hook] Turn ${turnCount}/${retainEveryN}, skipping retain (next at turn ${nextRetainAt})`);
-            return;
-          }
-
+          // Deliberately require the exact boundary turn from persisted history.
+          // If a hook run is skipped at turn N, we do not try to backfill that
+          // missed window on turn N+1; the next retained window is the next exact
+          // multiple. That keeps window numbering deterministic across resumes.
           // Sliding window in turns: N turns + configured overlap turns.
           // We slice by actual turn boundaries (user-role messages), so this
           // remains stable even when system/tool messages are present.
@@ -1757,7 +1763,7 @@ ${memoriesFormatted}
           const windowTurns = retainEveryN + overlapTurns;
           messagesToRetain = sliceLastTurnsByUserBoundary(allMessages, windowTurns);
           retainFullWindow = true;
-          debug(`[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
+          debug(`[Hindsight Hook] Turn ${conversationTurnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
         }
 
         const retention = prepareRetentionTranscript(messagesToRetain, pluginConfig, retainFullWindow);
@@ -1799,6 +1805,7 @@ ${memoriesFormatted}
           {
             retentionScope: retainFullWindow ? 'window' : 'turn',
             windowTurns: retainFullWindow ? (pluginConfig.retainEveryNTurns ?? 1) + (pluginConfig.retainOverlapTurns ?? 0) : undefined,
+            turnIndex: retainTurnIndex,
           },
         );
 
@@ -1856,6 +1863,10 @@ function getSessionDocumentBase(effectiveCtx: PluginHookAgentContext | undefined
 }
 
 function nextDocumentSequence(effectiveCtx: PluginHookAgentContext | undefined): number {
+  // Legacy best-effort fallback for direct callers that do not pass turnIndex.
+  // The agent_end hook always supplies a history-derived turn index, which is
+  // restart-safe. This counter is process-local only, so callers that need
+  // stable document ids across resumes should pass options.turnIndex.
   const sequenceKey = effectiveCtx?.sessionKey || 'session';
   const next = (documentSequenceBySession.get(sequenceKey) || 0) + 1;
   setCappedMapValue(documentSequenceBySession, sequenceKey, next);
@@ -2094,6 +2105,30 @@ function buildToolResultBlock(msg: any): any | null {
   const block: any = { type: 'tool_result', content: text };
   if (toolUseId) block.tool_use_id = toolUseId;
   return block;
+}
+
+export function countUserTurns(messages: Array<{ role?: string }>): number {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return 0;
+  }
+
+  return messages.reduce((count: number, message) => count + (message?.role === 'user' ? 1 : 0), 0);
+}
+
+export function getRetentionTurnIndex(conversationTurnCount: number, retainEveryN: number): number | null {
+  if (conversationTurnCount <= 0 || retainEveryN <= 0) {
+    return null;
+  }
+
+  if (retainEveryN === 1) {
+    return conversationTurnCount;
+  }
+
+  if (conversationTurnCount % retainEveryN !== 0) {
+    return null;
+  }
+
+  return Math.floor(conversationTurnCount / retainEveryN);
 }
 
 export function sliceLastTurnsByUserBoundary(messages: any[], turns: number): any[] {
