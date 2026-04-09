@@ -1056,8 +1056,6 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     bankIdPrefix: config.bankIdPrefix,
     retainTags: normalizeRetainTags(config.retainTags),
     retainSource: typeof config.retainSource === 'string' && config.retainSource.trim().length > 0 ? config.retainSource.trim() : undefined,
-    retainUserPrefix: typeof config.retainUserPrefix === 'string' && config.retainUserPrefix.trim().length > 0 ? config.retainUserPrefix.trim() : 'User',
-    retainAssistantPrefix: typeof config.retainAssistantPrefix === 'string' && config.retainAssistantPrefix.trim().length > 0 ? config.retainAssistantPrefix.trim() : 'Assistant',
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(new Set(['heartbeat', ...config.excludeProviders.filter((provider): provider is string => typeof provider === 'string')]))
       : ['heartbeat'],

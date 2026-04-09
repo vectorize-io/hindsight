@@ -100,16 +100,6 @@
         "description": "Source value written into retained document metadata. Defaults to 'openclaw'.",
         "default": "openclaw"
       },
-      "retainUserPrefix": {
-        "type": "string",
-        "description": "Reserved for future transcript-label parity work. Currently retained transcripts continue using structured role markers.",
-        "default": "User"
-      },
-      "retainAssistantPrefix": {
-        "type": "string",
-        "description": "Reserved for future transcript-label parity work. Currently retained transcripts continue using structured role markers.",
-        "default": "Assistant"
-      },
       "autoRecall": {
         "type": "boolean",
         "description": "Automatically recall memories on every prompt and inject them as context. Set to false when agent has its own recall tool.",

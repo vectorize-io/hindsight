@@ -336,8 +336,6 @@ describe('prepareRetentionTranscript', () => {
   const baseConfig: PluginConfig = {
     dynamicBankId: true,
     retainRoles: ['user', 'assistant'],
-    retainUserPrefix: 'User',
-    retainAssistantPrefix: 'Assistant',
   };
 
   it('returns null if no user message found (turn boundary)', () => {
@@ -361,17 +359,6 @@ describe('prepareRetentionTranscript', () => {
     expect(result?.transcript).toContain('New user');
     expect(result?.transcript).toContain('New assistant');
     expect(result?.transcript).not.toContain('Old user');
-  });
-
-  it('retains structured role markers even when prefixes are configured', () => {
-    const config: PluginConfig = { ...baseConfig, retainUserPrefix: 'Operator', retainAssistantPrefix: 'Aldous' };
-    const messages = [
-      { role: 'user', content: 'Hello there' },
-      { role: 'assistant', content: 'General Kenobi' }
-    ];
-    const result = prepareRetentionTranscript(messages, config);
-    expect(result?.transcript).toContain('[role: user]\nHello there\n[user:end]');
-    expect(result?.transcript).toContain('[role: assistant]\nGeneral Kenobi\n[assistant:end]');
   });
 
   it('filters out excluded roles', () => {

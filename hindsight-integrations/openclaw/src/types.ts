@@ -67,8 +67,6 @@ export interface PluginConfig {
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
   retainTags?: string[]; // Default tags applied to retained documents; merged with per-call tags when provided
   retainSource?: string; // Source written into retained document metadata (default: 'openclaw')
-  retainUserPrefix?: string; // Label used before user turns in retained transcripts (default: 'User')
-  retainAssistantPrefix?: string; // Label used before assistant turns in retained transcripts (default: 'Assistant')
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
   dynamicBankGranularity?: Array<'agent' | 'provider' | 'channel' | 'user'>; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
