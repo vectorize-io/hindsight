@@ -190,7 +190,18 @@ class HindsightEmbedded:
         if self._closed:
             return
 
-        with self._lock:
+        acquired = self._lock.acquire(timeout=5.0)
+        if not acquired:
+            # Could not acquire lock within timeout (e.g. daemon thread is mid-operation).
+            # Mark as closed so future calls are rejected; daemon will stop via idle timeout.
+            logger.warning(
+                f"Could not acquire cleanup lock for profile '{self.profile}' within 5s, "
+                "forcing closed state. Daemon will stop via idle timeout."
+            )
+            self._closed = True
+            return
+
+        try:
             if self._closed:
                 return
 
@@ -209,6 +220,14 @@ class HindsightEmbedded:
                 self._manager.stop(self.profile)
 
             self._closed = True
+        except KeyboardInterrupt:
+            self._closed = True
+            logger.warning(
+                f"Cleanup interrupted for profile '{self.profile}', "
+                "forcing closed state. Daemon will stop via idle timeout."
+            )
+        finally:
+            self._lock.release()
 
     def close(self, stop_daemon: bool = False):
         """
