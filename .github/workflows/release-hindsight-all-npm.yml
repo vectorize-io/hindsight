@@ -1,0 +1,90 @@
+name: Release @vectorize-io/hindsight-all (manual)
+
+# Ad-hoc publisher for @vectorize-io/hindsight-all. Decoupled from the main
+# Hindsight `v*` tag pipeline so we can cut a fresh version without cutting a
+# full Hindsight release.
+#
+# Trigger: GitHub Actions UI → "Release @vectorize-io/hindsight-all (manual)"
+# → "Run workflow" → enter the version (e.g. 0.1.0). Or from the command
+# line: `gh workflow run release-hindsight-all-npm.yml -f version=0.1.0`.
+#
+# The workflow overrides hindsight-all-npm/package.json at build time via
+# `npm version --no-git-tag-version`, so the committed version (which
+# scripts/release.sh keeps in sync with the main Hindsight version) is not
+# disturbed. npm lets us publish any version number as long as it has not
+# been published before.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (semver, e.g. 0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (build + npm pack, skip publish)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: main
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install root workspace dependencies
+      run: npm ci
+
+    - name: Set package version (build-time only, not committed)
+      working-directory: ./hindsight-all-npm
+      run: npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+
+    - name: Build
+      run: npm run build --workspace=hindsight-all-npm
+
+    - name: Run unit tests
+      run: npm test --workspace=hindsight-all-npm
+
+    - name: Publish to npm
+      if: ${{ !inputs.dry_run }}
+      working-directory: ./hindsight-all-npm
+      run: |
+        set +e
+        OUTPUT=$(npm publish --access public 2>&1)
+        EXIT_CODE=$?
+        echo "$OUTPUT"
+        if [ $EXIT_CODE -ne 0 ]; then
+          if echo "$OUTPUT" | grep -q "cannot publish over"; then
+            echo "Package version ${{ inputs.version }} already published, skipping..."
+            exit 0
+          fi
+          exit $EXIT_CODE
+        fi
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Pack (dry run)
+      if: ${{ inputs.dry_run }}
+      working-directory: ./hindsight-all-npm
+      run: npm pack
+
+    - name: Upload tarball artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: hindsight-all-npm-${{ inputs.version }}
+        path: hindsight-all-npm/*.tgz
+        if-no-files-found: warn
+        retention-days: 14
