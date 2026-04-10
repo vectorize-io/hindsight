@@ -259,13 +259,17 @@ jobs:
       working-directory: ./hindsight-integrations/openclaw
       run: npm ci
 
-    - name: Run tests
-      working-directory: ./hindsight-integrations/openclaw
-      run: npm test
-
+    # Build must run before tests: one unit test in src/backfill.test.ts
+    # creates a symlink to `$cwd/dist/backfill.js` and calls realpathSync on
+    # it via isDirectExecution(). Without a populated dist/ the realpath call
+    # throws, both paths stay unresolved, and the equality assertion fails.
     - name: Build
       working-directory: ./hindsight-integrations/openclaw
       run: npm run build
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/openclaw
+      run: npm test
 
   test-claude-code-integration:
     needs: [detect-changes]
