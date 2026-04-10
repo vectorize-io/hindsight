@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@vectorize-io/hindsight-client": "file:../../hindsight-clients/typescript",
-    "@vectorize-io/hindsight-embed": "file:../../hindsight-embed-npm"
+    "@vectorize-io/hindsight-all": "file:../../hindsight-all-npm"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

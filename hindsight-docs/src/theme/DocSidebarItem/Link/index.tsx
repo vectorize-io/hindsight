@@ -9,12 +9,12 @@ import {
   LuZap, LuDatabase, LuGitCompare, LuRocket, LuMemoryStick,
   LuWebhook, LuFileText, LuServer, LuSettings, LuTerminal,
   LuActivity, LuPlug, LuShield, LuPackage, LuBook,
-  LuNetwork, LuCode, LuLayers, LuCpu,
+  LuNetwork, LuCode, LuLayers, LuCpu, LuHardDrive,
   LuArrowUpRight, LuBookOpen, LuRss, LuCloud, LuMessageCircle,
   LuChartBar, LuChartColumn, LuStar, LuCircleHelp,
   LuLayoutTemplate, LuFileJson,
 } from 'react-icons/lu';
-import {SiGo, SiPython, SiGithub, SiSlack} from 'react-icons/si';
+import {SiGo, SiPython, SiGithub, SiSlack, SiDocker, SiKubernetes, SiNodedotjs} from 'react-icons/si';
 
 const ICON_MAP: Record<string, IconType> = {
   'lu-brain':       LuBrain,
@@ -41,10 +41,14 @@ const ICON_MAP: Record<string, IconType> = {
   'lu-code':        LuCode,
   'lu-layers':      LuLayers,
   'lu-cpu':         LuCpu,
+  'lu-hard-drive':  LuHardDrive,
   'si-go':          SiGo,
   'si-python':      SiPython,
   'si-github':      SiGithub,
   'si-slack':       SiSlack,
+  'si-docker':      SiDocker,
+  'si-kubernetes':  SiKubernetes,
+  'si-nodedotjs':   SiNodedotjs,
   'lu-chart-bar':   LuChartBar,
   'lu-chart-column': LuChartColumn,
   'lu-arrow-up-right': LuArrowUpRight,

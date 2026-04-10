@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { getEmbedCommand } from './command.js';
 import { silentLogger } from './logger.js';
 import type { Logger } from './logger.js';
-import type { HindsightEmbedManagerOptions } from './types.js';
+import type { HindsightServerOptions } from './types.js';
 
 const DEFAULT_PORT = 8888;
 const DEFAULT_HOST = '127.0.0.1';
@@ -11,13 +11,13 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const DEFAULT_READY_POLL_INTERVAL_MS = 1_000;
 
 /**
- * Manages the lifecycle of a local `hindsight-embed` daemon.
+ * Manages the lifecycle of a local Hindsight daemon from a Node.js process.
  *
  * On {@link start}, this class:
  *   1. Resolves the `hindsight-embed` command (via `uvx` or a local `uv run`).
  *   2. Runs `profile create <name> --merge --port <port> [--env K=V ...]`
- *      with every entry in {@link HindsightEmbedManagerOptions.env} forwarded
- *      as an `--env` flag.
+ *      with every entry in {@link HindsightServerOptions.env} forwarded as
+ *      an `--env` flag.
  *   3. Runs `daemon --profile <name> start` and waits for the start command
  *      to exit.
  *   4. Polls `http://host:port/health` until it returns `200` or the
@@ -26,11 +26,17 @@ const DEFAULT_READY_POLL_INTERVAL_MS = 1_000;
  * On {@link stop}, it runs `daemon --profile <name> stop` and returns once
  * the command exits (or after a short grace period).
  *
- * The class is deliberately transparent about the Python side: new CLI flags
- * or environment variables never require a code change here — callers can
- * pass them via `env`, `extraProfileCreateArgs`, or `extraDaemonStartArgs`.
+ * This is the Node.js equivalent of the Python `hindsight-all` package's
+ * `HindsightServer`: a thin programmatic lifecycle wrapper around the
+ * Hindsight daemon. It does NOT ship an HTTP client — once `start()`
+ * resolves, use `@vectorize-io/hindsight-client` against `getBaseUrl()` for
+ * retain / recall / reflect.
+ *
+ * The class is deliberately transparent about the daemon: new CLI flags or
+ * environment variables never require a code change here — callers can pass
+ * them via `env`, `extraProfileCreateArgs`, or `extraDaemonStartArgs`.
  */
-export class HindsightEmbedManager {
+export class HindsightServer {
   private readonly profile: string;
   private readonly port: number;
   private readonly host: string;
@@ -45,7 +51,7 @@ export class HindsightEmbedManager {
   private readonly readyPollIntervalMs: number;
   private readonly logger: Logger;
 
-  constructor(opts: HindsightEmbedManagerOptions = {}) {
+  constructor(opts: HindsightServerOptions = {}) {
     this.profile = opts.profile ?? DEFAULT_PROFILE;
     this.port = opts.port ?? DEFAULT_PORT;
     this.host = opts.host ?? DEFAULT_HOST;
@@ -66,7 +72,7 @@ export class HindsightEmbedManager {
     return this.baseUrl;
   }
 
-  /** The profile name this manager operates on. */
+  /** The profile name this server operates on. */
   getProfile(): string {
     return this.profile;
   }
@@ -76,19 +82,19 @@ export class HindsightEmbedManager {
    * `profile create --merge` and `daemon start` commands tolerate re-runs.
    */
   async start(): Promise<void> {
-    this.logger.info(`[hindsight-embed] starting daemon for profile "${this.profile}"`);
+    this.logger.info(`[hindsight] starting daemon for profile "${this.profile}"`);
 
     const env = this.buildEnv();
     await this.configureProfile(env);
     await this.startDaemon(env);
     await this.waitForReady();
 
-    this.logger.info(`[hindsight-embed] daemon ready at ${this.baseUrl}`);
+    this.logger.info(`[hindsight] daemon ready at ${this.baseUrl}`);
   }
 
   /** Stop the daemon. Never throws — logs and resolves even on failure. */
   async stop(): Promise<void> {
-    this.logger.info(`[hindsight-embed] stopping daemon for profile "${this.profile}"`);
+    this.logger.info(`[hindsight] stopping daemon for profile "${this.profile}"`);
 
     const [cmd, ...baseArgs] = getEmbedCommand({
       embedVersion: this.embedVersion,
@@ -101,17 +107,17 @@ export class HindsightEmbedManager {
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        this.logger.warn(`[hindsight-embed] daemon stop timed out after 5s`);
+        this.logger.warn(`[hindsight] daemon stop timed out after 5s`);
         resolve();
       }, 5_000);
       child.on('exit', () => {
         clearTimeout(timeout);
-        this.logger.info(`[hindsight-embed] daemon stopped`);
+        this.logger.info(`[hindsight] daemon stopped`);
         resolve();
       });
       child.on('error', (err) => {
         clearTimeout(timeout);
-        this.logger.warn(`[hindsight-embed] error stopping daemon: ${err.message}`);
+        this.logger.warn(`[hindsight] error stopping daemon: ${err.message}`);
         resolve();
       });
     });
@@ -161,7 +167,7 @@ export class HindsightEmbedManager {
    * auto-applied by the CPU workaround) is forwarded as `--env`.
    */
   private async configureProfile(env: NodeJS.ProcessEnv): Promise<void> {
-    this.logger.info(`[hindsight-embed] configuring profile "${this.profile}"`);
+    this.logger.info(`[hindsight] configuring profile "${this.profile}"`);
 
     const [cmd, ...baseArgs] = getEmbedCommand({
       embedVersion: this.embedVersion,
@@ -251,14 +257,14 @@ export class HindsightEmbedManager {
       const text = data.toString();
       output += text;
       for (const line of text.trimEnd().split('\n')) {
-        if (line) this.logger.info(`[hindsight-embed:${label}] ${line}`);
+        if (line) this.logger.info(`[hindsight:${label}] ${line}`);
       }
     });
     child.stderr?.on('data', (data: Buffer) => {
       const text = data.toString();
       output += text;
       for (const line of text.trimEnd().split('\n')) {
-        if (line) this.logger.warn(`[hindsight-embed:${label}] ${line}`);
+        if (line) this.logger.warn(`[hindsight:${label}] ${line}`);
       }
     });
 
@@ -280,12 +286,12 @@ export class HindsightEmbedManager {
   private pipeOutput(child: ReturnType<typeof spawn>, label: string): void {
     child.stdout?.on('data', (data: Buffer) => {
       for (const line of data.toString().trimEnd().split('\n')) {
-        if (line) this.logger.info(`[hindsight-embed:${label}] ${line}`);
+        if (line) this.logger.info(`[hindsight:${label}] ${line}`);
       }
     });
     child.stderr?.on('data', (data: Buffer) => {
       for (const line of data.toString().trimEnd().split('\n')) {
-        if (line) this.logger.warn(`[hindsight-embed:${label}] ${line}`);
+        if (line) this.logger.warn(`[hindsight:${label}] ${line}`);
       }
     });
   }
@@ -301,7 +307,7 @@ export class HindsightEmbedManager {
           signal: AbortSignal.timeout(this.readyPollIntervalMs),
         });
         if (res.ok) {
-          this.logger.debug(`[hindsight-embed] health check passed (attempt ${attempt})`);
+          this.logger.debug(`[hindsight] health check passed (attempt ${attempt})`);
           return;
         }
       } catch {
@@ -310,7 +316,7 @@ export class HindsightEmbedManager {
       await new Promise((resolve) => setTimeout(resolve, this.readyPollIntervalMs));
     }
     throw new Error(
-      `hindsight-embed daemon did not become ready within ${this.readyTimeoutMs}ms at ${this.baseUrl}`,
+      `Hindsight daemon did not become ready within ${this.readyTimeoutMs}ms at ${this.baseUrl}`,
     );
   }
 }

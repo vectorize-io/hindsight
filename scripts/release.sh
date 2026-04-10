@@ -124,14 +124,14 @@ else
     print_warn "File $CONTROL_PLANE_PKG not found, skipping"
 fi
 
-# Update hindsight-embed npm wrapper package.json
-EMBED_NPM_PKG="hindsight-embed-npm/package.json"
-if [ -f "$EMBED_NPM_PKG" ]; then
-    print_info "Updating $EMBED_NPM_PKG"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$EMBED_NPM_PKG"
-    rm "${EMBED_NPM_PKG}.bak"
+# Update hindsight-all npm wrapper package.json
+ALL_NPM_PKG="hindsight-all-npm/package.json"
+if [ -f "$ALL_NPM_PKG" ]; then
+    print_info "Updating $ALL_NPM_PKG"
+    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$ALL_NPM_PKG"
+    rm "${ALL_NPM_PKG}.bak"
 else
-    print_warn "File $EMBED_NPM_PKG not found, skipping"
+    print_warn "File $ALL_NPM_PKG not found, skipping"
 fi
 
 # Update Python API client
@@ -199,7 +199,7 @@ COMMIT_MSG="Release v$VERSION
 - Python packages: hindsight-api, hindsight-dev, hindsight-all, hindsight-embed
 - Python client: hindsight-clients/python
 - TypeScript client: hindsight-clients/typescript
-- hindsight-embed npm wrapper: hindsight-embed-npm
+- hindsight-all npm wrapper: hindsight-all-npm
 - Rust CLI: hindsight-cli
 - Control Plane: hindsight-control-plane
 - Helm chart"

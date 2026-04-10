@@ -165,18 +165,6 @@ const sidebars: SidebarsConfig = {
           label: 'CLI',
           customProps: { icon: 'lu-terminal' },
         },
-        {
-          type: 'doc',
-          id: 'sdks/embed',
-          label: 'Embedded Python',
-          customProps: { icon: '/img/icons/package.svg' },
-        },
-        {
-          type: 'doc',
-          id: 'sdks/embed-npm',
-          label: 'Embedded Node.js',
-          customProps: { icon: '/img/icons/package.svg' },
-        },
       ],
     },
     {
@@ -358,6 +346,49 @@ const sidebars: SidebarsConfig = {
           id: 'developer/mcp-server',
           label: 'MCP Server',
           customProps: { icon: 'lu-network' },
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Installation',
+      collapsible: false,
+      items: [
+        {
+          type: 'link',
+          href: '/developer/installation#docker',
+          label: 'Docker',
+          customProps: { icon: 'si-docker', iconAfter: 'lu-arrow-up-right' },
+        },
+        {
+          type: 'link',
+          href: '/developer/installation#helm--kubernetes',
+          label: 'Kubernetes',
+          customProps: { icon: 'si-kubernetes', iconAfter: 'lu-arrow-up-right' },
+        },
+        {
+          type: 'link',
+          href: '/developer/installation#bare-metal-pip',
+          label: 'Bare Metal',
+          customProps: { icon: 'lu-hard-drive', iconAfter: 'lu-arrow-up-right' },
+        },
+        {
+          type: 'doc',
+          id: 'sdks/hindsight-all',
+          label: 'Programmatic API (Python)',
+          customProps: { icon: 'si-python' },
+        },
+        {
+          type: 'doc',
+          id: 'sdks/hindsight-all-npm',
+          label: 'Programmatic API (Node.js)',
+          customProps: { icon: 'si-nodedotjs' },
+        },
+        {
+          type: 'doc',
+          id: 'sdks/embed',
+          label: 'Daemon CLI',
+          customProps: { icon: 'lu-terminal' },
         },
       ],
     },

@@ -2,40 +2,42 @@
 sidebar_position: 6
 ---
 
-# Embedded Node.js (hindsight-embed)
+# Programmatic API (Node.js)
 
-Node.js lifecycle manager for the Python `hindsight-embed` daemon. Use this when you want to embed a local Hindsight daemon in a Node application without hand-rolling subprocess management.
+The `@vectorize-io/hindsight-all` npm package is the Node.js equivalent of the Python [`hindsight-all`](./hindsight-all.md) package. It lets your Node code spawn and supervise a local Hindsight daemon without deploying any server infrastructure — pair it with [`@vectorize-io/hindsight-client`](./nodejs.md) for memory operations.
 
-This package **does not ship an HTTP client** — it only owns the daemon process. Once the daemon is running, talk to it with [`@vectorize-io/hindsight-client`](./nodejs.md) against `manager.getBaseUrl()`. The two packages compose: one owns the process, the other owns the API surface.
+The daemon runs as a **separate OS process** on `127.0.0.1` (not in your Node process). Your code talks to it over HTTP via `HindsightClient`.
+
+This package **does not ship an HTTP client** — it only owns the server process. Once the daemon is running, talk to it with [`@vectorize-io/hindsight-client`](./nodejs.md) against `server.getBaseUrl()`. The two packages compose: one owns the process, the other owns the API surface.
 
 ## How it works
 
-1. `manager.start()` resolves the `hindsight-embed` command (via `uvx` from PyPI, or `uv run --directory <path>` for a local checkout).
+1. `server.start()` resolves the underlying `hindsight-embed` command (via `uvx` from PyPI, or `uv run --directory <path>` for a local checkout).
 2. Runs `profile create <name> --merge --port <port> [--env KEY=VALUE ...]` with every entry from `options.env` forwarded as `--env`.
 3. Runs `daemon --profile <name> start`.
 4. Polls `http://host:port/health` until it returns `200` or the `readyTimeoutMs` budget is exhausted.
-5. `manager.stop()` runs `daemon --profile <name> stop`.
+5. `server.stop()` runs `daemon --profile <name> stop`.
 
-The manager is intentionally transparent: new Python env vars or CLI flags never require a wrapper release — pass them through `env`, `extraProfileCreateArgs`, or `extraDaemonStartArgs`.
+The server is intentionally transparent: new daemon env vars or CLI flags never require a wrapper release — pass them through `env`, `extraProfileCreateArgs`, or `extraDaemonStartArgs`.
 
 ## Requirements
 
 - **Node.js ≥ 22** — uses global `fetch` and `AbortSignal.timeout`.
-- **`uv` / `uvx`** on `PATH` — used to download and run the Python `hindsight-embed` package. Install via [docs.astral.sh/uv](https://docs.astral.sh/uv/).
+- **`uv` / `uvx`** on `PATH` — used to download and run the Hindsight daemon. Install via [docs.astral.sh/uv](https://docs.astral.sh/uv/).
 
 ## Install
 
 ```bash
-npm install @vectorize-io/hindsight-embed @vectorize-io/hindsight-client
+npm install @vectorize-io/hindsight-all @vectorize-io/hindsight-client
 ```
 
 ## Example
 
 ```ts
-import { HindsightEmbedManager, consoleLogger } from '@vectorize-io/hindsight-embed';
+import { HindsightServer, consoleLogger } from '@vectorize-io/hindsight-all';
 import { HindsightClient } from '@vectorize-io/hindsight-client';
 
-const manager = new HindsightEmbedManager({
+const server = new HindsightServer({
   profile: 'my-app',
   port: 9077,
   env: {
@@ -47,25 +49,25 @@ const manager = new HindsightEmbedManager({
   logger: consoleLogger,
 });
 
-await manager.start();
+await server.start();
 
-const client = new HindsightClient({ baseUrl: manager.getBaseUrl() });
+const client = new HindsightClient({ baseUrl: server.getBaseUrl() });
 await client.retain('user-123', 'User prefers dark mode.');
 const recall = await client.recall('user-123', 'what are the user preferences?');
 
-await manager.stop();
+await server.stop();
 ```
 
-For a remote Hindsight API, skip the manager entirely and point `HindsightClient` directly at the remote URL.
+For a remote Hindsight API, skip the server entirely and point `HindsightClient` directly at the remote URL.
 
-## `HindsightEmbedManagerOptions`
+## `HindsightServerOptions`
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `profile` | `string` | `"default"` | Profile name passed to `--profile` on every sub-command. |
 | `port` | `number` | `8888` | TCP port the daemon listens on. |
 | `host` | `string` | `"127.0.0.1"` | Hostname the daemon binds to (used for health checks). |
-| `embedVersion` | `string` | `"latest"` | Version of `hindsight-embed` to run via `uvx`. |
+| `embedVersion` | `string` | `"latest"` | Version of the underlying `hindsight-embed` package to run via `uvx`. |
 | `embedPackagePath` | `string` | — | Local checkout path — takes precedence over `embedVersion`. Uses `uv run --directory` instead of `uvx`. |
 | `env` | `Record<string, string \| undefined>` | `{}` | Environment variables passed to the daemon process **and** written into the profile config via `--env KEY=VALUE`. The preferred way to surface any `HINDSIGHT_API_*` / `HINDSIGHT_EMBED_*` setting. |
 | `extraProfileCreateArgs` | `string[]` | `[]` | Extra args appended verbatim to `profile create`. |
@@ -75,7 +77,7 @@ For a remote Hindsight API, skip the manager entirely and point `HindsightClient
 | `readyPollIntervalMs` | `number` | `1000` | Polling interval while waiting for `/health`. |
 | `logger` | `Logger` | silent | Pluggable logger (`debug`/`info`/`warn`/`error`). `consoleLogger` and `silentLogger` helpers are exported. |
 
-## Manager methods
+## Server methods
 
 | Method | Returns | Description |
 |---|---|---|
@@ -83,6 +85,6 @@ For a remote Hindsight API, skip the manager entirely and point `HindsightClient
 | `stop()` | `Promise<void>` | Stop the daemon. Never throws; logs and resolves even on failure. |
 | `checkHealth()` | `Promise<boolean>` | One-shot `/health` probe with a 2 s timeout. |
 | `getBaseUrl()` | `string` | `http://host:port` — pass this straight to `HindsightClient`. |
-| `getProfile()` | `string` | The profile name this manager operates on. |
+| `getProfile()` | `string` | The profile name this server operates on. |
 
 For memory operations (retain, recall, reflect, bank management) use [`@vectorize-io/hindsight-client`](./nodejs.md).

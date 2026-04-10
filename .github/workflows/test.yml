@@ -32,7 +32,7 @@ jobs:
       helm: ${{ steps.filter.outputs.helm }}
       docs: ${{ steps.filter.outputs.docs }}
       embed: ${{ steps.filter.outputs.embed }}
-      embed-npm: ${{ steps.filter.outputs.embed-npm }}
+      all-npm: ${{ steps.filter.outputs.all-npm }}
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
@@ -93,8 +93,8 @@ jobs:
             - '*.md'
           embed:
             - 'hindsight-embed/**'
-          embed-npm:
-            - 'hindsight-embed-npm/**'
+          all-npm:
+            - 'hindsight-all-npm/**'
             - 'package.json'
             - 'package-lock.json'
           hindsight-all:
@@ -188,12 +188,12 @@ jobs:
     - name: Build TypeScript client
       run: npm run build --workspace=hindsight-clients/typescript
 
-  build-hindsight-embed-npm:
+  build-hindsight-all-npm:
     needs: [detect-changes]
     if: >-
       github.event_name != 'pull_request_review' &&
       (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.embed-npm == 'true' ||
+      needs.detect-changes.outputs.all-npm == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
 
@@ -210,13 +210,13 @@ jobs:
         cache-dependency-path: package-lock.json
 
     - name: Install dependencies
-      run: npm ci --workspace=hindsight-embed-npm
+      run: npm ci --workspace=hindsight-all-npm
 
     - name: Run tests
-      run: npm test --workspace=hindsight-embed-npm
+      run: npm test --workspace=hindsight-all-npm
 
     - name: Build
-      run: npm run build --workspace=hindsight-embed-npm
+      run: npm run build --workspace=hindsight-all-npm
 
   build-openclaw-integration:
     needs: [detect-changes]

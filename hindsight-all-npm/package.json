@@ -1,7 +1,7 @@
 {
-  "name": "@vectorize-io/hindsight-embed",
+  "name": "@vectorize-io/hindsight-all",
   "version": "0.5.0",
-  "description": "Node.js wrapper for the hindsight-embed Python CLI — spawns and talks to a local hindsight-embed daemon, or proxies to a remote Hindsight API",
+  "description": "Node.js programmatic lifecycle manager for Hindsight — embeds a local hindsight daemon in a Node application. Pair with @vectorize-io/hindsight-client for memory operations.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -13,19 +13,20 @@
   },
   "keywords": [
     "hindsight",
-    "hindsight-embed",
+    "hindsight-all",
     "memory",
     "ai",
     "agent",
     "long-term-memory",
-    "llm"
+    "llm",
+    "embedded-server"
   ],
   "author": "Vectorize <support@vectorize.io>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/vectorize-io/hindsight.git",
-    "directory": "hindsight-embed-npm"
+    "directory": "hindsight-all-npm"
   },
   "files": [
     "dist",

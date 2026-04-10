@@ -83,18 +83,25 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
-          // Only show "next" version in development or when INCLUDE_CURRENT_VERSION=true
-          // In production, only show released versions from versions.json
+          // Whether to include the "current" (Next / unreleased) docs version.
+          //
+          // Controlled by the single explicit env var INCLUDE_CURRENT_VERSION.
+          // `start-docs.sh` sets it to "true" so local dev always sees Next;
+          // production builds leave it unset so only released versions ship.
+          //
+          // We deliberately do NOT sniff NODE_ENV here — it's unreliable
+          // across Docusaurus hot-reload paths and used to cause the Next
+          // version to disappear intermittently when editing files.
           onlyIncludeVersions: (() => {
-            const isDev = process.env.NODE_ENV === 'development' || process.env.INCLUDE_CURRENT_VERSION === 'true';
+            const includeCurrent = process.env.INCLUDE_CURRENT_VERSION === 'true';
+            let released: string[] = [];
             try {
-              const versions = require('./versions.json') as string[];
-              // In dev mode, explicitly include 'current' (Next) + all released versions
-              // In production, only show released versions
-              return isDev ? ['current', ...versions] : versions;
+              released = require('./versions.json') as string[];
             } catch {
-              return undefined; // No versions yet, show current
+              // No versions.json yet — nothing has been released.
+              return undefined;
             }
+            return includeCurrent ? ['current', ...released] : released;
           })(),
           // Disable version badges on all versions
           versions: (() => {

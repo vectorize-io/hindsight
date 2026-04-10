@@ -10,11 +10,11 @@ const managerStart = vi.fn();
 const managerStop = vi.fn();
 const managerGetBaseUrl = vi.fn(() => 'http://127.0.0.1:9077');
 
-vi.mock('@vectorize-io/hindsight-embed', async () => {
-  const actual = await vi.importActual<typeof import('@vectorize-io/hindsight-embed')>('@vectorize-io/hindsight-embed');
+vi.mock('@vectorize-io/hindsight-all', async () => {
+  const actual = await vi.importActual<typeof import('@vectorize-io/hindsight-all')>('@vectorize-io/hindsight-all');
   return {
     ...actual,
-    HindsightEmbedManager: vi.fn(class {
+    HindsightServer: vi.fn(class {
       start = managerStart;
       stop = managerStop;
       getBaseUrl = managerGetBaseUrl;

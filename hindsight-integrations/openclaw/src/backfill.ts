@@ -2,7 +2,7 @@
 import { existsSync, realpathSync } from 'fs';
 import { join, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { HindsightEmbedManager } from '@vectorize-io/hindsight-embed';
+import { HindsightServer } from '@vectorize-io/hindsight-all';
 import { HindsightClient } from '@vectorize-io/hindsight-client';
 import { detectExternalApi, detectLLMConfig } from './index.js';
 import type { BankStats, PluginConfig } from './types.js';
@@ -297,7 +297,7 @@ export async function createBackfillRuntime(
   }
 
   const llmConfig = detectLLMConfig(pluginConfig);
-  const manager = new HindsightEmbedManager({
+  const manager = new HindsightServer({
     profile: 'openclaw',
     port: pluginConfig.apiPort || 9077,
     embedVersion: pluginConfig.embedVersion,

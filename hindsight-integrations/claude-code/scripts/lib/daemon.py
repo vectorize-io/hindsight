@@ -1,6 +1,6 @@
 """Hindsight-embed daemon lifecycle management.
 
-Port of: HindsightEmbedManager in embed-manager.js, adapted for Python
+Port of: HindsightServer in @vectorize-io/hindsight-all, adapted for Python
 subprocess calls from ephemeral hook processes.
 
 Manages three connection modes (same as Openclaw):
@@ -30,7 +30,7 @@ PROFILE_NAME = "claude-code"
 def _get_embed_command(config: dict) -> list:
     """Get the command to run hindsight-embed.
 
-    Port of: getEmbedCommand() in embed-manager.js
+    Port of: getEmbedCommand() in @vectorize-io/hindsight-all
     """
     embed_path = config.get("embedPackagePath")
     if embed_path:
@@ -139,7 +139,7 @@ def get_api_url(config: dict, debug_fn=None, allow_daemon_start: bool = False) -
 def _ensure_daemon_running(config: dict, port: int, debug_fn=None):
     """Start the hindsight-embed daemon if not already running.
 
-    Port of: HindsightEmbedManager.start() in embed-manager.js
+    Port of: HindsightServer.start() in @vectorize-io/hindsight-all
     """
     # Fast-fail if hindsight-embed toolchain is not available
     if not _is_embed_available(config):

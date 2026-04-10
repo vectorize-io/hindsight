@@ -1,5 +1,5 @@
 import type { MoltbotPluginAPI, PluginConfig, PluginHookAgentContext, MemoryResult, RetainRequest } from './types.js';
-import { HindsightEmbedManager, type Logger } from '@vectorize-io/hindsight-embed';
+import { HindsightServer, type Logger } from '@vectorize-io/hindsight-all';
 import { HindsightClient, type HindsightClientOptions } from '@vectorize-io/hindsight-client';
 import { RetainQueue } from './retain-queue.js';
 import { compileSessionPatterns, matchesSessionPattern } from './session-patterns.js';
@@ -28,7 +28,7 @@ const debug = (...args: unknown[]) => {
 };
 
 // Module-level state
-let embedManager: HindsightEmbedManager | null = null;
+let hindsightServer: HindsightServer | null = null;
 let client: HindsightClient | null = null;
 let clientOptions: HindsightClientOptions | null = null;
 let initPromise: Promise<void> | null = null;
@@ -1064,8 +1064,8 @@ export default function (api: MoltbotPluginAPI) {
               debug('[Hindsight] ✓ Ready (external API mode)');
             } else {
               // Local daemon mode - start hindsight-embed daemon
-              debug('[Hindsight] Creating HindsightEmbedManager...');
-              embedManager = new HindsightEmbedManager({
+              debug('[Hindsight] Creating HindsightServer...');
+              hindsightServer = new HindsightServer({
                 profile: 'openclaw',
                 port: apiPort,
                 embedVersion: pluginConfig.embedVersion,
@@ -1082,11 +1082,11 @@ export default function (api: MoltbotPluginAPI) {
 
               // Start the embedded server
               debug('[Hindsight] Starting embedded server...');
-              await embedManager.start();
+              await hindsightServer.start();
 
               // Initialize client pointed at the local daemon URL
               debug('[Hindsight] Creating HindsightClient (local daemon)...');
-              clientOptions = { baseUrl: embedManager.getBaseUrl() };
+              clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
               banksWithMissionSet.clear();
               client = new HindsightClient(clientOptions);
 
@@ -1147,8 +1147,8 @@ export default function (api: MoltbotPluginAPI) {
           }
         } else {
           // Local daemon mode: check daemon health (handles SIGUSR1 restart case)
-          if (embedManager && isInitialized) {
-            const healthy = await embedManager.checkHealth();
+          if (hindsightServer && isInitialized) {
+            const healthy = await hindsightServer.checkHealth();
             if (healthy) {
               debug('[Hindsight] Daemon is healthy');
               return;
@@ -1156,7 +1156,7 @@ export default function (api: MoltbotPluginAPI) {
 
             debug('[Hindsight] Daemon is not responding - reinitializing...');
             // Reset state for reinitialization
-            embedManager = null;
+            hindsightServer = null;
             client = null;
             clientOptions = null;
             banksWithMissionSet.clear();
@@ -1201,7 +1201,7 @@ export default function (api: MoltbotPluginAPI) {
             debug('[Hindsight] Reinitialization complete (external API mode)');
           } else {
             // Local daemon mode
-            embedManager = new HindsightEmbedManager({
+            hindsightServer = new HindsightServer({
               profile: 'openclaw',
               port: apiPort,
               embedVersion: reinitPluginConfig.embedVersion,
@@ -1216,9 +1216,9 @@ export default function (api: MoltbotPluginAPI) {
               logger: embedLogger,
             });
 
-            await embedManager.start();
+            await hindsightServer.start();
 
-            clientOptions = { baseUrl: embedManager.getBaseUrl() };
+            clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
             banksWithMissionSet.clear();
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
@@ -1243,9 +1243,9 @@ export default function (api: MoltbotPluginAPI) {
           debug('[Hindsight] Service stopping...');
 
           // Only stop daemon if in local mode
-          if (!usingExternalApi && embedManager) {
-            await embedManager.stop();
-            embedManager = null;
+          if (!usingExternalApi && hindsightServer) {
+            await hindsightServer.stop();
+            hindsightServer = null;
           }
 
           // Close retain queue

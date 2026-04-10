@@ -2,7 +2,7 @@
  * Integration tests for the Hindsight OpenClaw integration.
  *
  * Exercises both HTTP mode (direct API calls) and Embed mode (local daemon
- * spawned via HindsightEmbedManager), talking to Hindsight through
+ * spawned via HindsightServer), talking to Hindsight through
  * `@vectorize-io/hindsight-client`.
  *
  * Requirements:
@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { HindsightEmbedManager } from '@vectorize-io/hindsight-embed';
+import { HindsightServer } from '@vectorize-io/hindsight-all';
 import { HindsightClient } from '@vectorize-io/hindsight-client';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -170,12 +170,12 @@ describe('openclaw integration — HTTP mode', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Embed Mode Tests (local daemon spawned by HindsightEmbedManager)
+// Embed Mode Tests (local daemon spawned by HindsightServer)
 // ---------------------------------------------------------------------------
 
 describe('openclaw integration — embed mode', () => {
   let client: HindsightClient;
-  let embedManager: HindsightEmbedManager;
+  let server: HindsightServer;
 
   const hasEmbedCredentials = Boolean(LLM_PROVIDER && LLM_API_KEY);
 
@@ -188,7 +188,7 @@ describe('openclaw integration — embed mode', () => {
       return;
     }
 
-    embedManager = new HindsightEmbedManager({
+    server = new HindsightServer({
       profile: 'openclaw-test',
       port: EMBED_TEST_PORT,
       embedVersion: 'latest',
@@ -201,14 +201,14 @@ describe('openclaw integration — embed mode', () => {
       },
     });
 
-    await embedManager.start();
+    await server.start();
 
-    client = new HindsightClient({ baseUrl: embedManager.getBaseUrl() });
+    client = new HindsightClient({ baseUrl: server.getBaseUrl() });
   }, 120_000); // daemon startup can take up to 2 minutes
 
   afterAll(async () => {
-    if (embedManager) {
-      await embedManager.stop();
+    if (server) {
+      await server.stop();
     }
   }, 30_000);
 

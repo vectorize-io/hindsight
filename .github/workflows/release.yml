@@ -150,7 +150,7 @@ jobs:
         path: hindsight-clients/typescript/*.tgz
         retention-days: 1
 
-  release-hindsight-embed-npm:
+  release-hindsight-all-npm:
     runs-on: ubuntu-latest
     environment: npm
 
@@ -166,13 +166,13 @@ jobs:
         cache-dependency-path: package-lock.json
 
     - name: Install dependencies
-      run: npm ci --workspace=hindsight-embed-npm
+      run: npm ci --workspace=hindsight-all-npm
 
     - name: Build
-      run: npm run build --workspace=hindsight-embed-npm
+      run: npm run build --workspace=hindsight-all-npm
 
     - name: Publish to npm
-      working-directory: ./hindsight-embed-npm
+      working-directory: ./hindsight-all-npm
       run: |
         set +e
         OUTPUT=$(npm publish --access public 2>&1)
@@ -189,14 +189,14 @@ jobs:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     - name: Pack for GitHub release
-      working-directory: ./hindsight-embed-npm
+      working-directory: ./hindsight-all-npm
       run: npm pack
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
       with:
-        name: hindsight-embed-npm
-        path: hindsight-embed-npm/*.tgz
+        name: hindsight-all-npm
+        path: hindsight-all-npm/*.tgz
         retention-days: 1
 
   release-control-plane:
@@ -456,7 +456,7 @@ jobs:
 
   create-github-release:
     runs-on: ubuntu-latest
-    needs: [release-python-packages, release-typescript-client, release-hindsight-embed-npm, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
+    needs: [release-python-packages, release-typescript-client, release-hindsight-all-npm, release-control-plane, release-rust-cli, release-docker-images, release-helm-chart]
     permissions:
       contents: write
 
@@ -488,8 +488,8 @@ jobs:
     - name: Download hindsight-embed npm wrapper
       uses: actions/download-artifact@v8
       with:
-        name: hindsight-embed-npm
-        path: ./artifacts/hindsight-embed-npm
+        name: hindsight-all-npm
+        path: ./artifacts/hindsight-all-npm
 
     - name: Download Rust CLI (Linux)
       uses: actions/download-artifact@v8
@@ -528,7 +528,7 @@ jobs:
         # TypeScript client
         cp artifacts/typescript-client/*.tgz release-assets/ || true
         # hindsight-embed npm wrapper
-        cp artifacts/hindsight-embed-npm/*.tgz release-assets/ || true
+        cp artifacts/hindsight-all-npm/*.tgz release-assets/ || true
         # Control Plane
         cp artifacts/control-plane/*.tgz release-assets/ || true
         # Rust CLI binaries
