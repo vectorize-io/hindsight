@@ -6,6 +6,58 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Changelog" subtitle="User-facing changes only. Internal maintenance and infrastructure updates are omitted." />
 
+## [0.5.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.0)
+
+**Breaking Changes**
+
+- Removed BFS and MPFP graph retrieval strategies. LinkExpansionRetriever is now the sole graph retrieval algorithm, offering simpler, faster, and more accurate results. ([`ea834bc7`](https://github.com/vectorize-io/hindsight/commit/ea834bc7))
+- Dropped the `hindsight-hermes` integration package. ([`cf0537ba`](https://github.com/vectorize-io/hindsight/commit/cf0537ba))
+
+**Features**
+
+- Built-in llama.cpp LLM provider for fully local inference without external API calls. ([`f74b577e`](https://github.com/vectorize-io/hindsight/commit/f74b577e))
+- Retain `update_mode='append'` for concatenating new content onto an existing document instead of replacing it. ([`3c633e5e`](https://github.com/vectorize-io/hindsight/commit/3c633e5e))
+- OpenRouter support for LLM, embeddings, and reranking. ([`e5944b63`](https://github.com/vectorize-io/hindsight/commit/e5944b63))
+- Bank template import/export with Template Hub — export a bank's configuration, mental models, and directives as a reusable manifest, then import into other banks. ([`30a319a6`](https://github.com/vectorize-io/hindsight/commit/30a319a6))
+- Constellation view in the Control Plane — interactive, zoomable canvas visualization of entity relationship graphs with heat-gradient coloring and dark mode support. ([`36783df3`](https://github.com/vectorize-io/hindsight/commit/36783df3))
+- Added `detail` parameter to list/get mental model endpoints for controlling response verbosity. ([`8d1bfbbd`](https://github.com/vectorize-io/hindsight/commit/8d1bfbbd))
+- Added AutoGen integration (`hindsight-autogen`) for persistent long-term memory in AutoGen agents. ([`a757765a`](https://github.com/vectorize-io/hindsight/commit/a757765a))
+- Added Paperclip integration (`@vectorize-io/hindsight-paperclip`) with Express middleware and process adapter modes for stateless agent memory. ([`81441ee9`](https://github.com/vectorize-io/hindsight/commit/81441ee9))
+- Added OpenCode persistent memory plugin for the OpenCode editor. ([`e1c6220f`](https://github.com/vectorize-io/hindsight/commit/e1c6220f))
+- OpenClaw JSONL-backed retain queue for external API resilience — buffers retain calls locally when the API is unreachable. ([`087545cc`](https://github.com/vectorize-io/hindsight/commit/087545cc))
+- OpenClaw now supports `bankId` for static bank configurations. ([`0e81d1a2`](https://github.com/vectorize-io/hindsight/commit/0e81d1a2))
+- Added Google embeddings and reranker provider support. ([`07de798c`](https://github.com/vectorize-io/hindsight/commit/07de798c))
+- Added persistent volume support in Helm chart for local model cache. ([`cefa7554`](https://github.com/vectorize-io/hindsight/commit/cefa7554))
+- MCP server now includes a `sync_retain` tool and validates UUID inputs. ([`48185a4b`](https://github.com/vectorize-io/hindsight/commit/48185a4b))
+- Recall combined scoring now includes `proof_count` boost for better ranking. ([`26794aab`](https://github.com/vectorize-io/hindsight/commit/26794aab))
+
+**Improvements**
+
+- 3-phase retain pipeline restructures memory ingestion into pre-resolve, insert, and post-link phases, dramatically improving throughput under concurrent load by removing slow reads from write transactions. ([`914ba796`](https://github.com/vectorize-io/hindsight/commit/914ba796))
+- Recall entity graph expansion now caps per-entity fanout and includes a timeout fallback, preventing slow queries on banks with high-fanout entities. ([`57f15445`](https://github.com/vectorize-io/hindsight/commit/57f15445))
+- Fact serialization in think-prompt now includes `occurred_end` and `mentioned_at` for richer temporal context. ([`37348c85`](https://github.com/vectorize-io/hindsight/commit/37348c85))
+- Consolidation observation quality improved with structured processing rules. ([`6f173b10`](https://github.com/vectorize-io/hindsight/commit/6f173b10))
+
+**Bug Fixes**
+
+- LiteLLM SDK embeddings `encoding_format` is now configurable instead of hardcoded. ([`cece2c90`](https://github.com/vectorize-io/hindsight/commit/cece2c90))
+- Fixed out-of-range `content_index` crash in recall result mapping. ([`9790d904`](https://github.com/vectorize-io/hindsight/commit/9790d904))
+- Experience fact types are now preserved correctly during normalization. ([`9cfdd464`](https://github.com/vectorize-io/hindsight/commit/9cfdd464))
+- Clear memories endpoint no longer deletes the bank profile. ([`26a64cc0`](https://github.com/vectorize-io/hindsight/commit/26a64cc0))
+- Embedding daemon clears stale processes on the port before starting. ([`7d6c570a`](https://github.com/vectorize-io/hindsight/commit/7d6c570a))
+- Per-bank vector index migration now respects vector extension configuration. ([`4fd7c5d1`](https://github.com/vectorize-io/hindsight/commit/4fd7c5d1))
+- Timeline group sort uses numeric date comparison instead of locale string comparison. ([`f3f2c6b0`](https://github.com/vectorize-io/hindsight/commit/f3f2c6b0))
+- Resolved 25 test regressions from the streaming retain pipeline. ([`7415ebff`](https://github.com/vectorize-io/hindsight/commit/7415ebff))
+- MCP server now auto-coerces string-encoded JSON in tool arguments. ([`443c94c8`](https://github.com/vectorize-io/hindsight/commit/443c94c8))
+- Entity labels structure is now validated on PATCH to prevent invalid configurations. ([`7e23f8e1`](https://github.com/vectorize-io/hindsight/commit/7e23f8e1))
+- Fixed `bank_id` metric label to be opt-in, preventing OTel memory leak. ([`cf4bd598`](https://github.com/vectorize-io/hindsight/commit/cf4bd598))
+- Fixed `max_tokens` handling for OpenAI-compatible endpoints with custom base URLs. ([`cd99eef4`](https://github.com/vectorize-io/hindsight/commit/cd99eef4))
+- Fixed `event_date` AttributeError when date is None in fact extraction. ([`6cb309f7`](https://github.com/vectorize-io/hindsight/commit/6cb309f7))
+- Query analyzer now handles dateparser internal crashes gracefully. ([`e0e65c44`](https://github.com/vectorize-io/hindsight/commit/e0e65c44))
+- Embedding profile `.env` overwrite skipped when config has no Hindsight keys. ([`9e2890ba`](https://github.com/vectorize-io/hindsight/commit/9e2890ba))
+- Windows compatibility fix for hindsight-embed. ([`f9fe6953`](https://github.com/vectorize-io/hindsight/commit/f9fe6953))
+- Addressed critical and high severity security vulnerabilities in dependencies. ([`ee4510a7`](https://github.com/vectorize-io/hindsight/commit/ee4510a7))
+
 ## [0.4.22](https://github.com/vectorize-io/hindsight/releases/tag/v0.4.22)
 
 **Features**

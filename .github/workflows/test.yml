@@ -224,6 +224,8 @@ jobs:
       github.event_name != 'pull_request_review' &&
       (github.event_name == 'workflow_dispatch' ||
       needs.detect-changes.outputs.integrations-openclaw == 'true' ||
+      needs.detect-changes.outputs.clients-ts == 'true' ||
+      needs.detect-changes.outputs.all-npm == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
 
@@ -236,8 +238,24 @@ jobs:
       uses: actions/setup-node@v6
       with:
         node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
-    - name: Install dependencies
+    # openclaw depends on two monorepo workspaces via `file:` deps:
+    # @vectorize-io/hindsight-client and @vectorize-io/hindsight-all. Their
+    # `dist/` directories are gitignored, so we must build them first.
+    # Otherwise vitest/tsc in openclaw fails with
+    # "Failed to resolve entry for package ..." on the value imports.
+    - name: Install root workspace dependencies
+      run: npm ci
+
+    - name: Build hindsight-client (openclaw dep)
+      run: npm run build --workspace=hindsight-clients/typescript
+
+    - name: Build hindsight-all-npm (openclaw dep)
+      run: npm run build --workspace=hindsight-all-npm
+
+    - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
       run: npm ci
 
@@ -1559,6 +1577,18 @@ jobs:
         CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
         print('Models downloaded successfully')
         "
+
+    # openclaw depends on @vectorize-io/hindsight-client and
+    # @vectorize-io/hindsight-all via `file:` — their `dist/` directories are
+    # gitignored and must be built before openclaw's npm ci copies them.
+    - name: Install root workspace dependencies
+      run: npm ci
+
+    - name: Build hindsight-client (openclaw dep)
+      run: npm run build --workspace=hindsight-clients/typescript
+
+    - name: Build hindsight-all-npm (openclaw dep)
+      run: npm run build --workspace=hindsight-all-npm
 
     - name: Install openclaw integration dependencies
       working-directory: ./hindsight-integrations/openclaw

@@ -1669,7 +1669,7 @@ requires-dist = [
     { name = "flashrank", marker = "extra == 'local-ml'", specifier = ">=0.2.0" },
     { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-genai", specifier = ">=1.0.0" },
-    { name = "greenlet", specifier = ">=3.2.4" },
+    { name = "greenlet", specifier = ">=3.2.4,<3.4.0" },
     { name = "hindsight-api-slim", extras = ["local-ml", "embedded-db"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", marker = "extra == 'local-llm'", specifier = ">=0.20.0" },
