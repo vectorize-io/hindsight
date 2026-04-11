@@ -58,7 +58,15 @@ interface SystemTransformOutput {
 
 type OpencodeClient = {
     session: {
-        messages: (opts: { path: { id: string } }) => Promise<{ data?: Array<{ role: string; parts?: Array<{ type: string; text?: string }> }> }>;
+        messages: (params: { path: { id: string } }) => Promise<{
+            data?: Array<{
+                info: { role: string };
+                parts: Array<{ type: string; text?: string }>;
+            }>;
+            error?: unknown;
+            request?: unknown;
+            response?: unknown;
+        }>;
     };
 };
 
@@ -117,24 +125,30 @@ export function createHooks(
     /** Extract plain-text messages from an OpenCode session */
     async function getSessionMessages(sessionId: string): Promise<Message[]> {
         try {
+            console.error(`[Hindsight] getSessionMessages: calling session.messages with path.id=${sessionId}`);
             const response = await opencodeClient.session.messages({
                 path: { id: sessionId },
             });
+            if (response.error) {
+                console.error(`[Hindsight] getSessionMessages: error=${JSON.stringify(response.error)?.substring(0, 500)}`);
+            }
+            console.error(`[Hindsight] getSessionMessages: response keys=${Object.keys(response).join(',')}, type=${typeof response.data}, isArray=${Array.isArray(response.data)}, data=${JSON.stringify(response.data)?.substring(0, 200)}`);
             const rawMessages = response.data || [];
             const messages: Message[] = [];
             for (const msg of rawMessages) {
-                const role = msg.role;
+                const role = msg.info.role;
                 if (role !== 'user' && role !== 'assistant') continue;
-                const textParts = (msg.parts || [])
-                    .filter((p: { type: string; text?: string }) => p.type === 'text' && p.text)
-                    .map((p: { type: string; text?: string }) => p.text!);
+                const textParts = msg.parts
+                    .filter((p) => p.type === 'text' && p.text)
+                    .map((p) => p.text!);
                 if (textParts.length) {
                     messages.push({ role, content: textParts.join('\n') });
                 }
             }
+            console.error(`[Hindsight] getSessionMessages: raw=${rawMessages.length}, parsed=${messages.length}`);
             return messages;
         } catch (e) {
-            debugLog(config, 'Failed to get session messages:', e);
+            console.error('[Hindsight] Failed to get session messages:', e);
             return [];
         }
     }
@@ -177,14 +191,20 @@ export function createHooks(
 
     /** Auto-retain conversation transcript */
     async function handleSessionIdle(sessionId: string): Promise<void> {
-        if (!config.autoRetain) return;
+        console.error(`[Hindsight] handleSessionIdle called for session ${sessionId}`);
+        if (!config.autoRetain) {
+            console.error('[Hindsight] handleSessionIdle: autoRetain is false, skipping');
+            return;
+        }
 
         const messages = await getSessionMessages(sessionId);
+        console.error(`[Hindsight] handleSessionIdle: got ${messages.length} messages`);
         if (!messages.length) return;
 
         // Count user turns
         const userTurns = messages.filter((m) => m.role === 'user').length;
         const lastRetained = state.lastRetainedTurn.get(sessionId) || 0;
+        console.error(`[Hindsight] handleSessionIdle: userTurns=${userTurns}, lastRetained=${lastRetained}, retainEveryNTurns=${config.retainEveryNTurns}`);
 
         // Only retain if enough new turns since last retain
         if (userTurns - lastRetained < config.retainEveryNTurns) return;
@@ -192,18 +212,20 @@ export function createHooks(
         try {
             await retainSession(sessionId, messages);
             state.lastRetainedTurn.set(sessionId, userTurns);
-            debugLog(config, `Auto-retained ${messages.length} messages for session ${sessionId}`);
+            console.error(`[Hindsight] Auto-retained ${messages.length} messages for session ${sessionId}`);
         } catch (e) {
-            debugLog(config, 'Auto-retain failed:', e);
+            console.error('[Hindsight] Auto-retain failed:', e);
         }
     }
 
     const event = async (input: EventInput): Promise<void> => {
         try {
             const { event: evt } = input;
+            console.error(`[Hindsight] event hook fired: type=${evt.type}`);
 
             if (evt.type === 'session.idle') {
                 const sessionId = (evt.properties as { sessionID?: string }).sessionID;
+                console.error(`[Hindsight] session.idle event: sessionId=${sessionId}`);
                 if (sessionId) {
                     await handleSessionIdle(sessionId);
                 }

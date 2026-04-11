@@ -20,7 +20,7 @@ function makeClient() {
     } as any;
 }
 
-function makeOpencodeClient(messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> = []) {
+function makeOpencodeClient(messages: Array<{ info: { role: string }; parts: Array<{ type: string; text?: string }> }> = []) {
     return {
         session: {
             messages: vi.fn().mockResolvedValue({ data: messages }),
@@ -41,8 +41,8 @@ describe('event hook — session.idle', () => {
     it('auto-retains conversation on session.idle with document_id', async () => {
         const client = makeClient();
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi there' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi there' }] },
         ];
         const opencodeClient = makeOpencodeClient(messages);
         const state = makeState();
@@ -63,8 +63,8 @@ describe('event hook — session.idle', () => {
     it('skips retain when autoRetain is false', async () => {
         const client = makeClient();
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi' }] },
         ];
         const hooks = createHooks(
             client,
@@ -84,10 +84,10 @@ describe('event hook — session.idle', () => {
     it('uses chunked document_id with overlap in last-turn mode', async () => {
         const client = makeClient();
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Turn 1' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Reply 1' }] },
-            { role: 'user', parts: [{ type: 'text', text: 'Turn 2' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Reply 2' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Turn 1' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Reply 1' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Turn 2' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Reply 2' }] },
         ];
         const config = makeConfig({ retainMode: 'last-turn', retainEveryNTurns: 1, retainOverlapTurns: 1 });
         const state = makeState();
@@ -106,8 +106,8 @@ describe('event hook — session.idle', () => {
     it('respects retainEveryNTurns', async () => {
         const client = makeClient();
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi' }] },
         ];
         const config = makeConfig({ retainEveryNTurns: 5 });
         const state = makeState();
@@ -125,8 +125,8 @@ describe('event hook — session.idle', () => {
         const client = makeClient();
         client.retain.mockRejectedValue(new Error('Network error'));
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi' }] },
         ];
         const hooks = createHooks(client, 'bank', makeConfig({ retainEveryNTurns: 1 }), makeState(), makeOpencodeClient(messages));
 
@@ -181,8 +181,8 @@ describe('compacting hook', () => {
             results: [{ text: 'Important fact', type: 'world' }],
         });
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Build the feature' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Working on it' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Build the feature' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Working on it' }] },
         ];
         const output = { context: [] as string[], prompt: undefined };
         const hooks = createHooks(client, 'bank', makeConfig(), makeState(), makeOpencodeClient(messages));
@@ -201,8 +201,8 @@ describe('compacting hook', () => {
         const client = makeClient();
         client.recall.mockResolvedValue({ results: [] });
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi' }] },
         ];
         const output = { context: [] as string[] };
         const hooks = createHooks(client, 'bank', makeConfig(), makeState(), makeOpencodeClient(messages));
@@ -219,8 +219,8 @@ describe('compacting hook', () => {
         const client = makeClient();
         client.recall.mockResolvedValue({ results: [] });
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Hello' }] },
-            { role: 'assistant', parts: [{ type: 'text', text: 'Hi' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Hello' }] },
+            { info: { role: 'assistant' }, parts: [{ type: 'text', text: 'Hi' }] },
         ];
         const config = makeConfig({ retainMode: 'last-turn', retainEveryNTurns: 1 });
         const output = { context: [] as string[] };
@@ -236,7 +236,7 @@ describe('compacting hook', () => {
         const client = makeClient();
         client.recall.mockRejectedValue(new Error('Failed'));
         const messages = [
-            { role: 'user', parts: [{ type: 'text', text: 'Test' }] },
+            { info: { role: 'user' }, parts: [{ type: 'text', text: 'Test' }] },
         ];
         const output = { context: [] as string[] };
         const hooks = createHooks(client, 'bank', makeConfig(), makeState(), makeOpencodeClient(messages));
