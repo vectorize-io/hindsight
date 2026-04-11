@@ -2,7 +2,7 @@
  * Tenant-aware Hindsight API client factory for the control plane.
  *
  * Supports two modes:
- * 1. Multi-tenant: HINDSIGHT_CP_TENANT_KEY_MAP=key1:name1;key2:name2
+ * 1. Multi-tenant: HINDSIGHT_API_TENANT_KEY_MAP=key1:name1;key2:name2
  * 2. Single-tenant (backwards-compat): HINDSIGHT_CP_DATAPLANE_API_KEY=key
  *
  * In multi-tenant mode, getClientForTenant(name) returns a client scoped to
@@ -33,7 +33,7 @@ function parseTenantKeyMap(raw: string): TenantEntry[] {
     const colonIdx = entry.indexOf(":");
     if (colonIdx === -1) {
       throw new Error(
-        `Invalid HINDSIGHT_CP_TENANT_KEY_MAP entry "${entry}". Expected "key:name".`
+        `Invalid HINDSIGHT_API_TENANT_KEY_MAP entry "${entry}". Expected "key:name".`
       );
     }
     return {
@@ -43,11 +43,8 @@ function parseTenantKeyMap(raw: string): TenantEntry[] {
   });
 }
 
-// CP-specific var takes precedence; falls back to the API key map so
-// operators don't have to duplicate keys across two env vars.
-const TENANT_KEY_MAP_RAW = process.env.HINDSIGHT_CP_TENANT_KEY_MAP
-  || process.env.HINDSIGHT_API_TENANT_KEY_MAP
-  || "";
+// Same env var as the API server — one key map for both.
+const TENANT_KEY_MAP_RAW = process.env.HINDSIGHT_API_TENANT_KEY_MAP || "";
 const SINGLE_KEY = process.env.HINDSIGHT_CP_DATAPLANE_API_KEY || "";
 
 const tenantEntries: TenantEntry[] = TENANT_KEY_MAP_RAW

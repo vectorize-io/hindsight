@@ -16,9 +16,6 @@
     "build:standalone": "rm -rf standalone && SERVER_JS=$(find .next/standalone -path '*/node_modules' -prune -o -name 'server.js' -print | head -1) && test -n \"$SERVER_JS\" || (echo 'Error: server.js not found in .next/standalone - standalone build failed' && exit 1) && STANDALONE_ROOT=$(dirname \"$SERVER_JS\") && cp -r \"$STANDALONE_ROOT\" standalone && cp -r .next/standalone/node_modules standalone/node_modules && mkdir -p standalone/.next && cp -r .next/static standalone/.next/static && mkdir -p standalone/public && (cp -r public/* standalone/public/ 2>/dev/null || true)",
     "start": "next start",
     "lint": "next lint",
-    "test:e2e": "npx playwright test",
-    "test:e2e:headed": "npx playwright test --headed",
-    "test:e2e:prod": "bash e2e/run-prod.sh",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -80,7 +77,6 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
-    "@playwright/test": "^1.59.1",
     "@vectorize-io/hindsight-client": "file:../hindsight-clients/typescript",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
