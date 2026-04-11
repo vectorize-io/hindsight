@@ -1312,6 +1312,65 @@ export default function (api: MoltbotPluginAPI) {
     debug('[Hindsight] Registering agent hooks...');
     log.info('registering agent hooks');
 
+    api.on('before_dispatch', async (event: any, ctx?: PluginHookAgentContext) => {
+      try {
+        const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        if (!sessionKey) {
+          return;
+        }
+
+        const parsedSession = parseSessionKey(sessionKey);
+        const dispatchChannel =
+          (typeof event?.channel === 'string' ? event.channel : undefined) ||
+          ctx?.messageProvider ||
+          parsedSession.provider;
+        const dispatchCtx = resolveSessionIdentity({
+          ...ctx,
+          sessionKey,
+          agentId: ctx?.agentId || parsedSession.agentId,
+          messageProvider: ctx?.messageProvider ?? parsedSession.provider ?? dispatchChannel,
+          channelId: ctx?.channelId || parsedSession.channel,
+          senderId:
+            (typeof event?.senderId === 'string' ? event.senderId : undefined) ||
+            ctx?.senderId,
+        });
+
+        const surfaceMismatch = Boolean(
+          parsedSession.provider && dispatchChannel && parsedSession.provider !== dispatchChannel,
+        );
+        if (surfaceMismatch) {
+          const reason = `dispatch surface ${dispatchChannel} does not match session provider ${parsedSession.provider}`;
+          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
+          debug(`[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${reason}`);
+          return;
+        }
+
+        const { resolvedCtx, reason } = getIdentitySkipReason(dispatchCtx);
+        if (reason) {
+          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
+          debug(`[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${reason}`);
+          return;
+        }
+
+        skipHindsightTurnBySession.delete(sessionKey);
+        if (!resolvedCtx?.senderId || typeof resolvedCtx.senderId !== 'string') {
+          return;
+        }
+
+        setCappedMapValue(sessionIdentityBySession, sessionKey, {
+          senderId: resolvedCtx.senderId,
+          messageProvider: resolvedCtx.messageProvider,
+          channelId: resolvedCtx.channelId,
+        });
+        setCappedMapValue(senderIdBySession, sessionKey, resolvedCtx.senderId);
+        debug(
+          `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`,
+        );
+      } catch (error) {
+        log.warn(`before_dispatch identity cache error: ${error}`);
+      }
+    });
+
     api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
         const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
