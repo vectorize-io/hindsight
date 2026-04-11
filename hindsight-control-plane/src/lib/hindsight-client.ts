@@ -155,14 +155,4 @@ export function dataplaneBankUrl(bankId: string, suffix = ""): string {
   return `${DATAPLANE_URL}/v1/default/banks/${encodeURIComponent(bankId)}${suffix}`;
 }
 
-// --- Backwards-compatible default exports ---
-// These use the first configured tenant (or the single key).
-
-const defaultClients = getClientForTenant();
-
-/** @deprecated Use getClientForTenant() instead */
-export const hindsightClient = defaultClients.hindsightClient;
-/** @deprecated Use getClientForTenant() instead */
-export const lowLevelClient = defaultClients.lowLevelClient;
-
 export { sdk, HindsightError };

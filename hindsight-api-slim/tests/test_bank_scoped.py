@@ -9,7 +9,6 @@ from hindsight_api.extensions.builtin.bank_scoped_tenant import (
 from hindsight_api.extensions.tenant import AuthenticationError
 from hindsight_api.models import RequestContext
 
-
 # =========================================================================
 # _parse_key_map tests
 # =========================================================================
@@ -65,10 +64,12 @@ class TestApiKeySchemaTenantExtension:
 
     def test_init_invalid_schema_prefix(self):
         with pytest.raises(ValueError, match="Invalid schema_prefix"):
-            ApiKeySchemaTenantExtension({
-                "key_map": "key1:schema1",
-                "schema_prefix": "bad-prefix",
-            })
+            ApiKeySchemaTenantExtension(
+                {
+                    "key_map": "key1:schema1",
+                    "schema_prefix": "bad-prefix",
+                }
+            )
 
     def test_schema_names_without_prefix(self):
         ext = self._make_ext("key1:team_alpha;key2:team_beta")
@@ -142,9 +143,11 @@ class TestPromptInjectionDefense:
     @pytest.mark.asyncio
     async def test_attacker_key_cannot_reach_victim_schema(self):
         """The schema is determined solely by the API key, not the request."""
-        ext = ApiKeySchemaTenantExtension({
-            "key_map": "victim_key:victim_schema;attacker_key:attacker_schema",
-        })
+        ext = ApiKeySchemaTenantExtension(
+            {
+                "key_map": "victim_key:victim_schema;attacker_key:attacker_schema",
+            }
+        )
         ext._initialized_schemas.update(["victim_schema", "attacker_schema"])
 
         result = await ext.authenticate(RequestContext(api_key="attacker_key"))
@@ -154,9 +157,11 @@ class TestPromptInjectionDefense:
     @pytest.mark.asyncio
     async def test_unknown_key_rejected_not_defaulted(self):
         """Unknown keys must be rejected, never mapped to a default schema."""
-        ext = ApiKeySchemaTenantExtension({
-            "key_map": "real_key:real_schema",
-        })
+        ext = ApiKeySchemaTenantExtension(
+            {
+                "key_map": "real_key:real_schema",
+            }
+        )
 
         with pytest.raises(AuthenticationError, match="Invalid API key"):
             await ext.authenticate(RequestContext(api_key="guessed_key"))
@@ -164,9 +169,11 @@ class TestPromptInjectionDefense:
     @pytest.mark.asyncio
     async def test_empty_key_rejected(self):
         """Empty and None keys must be rejected."""
-        ext = ApiKeySchemaTenantExtension({
-            "key_map": "real_key:real_schema",
-        })
+        ext = ApiKeySchemaTenantExtension(
+            {
+                "key_map": "real_key:real_schema",
+            }
+        )
 
         with pytest.raises(AuthenticationError, match="Missing API key"):
             await ext.authenticate(RequestContext(api_key=None))

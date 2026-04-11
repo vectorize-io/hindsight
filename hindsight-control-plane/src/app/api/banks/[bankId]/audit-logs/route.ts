@@ -10,8 +10,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: "bank_id is required" }, { status: 400 });
     }
 
-    // Forward query params
+    // Forward query params (strip tenant — it's a CP-internal routing param, not a dataplane param)
     const { searchParams } = new URL(request.url);
+    searchParams.delete("tenant");
     const query = searchParams.toString();
 
     const url = dataplaneBankUrl(bankId, `/audit-logs${query ? `?${query}` : ""}`);
