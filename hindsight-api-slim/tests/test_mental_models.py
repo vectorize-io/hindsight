@@ -1023,6 +1023,65 @@ class TestMentalModelRefreshTagSecurity:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_refresh_with_tags_emits_warning_when_no_facts_match(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Test that refreshing a mental model whose tags match no memories surfaces a clear warning.
+
+        Regression test for https://github.com/vectorize-io/hindsight/issues/945.
+        Previously, tag filtering that produced an empty fact pool resulted in a generic
+        "I don't have information" message with no indication that tags were the cause.
+        """
+        bank_id = f"test-refresh-tag-warning-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Retain memories tagged with "user:alice" only
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {"content": "Alice works on the frontend React project.", "tags": ["user:alice"]},
+            ],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        # Create a mental model tagged with "user:bob" — no memories share this tag
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Bob's Summary",
+            source_query="What is known about Bob?",
+            content="Initial content",
+            tags=["user:bob"],
+            request_context=request_context,
+        )
+
+        # Refresh the model — tag filter will produce an empty fact pool
+        refreshed = await memory.refresh_mental_model(
+            bank_id=bank_id,
+            mental_model_id=mm["id"],
+            request_context=request_context,
+        )
+        await memory.wait_for_background_tasks()
+
+        updated = await memory.get_mental_model(bank_id, mm["id"], request_context=request_context)
+
+        # The content should contain a tag filter warning, not a generic "no information" message
+        assert updated["content"] is not None
+        assert "user:bob" in updated["content"] or "tag" in updated["content"].lower(), (
+            f"Expected tag filter warning in content, got: {updated['content']}"
+        )
+
+        # The reflect_response should carry the structured warning field
+        reflect_response = updated.get("reflect_response") or {}
+        assert "tag_filter_warning" in reflect_response, (
+            f"Expected 'tag_filter_warning' in reflect_response, got keys: {list(reflect_response.keys())}"
+        )
+        assert "user:bob" in reflect_response["tag_filter_warning"], (
+            f"Warning should mention the active tags: {reflect_response['tag_filter_warning']}"
+        )
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestMentalModelTriggerTagsConfig:
     """Test trigger-level tags_match and tag_groups configuration for mental model refresh."""

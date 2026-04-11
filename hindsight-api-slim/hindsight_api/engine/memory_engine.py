@@ -996,10 +996,33 @@ class MemoryEngine(MemoryEngineInterface):
                     )
             based_on_serialized[fact_type] = serialized_facts
 
-        reflect_response = {
+        # Detect empty fact pool caused by tag filtering and surface a clear warning.
+        # Without this, users see "I don't have information" with no hint that tags are
+        # the cause (reported in https://github.com/vectorize-io/hindsight/issues/945).
+        has_tag_filtering = bool(tag_filtering.tags or tag_filtering.tag_groups)
+        non_directive_facts = sum(
+            len(facts) for fact_type, facts in based_on_serialized.items() if fact_type != "directives"
+        )
+        tag_filter_warning: str | None = None
+        if has_tag_filtering and non_directive_facts == 0:
+            active_tags = tag_filtering.tags or [str(tg) for tg in (tag_filtering.tag_groups or [])]
+            tag_filter_warning = (
+                f"No memories matched the tags {active_tags!r} configured on this mental model. "
+                f"The model content could not be generated. "
+                f"Remove the tags from the model or backfill memory tags to allow facts to be retrieved."
+            )
+            logger.warning(
+                f"[REFRESH_MENTAL_MODEL_TASK] Tag filtering produced empty fact pool for "
+                f"mental_model_id={mental_model_id}, bank_id={bank_id}, tags={active_tags!r}"
+            )
+            generated_content = f"[Tag filter warning: {tag_filter_warning}]"
+
+        reflect_response: dict[str, Any] = {
             "text": reflect_result.text,
             "based_on": based_on_serialized,
         }
+        if tag_filter_warning is not None:
+            reflect_response["tag_filter_warning"] = tag_filter_warning
 
         # Update the mental model with the generated content and reflect_response
         await self.update_mental_model(
