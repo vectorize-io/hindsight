@@ -69,6 +69,69 @@ def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
 
 
+_SIMPLE_DECLARATIVE_FACT_RE = re.compile(
+    r"^\s*(?P<subject>(?:I|We|You|[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*)*))\s+"
+    r"(?P<verb>love|loves|like|likes|hate|hates|dislike|dislikes|prefer|prefers|value|values|"
+    r"is|are|was|were|originated|originates)\s+"
+    r"(?P<object>.+?)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+_FALLBACK_SUBJECT_BLOCKLIST = {"this", "that", "it", "there", "here", "hi", "hello", "thanks", "thank"}
+_FALLBACK_TEXT_BLOCKLIST_PREFIXES = (
+    "hi ",
+    "hello ",
+    "thanks",
+    "thank you",
+    "how are you",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "let me ",
+    "one moment",
+    "sounds good",
+    "got it",
+)
+
+
+def _fallback_simple_preference_fact(chunk: str) -> "Fact | None":
+    """
+    Recover an obvious one-line fact when the LLM returns an empty facts list.
+
+    Some providers occasionally drop short statements like "Alex hates pizza."
+    or "Pizza originated in Naples." even though they are useful durable facts.
+    Keep the fallback narrow so greetings/process chatter still stay empty.
+    """
+    chunk = chunk.strip()
+    chunk_lower = chunk.lower()
+    if "\n" in chunk or len(chunk) > 200:
+        return None
+    if any(chunk_lower.startswith(prefix) for prefix in _FALLBACK_TEXT_BLOCKLIST_PREFIXES):
+        return None
+
+    match = _SIMPLE_DECLARATIVE_FACT_RE.match(chunk)
+    if not match:
+        return None
+
+    subject = match.group("subject").strip()
+    verb = match.group("verb").lower()
+    obj = match.group("object").strip().rstrip(".!?")
+    if not obj:
+        return None
+
+    subject_lower = subject.lower()
+    if subject_lower in _FALLBACK_SUBJECT_BLOCKLIST:
+        return None
+    if subject_lower in {"i", "we"}:
+        fact_type = "experience"
+        entities = [Entity(text="user")]
+    else:
+        fact_type = "world"
+        entities = [Entity(text=subject)] if subject_lower not in {"you"} else None
+
+    fact = f"{subject} {verb} {obj}"
+    return Fact(fact=fact, fact_type=fact_type, entities=entities)
+
+
 class Entity(BaseModel):
     """An entity extracted from text."""
 
@@ -1056,6 +1119,12 @@ async def _extract_facts_from_chunk(
             raw_facts = extraction_response_json.get("facts", [])
 
             if not raw_facts:
+                fallback_fact = _fallback_simple_preference_fact(chunk)
+                if fallback_fact is not None:
+                    logger.info(
+                        "LLM returned 0 facts for an obvious preference statement; applying simple fallback extraction"
+                    )
+                    return [fallback_fact], usage
                 logger.debug(
                     f"LLM response missing 'facts' field or returned empty list. "
                     f"Response: {extraction_response_json}. "

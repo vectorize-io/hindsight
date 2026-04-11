@@ -175,6 +175,66 @@ async def test_none_event_date_with_empty_facts_no_crash():
 
 
 @pytest.mark.asyncio
+async def test_empty_facts_falls_back_for_simple_preference_statement():
+    """An empty LLM response should still preserve obvious one-line preferences."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Alex hates pizza.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2024, 11, 13, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert facts[0].fact == "Alex hates pizza"
+    assert facts[0].fact_type == "world"
+    assert facts[0].entities is not None
+    assert facts[0].entities[0].text == "Alex"
+
+
+@pytest.mark.asyncio
+async def test_empty_facts_falls_back_for_simple_declarative_statement():
+    """An empty LLM response should still preserve obvious one-line world facts."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=1)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Pizza is a popular Italian food.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2024, 11, 13, tzinfo=timezone.utc),
+            context="",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert facts[0].fact == "Pizza is a popular Italian food"
+    assert facts[0].fact_type == "world"
+    assert facts[0].entities is not None
+    assert facts[0].entities[0].text == "Pizza"
+
+
+@pytest.mark.asyncio
 async def test_none_event_date_with_valid_facts_no_crash():
     """
     When event_date is None but the LLM returns valid facts,
