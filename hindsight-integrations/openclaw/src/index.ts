@@ -132,6 +132,11 @@ const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 // Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
 // blocks) so agent_end can look them up — event.messages in agent_end is clean history.
 const senderIdBySession = new Map<string, string>();
+const sessionIdentityBySession = new Map<
+  string,
+  Pick<PluginHookAgentContext, 'senderId' | 'messageProvider' | 'channelId'>
+>();
+const skipHindsightTurnBySession = new Map<string, string>();
 const documentSequenceBySession = new Map<string, number>();
 
 // Guard against duplicate hook registration within a single runtime load.
@@ -583,18 +588,28 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
 }
 
 /**
- * Derive a bank ID from the agent context.
- * Uses configurable dynamicBankGranularity to determine bank segmentation.
- * Falls back to default bank when context is unavailable.
- */
-/**
  * Parse the OpenClaw sessionKey to extract context fields.
  * Format: "agent:{agentId}:{provider}:{channelType}:{channelId}[:{extra}]"
  * Example: "agent:c0der:telegram:group:-1003825475854:topic:42"
  */
-function parseSessionKey(sessionKey: string): { agentId?: string; provider?: string; channel?: string } {
+export function parseSessionKey(sessionKey: string): { agentId?: string; provider?: string; channel?: string } {
   const parts = sessionKey.split(':');
-  if (parts.length < 5 || parts[0] !== 'agent') return {};
+  if (parts[0] !== 'agent') return {};
+  if (parts.length === 3 && parts[2] === 'main') {
+    return {
+      agentId: parts[1],
+      provider: 'main',
+      channel: 'main',
+    };
+  }
+  if (parts.length >= 4 && ['cron', 'heartbeat', 'subagent'].includes(parts[2])) {
+    return {
+      agentId: parts[1],
+      provider: parts[2],
+      channel: parts.slice(3).join(':'),
+    };
+  }
+  if (parts.length < 5) return {};
   // parts[1] = agentId, parts[2] = provider, parts[3] = channelType, parts[4..] = channelId + extras
   return {
     agentId: parts[1],
@@ -604,6 +619,105 @@ function parseSessionKey(sessionKey: string): { agentId?: string; provider?: str
   };
 }
 
+export function extractTelegramDirectSenderId(channelId: string | undefined): string | undefined {
+  if (typeof channelId !== 'string') return undefined;
+  const match = channelId.match(/^direct:([^:]+)$/);
+  return match?.[1];
+}
+
+export function resolveSessionIdentity(
+  ctx: PluginHookAgentContext | undefined,
+): PluginHookAgentContext | undefined {
+  if (!ctx) return undefined;
+
+  const sessionParsed = ctx.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
+  const messageProvider = ctx.messageProvider || sessionParsed.provider;
+  const channelId = ctx.channelId || sessionParsed.channel;
+  const senderId =
+    ctx.senderId ||
+    (messageProvider === 'telegram' ? extractTelegramDirectSenderId(channelId) : undefined);
+
+  return {
+    ...ctx,
+    agentId: ctx.agentId || sessionParsed.agentId,
+    messageProvider,
+    channelId,
+    senderId,
+  };
+}
+
+export function getIdentitySkipReason(
+  ctx: PluginHookAgentContext | undefined,
+): { resolvedCtx: PluginHookAgentContext | undefined; reason?: string } {
+  const resolvedCtx = resolveSessionIdentity(ctx);
+  const sessionKey = resolvedCtx?.sessionKey;
+
+  if (typeof sessionKey === 'string') {
+    if (/^agent:[^:]+:(cron|heartbeat|subagent):/i.test(sessionKey)) {
+      return { resolvedCtx, reason: `operational session ${sessionKey}` };
+    }
+    if (/^agent:[^:]+:main$/i.test(sessionKey)) {
+      return { resolvedCtx, reason: `internal main session ${sessionKey}` };
+    }
+    if (/^temp:/i.test(sessionKey)) {
+      return { resolvedCtx, reason: `ephemeral temp session ${sessionKey}` };
+    }
+  }
+
+  if (resolvedCtx?.messageProvider && ['cron', 'heartbeat', 'subagent', 'main'].includes(resolvedCtx.messageProvider)) {
+    return { resolvedCtx, reason: `operational provider ${resolvedCtx.messageProvider}` };
+  }
+  if (!resolvedCtx?.messageProvider || resolvedCtx.messageProvider === 'unknown') {
+    return { resolvedCtx, reason: 'missing stable message provider' };
+  }
+  if (!resolvedCtx?.senderId || resolvedCtx.senderId === 'anonymous') {
+    return { resolvedCtx, reason: 'missing stable sender identity' };
+  }
+  if (
+    resolvedCtx.messageProvider === 'telegram' &&
+    typeof resolvedCtx.channelId === 'string' &&
+    resolvedCtx.channelId.startsWith('direct:')
+  ) {
+    const directSenderId = extractTelegramDirectSenderId(resolvedCtx.channelId);
+    if (!directSenderId || directSenderId !== resolvedCtx.senderId) {
+      return {
+        resolvedCtx,
+        reason: `telegram direct identity mismatch (${resolvedCtx.channelId} vs ${resolvedCtx.senderId})`,
+      };
+    }
+  }
+
+  return { resolvedCtx, reason: undefined };
+}
+
+export function isEphemeralOperationalText(text: string | undefined): boolean {
+  if (!text || typeof text !== 'string') return false;
+
+  const normalized = text
+    .replace(/\[role:\s*[^\]]+\]\s*/gi, '')
+    .replace(/\[[a-z]+:end\]\s*/gi, '')
+    .trim();
+
+  return [
+    /^A new session was started via \/(?:new|reset)\./i,
+    /^Based on this conversation, generate a short 1-2/i,
+    /^This (?:script|task|job|workflow) updates .* index/i,
+  ].some(pattern => pattern.test(normalized));
+}
+
+function setCappedMapValue<K, V>(map: Map<K, V>, key: K, value: V): void {
+  map.set(key, value);
+  if (map.size > MAX_TRACKED_SESSIONS) {
+    const oldest = map.keys().next().value;
+    if (oldest) map.delete(oldest);
+  }
+}
+
+/**
+ * Derive a bank ID from the agent context.
+ * Uses configurable dynamicBankGranularity to determine bank segmentation.
+ * Falls back to default bank when context is unavailable.
+ */
 export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConfig: PluginConfig): string {
   if (pluginConfig.dynamicBankId === false) {
     return getStaticBankId(pluginConfig);
@@ -614,6 +728,7 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
     return getDefaultBankId(pluginConfig);
   }
 
+  const resolvedCtx = resolveSessionIdentity(ctx);
   const fields = pluginConfig.dynamicBankGranularity?.length ? pluginConfig.dynamicBankGranularity : ['agent', 'channel', 'user'];
 
   // Validate field names at runtime — typos silently produce 'unknown' segments
@@ -625,18 +740,18 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
   }
 
   // Parse sessionKey as fallback when direct context fields are missing
-  const sessionParsed = ctx?.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
+  const sessionParsed = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
 
   // Warn when 'user' is in active fields but senderId is missing — bank ID will contain "anonymous"
-  if (fields.includes('user') && ctx && !ctx.senderId) {
+  if (fields.includes('user') && resolvedCtx && !resolvedCtx.senderId) {
     debug('[Hindsight] senderId not available in context — bank ID will use "anonymous". Ensure your OpenClaw provider passes senderId.');
   }
 
   const fieldMap: Record<string, string> = {
-    agent: ctx?.agentId || sessionParsed.agentId || 'default',
-    channel: ctx?.channelId || sessionParsed.channel || 'unknown',
-    user: ctx?.senderId || 'anonymous',
-    provider: ctx?.messageProvider || sessionParsed.provider || 'unknown',
+    agent: resolvedCtx?.agentId || sessionParsed.agentId || 'default',
+    channel: resolvedCtx?.channelId || sessionParsed.channel || 'unknown',
+    user: resolvedCtx?.senderId || 'anonymous',
+    provider: resolvedCtx?.messageProvider || sessionParsed.provider || 'unknown',
   };
 
   const baseBankId = fields
@@ -1197,6 +1312,51 @@ export default function (api: MoltbotPluginAPI) {
     debug('[Hindsight] Registering agent hooks...');
     log.info('registering agent hooks');
 
+    api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
+      try {
+        const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        const baseCtx = ctx || (sessionKey ? ({ sessionKey } as PluginHookAgentContext) : undefined);
+        const cachedSessionIdentity = sessionKey ? sessionIdentityBySession.get(sessionKey) : undefined;
+        const effectiveCtx = resolveSessionIdentity(
+          cachedSessionIdentity
+            ? {
+                ...baseCtx,
+                senderId: baseCtx?.senderId || cachedSessionIdentity.senderId,
+                messageProvider: cachedSessionIdentity.messageProvider ?? baseCtx?.messageProvider,
+                channelId: cachedSessionIdentity.channelId ?? baseCtx?.channelId,
+              }
+            : baseCtx,
+        );
+
+        if (sessionKey && effectiveCtx && (effectiveCtx.messageProvider || effectiveCtx.channelId || effectiveCtx.senderId)) {
+          setCappedMapValue(sessionIdentityBySession, sessionKey, {
+            senderId: effectiveCtx.senderId,
+            messageProvider: effectiveCtx.messageProvider,
+            channelId: effectiveCtx.channelId,
+          });
+          if (effectiveCtx.senderId) {
+            setCappedMapValue(senderIdBySession, sessionKey, effectiveCtx.senderId);
+          }
+        }
+
+        const { resolvedCtx, reason } = getIdentitySkipReason(effectiveCtx);
+        if (sessionKey && reason) {
+          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
+          debug(`[Hindsight] before_agent_start skipping session ${sessionKey}: ${reason}`);
+          return;
+        }
+        if (!resolvedCtx) {
+          return;
+        }
+        if (sessionKey) {
+          skipHindsightTurnBySession.delete(sessionKey);
+        }
+        const bankId = deriveBankId(resolvedCtx, pluginConfig);
+        debug(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId}`);
+      } catch (error) {
+        log.warn(`before_agent_start identity resolution error: ${error}`);
+      }
+    });
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on('before_prompt_build', async (event: any, ctx?: PluginHookAgentContext) => {
@@ -1231,25 +1391,54 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from the inbound metadata
-        // block when it's missing (agent-phase hooks don't carry senderId in ctx directly).
-        const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
-        const effectiveCtxForRecall = senderIdFromPrompt ? { ...ctx, senderId: senderIdFromPrompt } : ctx;
+        const sessionKeyForCache = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        const skipTurnReason = sessionKeyForCache ? skipHindsightTurnBySession.get(sessionKeyForCache) : undefined;
+        const canRetryIdentityResolution = typeof skipTurnReason === 'string' && skipTurnReason.startsWith('missing stable ');
+        if (skipTurnReason && !canRetryIdentityResolution) {
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${skipTurnReason}`);
+          return;
+        }
 
-        // Cache the resolved sender ID keyed by sessionKey so agent_end can use it.
-        // event.messages in agent_end is clean history without the metadata blocks.
-        const resolvedSenderId = effectiveCtxForRecall?.senderId;
-        const sessionKeyForCache = ctx?.sessionKey;
-        if (resolvedSenderId && sessionKeyForCache) {
-          senderIdBySession.set(sessionKeyForCache, resolvedSenderId);
-          if (senderIdBySession.size > MAX_TRACKED_SESSIONS) {
-            const oldest = senderIdBySession.keys().next().value;
-            if (oldest) senderIdBySession.delete(oldest);
+        const cachedSessionIdentity = sessionKeyForCache ? sessionIdentityBySession.get(sessionKeyForCache) : undefined;
+        const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
+        let effectiveCtxForRecall = ctx;
+        if (cachedSessionIdentity) {
+          effectiveCtxForRecall = {
+            ...effectiveCtxForRecall,
+            senderId: effectiveCtxForRecall?.senderId || cachedSessionIdentity.senderId || senderIdFromPrompt,
+            messageProvider: cachedSessionIdentity.messageProvider ?? effectiveCtxForRecall?.messageProvider,
+            channelId: cachedSessionIdentity.channelId ?? effectiveCtxForRecall?.channelId,
+          };
+        } else if (senderIdFromPrompt) {
+          effectiveCtxForRecall = { ...effectiveCtxForRecall, senderId: senderIdFromPrompt };
+        }
+
+        const resolvedCtxForRecall = resolveSessionIdentity(effectiveCtxForRecall);
+        if (resolvedCtxForRecall && sessionKeyForCache && (resolvedCtxForRecall.messageProvider || resolvedCtxForRecall.channelId || resolvedCtxForRecall.senderId)) {
+          setCappedMapValue(sessionIdentityBySession, sessionKeyForCache, {
+            senderId: resolvedCtxForRecall.senderId,
+            messageProvider: resolvedCtxForRecall.messageProvider,
+            channelId: resolvedCtxForRecall.channelId,
+          });
+          if (resolvedCtxForRecall.senderId) {
+            setCappedMapValue(senderIdBySession, sessionKeyForCache, resolvedCtxForRecall.senderId);
           }
         }
 
-        const bankId = deriveBankId(effectiveCtxForRecall, pluginConfig);
-        debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
+        const { reason: identitySkipReason } = getIdentitySkipReason(resolvedCtxForRecall);
+        if (identitySkipReason) {
+          if (sessionKeyForCache) {
+            setCappedMapValue(skipHindsightTurnBySession, sessionKeyForCache, identitySkipReason);
+          }
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${identitySkipReason}`);
+          return;
+        }
+        if (sessionKeyForCache) {
+          skipHindsightTurnBySession.delete(sessionKeyForCache);
+        }
+
+        const bankId = deriveBankId(resolvedCtxForRecall, pluginConfig);
+        debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${resolvedCtxForRecall?.messageProvider}/${resolvedCtxForRecall?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
         debug(`[Hindsight] event.context keys: ${Object.keys(event.context ?? {}).join(', ')}`);
 
@@ -1259,6 +1448,10 @@ export default function (api: MoltbotPluginAPI) {
         const extracted = extractRecallQuery(event.rawMessage, event.prompt);
         if (!extracted) {
           debug('[Hindsight] extractRecallQuery returned null, skipping recall');
+          return;
+        }
+        if (isEphemeralOperationalText(extracted)) {
+          debug('[Hindsight] Recall query is operational/ephemeral noise, skipping recall');
           return;
         }
         debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
@@ -1289,7 +1482,7 @@ export default function (api: MoltbotPluginAPI) {
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(effectiveCtxForRecall);
+        const client = await clientGlobal.getClientForContext(resolvedCtxForRecall);
         if (!client) {
           debug('[Hindsight] Client not initialized, skipping auto-recall');
           return;
@@ -1392,15 +1585,58 @@ ${memoriesFormatted}
           }
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from the session cache.
-        // event.messages in agent_end is clean history without OpenClaw's metadata blocks;
-        // the sender ID was captured during before_prompt_build where event.prompt has them.
         const sessionKeyForLookup = effectiveCtx?.sessionKey;
+        const skipTurnReason = sessionKeyForLookup ? skipHindsightTurnBySession.get(sessionKeyForLookup) : undefined;
+        const canRetryIdentityResolution = typeof skipTurnReason === 'string' && skipTurnReason.startsWith('missing stable ');
+        if (skipTurnReason && !canRetryIdentityResolution) {
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${skipTurnReason}`);
+          if (sessionKeyForLookup) {
+            skipHindsightTurnBySession.delete(sessionKeyForLookup);
+          }
+          return;
+        }
+
+        const cachedSessionIdentity = sessionKeyForLookup ? sessionIdentityBySession.get(sessionKeyForLookup) : undefined;
         const senderIdFromCache = !effectiveCtx?.senderId && sessionKeyForLookup
           ? senderIdBySession.get(sessionKeyForLookup)
           : undefined;
-        const effectiveCtxForRetain = senderIdFromCache ? { ...effectiveCtx, senderId: senderIdFromCache } : effectiveCtx;
-        const bankId = deriveBankId(effectiveCtxForRetain, pluginConfig);
+        let effectiveCtxForRetain = effectiveCtx;
+        if (cachedSessionIdentity) {
+          effectiveCtxForRetain = {
+            ...effectiveCtxForRetain,
+            senderId: effectiveCtxForRetain?.senderId || cachedSessionIdentity.senderId || senderIdFromCache,
+            messageProvider: cachedSessionIdentity.messageProvider ?? effectiveCtxForRetain?.messageProvider,
+            channelId: cachedSessionIdentity.channelId ?? effectiveCtxForRetain?.channelId,
+          };
+        } else if (senderIdFromCache) {
+          effectiveCtxForRetain = { ...effectiveCtxForRetain, senderId: senderIdFromCache };
+        }
+
+        const resolvedCtxForRetain = resolveSessionIdentity(effectiveCtxForRetain);
+        if (resolvedCtxForRetain && sessionKeyForLookup && (resolvedCtxForRetain.messageProvider || resolvedCtxForRetain.channelId || resolvedCtxForRetain.senderId)) {
+          setCappedMapValue(sessionIdentityBySession, sessionKeyForLookup, {
+            senderId: resolvedCtxForRetain.senderId,
+            messageProvider: resolvedCtxForRetain.messageProvider,
+            channelId: resolvedCtxForRetain.channelId,
+          });
+          if (resolvedCtxForRetain.senderId) {
+            setCappedMapValue(senderIdBySession, sessionKeyForLookup, resolvedCtxForRetain.senderId);
+          }
+        }
+
+        const { reason: identitySkipReason } = getIdentitySkipReason(resolvedCtxForRetain);
+        if (identitySkipReason) {
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${identitySkipReason}`);
+          if (sessionKeyForLookup) {
+            skipHindsightTurnBySession.delete(sessionKeyForLookup);
+          }
+          return;
+        }
+        if (sessionKeyForLookup) {
+          skipHindsightTurnBySession.delete(sessionKeyForLookup);
+        }
+
+        const bankId = deriveBankId(resolvedCtxForRetain, pluginConfig);
         debug(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
 
         if (event.success === false) {
@@ -1427,13 +1663,7 @@ ${memoriesFormatted}
         if (retainEveryN > 1) {
           const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || 'session'}`;
           const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
-          turnCountBySession.set(sessionTrackingKey, turnCount);
-          if (turnCountBySession.size > MAX_TRACKED_SESSIONS) {
-            const oldestKey = turnCountBySession.keys().next().value;
-            if (oldestKey) {
-              turnCountBySession.delete(oldestKey);
-            }
-          }
+          setCappedMapValue(turnCountBySession, sessionTrackingKey, turnCount);
 
           if (turnCount % retainEveryN !== 0) {
             const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
@@ -1458,6 +1688,11 @@ ${memoriesFormatted}
         }
         const { transcript, messageCount } = retention;
 
+        if (isEphemeralOperationalText(transcript)) {
+          debug('[Hindsight Hook] Transcript is operational/ephemeral noise, skipping retention');
+          return;
+        }
+
         // Wait for client to be ready
         const clientGlobal = (global as any).__hindsightClient;
         if (!clientGlobal) {
@@ -1468,7 +1703,7 @@ ${memoriesFormatted}
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(effectiveCtxForRetain);
+        const client = await clientGlobal.getClientForContext(resolvedCtxForRetain);
         if (!client) {
           log.warn('client not initialized, skipping retain');
           return;
@@ -1479,7 +1714,7 @@ ${memoriesFormatted}
         const retainRequest = buildRetainRequest(
           transcript,
           messageCount,
-          effectiveCtxForRetain,
+          resolvedCtxForRetain,
           pluginConfig,
           retainNow,
           {
@@ -1544,13 +1779,7 @@ function getSessionDocumentBase(effectiveCtx: PluginHookAgentContext | undefined
 function nextDocumentSequence(effectiveCtx: PluginHookAgentContext | undefined): number {
   const sequenceKey = effectiveCtx?.sessionKey || 'session';
   const next = (documentSequenceBySession.get(sequenceKey) || 0) + 1;
-  documentSequenceBySession.set(sequenceKey, next);
-  if (documentSequenceBySession.size > MAX_TRACKED_SESSIONS) {
-    const oldestKey = documentSequenceBySession.keys().next().value;
-    if (oldestKey) {
-      documentSequenceBySession.delete(oldestKey);
-    }
-  }
+  setCappedMapValue(documentSequenceBySession, sequenceKey, next);
   return next;
 }
 
@@ -1568,14 +1797,15 @@ export function buildRetainRequest(
   now = Date.now(),
   options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
 ): RetainRequest {
-  const parsedSession = effectiveCtx?.sessionKey ? parseSessionKey(effectiveCtx.sessionKey) : {};
-  const turnIndex = options?.turnIndex ?? nextDocumentSequence(effectiveCtx);
+  const resolvedCtx = resolveSessionIdentity(effectiveCtx);
+  const parsedSession = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
+  const turnIndex = options?.turnIndex ?? nextDocumentSequence(resolvedCtx);
   const retentionScope = options?.retentionScope || 'turn';
-  const documentBase = getSessionDocumentBase(effectiveCtx);
+  const documentBase = getSessionDocumentBase(resolvedCtx);
   const documentKind = retentionScope === 'window' ? 'window' : 'turn';
   const documentId = `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, '0')}`;
-  const channelId = effectiveCtx?.channelId || parsedSession.channel;
-  const provider = effectiveCtx?.messageProvider || parsedSession.provider;
+  const channelId = resolvedCtx?.channelId || parsedSession.channel;
+  const provider = resolvedCtx?.messageProvider || parsedSession.provider;
   const threadId = extractThreadId(channelId);
 
   return {
@@ -1587,13 +1817,13 @@ export function buildRetainRequest(
       source: pluginConfig.retainSource || 'openclaw',
       retention_scope: retentionScope,
       turn_index: String(turnIndex),
-      session_key: effectiveCtx?.sessionKey,
-      agent_id: effectiveCtx?.agentId || parsedSession.agentId,
+      session_key: resolvedCtx?.sessionKey,
+      agent_id: resolvedCtx?.agentId || parsedSession.agentId,
       provider,
-      channel_type: effectiveCtx?.messageProvider,
+      channel_type: provider,
       channel_id: channelId,
       thread_id: threadId,
-      sender_id: effectiveCtx?.senderId,
+      sender_id: resolvedCtx?.senderId,
       ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
     tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,

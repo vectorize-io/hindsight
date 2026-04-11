@@ -8,6 +8,12 @@ import {
   composeRecallQuery,
   truncateRecallQuery,
   buildRetainRequest,
+  parseSessionKey,
+  extractTelegramDirectSenderId,
+  resolveSessionIdentity,
+  getIdentitySkipReason,
+  isEphemeralOperationalText,
+  deriveBankId,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -498,6 +504,90 @@ describe('truncateRecallQuery', () => {
     const truncated = truncateRecallQuery(composed, latest, 180);
     expect(truncated).toContain(latest);
     expect(truncated.length).toBeLessThanOrEqual(180);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session identity + operational guardrails
+// ---------------------------------------------------------------------------
+
+describe('session identity helpers', () => {
+  const baseConfig: PluginConfig = {
+    dynamicBankId: true,
+    dynamicBankGranularity: ['agent', 'channel', 'user'],
+  };
+
+  it('parses main sessions', () => {
+    expect(parseSessionKey('agent:main:main')).toEqual({
+      agentId: 'main',
+      provider: 'main',
+      channel: 'main',
+    });
+  });
+
+  it('parses operational cron-like sessions', () => {
+    expect(parseSessionKey('agent:worker:cron:nightly:cleanup')).toEqual({
+      agentId: 'worker',
+      provider: 'cron',
+      channel: 'nightly:cleanup',
+    });
+  });
+
+  it('extracts telegram direct sender ids from channel ids', () => {
+    expect(extractTelegramDirectSenderId('direct:12345')).toBe('12345');
+    expect(extractTelegramDirectSenderId('group:12345')).toBeUndefined();
+  });
+
+  it('resolves telegram direct identity from session key when senderId is missing', () => {
+    const resolved = resolveSessionIdentity({
+      agentId: 'main',
+      sessionKey: 'agent:main:telegram:direct:12345',
+    });
+
+    expect(resolved).toMatchObject({
+      agentId: 'main',
+      messageProvider: 'telegram',
+      channelId: 'direct:12345',
+      senderId: '12345',
+    });
+  });
+
+  it('derives bank ids from resolved telegram direct identity', () => {
+    const bankId = deriveBankId(
+      {
+        agentId: 'main',
+        sessionKey: 'agent:main:telegram:direct:12345',
+      },
+      baseConfig,
+    );
+
+    expect(bankId).toBe('main::direct%3A12345::12345');
+  });
+
+  it('marks operational main sessions as skippable', () => {
+    const result = getIdentitySkipReason({ sessionKey: 'agent:main:main' });
+    expect(result.reason).toBe('internal main session agent:main:main');
+  });
+
+  it('marks telegram direct sender mismatches as skippable', () => {
+    const result = getIdentitySkipReason({
+      sessionKey: 'agent:main:telegram:direct:12345',
+      messageProvider: 'telegram',
+      channelId: 'direct:12345',
+      senderId: '99999',
+    });
+
+    expect(result.reason).toContain('telegram direct identity mismatch');
+  });
+
+  it('detects ephemeral operational text with or without transcript wrappers', () => {
+    expect(isEphemeralOperationalText('A new session was started via /reset.')).toBe(true);
+    expect(
+      isEphemeralOperationalText(
+        '[role: user]\nA new session was started via /new.\n[user:end]',
+      ),
+    ).toBe(true);
+    expect(isEphemeralOperationalText('Tell me what I said about dark mode.')).toBe(false);
   });
 });
 
