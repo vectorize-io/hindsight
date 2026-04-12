@@ -1210,7 +1210,7 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         try:
             import mlx.core  # noqa: F401
             import mlx_lm  # noqa: F401
-        except ImportError:
+        except ModuleNotFoundError:
             raise ImportError(
                 "mlx and mlx-lm are required for JinaMLXCrossEncoder. "
                 "Install with: pip install mlx>=0.31.0 mlx-lm>=0.31.1 safetensors>=0.6.2"
