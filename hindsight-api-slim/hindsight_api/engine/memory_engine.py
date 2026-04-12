@@ -2765,7 +2765,8 @@ class MemoryEngine(MemoryEngineInterface):
             embedding_span.set_attribute("hindsight.query", query[:100])
 
             try:
-                query_embedding = embedding_utils.generate_embedding(self.embeddings, query)
+                query_embeddings = await embedding_utils.generate_embeddings_batch(self.embeddings, [query])
+                query_embedding = query_embeddings[0]
                 step_duration = time.time() - step_start
                 log_buffer.append(f"  [1] Generate query embedding: {step_duration:.3f}s")
             finally:
