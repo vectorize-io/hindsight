@@ -129,14 +129,13 @@ const turnCountBySession = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 10_000;
 const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
-// Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
-// blocks) so agent_end can look them up — event.messages in agent_end is clean history.
-const senderIdBySession = new Map<string, string>();
-const sessionIdentityBySession = new Map<
-  string,
-  Pick<PluginHookAgentContext, 'senderId' | 'messageProvider' | 'channelId'>
->();
-const skipHindsightTurnBySession = new Map<string, string>();
+type SessionIdentityRecord = Pick<PluginHookAgentContext, 'senderId' | 'messageProvider' | 'channelId'>;
+export type IdentitySkipReason =
+  | { kind: 'retryable'; detail: 'missing stable message provider' | 'missing stable sender identity' }
+  | { kind: 'final'; detail: string };
+
+const sessionIdentityBySession = new Map<string, SessionIdentityRecord>();
+const skipHindsightTurnBySession = new Map<string, IdentitySkipReason>();
 const documentSequenceBySession = new Map<string, number>();
 
 // Guard against duplicate hook registration within a single runtime load.
@@ -592,7 +591,13 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
  * Format: "agent:{agentId}:{provider}:{channelType}:{channelId}[:{extra}]"
  * Example: "agent:c0der:telegram:group:-1003825475854:topic:42"
  */
-export function parseSessionKey(sessionKey: string): { agentId?: string; provider?: string; channel?: string } {
+export interface ParsedSessionKey {
+  agentId?: string;
+  provider?: string;
+  channel?: string;
+}
+
+export function parseSessionKey(sessionKey: string): ParsedSessionKey {
   const parts = sessionKey.split(':');
   if (parts[0] !== 'agent') return {};
   if (parts.length === 3 && parts[2] === 'main') {
@@ -646,32 +651,124 @@ export function resolveSessionIdentity(
   };
 }
 
+function retryableSkipReason(
+  detail: 'missing stable message provider' | 'missing stable sender identity',
+): IdentitySkipReason {
+  return { kind: 'retryable', detail };
+}
+
+function finalSkipReason(detail: string): IdentitySkipReason {
+  return { kind: 'final', detail };
+}
+
+function formatIdentitySkipReason(reason: IdentitySkipReason | undefined): string | undefined {
+  return reason?.detail;
+}
+
+function isRetryableIdentitySkipReason(reason: IdentitySkipReason | undefined): boolean {
+  return reason?.kind === 'retryable';
+}
+
+function cacheSessionIdentity(sessionKey: string | undefined, resolvedCtx: PluginHookAgentContext | undefined): void {
+  if (!sessionKey || !resolvedCtx) return;
+  if (!resolvedCtx.messageProvider && !resolvedCtx.channelId && !resolvedCtx.senderId) return;
+
+  setCappedMapValue(sessionIdentityBySession, sessionKey, {
+    senderId: resolvedCtx.senderId,
+    messageProvider: resolvedCtx.messageProvider,
+    channelId: resolvedCtx.channelId,
+  });
+}
+
+interface ResolveAndCacheIdentityOptions {
+  sessionKey?: string;
+  ctx?: PluginHookAgentContext;
+  senderIdHint?: string;
+  dispatchChannel?: string;
+}
+
+function resolveAndCacheIdentity(
+  options: ResolveAndCacheIdentityOptions,
+): {
+  effectiveCtx: PluginHookAgentContext | undefined;
+  resolvedCtx: PluginHookAgentContext | undefined;
+  skipReason?: IdentitySkipReason;
+} {
+  const sessionKey = options.sessionKey ?? options.ctx?.sessionKey;
+  const parsedSession = sessionKey ? parseSessionKey(sessionKey) : {};
+  const cachedIdentity = sessionKey ? sessionIdentityBySession.get(sessionKey) : undefined;
+  const baseCtx = options.ctx || (sessionKey ? ({ sessionKey } as PluginHookAgentContext) : undefined);
+  const effectiveCtx =
+    baseCtx || cachedIdentity || options.senderIdHint || options.dispatchChannel || sessionKey
+      ? {
+          ...baseCtx,
+          sessionKey: baseCtx?.sessionKey || sessionKey,
+          agentId: baseCtx?.agentId || parsedSession.agentId,
+          messageProvider: baseCtx?.messageProvider ?? cachedIdentity?.messageProvider,
+          channelId: baseCtx?.channelId ?? cachedIdentity?.channelId,
+          senderId: baseCtx?.senderId || cachedIdentity?.senderId || options.senderIdHint,
+        }
+      : undefined;
+  const resolvedCtx = resolveSessionIdentity(
+    effectiveCtx
+      ? {
+          ...effectiveCtx,
+          messageProvider: effectiveCtx.messageProvider ?? parsedSession.provider ?? options.dispatchChannel,
+          channelId: effectiveCtx.channelId ?? parsedSession.channel,
+        }
+      : undefined,
+  );
+
+  if (parsedSession.provider && options.dispatchChannel && parsedSession.provider !== options.dispatchChannel) {
+    const skipReason = finalSkipReason(
+      `dispatch surface ${options.dispatchChannel} does not match session provider ${parsedSession.provider}`,
+    );
+    if (sessionKey) {
+      setCappedMapValue(skipHindsightTurnBySession, sessionKey, skipReason);
+    }
+    return { effectiveCtx, resolvedCtx, skipReason };
+  }
+
+  cacheSessionIdentity(sessionKey, resolvedCtx);
+
+  const { reason: skipReason } = getIdentitySkipReason(resolvedCtx);
+  if (sessionKey) {
+    if (skipReason) {
+      setCappedMapValue(skipHindsightTurnBySession, sessionKey, skipReason);
+    } else {
+      skipHindsightTurnBySession.delete(sessionKey);
+    }
+  }
+
+  return { effectiveCtx, resolvedCtx, skipReason };
+}
+
 export function getIdentitySkipReason(
   ctx: PluginHookAgentContext | undefined,
-): { resolvedCtx: PluginHookAgentContext | undefined; reason?: string } {
+): { resolvedCtx: PluginHookAgentContext | undefined; reason?: IdentitySkipReason } {
   const resolvedCtx = resolveSessionIdentity(ctx);
   const sessionKey = resolvedCtx?.sessionKey;
 
   if (typeof sessionKey === 'string') {
-    if (/^agent:[^:]+:(cron|heartbeat|subagent):/i.test(sessionKey)) {
-      return { resolvedCtx, reason: `operational session ${sessionKey}` };
+    if (/^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`operational session ${sessionKey}`) };
     }
-    if (/^agent:[^:]+:main$/i.test(sessionKey)) {
-      return { resolvedCtx, reason: `internal main session ${sessionKey}` };
+    if (/^agent:[^:]+:main$/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`internal main session ${sessionKey}`) };
     }
-    if (/^temp:/i.test(sessionKey)) {
-      return { resolvedCtx, reason: `ephemeral temp session ${sessionKey}` };
+    if (/^temp:/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`ephemeral temp session ${sessionKey}`) };
     }
   }
 
   if (resolvedCtx?.messageProvider && ['cron', 'heartbeat', 'subagent', 'main'].includes(resolvedCtx.messageProvider)) {
-    return { resolvedCtx, reason: `operational provider ${resolvedCtx.messageProvider}` };
+    return { resolvedCtx, reason: finalSkipReason(`operational provider ${resolvedCtx.messageProvider}`) };
   }
   if (!resolvedCtx?.messageProvider || resolvedCtx.messageProvider === 'unknown') {
-    return { resolvedCtx, reason: 'missing stable message provider' };
+    return { resolvedCtx, reason: retryableSkipReason('missing stable message provider') };
   }
   if (!resolvedCtx?.senderId || resolvedCtx.senderId === 'anonymous') {
-    return { resolvedCtx, reason: 'missing stable sender identity' };
+    return { resolvedCtx, reason: retryableSkipReason('missing stable sender identity') };
   }
   if (
     resolvedCtx.messageProvider === 'telegram' &&
@@ -682,7 +779,9 @@ export function getIdentitySkipReason(
     if (!directSenderId || directSenderId !== resolvedCtx.senderId) {
       return {
         resolvedCtx,
-        reason: `telegram direct identity mismatch (${resolvedCtx.channelId} vs ${resolvedCtx.senderId})`,
+        reason: finalSkipReason(
+          `telegram direct identity mismatch (${resolvedCtx.channelId} vs ${resolvedCtx.senderId})`,
+        ),
       };
     }
   }
@@ -698,6 +797,8 @@ export function isEphemeralOperationalText(text: string | undefined): boolean {
     .replace(/\[[a-z]+:end\]\s*/gi, '')
     .trim();
 
+  // These prefixes are OpenClaw-generated operational/session-bootstrap strings,
+  // not user-authored content, so they should not create recall/retain entries.
   return [
     /^A new session was started via \/(?:new|reset)\./i,
     /^Based on this conversation, generate a short 1-2/i,
@@ -706,6 +807,7 @@ export function isEphemeralOperationalText(text: string | undefined): boolean {
 }
 
 function setCappedMapValue<K, V>(map: Map<K, V>, key: K, value: V): void {
+  // FIFO cap, not LRU: updating an existing key keeps its original insertion order.
   map.set(key, value);
   if (map.size > MAX_TRACKED_SESSIONS) {
     const oldest = map.keys().next().value;
@@ -1319,50 +1421,32 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        const parsedSession = parseSessionKey(sessionKey);
         const dispatchChannel =
           (typeof event?.channel === 'string' ? event.channel : undefined) ||
           ctx?.messageProvider ||
-          parsedSession.provider;
-        const dispatchCtx = resolveSessionIdentity({
-          ...ctx,
+          parseSessionKey(sessionKey).provider;
+        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
           sessionKey,
-          agentId: ctx?.agentId || parsedSession.agentId,
-          messageProvider: ctx?.messageProvider ?? parsedSession.provider ?? dispatchChannel,
-          channelId: ctx?.channelId || parsedSession.channel,
-          senderId:
-            (typeof event?.senderId === 'string' ? event.senderId : undefined) ||
-            ctx?.senderId,
+          ctx: {
+            ...ctx,
+            sessionKey,
+            senderId:
+              (typeof event?.senderId === 'string' ? event.senderId : undefined) ||
+              ctx?.senderId,
+          },
+          dispatchChannel,
         });
 
-        const surfaceMismatch = Boolean(
-          parsedSession.provider && dispatchChannel && parsedSession.provider !== dispatchChannel,
-        );
-        if (surfaceMismatch) {
-          const reason = `dispatch surface ${dispatchChannel} does not match session provider ${parsedSession.provider}`;
-          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
-          debug(`[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${reason}`);
+        if (skipReason) {
+          debug(
+            `[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`,
+          );
           return;
         }
-
-        const { resolvedCtx, reason } = getIdentitySkipReason(dispatchCtx);
-        if (reason) {
-          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
-          debug(`[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${reason}`);
-          return;
-        }
-
-        skipHindsightTurnBySession.delete(sessionKey);
         if (!resolvedCtx?.senderId || typeof resolvedCtx.senderId !== 'string') {
           return;
         }
 
-        setCappedMapValue(sessionIdentityBySession, sessionKey, {
-          senderId: resolvedCtx.senderId,
-          messageProvider: resolvedCtx.messageProvider,
-          channelId: resolvedCtx.channelId,
-        });
-        setCappedMapValue(senderIdBySession, sessionKey, resolvedCtx.senderId);
         debug(
           `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`,
         );
@@ -1374,41 +1458,14 @@ export default function (api: MoltbotPluginAPI) {
     api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
       try {
         const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
-        const baseCtx = ctx || (sessionKey ? ({ sessionKey } as PluginHookAgentContext) : undefined);
-        const cachedSessionIdentity = sessionKey ? sessionIdentityBySession.get(sessionKey) : undefined;
-        const effectiveCtx = resolveSessionIdentity(
-          cachedSessionIdentity
-            ? {
-                ...baseCtx,
-                senderId: baseCtx?.senderId || cachedSessionIdentity.senderId,
-                messageProvider: cachedSessionIdentity.messageProvider ?? baseCtx?.messageProvider,
-                channelId: cachedSessionIdentity.channelId ?? baseCtx?.channelId,
-              }
-            : baseCtx,
-        );
+        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({ sessionKey, ctx });
 
-        if (sessionKey && effectiveCtx && (effectiveCtx.messageProvider || effectiveCtx.channelId || effectiveCtx.senderId)) {
-          setCappedMapValue(sessionIdentityBySession, sessionKey, {
-            senderId: effectiveCtx.senderId,
-            messageProvider: effectiveCtx.messageProvider,
-            channelId: effectiveCtx.channelId,
-          });
-          if (effectiveCtx.senderId) {
-            setCappedMapValue(senderIdBySession, sessionKey, effectiveCtx.senderId);
-          }
-        }
-
-        const { resolvedCtx, reason } = getIdentitySkipReason(effectiveCtx);
-        if (sessionKey && reason) {
-          setCappedMapValue(skipHindsightTurnBySession, sessionKey, reason);
-          debug(`[Hindsight] before_agent_start skipping session ${sessionKey}: ${reason}`);
+        if (sessionKey && skipReason) {
+          debug(`[Hindsight] before_agent_start skipping session ${sessionKey}: ${formatIdentitySkipReason(skipReason)}`);
           return;
         }
         if (!resolvedCtx) {
           return;
-        }
-        if (sessionKey) {
-          skipHindsightTurnBySession.delete(sessionKey);
         }
         const bankId = deriveBankId(resolvedCtx, pluginConfig);
         debug(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId}`);
@@ -1452,48 +1509,20 @@ export default function (api: MoltbotPluginAPI) {
 
         const sessionKeyForCache = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
         const skipTurnReason = sessionKeyForCache ? skipHindsightTurnBySession.get(sessionKeyForCache) : undefined;
-        const canRetryIdentityResolution = typeof skipTurnReason === 'string' && skipTurnReason.startsWith('missing stable ');
-        if (skipTurnReason && !canRetryIdentityResolution) {
-          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${skipTurnReason}`);
+        if (skipTurnReason && !isRetryableIdentitySkipReason(skipTurnReason)) {
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${formatIdentitySkipReason(skipTurnReason)}`);
           return;
         }
 
-        const cachedSessionIdentity = sessionKeyForCache ? sessionIdentityBySession.get(sessionKeyForCache) : undefined;
         const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
-        let effectiveCtxForRecall = ctx;
-        if (cachedSessionIdentity) {
-          effectiveCtxForRecall = {
-            ...effectiveCtxForRecall,
-            senderId: effectiveCtxForRecall?.senderId || cachedSessionIdentity.senderId || senderIdFromPrompt,
-            messageProvider: cachedSessionIdentity.messageProvider ?? effectiveCtxForRecall?.messageProvider,
-            channelId: cachedSessionIdentity.channelId ?? effectiveCtxForRecall?.channelId,
-          };
-        } else if (senderIdFromPrompt) {
-          effectiveCtxForRecall = { ...effectiveCtxForRecall, senderId: senderIdFromPrompt };
-        }
-
-        const resolvedCtxForRecall = resolveSessionIdentity(effectiveCtxForRecall);
-        if (resolvedCtxForRecall && sessionKeyForCache && (resolvedCtxForRecall.messageProvider || resolvedCtxForRecall.channelId || resolvedCtxForRecall.senderId)) {
-          setCappedMapValue(sessionIdentityBySession, sessionKeyForCache, {
-            senderId: resolvedCtxForRecall.senderId,
-            messageProvider: resolvedCtxForRecall.messageProvider,
-            channelId: resolvedCtxForRecall.channelId,
-          });
-          if (resolvedCtxForRecall.senderId) {
-            setCappedMapValue(senderIdBySession, sessionKeyForCache, resolvedCtxForRecall.senderId);
-          }
-        }
-
-        const { reason: identitySkipReason } = getIdentitySkipReason(resolvedCtxForRecall);
+        const { resolvedCtx: resolvedCtxForRecall, skipReason: identitySkipReason } = resolveAndCacheIdentity({
+          sessionKey: sessionKeyForCache,
+          ctx,
+          senderIdHint: senderIdFromPrompt,
+        });
         if (identitySkipReason) {
-          if (sessionKeyForCache) {
-            setCappedMapValue(skipHindsightTurnBySession, sessionKeyForCache, identitySkipReason);
-          }
-          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${identitySkipReason}`);
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${formatIdentitySkipReason(identitySkipReason)}`);
           return;
-        }
-        if (sessionKeyForCache) {
-          skipHindsightTurnBySession.delete(sessionKeyForCache);
         }
 
         const bankId = deriveBankId(resolvedCtxForRecall, pluginConfig);
@@ -1646,46 +1675,19 @@ ${memoriesFormatted}
 
         const sessionKeyForLookup = effectiveCtx?.sessionKey;
         const skipTurnReason = sessionKeyForLookup ? skipHindsightTurnBySession.get(sessionKeyForLookup) : undefined;
-        const canRetryIdentityResolution = typeof skipTurnReason === 'string' && skipTurnReason.startsWith('missing stable ');
-        if (skipTurnReason && !canRetryIdentityResolution) {
-          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${skipTurnReason}`);
+        if (skipTurnReason && !isRetryableIdentitySkipReason(skipTurnReason)) {
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${formatIdentitySkipReason(skipTurnReason)}`);
           if (sessionKeyForLookup) {
             skipHindsightTurnBySession.delete(sessionKeyForLookup);
           }
           return;
         }
 
-        const cachedSessionIdentity = sessionKeyForLookup ? sessionIdentityBySession.get(sessionKeyForLookup) : undefined;
-        const senderIdFromCache = !effectiveCtx?.senderId && sessionKeyForLookup
-          ? senderIdBySession.get(sessionKeyForLookup)
-          : undefined;
-        let effectiveCtxForRetain = effectiveCtx;
-        if (cachedSessionIdentity) {
-          effectiveCtxForRetain = {
-            ...effectiveCtxForRetain,
-            senderId: effectiveCtxForRetain?.senderId || cachedSessionIdentity.senderId || senderIdFromCache,
-            messageProvider: cachedSessionIdentity.messageProvider ?? effectiveCtxForRetain?.messageProvider,
-            channelId: cachedSessionIdentity.channelId ?? effectiveCtxForRetain?.channelId,
-          };
-        } else if (senderIdFromCache) {
-          effectiveCtxForRetain = { ...effectiveCtxForRetain, senderId: senderIdFromCache };
-        }
+        const { effectiveCtx: effectiveCtxForRetain, resolvedCtx: resolvedCtxForRetain, skipReason: identitySkipReason } =
+          resolveAndCacheIdentity({ sessionKey: sessionKeyForLookup, ctx: effectiveCtx });
 
-        const resolvedCtxForRetain = resolveSessionIdentity(effectiveCtxForRetain);
-        if (resolvedCtxForRetain && sessionKeyForLookup && (resolvedCtxForRetain.messageProvider || resolvedCtxForRetain.channelId || resolvedCtxForRetain.senderId)) {
-          setCappedMapValue(sessionIdentityBySession, sessionKeyForLookup, {
-            senderId: resolvedCtxForRetain.senderId,
-            messageProvider: resolvedCtxForRetain.messageProvider,
-            channelId: resolvedCtxForRetain.channelId,
-          });
-          if (resolvedCtxForRetain.senderId) {
-            setCappedMapValue(senderIdBySession, sessionKeyForLookup, resolvedCtxForRetain.senderId);
-          }
-        }
-
-        const { reason: identitySkipReason } = getIdentitySkipReason(resolvedCtxForRetain);
         if (identitySkipReason) {
-          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${identitySkipReason}`);
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${formatIdentitySkipReason(identitySkipReason)}`);
           if (sessionKeyForLookup) {
             skipHindsightTurnBySession.delete(sessionKeyForLookup);
           }
@@ -1773,7 +1775,7 @@ ${memoriesFormatted}
         const retainRequest = buildRetainRequest(
           transcript,
           messageCount,
-          resolvedCtxForRetain,
+          effectiveCtxForRetain,
           pluginConfig,
           retainNow,
           {
@@ -1865,6 +1867,7 @@ export function buildRetainRequest(
   const documentId = `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, '0')}`;
   const channelId = resolvedCtx?.channelId || parsedSession.channel;
   const provider = resolvedCtx?.messageProvider || parsedSession.provider;
+  const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
 
   return {
@@ -1879,7 +1882,7 @@ export function buildRetainRequest(
       session_key: resolvedCtx?.sessionKey,
       agent_id: resolvedCtx?.agentId || parsedSession.agentId,
       provider,
-      channel_type: provider,
+      channel_type: channelType,
       channel_id: channelId,
       thread_id: threadId,
       sender_id: resolvedCtx?.senderId,

@@ -300,6 +300,19 @@ describe('buildRetainRequest', () => {
     expect(request.metadata?.source).toBe('openclaw');
     expect(request.tags).toBeUndefined();
   });
+
+  it('preserves provider fallback without backfilling channel_type from the session key', () => {
+    const request = buildRetainRequest('hello world', 1, {
+      sessionKey: 'agent:main:telegram:direct:12345',
+    }, {}, 1700000000000, { turnIndex: 1 });
+
+    expect(request.metadata).toMatchObject({
+      provider: 'telegram',
+      channel_type: undefined,
+      channel_id: 'direct:12345',
+      sender_id: '12345',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -566,10 +579,49 @@ describe('session identity helpers', () => {
 
   it('marks operational main sessions as skippable', () => {
     const result = getIdentitySkipReason({ sessionKey: 'agent:main:main' });
-    expect(result.reason).toBe('internal main session agent:main:main');
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'internal main session agent:main:main',
+    });
   });
 
-  it('marks telegram direct sender mismatches as skippable', () => {
+  it.each([
+    'agent:worker:cron:nightly:cleanup',
+    'agent:worker:heartbeat:node-1',
+    'agent:worker:subagent:abc123',
+  ])('marks operational sessions as final skips: %s', (sessionKey) => {
+    const result = getIdentitySkipReason({ sessionKey });
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: `operational session ${sessionKey}`,
+    });
+  });
+
+  it('marks temp sessions as final skips', () => {
+    const result = getIdentitySkipReason({ sessionKey: 'temp:compose:123' });
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'ephemeral temp session temp:compose:123',
+    });
+  });
+
+  it('marks missing provider as retryable', () => {
+    const result = getIdentitySkipReason({ senderId: '12345' });
+    expect(result.reason).toEqual({
+      kind: 'retryable',
+      detail: 'missing stable message provider',
+    });
+  });
+
+  it('marks missing sender as retryable', () => {
+    const result = getIdentitySkipReason({ messageProvider: 'telegram', channelId: 'group:12345' });
+    expect(result.reason).toEqual({
+      kind: 'retryable',
+      detail: 'missing stable sender identity',
+    });
+  });
+
+  it('marks telegram direct sender mismatches as final skips', () => {
     const result = getIdentitySkipReason({
       sessionKey: 'agent:main:telegram:direct:12345',
       messageProvider: 'telegram',
@@ -577,7 +629,10 @@ describe('session identity helpers', () => {
       senderId: '99999',
     });
 
-    expect(result.reason).toContain('telegram direct identity mismatch');
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'telegram direct identity mismatch (direct:12345 vs 99999)',
+    });
   });
 
   it('detects ephemeral operational text with or without transcript wrappers', () => {

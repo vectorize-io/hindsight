@@ -560,6 +560,27 @@ describe('agent_end hook', () => {
     expect(options?.metadata?.sender_id).toBe('U015B');
   });
 
+  it('keeps provider fallback without backfilling channel_type when only session parsing provides it', async () => {
+    if (!apiReachable) return;
+    retainSpy.mockResolvedValue(OK_RETAIN);
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I prefer espresso.' }],
+      },
+      { sessionKey: 'agent:main:telegram:direct:U015C' },
+    );
+
+    expect(retainSpy).toHaveBeenCalledOnce();
+    const [, , options] = retainSpy.mock.calls[0];
+    expect(options?.metadata?.provider).toBe('telegram');
+    expect(options?.metadata?.channel_type).toBeUndefined();
+    expect(options?.metadata?.channel_id).toBe('direct:U015C');
+    expect(options?.metadata?.sender_id).toBe('U015C');
+  });
+
   it('strips <hindsight_memories> tags from content before retaining', async () => {
     if (!apiReachable) return;
     retainSpy.mockResolvedValue(OK_RETAIN);
