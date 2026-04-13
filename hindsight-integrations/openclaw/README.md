@@ -91,7 +91,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `dynamicBankId` | `true` | Enable per-context memory banks |
 | `bankId` | — | Static bank ID used when `dynamicBankId` is `false`. |
 | `bankIdPrefix` | — | Prefix for bank IDs (e.g. `"prod"`) |
-| `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`) |
+| `retainTags` | `[]` | Tags applied to every retained document, useful for cross-agent/source labeling (e.g. `source_system:openclaw`, `agent:agentname`). Auto-retain also merges inline per-message tags from `<retain_tags>...</retain_tags>` or `<hindsight_retain_tags>...</hindsight_retain_tags>` blocks in user messages. |
 | `retainSource` | `"openclaw"` | `source` value written into retained document metadata |
 | `dynamicBankGranularity` | `["agent", "channel", "user"]` | Fields used to derive bank ID. Options: `agent`, `channel`, `user`, `provider` |
 | `excludeProviders` | `["heartbeat"]` | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`) |

@@ -371,6 +371,40 @@ export function stripMemoryTags(content: string): string {
 }
 
 /**
+ * Extract per-message retain tag overrides from inline user content.
+ *
+ * Supported forms:
+ * - <retain_tags>tag:a, tag:b</retain_tags>
+ * - <hindsight_retain_tags>tag:a, tag:b</hindsight_retain_tags>
+ */
+export function extractInlineRetainTags(content: string): string[] {
+  if (!content) return [];
+
+  const tags: string[] = [];
+  const blockRe = /<(?:hindsight_)?retain_tags>([\s\S]*?)<\/(?:hindsight_)?retain_tags>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = blockRe.exec(content)) !== null) {
+    const normalized = normalizeRetainTags(match[1]);
+    for (const tag of normalized) {
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+      }
+    }
+  }
+
+  return tags;
+}
+
+/**
+ * Remove inline retain tag directives from message content before storing it.
+ */
+export function stripInlineRetainTags(content: string): string {
+  if (!content) return content;
+  return content.replace(/<(?:hindsight_)?retain_tags>[\s\S]*?<\/(?:hindsight_)?retain_tags>/gi, '');
+}
+
+/**
  * Extract sender_id from OpenClaw's injected inbound metadata blocks.
  * Checks both "Conversation info (untrusted metadata)" and "Sender (untrusted metadata)" blocks.
  * Returns the first sender_id / id string found, or undefined if none.
@@ -1781,6 +1815,25 @@ ${memoriesFormatted}
           debug(`[Hindsight Hook] Turn ${turnCount}: chunked retain firing (window: ${windowTurns} turns, ${messagesToRetain.length} messages)`);
         }
 
+        const inlineRetainTags = normalizeRetainTags(
+          messagesToRetain.flatMap((msg: any) => {
+            if (msg?.role !== 'user') {
+              return [];
+            }
+
+            const content = typeof msg?.content === 'string'
+              ? msg.content
+              : Array.isArray(msg?.content)
+                ? msg.content
+                    .filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
+                    .map((block: any) => block.text)
+                    .join('\n')
+                : '';
+
+            return extractInlineRetainTags(content);
+          }),
+        );
+
         const retention = prepareRetentionTranscript(messagesToRetain, pluginConfig, retainFullWindow);
         if (!retention) {
           debug('[Hindsight Hook] No messages to retain (filtered/short/no-user)');
@@ -1820,6 +1873,7 @@ ${memoriesFormatted}
           {
             retentionScope: retainFullWindow ? 'window' : 'turn',
             windowTurns: retainFullWindow ? (pluginConfig.retainEveryNTurns ?? 1) + (pluginConfig.retainOverlapTurns ?? 0) : undefined,
+            tags: inlineRetainTags,
           },
         );
 
@@ -1895,7 +1949,7 @@ export function buildRetainRequest(
   effectiveCtx: PluginHookAgentContext | undefined,
   pluginConfig: PluginConfig,
   now = Date.now(),
-  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
+  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number; tags?: string[] },
 ): RetainRequest {
   const resolvedCtx = resolveSessionIdentity(effectiveCtx);
   const parsedSession = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
@@ -1908,6 +1962,10 @@ export function buildRetainRequest(
   const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
   const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
+  const mergedTags = normalizeRetainTags([
+    ...(pluginConfig.retainTags ?? []),
+    ...(options?.tags ?? []),
+  ]);
 
   return {
     content: transcript,
@@ -1927,7 +1985,7 @@ export function buildRetainRequest(
       sender_id: resolvedCtx?.senderId,
       ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
-    tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
+    tags: mergedTags.length > 0 ? mergedTags : undefined,
   };
 }
 
@@ -1993,6 +2051,7 @@ export function prepareRetentionTranscript(
     }
 
     content = stripMemoryTags(content);
+    content = stripInlineRetainTags(content);
     content = stripMetadataEnvelopes(content);
 
     if (content.trim()) {
