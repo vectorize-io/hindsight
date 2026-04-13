@@ -4,14 +4,21 @@
   "private": true,
   "description": "OAuth 2.1 proxy for connecting cloud MCP clients to self-hosted Hindsight via Cloudflare Workers",
   "scripts": {
-    "dev": "npx wrangler dev",
-    "deploy": "npx wrangler deploy"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.0.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250327.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.9",
     "wrangler": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

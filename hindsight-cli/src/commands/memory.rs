@@ -21,7 +21,7 @@ use serde_json;
 struct MemoryUnitDetail {
     id: String,
     text: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "fact_type")]
     type_: Option<String>,
     document_id: Option<String>,
     context: Option<String>,
@@ -106,13 +106,14 @@ pub fn list(
                 } else {
                     for item in &result.items {
                         let fact_type = item
-                            .get("type")
+                            .get("fact_type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
                         let type_t = match fact_type {
                             "world" => 0.0,
                             "experience" => 0.5,
                             "opinion" => 1.0,
+                            "observation" => 0.25,
                             _ => 0.5,
                         };
 
@@ -179,6 +180,7 @@ pub fn get(
                     "world" => 0.0,
                     "experience" => 0.5,
                     "opinion" => 1.0,
+                    "observation" => 0.25,
                     _ => 0.5,
                 };
 

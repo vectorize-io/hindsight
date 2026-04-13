@@ -5,7 +5,7 @@ Tests the Cohere cross-encoder implementation, including Azure AI Foundry endpoi
 """
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -28,7 +28,7 @@ class TestCohereCrossEncoder:
         assert encoder.api_key == "test_key"
         assert encoder.model == "rerank-english-v3.0"
         assert encoder._client is None
-        assert encoder._httpx_client is None
+        assert encoder._http_client is None
 
         # Mock the cohere import
         mock_cohere = MagicMock()
@@ -36,7 +36,7 @@ class TestCohereCrossEncoder:
         with patch.dict("sys.modules", {"cohere": mock_cohere}):
             await encoder.initialize()
             assert encoder._client is not None
-            assert encoder._httpx_client is None
+            assert encoder._http_client is None
             mock_cohere.Client.assert_called_once_with(api_key="test_key", timeout=60.0)
 
     @pytest.mark.asyncio
@@ -52,9 +52,14 @@ class TestCohereCrossEncoder:
 
         await encoder.initialize()
 
-        assert encoder._httpx_client is not None
+        assert encoder._http_client is not None
         assert encoder._client is None
-        assert isinstance(encoder._httpx_client, httpx.Client)
+        assert isinstance(encoder._http_client._async_client, httpx.AsyncClient)
+        assert encoder._http_client.include_top_n is False
+        assert (
+            encoder._http_client.rerank_url
+            == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
+        )
 
     @pytest.mark.asyncio
     async def test_initialization_missing_package(self):
@@ -150,7 +155,7 @@ class TestCohereCrossEncoder:
 
         await encoder.initialize()
 
-        # Mock httpx response
+        # Mock async httpx response
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "results": [
@@ -159,8 +164,9 @@ class TestCohereCrossEncoder:
                 {"index": 2, "relevance_score": 0.5},
             ]
         }
+        mock_response.raise_for_status = MagicMock()
 
-        encoder._httpx_client.post = MagicMock(return_value=mock_response)
+        encoder._http_client._async_client.post = AsyncMock(return_value=mock_response)
 
         pairs = [
             ("What is Python?", "Python is a programming language"),
@@ -174,13 +180,15 @@ class TestCohereCrossEncoder:
         assert scores == [0.9, 0.7, 0.5]
 
         # Verify httpx.post was called with correct URL and payload
-        encoder._httpx_client.post.assert_called_once()
-        call_args = encoder._httpx_client.post.call_args
+        encoder._http_client._async_client.post.assert_called_once()
+        call_args = encoder._http_client._async_client.post.call_args
         assert call_args[0][0] == "https://my-endpoint.inference.ai.azure.com/models/cohere-rerank-v3-english/invoke"
         assert call_args.kwargs["json"]["model"] == "cohere-rerank-v3-english"
         assert call_args.kwargs["json"]["query"] == "What is Python?"
         assert len(call_args.kwargs["json"]["documents"]) == 3
         assert call_args.kwargs["json"]["return_documents"] is False
+        # Azure endpoints expect no top_n in the body
+        assert "top_n" not in call_args.kwargs["json"]
 
     @pytest.mark.asyncio
     async def test_predict_multiple_queries(self):
@@ -281,7 +289,7 @@ class TestCohereCrossEncoder:
             request=MagicMock(),
             response=MagicMock(status_code=404),
         )
-        encoder._httpx_client.post = MagicMock(return_value=mock_response)
+        encoder._http_client._async_client.post = AsyncMock(return_value=mock_response)
 
         pairs = [("What is Python?", "Python is a programming language")]
 

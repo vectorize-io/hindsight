@@ -767,6 +767,13 @@ function CreateMentalModelDialog({
                 onChange={(e) => setForm({ ...form, tags: e.target.value })}
                 placeholder="e.g., project-x, team-alpha (comma-separated)"
               />
+              <p className="text-xs text-muted-foreground">
+                Tags scope the model during reflect <strong>and</strong> filter source memories
+                during refresh (default <code>all_strict</code>: only memories carrying every listed
+                tag are read). If no memories have these tags yet, refresh will produce empty
+                content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
+                <em>Tag Groups</em> below.
+              </p>
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -1046,6 +1053,13 @@ function UpdateMentalModelDialog({
                 onChange={(e) => setForm({ ...form, tags: e.target.value })}
                 placeholder="e.g., project-x, team-alpha (comma-separated)"
               />
+              <p className="text-xs text-muted-foreground">
+                Tags scope the model during reflect <strong>and</strong> filter source memories
+                during refresh (default <code>all_strict</code>: only memories carrying every listed
+                tag are read). If no memories have these tags yet, refresh will produce empty
+                content — backfill tags on memories, or adjust <em>Tags Match</em> /{" "}
+                <em>Tag Groups</em> below.
+              </p>
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox

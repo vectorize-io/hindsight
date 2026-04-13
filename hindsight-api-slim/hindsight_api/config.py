@@ -247,6 +247,11 @@ ENV_RERANKER_ZEROENTROPY_API_KEY = "HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY"
 ENV_RERANKER_ZEROENTROPY_MODEL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL"
 ENV_RERANKER_ZEROENTROPY_BASE_URL = "HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL"
 
+# SiliconFlow configuration (reranker only; Cohere-compatible /rerank endpoint)
+ENV_RERANKER_SILICONFLOW_API_KEY = "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY"
+ENV_RERANKER_SILICONFLOW_MODEL = "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL"
+ENV_RERANKER_SILICONFLOW_BASE_URL = "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL"
+
 # Google Discovery Engine reranker configuration
 ENV_RERANKER_GOOGLE_MODEL = "HINDSIGHT_API_RERANKER_GOOGLE_MODEL"
 ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
@@ -473,6 +478,9 @@ DEFAULT_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b"
 DEFAULT_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5"
 
 DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
+
+DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
+DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
@@ -828,6 +836,9 @@ class HindsightConfig:
     reranker_zeroentropy_api_key: str | None
     reranker_zeroentropy_model: str
     reranker_zeroentropy_base_url: str | None
+    reranker_siliconflow_api_key: str | None
+    reranker_siliconflow_model: str
+    reranker_siliconflow_base_url: str
     reranker_google_model: str
     reranker_google_project_id: str | None
     reranker_google_service_account_key: str | None
@@ -984,6 +995,7 @@ class HindsightConfig:
         "reranker_tei_base_url",
         "reranker_cohere_base_url",
         "reranker_zeroentropy_base_url",
+        "reranker_siliconflow_base_url",
         # Service Account Keys
         "llm_vertexai_service_account_key",
         "embeddings_vertexai_service_account_key",
@@ -1352,6 +1364,12 @@ class HindsightConfig:
             reranker_zeroentropy_api_key=os.getenv(ENV_RERANKER_ZEROENTROPY_API_KEY),
             reranker_zeroentropy_model=os.getenv(ENV_RERANKER_ZEROENTROPY_MODEL, DEFAULT_RERANKER_ZEROENTROPY_MODEL),
             reranker_zeroentropy_base_url=os.getenv(ENV_RERANKER_ZEROENTROPY_BASE_URL) or None,
+            # SiliconFlow reranker (Cohere-compatible /rerank endpoint)
+            reranker_siliconflow_api_key=os.getenv(ENV_RERANKER_SILICONFLOW_API_KEY),
+            reranker_siliconflow_model=os.getenv(ENV_RERANKER_SILICONFLOW_MODEL, DEFAULT_RERANKER_SILICONFLOW_MODEL),
+            reranker_siliconflow_base_url=os.getenv(
+                ENV_RERANKER_SILICONFLOW_BASE_URL, DEFAULT_RERANKER_SILICONFLOW_BASE_URL
+            ),
             # Google Discovery Engine reranker (with fallback to LLM Vertex AI keys)
             reranker_google_model=os.getenv(ENV_RERANKER_GOOGLE_MODEL, DEFAULT_RERANKER_GOOGLE_MODEL),
             reranker_google_project_id=os.getenv(ENV_RERANKER_GOOGLE_PROJECT_ID)

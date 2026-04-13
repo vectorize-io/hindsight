@@ -20,30 +20,53 @@ This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a 
 openclaw plugins install @vectorize-io/hindsight-openclaw
 ```
 
-**Step 2: Configure the LLM provider used for memory extraction**
+**Step 2: Run the setup wizard**
 
-The plugin reads configuration from OpenClaw's plugin config — set it
-non-interactively with `openclaw config set`:
+`openclaw plugins install` unpacks the plugin into `~/.openclaw/extensions/`
+but does not put its bins on `PATH`. Run the wizard through `npx` instead —
+it resolves the bin out of the published package:
 
 ```bash
-# Option A — OpenAI (set llmApiKey as a SecretRef so the value comes from
-# the OPENAI_API_KEY environment variable at runtime instead of being
-# stored in plaintext on disk)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai
-openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \
-    --ref-source env --ref-provider default --ref-id OPENAI_API_KEY
-
-# Option B — Anthropic
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider anthropic
-openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \
-    --ref-source env --ref-provider default --ref-id ANTHROPIC_API_KEY
-
-# Option C — Claude Code (no API key needed)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider claude-code
-
-# Option D — OpenAI Codex (no API key needed)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai-codex
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
 ```
+
+The wizard walks you through picking one of three install modes:
+
+- **Cloud** — managed Hindsight at `https://api.hindsight.vectorize.io`. Paste your cloud API token when prompted (masked input). No local setup needed.
+- **External API** — your own running Hindsight deployment. Prompts for the URL and, optionally, the token value (masked).
+- **Embedded daemon** — spawns a local `hindsight-embed` daemon on this machine. Prompts for the LLM provider (OpenAI / Anthropic / Gemini / Groq / Claude Code / OpenAI Codex / Ollama) and the API key (masked).
+
+The interactive wizard stores credentials **inline** in `openclaw.json` for simplicity. For CI / production you can store credentials as a [`SecretRef`](#llm-configuration) (resolved from an env var, file, or exec source at startup, never saved on disk) by either passing `--token-env` / `--api-key-env` to the non-interactive wizard or switching an existing field afterwards via `openclaw config set ... --ref-source env|file|exec`.
+
+For CI and scripted setups the wizard also runs non-interactively — either with an inline value or with an env var reference:
+
+```bash
+# Cloud — inline token (simplest)
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode cloud --token hsk_your_cloud_token
+
+# Cloud — SecretRef (read from env at gateway startup)
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode cloud --token-env HINDSIGHT_CLOUD_TOKEN
+
+# External API (no auth)
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode api --api-url https://mcp.hindsight.example.com --no-token
+
+# Embedded daemon with OpenAI — inline API key
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode embedded --provider openai --api-key sk-...
+
+# Embedded daemon with OpenAI — SecretRef
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode embedded --provider openai --api-key-env OPENAI_API_KEY
+
+# Embedded daemon with Claude Code (no API key needed)
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup \
+    --mode embedded --provider claude-code
+```
+
+Run `npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup --help` for the full flag list.
 
 **Step 3: Start OpenClaw**
 
@@ -51,10 +74,7 @@ openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai
 openclaw gateway
 ```
 
-The plugin will automatically:
-- Start a local Hindsight daemon (port 9077)
-- Capture conversations after each turn
-- Inject relevant memories before agent responses
+The plugin will automatically capture conversations after each turn and inject relevant memories before agent responses.
 
 **Important:** The LLM you configure above is **only for memory extraction** (background processing). Your main OpenClaw agent can use any model you configure separately.
 
@@ -179,6 +199,10 @@ By default, the plugin retains `user` and `assistant` messages after each turn. 
 
 ### LLM Configuration
 
+> If you used `hindsight-openclaw-setup` in Quick Start, this section is
+> already handled for you — read on if you want to edit `openclaw.json`
+> directly or switch to a file/exec secret source.
+
 Configure the memory-extraction LLM via OpenClaw's plugin config. API keys
 should be stored as `SecretRef` values so they're resolved from env vars,
 mounted files, or `exec`-style secret managers (Vault, etc.) at runtime
@@ -235,6 +259,9 @@ in your OpenClaw config — see `openclaw config set --help` for the
 `--provider-source`/`--provider-path`/`--provider-command` builder flags.
 
 ### External API (Advanced)
+
+> `hindsight-openclaw-setup --mode api --api-url <url>` covers this path
+> interactively — this section documents the underlying config fields.
 
 Connect to a remote Hindsight API server instead of running a local daemon. This is useful for:
 

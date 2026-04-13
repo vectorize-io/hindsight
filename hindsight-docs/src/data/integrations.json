@@ -199,6 +199,16 @@
       "category": "framework",
       "link": "https://github.com/mrkhachaturov/hindclaw",
       "icon": "/img/icons/hindclaw.png"
+    },
+    {
+      "id": "context-forge",
+      "name": "ContextForge",
+      "description": "Register Hindsight as an MCP backend in ContextForge gateway. Gives every connected AI tool access to long-term memory via a unified MCP hub.",
+      "type": "community",
+      "by": "anderapartners",
+      "category": "mcp",
+      "link": "/sdks/integrations/context-forge",
+      "icon": "/img/icons/mcp.png"
     }
   ]
 }

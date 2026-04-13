@@ -84,6 +84,8 @@ pub fn print_fact(fact: &RecallResult, _show_activation: bool) {
     let type_t = match fact_type {
         "world" => 0.0,
         "agent" => 0.5,
+        "experience" => 0.5,
+        "observation" => 0.25,
         "opinion" => 1.0,
         _ => 0.5,
     };

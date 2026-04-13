@@ -190,14 +190,19 @@ class TestClearPort:
         with patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=False):
             assert manager._clear_port(9555) is True
 
-    def test_port_occupied_by_hindsight_stops_it(self):
-        """Port occupied by a hindsight daemon — kills it and returns True."""
+    def test_port_occupied_by_healthy_hindsight_is_reused(self):
+        """Port occupied by a healthy hindsight daemon — reused without killing.
+
+        Regression: previously _clear_port killed any hindsight daemon on the
+        target port, which meant two concurrent `start` calls would kill each
+        other's freshly-started daemons.
+        """
         manager = DaemonEmbedManager()
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
             patch("httpx.Client") as mock_httpx_cls,
-            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
-            patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
+            patch.object(DaemonEmbedManager, "_find_pid_on_port") as mock_find_pid,
+            patch.object(DaemonEmbedManager, "_kill_process") as mock_kill,
         ):
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
@@ -206,6 +211,8 @@ class TestClearPort:
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is True
+            mock_find_pid.assert_not_called()
+            mock_kill.assert_not_called()
 
     def test_port_occupied_by_non_hindsight_returns_false(self):
         """Port occupied by non-hindsight process — returns False."""
@@ -237,8 +244,8 @@ class TestClearPort:
 
             assert manager._clear_port(9555) is False
 
-    def test_pid_not_found_returns_false(self):
-        """Hindsight daemon on port but can't find PID — returns False."""
+    def test_unhealthy_daemon_pid_not_found_returns_false(self):
+        """Unhealthy process on port, no PID — cannot reclaim, returns False."""
         manager = DaemonEmbedManager()
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
@@ -248,13 +255,13 @@ class TestClearPort:
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
             mock_client.__exit__ = Mock(return_value=False)
-            mock_client.get.return_value = Mock(status_code=200)
+            mock_client.get.return_value = Mock(status_code=500)
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is False
 
-    def test_kill_fails_returns_false(self):
-        """Hindsight daemon found but won't die — returns False."""
+    def test_unhealthy_daemon_kill_fails_returns_false(self):
+        """Unhealthy process on port, kill failed — returns False."""
         manager = DaemonEmbedManager()
         with (
             patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
@@ -265,8 +272,80 @@ class TestClearPort:
             mock_client = MagicMock()
             mock_client.__enter__ = Mock(return_value=mock_client)
             mock_client.__exit__ = Mock(return_value=False)
-            mock_client.get.return_value = Mock(status_code=200)
+            mock_client.get.side_effect = httpx.ConnectError("refused")
             mock_httpx_cls.return_value = mock_client
 
             assert manager._clear_port(9555) is False
 
+    def test_unhealthy_daemon_kill_succeeds_returns_true(self):
+        """Unhealthy hindsight daemon (stale from version upgrade) reclaimed via kill."""
+        manager = DaemonEmbedManager()
+        with (
+            patch.object(DaemonEmbedManager, "_is_port_in_use", return_value=True),
+            patch("httpx.Client") as mock_httpx_cls,
+            patch.object(DaemonEmbedManager, "_find_pid_on_port", return_value=12345),
+            patch.object(DaemonEmbedManager, "_kill_process", return_value=True),
+        ):
+            mock_client = MagicMock()
+            mock_client.__enter__ = Mock(return_value=mock_client)
+            mock_client.__exit__ = Mock(return_value=False)
+            mock_client.get.return_value = Mock(status_code=503)
+            mock_httpx_cls.return_value = mock_client
+
+            assert manager._clear_port(9555) is True
+
+
+class TestStartDaemonSerialization:
+    """Tests that _start_daemon serializes concurrent starts via the profile lock.
+
+    Regression: two processes calling start() concurrently used to race into
+    _clear_port and kill each other's daemons. The per-profile flock
+    serializes them; the losing caller discovers the winner's daemon via
+    is_running() and short-circuits without spawning.
+    """
+
+    def test_second_start_sees_daemon_up_and_skips_spawn(self, tmp_path, monkeypatch):
+        """If is_running() is true inside the lock, _start_daemon returns without spawning."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        manager = DaemonEmbedManager()
+
+        with (
+            patch.object(DaemonEmbedManager, "is_running", return_value=True),
+            patch.object(DaemonEmbedManager, "_clear_port") as mock_clear,
+            patch.object(DaemonEmbedManager, "_start_daemon_locked") as mock_locked,
+            patch.object(DaemonEmbedManager, "_register_profile") as mock_register,
+        ):
+            assert manager._start_daemon({}, "codex") is True
+            mock_clear.assert_not_called()
+            mock_locked.assert_not_called()
+            mock_register.assert_called_once()
+
+    def test_start_daemon_locked_skips_spawn_when_port_already_healthy(self, tmp_path, monkeypatch):
+        """Inside _start_daemon_locked: healthy daemon appearing between checks skips spawn.
+
+        Simulates a healthy foreign-started daemon showing up after is_running()
+        first returned False. _clear_port keeps it; _start_daemon_locked's
+        second is_running() check returns True and we must NOT proceed to
+        subprocess.Popen.
+        """
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        manager = DaemonEmbedManager()
+
+        log_path = tmp_path / "daemon.log"
+        paths = ProfilePaths(
+            config=tmp_path / "embed",
+            lock=tmp_path / "daemon.lock",
+            log=log_path,
+            port=9600,
+        )
+
+        with (
+            patch.object(DaemonEmbedManager, "_clear_port", return_value=True),
+            patch.object(DaemonEmbedManager, "is_running", return_value=True),
+            patch.object(DaemonEmbedManager, "_register_profile"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            assert manager._start_daemon_locked({}, "codex", paths) is True
+            mock_popen.assert_not_called()

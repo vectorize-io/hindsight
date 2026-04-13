@@ -138,10 +138,6 @@ const sessionIdentityBySession = new Map<string, SessionIdentityRecord>();
 const skipHindsightTurnBySession = new Map<string, IdentitySkipReason>();
 const documentSequenceBySession = new Map<string, number>();
 
-// Guard against duplicate hook registration within a single runtime load.
-// Do not tie this to api instance identity, which can be brittle across loader phases.
-let hooksRegistered = false;
-
 // Cooldown + guard to prevent concurrent reinit attempts
 let lastReinitAttempt = 0;
 let isReinitInProgress = false;
@@ -591,6 +587,20 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
  * Format: "agent:{agentId}:{provider}:{channelType}:{channelId}[:{extra}]"
  * Example: "agent:c0der:telegram:group:-1003825475854:topic:42"
  */
+// Some OpenClaw hook contexts populate `ctx.channelId` with the provider name
+// (e.g. "discord") instead of the actual channel ID. Treat those as missing so
+// we fall through to the sessionKey-derived channel. See issue #854.
+const PROVIDER_CHANNEL_ID_TOKENS = new Set([
+  'discord', 'telegram', 'slack', 'matrix', 'whatsapp', 'signal', 'messenger', 'sms', 'email', 'web', 'cli',
+]);
+
+function sanitizeChannelId(channelId: string | undefined, provider?: string): string | undefined {
+  if (!channelId) return undefined;
+  if (provider && channelId === provider) return undefined;
+  if (PROVIDER_CHANNEL_ID_TOKENS.has(channelId.toLowerCase())) return undefined;
+  return channelId;
+}
+
 export interface ParsedSessionKey {
   agentId?: string;
   provider?: string;
@@ -851,7 +861,10 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
 
   const fieldMap: Record<string, string> = {
     agent: resolvedCtx?.agentId || sessionParsed.agentId || 'default',
-    channel: resolvedCtx?.channelId || sessionParsed.channel || 'unknown',
+    channel:
+      sanitizeChannelId(resolvedCtx?.channelId, resolvedCtx?.messageProvider || sessionParsed.provider) ||
+      sessionParsed.channel ||
+      'unknown',
     user: resolvedCtx?.senderId || 'anonymous',
     provider: resolvedCtx?.messageProvider || sessionParsed.provider || 'unknown',
   };
@@ -1405,12 +1418,15 @@ export default function (api: MoltbotPluginAPI) {
 
     debug('[Hindsight] Plugin loaded successfully');
 
-    // Register agent hooks for auto-recall and auto-retention
-    if (hooksRegistered) {
-      debug('[Hindsight] Hooks already registered in this runtime, skipping duplicate hook registration');
-      return;
-    }
-    hooksRegistered = true;
+    // Register agent hooks for auto-recall and auto-retention.
+    //
+    // Why no module-level "already registered" guard: each plugin entry invocation
+    // hands us a fresh `api` tied to a specific plugin registry. OpenClaw may call
+    // the plugin entry multiple times per process (CLI vs gateway vs lazy reloads),
+    // and the registry that's active when an agent actually runs is not guaranteed
+    // to be the first one we saw. A process-global flag would let the first call
+    // "win" and leave subsequent registries with zero hindsight hooks — which is
+    // exactly how auto-recall/auto-retain silently stopped firing in 0.6.x.
     debug('[Hindsight] Registering agent hooks...');
     log.info('registering agent hooks');
 
@@ -1865,8 +1881,8 @@ export function buildRetainRequest(
   const documentBase = getSessionDocumentBase(resolvedCtx);
   const documentKind = retentionScope === 'window' ? 'window' : 'turn';
   const documentId = `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, '0')}`;
-  const channelId = resolvedCtx?.channelId || parsedSession.channel;
-  const provider = resolvedCtx?.messageProvider || parsedSession.provider;
+  const provider = effectiveCtx?.messageProvider || parsedSession.provider;
+  const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
   const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
 

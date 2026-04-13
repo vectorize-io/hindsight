@@ -2,7 +2,7 @@
 sidebar_position: 5
 ---
 
-# Embedded SDK (hindsight-embed)
+# Daemon CLI (hindsight-embed)
 
 Zero-configuration local memory system with automatic daemon management. Perfect for development, prototyping, and single-user applications.
 

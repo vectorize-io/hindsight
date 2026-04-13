@@ -8,29 +8,39 @@ Biomimetic long-term memory for [OpenClaw](https://openclaw.ai) using [Hindsight
 # 1. Install the plugin
 openclaw plugins install @vectorize-io/hindsight-openclaw
 
-# 2. Configure the LLM provider used for memory extraction.
-
-# Option A — OpenAI (or any OpenAI-compatible provider)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai
-openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \
-    --ref-source env --ref-provider default --ref-id OPENAI_API_KEY
-
-# Option B — Claude Code (no API key needed)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider claude-code
-
-# Option C — OpenAI Codex (no API key needed)
-openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai-codex
+# 2. Run the interactive setup wizard
+npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
 
 # 3. Start OpenClaw
 openclaw gateway
 ```
 
-That's it! The plugin will automatically start capturing and recalling memories.
+`hindsight-openclaw-setup` walks you through picking one of three modes:
 
-`llmApiKey` is marked sensitive — `openclaw config set ... --ref-source env` writes a
-SecretRef that resolves the value from your `OPENAI_API_KEY` environment variable at
-runtime, so the key is never stored in plaintext on disk. `--ref-source file` and
-`--ref-source exec` are also supported for mounted-secret and Vault-style setups.
+- **Cloud** — managed Hindsight. Paste your cloud API token, done.
+- **External API** — your own running Hindsight deployment. Prompts for the URL and optional token.
+- **Embedded daemon** — spawns a local `hindsight-embed` daemon on this machine. Prompts for the LLM provider (OpenAI / Anthropic / Gemini / Groq / Claude Code / Codex / Ollama) and its API key.
+
+The interactive wizard stores credentials **inline** in `openclaw.json` for simplicity — the value is masked as you paste it. For CI / production you can store credentials as a `SecretRef` (resolved from an env var, file, or exec source at startup) by using the non-interactive flags with `--token-env` / `--api-key-env`, or by switching an existing field afterwards with `openclaw config set ... --ref-source env --ref-id …`.
+
+### Manual configuration (without the wizard)
+
+The wizard is a convenience wrapper — all of the same fields can be set directly with `openclaw config set`:
+
+```bash
+# Embedded daemon with OpenAI
+openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai
+openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \
+    --ref-source env --ref-provider default --ref-id OPENAI_API_KEY
+
+# Or: Claude Code (no API key needed)
+openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider claude-code
+
+# Or: point at an external Hindsight API
+openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiUrl https://mcp.hindsight.example.com
+openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiToken \
+    --ref-source env --ref-id HINDSIGHT_API_TOKEN
+```
 
 ## Migrating from 0.5.x
 

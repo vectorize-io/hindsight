@@ -520,7 +520,7 @@ Google's `gemini-embedding-001` produces 3072 dimensions natively but supports c
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
+| `HINDSIGHT_API_RERANKER_PROVIDER` | Provider: `local`, `tei`, `cohere`, `openrouter`, `zeroentropy`, `siliconflow`, `google`, `flashrank`, `litellm`, `litellm-sdk`, `jina-mlx`, or `rrf` | `local` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MODEL` | Model for local provider | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | `HINDSIGHT_API_RERANKER_LOCAL_MAX_CONCURRENT` | Max concurrent local reranking (prevents CPU thrashing under load) | `4` |
 | `HINDSIGHT_API_RERANKER_LOCAL_TRUST_REMOTE_CODE` | Allow loading models with custom code (security risk, disabled by default) | `false` |
@@ -535,7 +535,7 @@ Google's `gemini-embedding-001` produces 3072 dimensions natively but supports c
 | `HINDSIGHT_API_RERANKER_OPENROUTER_MODEL` | OpenRouter rerank model | `cohere/rerank-v3.5` |
 | `HINDSIGHT_API_RERANKER_COHERE_API_KEY` | Cohere API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_COHERE_MODEL` | Cohere rerank model | `rerank-english-v3.0` |
-| `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
+| `HINDSIGHT_API_RERANKER_COHERE_BASE_URL` | Custom base URL for any Cohere-compatible `/rerank` endpoint (Azure AI Foundry, Jina, Voyage, self-hosted BGE, etc.). When set, the `cohere` provider bypasses the Cohere SDK and calls the endpoint directly via HTTP. | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_API_BASE` | LiteLLM proxy base URL for reranking | `http://localhost:4000` |
 | `HINDSIGHT_API_RERANKER_LITELLM_API_KEY` | LiteLLM proxy API key for reranking (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_RERANKER_LITELLM_MODEL` | LiteLLM **proxy** rerank model (use provider prefix, e.g., `cohere/rerank-english-v3.0`) | `cohere/rerank-english-v3.0` |
@@ -546,6 +546,9 @@ Google's `gemini-embedding-001` produces 3072 dimensions natively but supports c
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY` | ZeroEntropy API key for reranking | - |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL` | ZeroEntropy rerank model (`zerank-2`, `zerank-2-small`) | `zerank-2` |
 | `HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL` | Custom base URL for ZeroEntropy-compatible API (e.g., mock server, proxy, or self-hosted deployment) | `https://api.zeroentropy.dev` |
+| `HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY` | SiliconFlow API key for reranking | - |
+| `HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL` | SiliconFlow rerank model (e.g., `BAAI/bge-reranker-v2-m3`) | `BAAI/bge-reranker-v2-m3` |
+| `HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL` | Base URL for the SiliconFlow `/rerank` endpoint | `https://api.siliconflow.cn/v1` |
 | `HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID` | Google Cloud project ID for Discovery Engine reranking (falls back to `HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID`) | - |
 | `HINDSIGHT_API_RERANKER_GOOGLE_MODEL` | Google Discovery Engine ranking model | `semantic-ranker-default-004` |
 | `HINDSIGHT_API_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY` | Path to service account JSON key (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`). If unset, uses ADC. | - |
@@ -578,17 +581,35 @@ export HINDSIGHT_API_RERANKER_PROVIDER=cohere
 export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 
-# Azure-hosted Cohere - reranking via custom endpoint
+# Any Cohere-compatible /rerank endpoint (Azure AI Foundry, Jina, Voyage, self-hosted BGE, etc.)
+#
+# Setting HINDSIGHT_API_RERANKER_COHERE_BASE_URL switches the `cohere` provider
+# off the Cohere SDK and onto a plain HTTP client that speaks the standard
+# Cohere rerank wire format:
+#   Request:  POST {base_url}  (or {base_url}/rerank, depending on host)
+#             Authorization: Bearer <api_key>
+#             {"model": "...", "query": "...", "documents": [...], "return_documents": false}
+#   Response: {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
+#
+# Any service implementing this contract works here. For Azure AI Foundry the
+# base_url is the full invoke URL; for SiliconFlow you can also use the
+# dedicated `siliconflow` provider below.
 export HINDSIGHT_API_RERANKER_PROVIDER=cohere
-export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-azure-api-key
-export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
-export HINDSIGHT_API_RERANKER_COHERE_BASE_URL=https://your-azure-cohere-endpoint.com
+export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0  # whatever model the endpoint serves
+export HINDSIGHT_API_RERANKER_COHERE_BASE_URL=https://your-cohere-compatible-endpoint.com
 
 # ZeroEntropy - cloud-based reranking (state-of-the-art accuracy)
 export HINDSIGHT_API_RERANKER_PROVIDER=zeroentropy
 export HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL=zerank-2  # or zerank-2-small
 # export HINDSIGHT_API_RERANKER_ZEROENTROPY_BASE_URL=https://your-custom-endpoint.com  # optional
+
+# SiliconFlow - cloud reranking via SiliconFlow's Cohere-compatible /rerank endpoint
+export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
+export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3
+# export HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1  # default
 
 # LiteLLM proxy - unified gateway for multiple reranking providers (requires running LiteLLM proxy server)
 export HINDSIGHT_API_RERANKER_PROVIDER=litellm
@@ -1103,8 +1124,12 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_POLL_INTERVAL_MS` | Database polling interval in milliseconds | `500` |
 | `HINDSIGHT_API_WORKER_MAX_RETRIES` | Max retries before marking task failed | `3` |
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
-| `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker | `10` |
-| `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Maximum concurrent consolidation tasks per worker | `2` |
+| `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
+| `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Slots reserved for consolidation tasks within `WORKER_MAX_SLOTS` | `2` |
+
+:::note Slot reservation
+`WORKER_CONSOLIDATION_MAX_SLOTS` is a **reservation within** `WORKER_MAX_SLOTS`, not an additive pool. With the defaults (`MAX_SLOTS=10`, `CONSOLIDATION_MAX_SLOTS=2`), retain and other non-consolidation tasks may use at most `10 - 2 = 8` concurrent slots, leaving 2 always available for consolidation. This prevents consolidation from being starved when retain throughput continuously saturates the queue. Set `CONSOLIDATION_MAX_SLOTS=0` to give all slots to non-consolidation work.
+:::
 
 ### Performance Optimization
 
@@ -1124,9 +1149,13 @@ Configuration for background task processing. By default, the API processes task
 
 ### Audit Logging
 
+Audit logging captures mutating operations (retain, recall, reflect, bank config updates, etc.) into an `audit_log` table, queryable via the `/audit-logs` endpoint.
+
+**Audit logging is disabled by default.** With `HINDSIGHT_API_AUDIT_LOG_ENABLED=false`, the `audit_log` table stays empty and `/audit-logs` returns `{"total": 0, "items": []}` regardless of activity. Set the flag to `true` and restart the API to start capturing events.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Master switch for audit logging | `false` |
+| `HINDSIGHT_API_AUDIT_LOG_ENABLED` | Master switch for audit logging. Must be `true` for any audit events to be written. | `false` |
 | `HINDSIGHT_API_AUDIT_LOG_ACTIONS` | Comma-separated allowlist of action types to audit (empty = all eligible actions) | `""` |
 | `HINDSIGHT_API_AUDIT_LOG_RETENTION_DAYS` | Number of days to retain audit log entries. `-1` = keep forever. | `-1` |
 
@@ -1289,6 +1318,33 @@ Configuration fields are categorized for security:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` | Enable per-bank config API | `true` |
+| `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE` | Bank template manifest (JSON) applied automatically to every newly-created bank. See below. | _(unset)_ |
+
+##### `HINDSIGHT_API_DEFAULT_BANK_TEMPLATE`
+
+Server-level default bank template. When set, the manifest is applied once
+to every bank the server creates — triggered the first time a bank is
+touched (via `PUT /v1/default/banks/{bank_id}`, `/import`, `/retain`, etc.).
+The value is a JSON-encoded `BankTemplateManifest` with the same shape
+accepted by `POST /v1/default/banks/{bank_id}/import` (see the `bank`,
+`mental_models`, and `directives` sections in the Bank Templates API).
+
+Precedence: fields set by the template become per-bank overrides, so they
+take precedence over the equivalent `HINDSIGHT_API_*` env-var defaults
+(e.g. `HINDSIGHT_API_RETAIN_EXTRACTION_MODE`). Users can still override
+individual fields later via `PATCH /v1/default/banks/{bank_id}/config`;
+the template is **not** re-applied on subsequent accesses, so explicit
+overrides are never clobbered.
+
+A malformed manifest (bad JSON, unknown version, schema errors) is logged
+and ignored — bank creation still succeeds with plain defaults, so a
+broken server-level setting cannot wedge all callers.
+
+Example (compact, single-line JSON as required by env vars):
+
+```bash
+export HINDSIGHT_API_DEFAULT_BANK_TEMPLATE='{"version":"1","bank":{"reflect_mission":"Help support agents remember customer interactions.","retain_extraction_mode":"verbose","disposition_empathy":5},"directives":[{"name":"Be concise","content":"Always respond concisely.","priority":10}]}'
+```
 
 #### API Endpoints
 

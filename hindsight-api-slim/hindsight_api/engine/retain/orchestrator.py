@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from ...worker.stage import set_stage
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from . import bank_utils
@@ -133,6 +134,7 @@ async def _pre_resolve_phase1(
     Running these outside the transaction avoids holding row locks during
     slow reads, eliminating TimeoutErrors under concurrent load.
     """
+    set_stage("retain.phase1.resolve")
     from .link_utils import compute_semantic_links_ann
 
     user_entities_per_content = {idx: content.entities for idx, content in enumerate(contents) if content.entities}
@@ -238,6 +240,7 @@ async def _insert_facts_and_links(
     only the unit_entities INSERT (FK to memory_units) stays in the transaction.
     Entity link building is deferred to Phase 3 (post-transaction, best-effort).
     """
+    set_stage("retain.phase2.insert_facts")
     unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts)
     step_start = time.time()
     log_buffer.append(f"  Insert facts: {len(unit_ids)} units in {time.time() - step_start:.3f}s")
@@ -322,6 +325,7 @@ async def _build_and_insert_entity_links_phase3(
     Entity links are for UI graph visualization only — retrieval uses
     the unit_entities self-join instead.
     """
+    set_stage("retain.phase3.entity_links")
     p3_unit_ids = phase3_ctx.unit_ids
     p3_resolved = phase3_ctx.resolved_entity_ids
     p3_entity_to_unit = phase3_ctx.entity_to_unit
@@ -367,6 +371,7 @@ async def _extract_and_embed(
     Returns:
         Tuple of (extracted_facts, processed_facts, chunks_metadata, usage)
     """
+    set_stage("retain.extract_and_embed")
     step_start = time.time()
     extracted_facts, chunks, usage = await fact_extraction.extract_facts_from_contents(
         contents, llm_config, agent_name, config, pool, operation_id, schema

@@ -8,6 +8,44 @@ import PageHero from '@site/src/components/PageHero';
 
 ← OpenClaw integration
 
+## [0.6.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.1)
+
+**Bug Fixes**
+
+- Openclaw setup wizard now prompts for the actual token value instead of an environment variable name. ([`9679d813`](https://github.com/vectorize-io/hindsight/commit/9679d813))
+
+## 0.6.1 (Unreleased)
+
+**Improvements**
+
+- `hindsight-openclaw-setup` interactive wizard now asks for the API token/API key **value** instead of the env var name holding it. Pasted values are masked and stored inline in `openclaw.json` — no more two-step "pick an env var name, then export it" flow that confused first-time users. For CI / production, the SecretRef path is still available via the non-interactive flags (`--token-env`, `--api-key-env`) or after-the-fact with `openclaw config set ... --ref-source env --ref-id …`.
+- Added non-interactive CLI flags for direct-value credentials: `--token` (cloud / external API modes) and `--api-key` (embedded mode). `--token` and `--token-env` are mutually exclusive within a mode; same for `--api-key` / `--api-key-env`.
+
+## [0.6.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.0)
+
+**Breaking Changes**
+
+- Configuration is now read from the plugin configuration instead of environment variables, requiring updates to existing deployments. ([`e22ae05f`](https://github.com/vectorize-io/hindsight/commit/e22ae05f))
+
+**Features**
+
+- Adds an interactive setup wizard with Cloud, API, and Embedded configuration modes. ([`87322396`](https://github.com/vectorize-io/hindsight/commit/87322396))
+- Adds a daemon lifecycle package for running the Hindsight "all" daemon. ([`576016f5`](https://github.com/vectorize-io/hindsight/commit/576016f5))
+- Adds a configuration-aware CLI to backfill historical data into Hindsight memory. ([`72fd3d59`](https://github.com/vectorize-io/hindsight/commit/72fd3d59))
+- Adds session pattern filtering to ignore or treat certain sessions as stateless. ([`5a61ac50`](https://github.com/vectorize-io/hindsight/commit/5a61ac50))
+- Adds configurable tags for retained memories. ([`b0e8ac0f`](https://github.com/vectorize-io/hindsight/commit/b0e8ac0f))
+- Adds support for bankId when using static banks. ([`0e81d1a2`](https://github.com/vectorize-io/hindsight/commit/0e81d1a2))
+
+**Improvements**
+
+- Improves startup resilience and enriches retained memory metadata. ([`1f1716bd`](https://github.com/vectorize-io/hindsight/commit/1f1716bd))
+- Adds a JSONL-backed retain queue to improve reliability when the external API is unavailable. ([`087545cc`](https://github.com/vectorize-io/hindsight/commit/087545cc))
+- Reduces CLI startup time by deferring heavy initialization until the service starts. ([`41025c3b`](https://github.com/vectorize-io/hindsight/commit/41025c3b))
+
+**Bug Fixes**
+
+- Avoids misrouting by ignoring ctx.channelId when it contains a provider name. ([`d4b8b354`](https://github.com/vectorize-io/hindsight/commit/d4b8b354))
+
 ## 0.6.0 (Unreleased)
 
 **Breaking Changes**
@@ -19,6 +57,8 @@ import PageHero from '@site/src/components/PageHero';
 
 **Features**
 
+- Added `hindsight-openclaw-setup`, an interactive setup wizard that walks users through picking one of three install modes — **Cloud** (managed Hindsight at `https://api.hindsight.vectorize.io`), **External API** (your own running Hindsight deployment), or **Embedded daemon** (local `hindsight-embed` daemon). The wizard writes a valid plugin config with env-backed `SecretRef` credentials and no plaintext secrets on disk.
+- `hindsight-openclaw-setup` also runs non-interactively via `--mode cloud|api|embedded` plus mode-specific flags (`--api-url`, `--token-env`, `--no-token`, `--provider`, `--api-key-env`, `--model`) for CI and scripted installs.
 - Added the `llmApiKey` plugin config field, marked as a sensitive field so OpenClaw resolves it as a `SecretRef` from env, file, or exec sources.
 - Added the `llmBaseUrl` plugin config field for OpenAI-compatible endpoint overrides (OpenRouter, Azure OpenAI, vLLM, etc.).
 - Marked `hindsightApiToken` as a sensitive field — it can now be configured as a `SecretRef` the same way as `llmApiKey`.
