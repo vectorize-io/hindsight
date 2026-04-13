@@ -1013,19 +1013,20 @@ async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null):
   }
 }
 
-function normalizeRetainTags(value: unknown): string[] {
+export function normalizeRetainTags(value: unknown): string[] {
   if (value == null) return [];
 
   const rawItems = Array.isArray(value)
     ? value
     : typeof value === 'string'
       ? value.split(',')
-      : [value];
+      : [];
 
   const seen = new Set<string>();
   const normalized: string[] = [];
   for (const item of rawItems) {
-    const tag = String(item ?? '').trim();
+    if (typeof item !== 'string') continue;
+    const tag = item.trim();
     if (!tag || seen.has(tag)) continue;
     seen.add(tag);
     normalized.push(tag);
@@ -1894,7 +1895,7 @@ export function buildRetainRequest(
   effectiveCtx: PluginHookAgentContext | undefined,
   pluginConfig: PluginConfig,
   now = Date.now(),
-  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number; tags?: string[] },
+  options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
 ): RetainRequest {
   const resolvedCtx = resolveSessionIdentity(effectiveCtx);
   const parsedSession = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
@@ -1907,8 +1908,6 @@ export function buildRetainRequest(
   const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
   const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
-
-  const mergedTags = normalizeRetainTags([...(pluginConfig.retainTags || []), ...((options?.tags || []).filter(Boolean))]);
 
   return {
     content: transcript,
@@ -1928,7 +1927,7 @@ export function buildRetainRequest(
       sender_id: resolvedCtx?.senderId,
       ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
-    tags: mergedTags.length > 0 ? mergedTags : undefined,
+    tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
   };
 }
 
@@ -2116,6 +2115,30 @@ function buildToolResultBlock(msg: any): any | null {
   const block: any = { type: 'tool_result', content: text };
   if (toolUseId) block.tool_use_id = toolUseId;
   return block;
+}
+
+export function countUserTurns(messages: any[]): number {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return 0;
+  }
+
+  return messages.reduce((count: number, message: any) => count + (message?.role === 'user' ? 1 : 0), 0);
+}
+
+export function getRetentionTurnIndex(conversationTurnCount: number, retainEveryN: number): number | null {
+  if (conversationTurnCount <= 0 || retainEveryN <= 0) {
+    return null;
+  }
+
+  if (retainEveryN === 1) {
+    return conversationTurnCount;
+  }
+
+  if (conversationTurnCount % retainEveryN !== 0) {
+    return null;
+  }
+
+  return Math.floor(conversationTurnCount / retainEveryN);
 }
 
 export function sliceLastTurnsByUserBoundary(messages: any[], turns: number): any[] {

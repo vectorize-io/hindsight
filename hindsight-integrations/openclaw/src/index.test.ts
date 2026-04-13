@@ -4,6 +4,8 @@ import {
   extractRecallQuery,
   formatMemories,
   prepareRetentionTranscript,
+  countUserTurns,
+  getRetentionTurnIndex,
   sliceLastTurnsByUserBoundary,
   composeRecallQuery,
   truncateRecallQuery,
@@ -14,6 +16,7 @@ import {
   getIdentitySkipReason,
   isEphemeralOperationalText,
   deriveBankId,
+  normalizeRetainTags,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -229,8 +232,57 @@ describe('formatMemories', () => {
 });
 
 // ---------------------------------------------------------------------------
-// prepareRetentionTranscript
+// retention helpers
 // ---------------------------------------------------------------------------
+
+describe('countUserTurns', () => {
+  it('counts user messages across a resumed conversation history', () => {
+    expect(countUserTurns([
+      { role: 'user', content: 'turn 1' },
+      { role: 'assistant', content: 'reply 1' },
+      { role: 'system', content: 'meta' },
+      { role: 'user', content: 'turn 2' },
+      { role: 'assistant', content: 'reply 2' },
+      { role: 'user', content: 'turn 3' },
+    ])).toBe(3);
+  });
+});
+
+describe('getRetentionTurnIndex', () => {
+  it('uses the full conversation turn count for per-turn retention', () => {
+    expect(getRetentionTurnIndex(7, 1)).toBe(7);
+  });
+
+  it('derives a stable window sequence for chunked retention', () => {
+    expect(getRetentionTurnIndex(6, 3)).toBe(2);
+  });
+
+  it('returns null when a chunk boundary has not been reached', () => {
+    expect(getRetentionTurnIndex(5, 3)).toBeNull();
+  });
+});
+
+describe('normalizeRetainTags', () => {
+  it('trims, deduplicates, and preserves order for string arrays', () => {
+    expect(normalizeRetainTags([' source_system:openclaw ', 'agent:main', 'agent:main', ''])).toEqual([
+      'source_system:openclaw',
+      'agent:main',
+    ]);
+  });
+
+  it('drops non-string values instead of stringifying them', () => {
+    expect(normalizeRetainTags(['agent:main', { a: 1 } as unknown as string, 42 as unknown as string, null as unknown as string])).toEqual([
+      'agent:main',
+    ]);
+  });
+
+  it('accepts comma-separated strings', () => {
+    expect(normalizeRetainTags(' source_system:openclaw, agent:main , agent:main ')).toEqual([
+      'source_system:openclaw',
+      'agent:main',
+    ]);
+  });
+});
 
 describe('buildRetainRequest', () => {
   it('adds configured source metadata and retain tags', () => {
@@ -293,19 +345,6 @@ describe('buildRetainRequest', () => {
       sender_id: 'user:456',
       window_turns: '2',
     });
-  });
-
-  it('merges configured retain tags with per-call tags', () => {
-    const request = buildRetainRequest('hello world', 1, {
-      sessionKey: 'agent:main:discord:channel:123',
-    }, {
-      retainTags: ['source_system:openclaw', 'agent:main'],
-    }, 1700000000000, {
-      turnIndex: 1,
-      tags: ['agent:main', 'kind:manual'],
-    });
-
-    expect(request.tags).toEqual(['source_system:openclaw', 'agent:main', 'kind:manual']);
   });
 
   it('defaults source metadata to openclaw when unset', () => {
