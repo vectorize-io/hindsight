@@ -8,23 +8,18 @@ Manages three connection modes:
 Daemon state is tracked via files in ~/.hindsight/codex/state/.
 """
 
-import json
 import os
 import platform
 import subprocess
-import sys
 import time
-import traceback
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 
 from .llm import detect_llm_config, get_llm_env_vars
-from .state import acquire_state_lock, state_file_path, write_state
+from .state import acquire_state_lock, write_state
 
 DAEMON_STATE_FILE = "daemon.json"
 DAEMON_START_LOCK_FILE = "daemon-start.lock"
-DAEMON_START_LOG_FILE = "daemon-start.log"
 PROFILE_NAME = "codex"
 
 # Worst-case startup budget: profile create (10s) + daemon start (30s) +
@@ -78,17 +73,6 @@ def _check_health(base_url: str, timeout: int = 2) -> bool:
             return resp.status == 200
     except Exception:
         return False
-
-
-def _append_startup_log(message: str) -> None:
-    """Append a line to the background-startup log, best-effort."""
-    try:
-        path = state_file_path(DAEMON_START_LOG_FILE)
-        stamp = datetime.now(timezone.utc).isoformat()
-        with open(path, "a") as f:
-            f.write(f"[{stamp}] {message}\n")
-    except OSError:
-        pass
 
 
 def get_api_url(config: dict, debug_fn=None, allow_daemon_start: bool = False) -> str:
@@ -270,8 +254,12 @@ def prestart_daemon_background(config: dict, debug_fn=None):
     """Fire off daemon startup in the background — non-blocking.
 
     Called from SessionStart hook to warm up the daemon before the first
-    recall or retain hook fires. Routed through _ensure_daemon_running so it
-    shares the startup lock with foreground paths.
+    recall or retain hook fires. Matches the claude-code integration's
+    detached-shell approach. The spawned `hindsight-embed daemon start`
+    command itself does not contend for the codex startup lock — correctness
+    relies on hindsight-embed's own single-instance guard — but once it
+    returns, subsequent foreground calls to `_ensure_daemon_running` will
+    see the daemon healthy inside the lock and short-circuit.
     """
     if config.get("hindsightApiUrl"):
         return  # External API mode — no local daemon needed
@@ -287,36 +275,41 @@ def prestart_daemon_background(config: dict, debug_fn=None):
             debug_fn("hindsight-embed not available, skipping pre-start")
         return
 
-    # Spawn a detached python process that invokes the prestart entrypoint
-    # script directly. This avoids sys.path gymnastics from -c strings: the
-    # entrypoint sets its own sys.path from its file location.
-    entrypoint = os.path.join(
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
-        "prestart_daemon.py",
-    )
+    try:
+        llm_config = detect_llm_config(config)
+    except RuntimeError as e:
+        if debug_fn:
+            debug_fn(f"No LLM configured, skipping daemon pre-start: {e}")
+        return
+
+    llm_env = get_llm_env_vars(llm_config)
+    daemon_env = dict(os.environ)
+    daemon_env.update(llm_env)
+    idle_timeout = config.get("daemonIdleTimeout", 300)
+    daemon_env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(idle_timeout)
+    if platform.system() == "Darwin":
+        daemon_env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
+        daemon_env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
+
+    embed_cmd = _get_embed_command(config)
+
+    profile_args = ["profile", "create", PROFILE_NAME, "--merge", "--port", str(port)]
+    for env_name, env_val in llm_env.items():
+        if env_val:
+            profile_args.extend(["--env", f"{env_name}={env_val}"])
+
+    import shlex
+
+    profile_str = shlex.join(embed_cmd + profile_args)
+    daemon_str = shlex.join(embed_cmd + ["daemon", "--profile", PROFILE_NAME, "start"])
+
     subprocess.Popen(
-        [sys.executable, entrypoint, json.dumps(config)],
-        env=dict(os.environ),
+        f"{profile_str} && {daemon_str}",
+        shell=True,
+        env=daemon_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
     if debug_fn:
         debug_fn(f"Daemon pre-start initiated in background (port {port})")
-
-
-def background_start_daemon(config: dict) -> int:
-    """Entrypoint used by the background prestart helper script.
-
-    Returns 0 on success, 1 on failure. Failures are logged to
-    ~/.hindsight/codex/state/daemon-start.log so silent warmup failures are
-    still debuggable after the fact.
-    """
-    port = config.get("apiPort", 9077)
-    try:
-        _ensure_daemon_running(config, port)
-        _append_startup_log(f"prestart succeeded on port {port}")
-        return 0
-    except Exception as e:
-        _append_startup_log(f"prestart failed on port {port}: {e}\n{traceback.format_exc()}")
-        return 1
