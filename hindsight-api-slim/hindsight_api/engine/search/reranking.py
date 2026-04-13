@@ -23,6 +23,7 @@ def apply_combined_scoring(
     recency_alpha: float = _RECENCY_ALPHA,
     temporal_alpha: float = _TEMPORAL_ALPHA,
     proof_count_alpha: float = _PROOF_COUNT_ALPHA,
+    is_passthrough_reranker: bool = False,
 ) -> None:
     """Apply combined scoring to a list of ScoredResults in-place.
 
@@ -71,20 +72,30 @@ def apply_combined_scoring(
     # rank instead, so the boosts modulate a meaningful base score rather than
     # replacing it. This is a no-op for real cross-encoders, which produce
     # diverse scores.
-    if scored_results:
-        ce_scores = {sr.cross_encoder_score_normalized for sr in scored_results}
-        if len(ce_scores) <= 1:
-            n = len(scored_results)
-            sorted_by_rrf = sorted(
-                scored_results,
-                key=lambda s: getattr(getattr(s, "candidate", None), "rrf_score", 0.0),
-                reverse=True,
-            )
-            denom = max(1, n - 1)
-            for new_rank, sr in enumerate(sorted_by_rrf):
-                # Map rank → [0.1, 1.0] so the recency boost can still nudge
-                # ordering between adjacent candidates without overpowering RRF.
-                sr.cross_encoder_score_normalized = 1.0 - (0.9 * new_rank / denom)
+    # When the reranker is a passthrough (e.g. RRFPassthroughCrossEncoder used
+    # by slim deployments), every cross_encoder_score_normalized is identical
+    # and provides no relevance signal. The multiplicative recency / temporal /
+    # proof_count boosts below would then become the *only* ranking signal,
+    # making the final order a pure recency sort regardless of how relevant a
+    # candidate actually is.
+    #
+    # Seed cross_encoder_score_normalized from the RRF rank instead, so the
+    # boosts modulate a meaningful base score. Caller passes is_passthrough
+    # explicitly because "all scores identical" is too fragile a heuristic —
+    # a real reranker can also tie scores (especially in tests with synthetic
+    # data) and we'd corrupt legitimate single-result reranks.
+    if is_passthrough_reranker and scored_results:
+        n = len(scored_results)
+        sorted_by_rrf = sorted(
+            scored_results,
+            key=lambda s: getattr(getattr(s, "candidate", None), "rrf_score", 0.0),
+            reverse=True,
+        )
+        denom = max(1, n - 1)
+        for new_rank, sr in enumerate(sorted_by_rrf):
+            # Map rank → [0.1, 1.0] so the recency boost can still nudge
+            # ordering between adjacent candidates without overpowering RRF.
+            sr.cross_encoder_score_normalized = 1.0 - (0.9 * new_rank / denom)
 
     for sr in scored_results:
         # Recency: linear decay over 365 days → [0.1, 1.0]; neutral 0.5 if no date.
