@@ -809,7 +809,7 @@ export function getPluginConfigFromConfig(rawConfig: MoltbotConfig): PluginConfi
     excludeProviders: Array.isArray(config.excludeProviders)
       ? Array.from(new Set(['heartbeat', ...config.excludeProviders.filter((provider): provider is string => typeof provider === 'string')]))
       : ['heartbeat'],
-    autoRecall: config.autoRecall !== false, // Default: true (on), backward compatible
+    autoRecall: config.autoRecall !== false, // Default: true (on) — backward compatible
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity) ? config.dynamicBankGranularity : undefined,
     autoRetain: config.autoRetain !== false, // Default: true
     retainRoles: Array.isArray(config.retainRoles) ? config.retainRoles : undefined,
@@ -942,6 +942,15 @@ async function fetchHindsightJson<T>(apiUrl: string, path: string, apiToken?: st
   return response.json() as Promise<T>;
 }
 
+/**
+ * Fetches all Hindsight documents and **materializes** them as markdown files
+ * under each workspace's `memory/hindsight-bridge/` directory.  Despite the
+ * "list" name (required by the OpenClaw bridge contract), this function writes
+ * to disk — it is not read-only.
+ *
+ * Note: `original_text` is written verbatim with no size cap.  For very large
+ * documents this may produce oversized artifacts; acceptable for v1.
+ */
 export async function listHindsightPublicArtifacts(cfg: MoltbotConfig): Promise<MemoryPluginPublicArtifact[]> {
   const pluginConfig = getPluginConfigFromConfig(cfg);
   const externalApi = detectExternalApi(pluginConfig);
@@ -962,32 +971,45 @@ export async function listHindsightPublicArtifacts(cfg: MoltbotConfig): Promise<
       );
 
       const items = documents.items ?? [];
-      for (const listedDocument of items) {
-        let document: HindsightDocument;
-        try {
-          document = await fetchHindsightJson<HindsightDocument>(
-            externalApi.apiUrl,
-            `/v1/default/banks/${encodeURIComponent(bank.bank_id)}/documents/${encodeURIComponent(listedDocument.id)}`,
-            externalApi.apiToken,
-          );
-        } catch (err) {
-          log.warn(`[Hindsight] Failed to fetch document ${listedDocument.id} from bank ${bank.bank_id}: ${err}`);
-          continue;
-        }
-        const relativePath = buildArtifactRelativePath(bank.bank_id, listedDocument.id);
 
-        for (const workspace of workspaces) {
-          const absolutePath = join(workspace.workspaceDir, relativePath);
-          await mkdir(dirname(absolutePath), { recursive: true });
-          await writeFile(absolutePath, renderArtifact(bank, document), 'utf8');
-          artifacts.push({
-            kind: 'daily-note',
-            workspaceDir: workspace.workspaceDir,
-            relativePath,
-            absolutePath,
-            agentIds: workspace.agentIds,
-            contentType: 'markdown',
-          });
+      // Fetch documents in batches to avoid sequential N+1 round-trips
+      const BATCH = 8;
+      for (let i = 0; i < items.length; i += BATCH) {
+        const batch = items.slice(i, i + BATCH);
+        const results = await Promise.allSettled(
+          batch.map((item) =>
+            fetchHindsightJson<HindsightDocument>(
+              externalApi.apiUrl,
+              `/v1/default/banks/${encodeURIComponent(bank.bank_id)}/documents/${encodeURIComponent(item.id)}`,
+              externalApi.apiToken,
+            ),
+          ),
+        );
+
+        for (let j = 0; j < results.length; j++) {
+          const result = results[j];
+          if (result.status === 'rejected') {
+            log.warn(`[Hindsight] Failed to fetch document ${batch[j].id} from bank ${bank.bank_id}: ${result.reason}`);
+            continue;
+          }
+          const document = result.value;
+          const relativePath = buildArtifactRelativePath(bank.bank_id, batch[j].id);
+
+          for (const workspace of workspaces) {
+            const absolutePath = join(workspace.workspaceDir, relativePath);
+            await mkdir(dirname(absolutePath), { recursive: true });
+            await writeFile(absolutePath, renderArtifact(bank, document), 'utf8');
+            artifacts.push({
+              // OpenClaw's bridge contract requires a fixed kind string; 'daily-note'
+              // is the closest built-in kind for periodically-refreshed markdown.
+              kind: 'daily-note',
+              workspaceDir: workspace.workspaceDir,
+              relativePath,
+              absolutePath,
+              agentIds: workspace.agentIds,
+              contentType: 'markdown',
+            });
+          }
         }
       }
 

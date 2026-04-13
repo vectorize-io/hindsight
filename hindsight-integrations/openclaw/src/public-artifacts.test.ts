@@ -237,4 +237,101 @@ describe('public artifacts', () => {
       'https://api.example.com/v1/default/banks/bank-p/documents?limit=100&offset=100',
     );
   });
+
+  it('returns empty array when there are no banks', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'hindsight-artifacts-'));
+
+    const cfg: MoltbotConfig = {
+      agents: {
+        defaults: { workspace: tempDir },
+        list: [{ id: 'main', default: true, workspace: tempDir }],
+      },
+      plugins: {
+        entries: {
+          'hindsight-openclaw': {
+            config: { hindsightApiUrl: 'https://api.example.com' },
+          },
+        },
+      },
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ banks: [] }) })),
+    );
+
+    const artifacts = await listHindsightPublicArtifacts(cfg);
+    expect(artifacts).toHaveLength(0);
+  });
+
+  it('materializes artifacts into every workspace', async () => {
+    const ws1 = mkdtempSync(join(tmpdir(), 'hindsight-ws1-'));
+    const ws2 = mkdtempSync(join(tmpdir(), 'hindsight-ws2-'));
+    // clean up both workspaces via afterEach — stash ws2, tempDir handles ws1
+    tempDir = ws1;
+
+    const cfg: MoltbotConfig = {
+      agents: {
+        list: [
+          { id: 'a1', workspace: ws1 },
+          { id: 'a2', workspace: ws2 },
+        ],
+      },
+      plugins: {
+        entries: {
+          'hindsight-openclaw': {
+            config: { hindsightApiUrl: 'https://api.example.com' },
+          },
+        },
+      },
+    };
+
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/banks')) {
+        return { ok: true, json: async () => ({ banks: [{ bank_id: 'b', name: 'B', mission: '' }] }) };
+      }
+      if (url.includes('/documents?')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{ id: 'doc-1', bank_id: 'b', updated_at: '2024-01-01T00:00:00Z' }],
+          }),
+        };
+      }
+      if (url.includes('/documents/doc-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'doc-1',
+            bank_id: 'b',
+            original_text: 'multi-ws content',
+            created_at: '2024-01-01T00:00:00Z',
+            updated_at: '2024-01-01T00:00:00Z',
+            memory_unit_count: 1,
+            tags: [],
+            document_metadata: {},
+            retain_params: {},
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const artifacts = await listHindsightPublicArtifacts(cfg);
+
+    // One doc × two workspaces = two artifacts
+    expect(artifacts).toHaveLength(2);
+    const dirs = artifacts.map((a) => a.workspaceDir).sort();
+    expect(dirs).toEqual([ws1, ws2].sort());
+
+    for (const a of artifacts) {
+      const content = readFileSync(a.absolutePath, 'utf8');
+      expect(content).toContain('multi-ws content');
+    }
+
+    // manual cleanup for ws2
+    rmSync(ws2, { recursive: true, force: true });
+  });
 });

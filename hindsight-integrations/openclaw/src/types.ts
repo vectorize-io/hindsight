@@ -1,4 +1,7 @@
-// Moltbot plugin API types (minimal subset needed for this plugin)
+// Moltbot plugin API types (minimal subset needed for this plugin).
+// These duplicate OpenClaw SDK types intentionally — the SDK does not publish
+// stable type-only imports yet, so we inline the shapes we rely on.
+// TODO: replace with SDK imports once OpenClaw ships a types package.
 
 export interface PluginPromptHookResult {
   prependContext?: string;
