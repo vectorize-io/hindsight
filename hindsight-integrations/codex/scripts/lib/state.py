@@ -8,6 +8,8 @@ import json
 import os
 import re
 import sys
+import time
+from contextlib import contextmanager
 
 # fcntl is Unix-only; import conditionally so the module loads on Windows
 if sys.platform != "win32":
@@ -41,6 +43,47 @@ def _state_file(name: str) -> str:
     if not resolved.startswith(expected_dir + os.sep) and resolved != expected_dir:
         raise ValueError(f"State file path escapes state directory: {name!r}")
     return path
+
+
+def state_file_path(name: str) -> str:
+    """Return the absolute path for a named state file."""
+    return _state_file(name)
+
+
+@contextmanager
+def acquire_state_lock(name: str, timeout_seconds: float = 30.0, poll_interval: float = 0.1):
+    """Acquire an exclusive flock on a state file, yielding when held.
+
+    On Windows (no fcntl) this is a no-op — callers must tolerate races.
+    On Unix, raises TimeoutError if the lock cannot be acquired in time.
+
+    Each call opens a fresh file descriptor, so locks across threads of the
+    same process still block each other (flock is per open-file-description
+    on Linux/macOS, not per-process).
+    """
+    if fcntl is None:
+        yield
+        return
+
+    lock_path = _state_file(name)
+    deadline = time.time() + timeout_seconds
+    lock_fd = open(lock_path, "w")
+    acquired = False
+    try:
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"Timed out acquiring state lock {name!r} after {timeout_seconds:.0f}s")
+                time.sleep(poll_interval)
+        yield
+    finally:
+        if acquired:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def read_state(name: str, default=None):
