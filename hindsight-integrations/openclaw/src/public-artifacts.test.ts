@@ -155,4 +155,86 @@ describe('public artifacts', () => {
     const written = readFileSync(artifacts[0]!.absolutePath, 'utf8');
     expect(written).toContain('good document content');
   });
+
+  it('paginates through documents when a page is full', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'hindsight-artifacts-'));
+
+    const cfg: MoltbotConfig = {
+      agents: {
+        defaults: { workspace: tempDir },
+        list: [{ id: 'main', default: true, workspace: tempDir }],
+      },
+      plugins: {
+        entries: {
+          'hindsight-openclaw': {
+            config: {
+              hindsightApiUrl: 'https://api.example.com',
+            },
+          },
+        },
+      },
+    };
+
+    // Build a full page of 100 items to trigger a second request
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: `doc/${i}`,
+      bank_id: 'bank-p',
+      updated_at: '2024-01-02T00:00:00Z',
+    }));
+
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === 'https://api.example.com/v1/default/banks') {
+        return {
+          ok: true,
+          json: async () => ({
+            banks: [{ bank_id: 'bank-p', name: 'Bank P', mission: 'Paginate' }],
+          }),
+        };
+      }
+      if (url === 'https://api.example.com/v1/default/banks/bank-p/documents?limit=100&offset=0') {
+        return { ok: true, json: async () => ({ items: fullPage }) };
+      }
+      if (url === 'https://api.example.com/v1/default/banks/bank-p/documents?limit=100&offset=100') {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{ id: 'doc/extra', bank_id: 'bank-p', updated_at: '2024-01-03T00:00:00Z' }],
+          }),
+        };
+      }
+      // Per-document fetches — return minimal valid documents
+      const docMatch = url.match(/\/documents\/(.+)$/);
+      if (docMatch) {
+        const docId = decodeURIComponent(docMatch[1]);
+        return {
+          ok: true,
+          json: async () => ({
+            id: docId,
+            bank_id: 'bank-p',
+            original_text: `content of ${docId}`,
+            created_at: '2024-01-01T00:00:00Z',
+            updated_at: '2024-01-02T00:00:00Z',
+            memory_unit_count: 1,
+            tags: [],
+            document_metadata: {},
+            retain_params: {},
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const artifacts = await listHindsightPublicArtifacts(cfg);
+
+    // 100 from first page + 1 from second page
+    expect(artifacts).toHaveLength(101);
+
+    // Verify the second page was actually requested
+    const calls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calls).toContain(
+      'https://api.example.com/v1/default/banks/bank-p/documents?limit=100&offset=100',
+    );
+  });
 });
