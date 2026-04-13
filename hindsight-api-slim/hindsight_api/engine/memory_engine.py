@@ -29,6 +29,7 @@ from ..metrics import get_metrics_collector
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
 from ..worker.exceptions import RetryTaskAt
+from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
 from .db_budget import budgeted_operation
 from .operation_metadata import (
@@ -1090,6 +1091,9 @@ class MemoryEngine(MemoryEngineInterface):
             self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
         ) as audit_entry:
             try:
+                # Stage breadcrumb for the worker poller's WORKER_TASK log line.
+                # No-op outside a worker context.
+                set_stage(f"task.{task_type}")
                 if task_type == "batch_retain":
                     await self._handle_batch_retain(task_dict)
                 elif task_type == "file_convert_retain":

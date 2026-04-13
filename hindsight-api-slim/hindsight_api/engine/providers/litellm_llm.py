@@ -21,6 +21,7 @@ from typing import Any
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,8 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
+            if attempt > 0:
+                set_stage(f"llm.litellm.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await self._litellm.acompletion(**call_kwargs)
 
@@ -283,6 +286,8 @@ class LiteLLMLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
+            if attempt > 0:
+                set_stage(f"llm.litellm.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await self._litellm.acompletion(**call_kwargs)
 

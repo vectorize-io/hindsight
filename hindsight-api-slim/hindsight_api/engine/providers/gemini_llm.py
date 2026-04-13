@@ -23,6 +23,7 @@ from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
+from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,8 @@ class GeminiLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
+            if attempt > 0:
+                set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await asyncio.wait_for(
                     self._client.aio.models.generate_content(
@@ -527,6 +530,8 @@ class GeminiLLM(LLMInterface):
 
         last_exception = None
         for attempt in range(max_retries + 1):
+            if attempt > 0:
+                set_stage(f"llm.gemini.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
                 response = await asyncio.wait_for(
                     self._client.aio.models.generate_content(

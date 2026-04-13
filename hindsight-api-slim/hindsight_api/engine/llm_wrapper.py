@@ -536,6 +536,15 @@ class LLMProvider:
             OutputTooLongError: If output exceeds token limits.
             Exception: Re-raises API errors after retries exhausted.
         """
+        # Stage breadcrumb so the worker log shows which LLM call a task is
+        # currently inside; the stage_age field then reveals long JSON-schema
+        # retry loops (e.g. a small model that can't satisfy strict_schema).
+        # No-op outside a worker context.
+        from ..worker.stage import set_stage
+
+        structured = "+structured" if response_format is not None else ""
+        set_stage(f"llm.{self.provider}.{scope}{structured}")
+
         async with _global_llm_semaphore:
             # Delegate to provider implementation
             result = await self._provider_impl.call(
@@ -592,6 +601,10 @@ class LLMProvider:
         Returns:
             LLMToolCallResult with content and/or tool_calls.
         """
+        from ..worker.stage import set_stage
+
+        set_stage(f"llm.{self.provider}.{scope}+tools")
+
         async with _global_llm_semaphore:
             # Delegate to provider implementation
             result = await self._provider_impl.call_with_tools(
