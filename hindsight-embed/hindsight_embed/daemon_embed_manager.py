@@ -20,7 +20,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .embed_manager import EmbedManager
-from .profile_manager import UI_PORT_OFFSET, ProfileManager, resolve_active_profile
+from .profile_manager import UI_PORT_OFFSET, ProfileManager, lock_file, resolve_active_profile, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -163,43 +163,83 @@ class DaemonEmbedManager(EmbedManager):
         """
         Ensure the port is free before starting a daemon.
 
-        If the port is occupied by a hindsight daemon, stop it gracefully.
-        If occupied by something else, return False.
-
-        Returns:
-            True if port is free (or was freed), False if occupied by non-hindsight process.
+        Behavior:
+          * Port free → True (nothing to do).
+          * Port occupied by a *healthy* hindsight daemon → True without killing.
+            The caller's "start" is effectively a no-op: the daemon is already up.
+            Killing it would race concurrent starts (one process kills the other's
+            freshly-started daemon, both rush to rebind the port).
+          * Port occupied but /health is unreachable / non-200 → treat as a stale
+            hindsight daemon (or foreign process) and attempt to reclaim by killing
+            the PID listening on the port. This preserves the original intent of
+            clearing stale daemons from version upgrades.
+          * Kill failed, or non-hindsight process occupying the port → False.
         """
         if not self._is_port_in_use(port):
             return True
 
-        # Port is occupied — check if it's a hindsight daemon via /health
+        # Port is occupied — check if it's a healthy hindsight daemon.
+        health_ok = False
         try:
             with httpx.Client(timeout=2) as client:
                 response = client.get(f"http://127.0.0.1:{port}/health")
-                if response.status_code != 200:
-                    logger.warning(f"Port {port} is in use by another process")
-                    return False
+                health_ok = response.status_code == 200
         except Exception:
+            health_ok = False
+
+        if health_ok:
+            logger.debug(f"Port {port} already serving a healthy hindsight daemon; reusing it")
+            return True
+
+        # Unhealthy — attempt to reclaim by killing the listener.
+        pid = self._find_pid_on_port(port)
+        if pid is None:
             logger.warning(f"Port {port} is in use by another process")
             return False
 
-        # It's a hindsight daemon — find its PID and stop it
-        pid = self._find_pid_on_port(port)
-        if pid is None:
-            logger.warning(f"Port {port} has a hindsight daemon but could not find its PID")
-            return False
-
-        logger.info(f"Stopping existing daemon on port {port} (PID {pid})")
+        logger.info(f"Clearing unhealthy process on port {port} (PID {pid})")
         if self._kill_process(pid):
-            logger.info(f"Old daemon (PID {pid}) stopped")
+            logger.info(f"Stale process (PID {pid}) stopped")
             return True
 
-        logger.warning(f"Old daemon (PID {pid}) did not stop in time")
+        logger.warning(f"Process (PID {pid}) did not stop in time")
         return False
 
     def _start_daemon(self, config: dict, profile: str, extra_args: list[str] | None = None) -> bool:
-        """Start the daemon in background."""
+        """Start the daemon in background.
+
+        Serializes concurrent start attempts via an exclusive flock on the
+        profile's lock file, so two processes calling `start()` at the same
+        time cannot race into `_clear_port` and kill each other's daemons.
+        Inside the lock we re-check `is_running()`; the second caller sees
+        the first caller's daemon and short-circuits.
+        """
         paths = self._profile_manager.resolve_profile_paths(profile)
+        paths.lock.parent.mkdir(parents=True, exist_ok=True)
+
+        # Hold the per-profile start lock for the full startup sequence.
+        # lock_file() blocks until the lock is acquired on Unix (flock) and
+        # Windows (msvcrt), so concurrent callers serialize here.
+        with open(paths.lock, "w") as lock_fd:
+            lock_file(lock_fd)
+            try:
+                if self.is_running(profile):
+                    logger.debug(f"Daemon for profile '{profile}' came up while waiting for start lock")
+                    if profile:
+                        self._register_profile(profile, paths.port, config)
+                    return True
+                return self._start_daemon_locked(config, profile, paths, extra_args=extra_args)
+            finally:
+                unlock_file(lock_fd)
+
+    def _start_daemon_locked(
+        self,
+        config: dict,
+        profile: str,
+        paths,
+        extra_args: list[str] | None = None,
+    ) -> bool:
+        """Perform the actual daemon startup. Caller must hold paths.lock."""
         profile_label = f"profile '{profile}'" if profile else "default profile"
         daemon_log = paths.log
         port = paths.port
@@ -208,6 +248,16 @@ class DaemonEmbedManager(EmbedManager):
         if not self._clear_port(port):
             logger.error(f"Cannot start daemon: port {port} is in use by a non-hindsight process")
             return False
+
+        # _clear_port returns True without killing when a healthy hindsight daemon
+        # already owns the port (started out-of-band, e.g. by another user or a
+        # previous version upgrade). Re-check is_running so we don't spawn a
+        # second daemon that would fail to bind.
+        if self.is_running(profile):
+            logger.debug(f"Daemon for profile '{profile}' already healthy; skipping spawn")
+            if profile:
+                self._register_profile(profile, port, config)
+            return True
 
         # Load profile's .env file and merge with provided config
         # This fixes issue #305 where profile env vars were ignored
