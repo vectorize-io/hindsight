@@ -242,19 +242,28 @@ def test_macos_forces_cpu_for_local_embeddings_and_reranker(temp_home, monkeypat
     manager = DaemonEmbedManager()
 
     captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
 
     def fake_popen(cmd, env, **kwargs):
         captured["env"] = env
+        popen_called[0] = True
         proc = MagicMock()
         proc.pid = 12345
         return proc
 
-    # Short-circuit the readiness wait; we only care about the env passed to Popen.
+    # is_running must return False before Popen (so _start_daemon and
+    # _start_daemon_locked don't short-circuit on the pre-Popen checks added
+    # in #1016) and True after Popen (so the readiness wait loop breaks
+    # immediately). Tying it to popen_called gives us both for free.
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
     with (
         patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),  # skip 2s stability wait
         patch.object(manager, "_clear_port", return_value=True),
         patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
-        patch.object(manager, "is_running", return_value=True),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
         patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
     ):
         manager._start_daemon(
@@ -317,19 +326,25 @@ def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, mo
 
     manager = DaemonEmbedManager()
     captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
 
     def fake_popen(cmd, env, **kwargs):
         captured["env"] = env
+        popen_called[0] = True
         proc = MagicMock()
         proc.pid = 12345
         return proc
 
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
     # Simulate Linux so the macOS default doesn't mask the test.
     with (
         patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
         patch.object(manager, "_clear_port", return_value=True),
         patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
-        patch.object(manager, "is_running", return_value=True),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
         patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Linux"),
     ):
         manager._start_daemon(config={}, profile=profile_name)
@@ -351,18 +366,24 @@ def test_macos_force_cpu_respects_explicit_override(temp_home, monkeypatch):
 
     manager = DaemonEmbedManager()
     captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
 
     def fake_popen(cmd, env, **kwargs):
         captured["env"] = env
+        popen_called[0] = True
         proc = MagicMock()
         proc.pid = 12345
         return proc
 
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
     with (
         patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
         patch.object(manager, "_clear_port", return_value=True),
         patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
-        patch.object(manager, "is_running", return_value=True),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
         patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
     ):
         manager._start_daemon(
