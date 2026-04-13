@@ -222,6 +222,10 @@ Every new integration in `hindsight-integrations/` must satisfy all of the follo
 
 If any of these are missing, the integration is incomplete and must not be pushed or merged.
 
+### Changelogs
+
+Never add "Unreleased" entries to changelogs (e.g. `hindsight-docs/src/pages/changelog/**`). Changelog entries are written by the release script (`./scripts/release-integration.sh`) when a version is actually cut. If a bug fix or feature needs documenting before release, describe it in the PR/commit — the release tooling will surface it in the published changelog section.
+
 ### Adding New API Configuration Flags
 
 Configuration follows a hierarchical system: **Global (env vars) → Tenant (via extension) → Bank (database)**.

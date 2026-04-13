@@ -134,10 +134,6 @@ const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 const senderIdBySession = new Map<string, string>();
 const documentSequenceBySession = new Map<string, number>();
 
-// Guard against duplicate hook registration within a single runtime load.
-// Do not tie this to api instance identity, which can be brittle across loader phases.
-let hooksRegistered = false;
-
 // Cooldown + guard to prevent concurrent reinit attempts
 let lastReinitAttempt = 0;
 let isReinitInProgress = false;
@@ -1202,12 +1198,15 @@ export default function (api: MoltbotPluginAPI) {
 
     debug('[Hindsight] Plugin loaded successfully');
 
-    // Register agent hooks for auto-recall and auto-retention
-    if (hooksRegistered) {
-      debug('[Hindsight] Hooks already registered in this runtime, skipping duplicate hook registration');
-      return;
-    }
-    hooksRegistered = true;
+    // Register agent hooks for auto-recall and auto-retention.
+    //
+    // Why no module-level "already registered" guard: each plugin entry invocation
+    // hands us a fresh `api` tied to a specific plugin registry. OpenClaw may call
+    // the plugin entry multiple times per process (CLI vs gateway vs lazy reloads),
+    // and the registry that's active when an agent actually runs is not guaranteed
+    // to be the first one we saw. A process-global flag would let the first call
+    // "win" and leave subsequent registries with zero hindsight hooks — which is
+    // exactly how auto-recall/auto-retain silently stopped firing in 0.6.x.
     debug('[Hindsight] Registering agent hooks...');
     log.info('registering agent hooks');
 
