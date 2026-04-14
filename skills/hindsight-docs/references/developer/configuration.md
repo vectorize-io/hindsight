@@ -985,7 +985,7 @@ For production deployments, use `s3`, `gcs`, or `azure` to avoid storing large b
 
 ### Observations (Experimental) {#observations}
 
-Observations are consolidated knowledge synthesized from facts.
+Observations are deduplicated, evidence-grounded knowledge consolidated from multiple facts. Each observation tracks its supporting memories, a proof count, and a computed freshness trend, and is refined — not overwritten — when new evidence arrives.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -1008,7 +1008,7 @@ Observations are consolidated knowledge synthesized from facts.
 
 **`HINDSIGHT_API_OBSERVATIONS_MISSION` — redefine what this bank synthesises**
 
-By default, observations are durable, specific facts synthesized from memories — the kind of knowledge that stays true over time (preferences, skills, relationships, recurring patterns). Ephemeral state is filtered out. Contradictions are tracked with temporal markers.
+By default, observations are durable, specific beliefs consolidated from memories — the kind of knowledge that stays true over time (preferences, skills, relationships, recurring patterns). Each one is grounded in the source memories that support it. Ephemeral state is filtered out. Contradictions are tracked with temporal markers rather than overwriting the prior belief.
 
 Set `HINDSIGHT_API_OBSERVATIONS_MISSION` to replace this definition entirely. Write a plain-language description of what observations should be for your use case. The LLM will use this instead of the default rules when deciding what to create or update. Leave it unset to keep the server default.
 

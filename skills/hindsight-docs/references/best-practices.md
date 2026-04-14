@@ -34,7 +34,7 @@ Banks are auto-created on first use. Configure them before ingesting data to ste
 | **Retain** | Ingests raw content (conversations, documents, notes). The LLM extracts facts, entities, and relationships — raw content is never stored verbatim. | After each conversation turn or session ends |
 | **Recall** | Retrieves relevant memories using 4 parallel strategies: semantic search, BM25, graph traversal, and temporal ranking. Returns a ranked list of facts. | Before generating a response that benefits from past context |
 | **Reflect** | Autonomous reasoning loop: searches memory, synthesizes an answer, and returns it directly. Uses mental models and observations hierarchically. | When you want Hindsight to answer a question, not just retrieve facts |
-| **Observations** | Auto-synthesized knowledge patterns produced by the consolidation operation, which runs asynchronously after retain completes. Consolidate facts into durable insights (preferences, behavioral patterns, contradictions). | Triggered automatically after retain — not part of the retain call itself |
+| **Observations** | Deduplicated, evidence-grounded knowledge consolidated from multiple facts. Each observation tracks its supporting memories with exact quotes, proof counts, and a computed freshness trend (stable/strengthening/weakening/stale). Refined — not overwritten — when new evidence supports, contradicts, or extends them. | Triggered automatically after retain — not part of the retain call itself |
 | **Mental Models** | Pre-computed reflect responses stored for common queries. Return instantly and consistently. | Create for repeated high-traffic queries or slowly-changing user profiles |
 
 ---
@@ -47,7 +47,7 @@ Facts extracted during retain are classified into three types:
 |------|-------------|---------|
 | `world` | General knowledge, external facts | "The Eiffel Tower is in Paris" |
 | `experience` | Personal events, user-specific facts | "User moved to Berlin in 2024" |
-| `observation` | Consolidated patterns synthesized from facts | "User consistently prefers async communication" |
+| `observation` | Consolidated belief grounded in multiple supporting facts; deduplicated and refined over time with tracked evidence and freshness | "User consistently prefers async communication (5 supporting memories, strengthening)" |
 
 Use `types` filtering in recall to target specific memory types.
 
