@@ -11,6 +11,7 @@ import pytest
 
 from hindsight_api.engine.reflect.tools import tool_search_observations
 from hindsight_api.engine.response_models import RecallResult
+from hindsight_api.models import RequestContext
 
 
 def _make_mock_engine(recall_result=None):
@@ -24,7 +25,11 @@ def _make_mock_engine(recall_result=None):
 
 @pytest.fixture
 def mock_request_context():
-    return MagicMock()
+    # Use a real dataclass instance — tool_search_observations calls
+    # dataclasses.replace(request_context, internal=True), which fails on
+    # MagicMock. The fields don't matter for these tests; we only inspect
+    # the kwargs passed to the mocked recall_async.
+    return RequestContext()
 
 
 class TestSearchObservationsSourceFacts:

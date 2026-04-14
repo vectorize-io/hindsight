@@ -1,7 +1,9 @@
 name = "hindsight-oauth-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-03-01"
-workers_dev = true
+# Production deployments should publish to a custom route, not the
+# workers.dev subdomain. Flip to `true` only for local/dev previews.
+workers_dev = false
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"

@@ -6,6 +6,41 @@ import PageHero from '@site/src/components/PageHero';
 
 <PageHero title="Changelog" subtitle="User-facing changes only. Internal maintenance and infrastructure updates are omitted." />
 
+## [0.5.1](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.1)
+
+**Breaking Changes**
+
+- OpenClaw now reads configuration from plugin config instead of environment variables. ([`e22ae05f`](https://github.com/vectorize-io/hindsight/commit/e22ae05f))
+
+**Features**
+
+- Added SiliconFlow as a supported reranker provider. ([`d0b2ab9a`](https://github.com/vectorize-io/hindsight/commit/d0b2ab9a))
+- Added an interactive OpenClaw setup wizard with Cloud / API / Embedded modes. ([`87322396`](https://github.com/vectorize-io/hindsight/commit/87322396))
+- Added a config-aware CLI to backfill OpenClaw history. ([`72fd3d59`](https://github.com/vectorize-io/hindsight/commit/72fd3d59))
+- Added OpenClaw session pattern filtering to ignore or treat sessions as stateless. ([`5a61ac50`](https://github.com/vectorize-io/hindsight/commit/5a61ac50))
+- Added a Cloudflare OAuth proxy integration option for self-hosted Hindsight. ([`aad07a14`](https://github.com/vectorize-io/hindsight/commit/aad07a14))
+- Expanded the CLI to cover all OpenAPI endpoints and request-body parameters. ([`c05c491d`](https://github.com/vectorize-io/hindsight/commit/c05c491d))
+- Added a default bank template environment variable (HINDSIGHT_API_DEFAULT_BANK_TEMPLATE). ([`fc941d5c`](https://github.com/vectorize-io/hindsight/commit/fc941d5c))
+- Added a daemon lifecycle package (@vectorize-io/hindsight-all) to simplify running the all-in-one daemon. ([`576016f5`](https://github.com/vectorize-io/hindsight/commit/576016f5))
+- Added recallTags and recallTagsMatch configuration options to control which tagged memories are recalled. ([`b57e337f`](https://github.com/vectorize-io/hindsight/commit/b57e337f))
+
+**Improvements**
+
+- Improved OpenClaw reliability with more resilient startup behavior and richer retain metadata. ([`1f1716bd`](https://github.com/vectorize-io/hindsight/commit/1f1716bd))
+
+**Bug Fixes**
+
+- OpenClaw setup wizard now prompts for the token value (not the env var name). ([`9679d813`](https://github.com/vectorize-io/hindsight/commit/9679d813))
+- Fixed embedded mode daemon start/stop race that could terminate healthy daemons. ([`e5724fcb`](https://github.com/vectorize-io/hindsight/commit/e5724fcb))
+- Fixed reranker initialization issues to show real import errors and avoid a Transformers 5.x race in jina-mlx. ([`f82f58fa`](https://github.com/vectorize-io/hindsight/commit/f82f58fa))
+- Fixed worker consolidation slot accounting to respect the configured maximum concurrency. ([`2d74007d`](https://github.com/vectorize-io/hindsight/commit/2d74007d))
+- Improved CLI API error output by including the HTTP response body. ([`93300b91`](https://github.com/vectorize-io/hindsight/commit/93300b91))
+- Fixed CLI memory listing showing "[UNKNOWN]" for fact types. ([`2635bbb4`](https://github.com/vectorize-io/hindsight/commit/2635bbb4))
+- Fixed recall ranking so RRF ordering is preserved when the reranker is configured as a passthrough. ([`4f9cf15c`](https://github.com/vectorize-io/hindsight/commit/4f9cf15c))
+- Fixed retain chunk insertion to be idempotent and avoid repeated retries on integrity errors. ([`2d95f78b`](https://github.com/vectorize-io/hindsight/commit/2d95f78b))
+- Fixed retain ANN seed temp table creation to run inside a transaction for better reliability. ([`3fc87e76`](https://github.com/vectorize-io/hindsight/commit/3fc87e76))
+- Fixed LLM requests to use the correct max token parameter for reasoning models and Azure OpenAI. ([`7b2263ba`](https://github.com/vectorize-io/hindsight/commit/7b2263ba))
+
 ## [0.5.0](https://github.com/vectorize-io/hindsight/releases/tag/v0.5.0)
 
 **Breaking Changes**

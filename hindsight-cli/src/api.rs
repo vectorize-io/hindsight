@@ -5,10 +5,42 @@
 
 use anyhow::Result;
 pub use hindsight_client::types;
-use hindsight_client::Client as AsyncClient;
+use hindsight_client::{Client as AsyncClient, Error as ClientError};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+
+/// Convert a progenitor client error into an anyhow error that includes the
+/// HTTP response body. Without this, errors render as
+/// "Unexpected Response: Response { ... }" with no body, hiding validation
+/// details (see issue #1007).
+async fn humanize_client_error<E>(err: ClientError<E>) -> anyhow::Error
+where
+    E: serde::Serialize + std::fmt::Debug + Send + Sync + 'static,
+{
+    match err {
+        ClientError::ErrorResponse(rv) => {
+            let status = rv.status();
+            let body = rv.into_inner();
+            let body_str = serde_json::to_string(&body).unwrap_or_else(|_| format!("{:?}", body));
+            anyhow::anyhow!("API request failed ({}): {}", status, body_str)
+        }
+        ClientError::UnexpectedResponse(response) => {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if body.is_empty() {
+                anyhow::anyhow!("API request failed ({})", status)
+            } else {
+                anyhow::anyhow!("API request failed ({}): {}", status, body)
+            }
+        }
+        ClientError::InvalidResponsePayload(bytes, src) => {
+            let body = String::from_utf8_lossy(&bytes);
+            anyhow::anyhow!("Invalid response payload ({}): {}", src, body)
+        }
+        other => anyhow::anyhow!("{}", other),
+    }
+}
 
 // Types not defined in OpenAPI spec (TODO: add to openapi.json)
 #[derive(Debug, Serialize, Deserialize)]
@@ -184,7 +216,10 @@ impl ApiClient {
             );
         }
         self.runtime.block_on(async {
-            let response = self.client.recall_memories(agent_id, None, request).await?;
+            let response = match self.client.recall_memories(agent_id, None, request).await {
+                Ok(r) => r,
+                Err(e) => return Err(humanize_client_error(e).await),
+            };
             Ok(response.into_inner())
         })
     }
@@ -196,7 +231,10 @@ impl ApiClient {
         _verbose: bool,
     ) -> Result<types::ReflectResponse> {
         self.runtime.block_on(async {
-            let response = self.client.reflect(agent_id, None, request).await?;
+            let response = match self.client.reflect(agent_id, None, request).await {
+                Ok(r) => r,
+                Err(e) => return Err(humanize_client_error(e).await),
+            };
             Ok(response.into_inner())
         })
     }
@@ -209,7 +247,10 @@ impl ApiClient {
         _verbose: bool,
     ) -> Result<MemoryPutResult> {
         self.runtime.block_on(async {
-            let response = self.client.retain_memories(agent_id, None, request).await?;
+            let response = match self.client.retain_memories(agent_id, None, request).await {
+                Ok(r) => r,
+                Err(e) => return Err(humanize_client_error(e).await),
+            };
             let result = response.into_inner();
             Ok(MemoryPutResult {
                 success: result.success,

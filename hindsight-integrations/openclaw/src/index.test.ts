@@ -8,6 +8,12 @@ import {
   composeRecallQuery,
   truncateRecallQuery,
   buildRetainRequest,
+  parseSessionKey,
+  extractTelegramDirectSenderId,
+  resolveSessionIdentity,
+  getIdentitySkipReason,
+  isEphemeralOperationalText,
+  deriveBankId,
 } from './index.js';
 import type { PluginConfig, MemoryResult } from './types.js';
 
@@ -294,6 +300,19 @@ describe('buildRetainRequest', () => {
     expect(request.metadata?.source).toBe('openclaw');
     expect(request.tags).toBeUndefined();
   });
+
+  it('preserves provider fallback without backfilling channel_type from the session key', () => {
+    const request = buildRetainRequest('hello world', 1, {
+      sessionKey: 'agent:main:telegram:direct:12345',
+    }, {}, 1700000000000, { turnIndex: 1 });
+
+    expect(request.metadata).toMatchObject({
+      provider: 'telegram',
+      channel_type: undefined,
+      channel_id: 'direct:12345',
+      sender_id: '12345',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -374,6 +393,110 @@ describe('prepareRetentionTranscript', () => {
     expect(result?.transcript).not.toContain('User prefers dark mode');
     expect(result?.transcript).toContain('What is dark mode?');
     expect(result?.transcript).toContain('Dark mode is a display setting.');
+  });
+
+  it('emits Anthropic-shaped typed blocks by default (retainToolCalls=true)', () => {
+    const messages = [
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'Hi back' },
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!.transcript);
+    expect(parsed).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Hello there' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Hi back' }] },
+    ]);
+    expect(result!.transcript).not.toContain('[role:');
+  });
+
+  it('flattens content to a string when retainToolCalls is false', () => {
+    const config: PluginConfig = { ...baseConfig, retainToolCalls: false };
+    const messages = [
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'Hi back' },
+    ];
+    const result = prepareRetentionTranscript(messages, config);
+    expect(JSON.parse(result!.transcript)).toEqual([
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'Hi back' },
+    ]);
+  });
+
+  it('retains assistant tool_use blocks and folds toolResult into a user tool_result block', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'What is the weather?' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'deliberation — should be stripped' },
+          { type: 'text', text: 'Let me check.' },
+          { type: 'toolCall', id: 'call_abc', name: 'get_weather', arguments: { city: 'SF' } },
+        ],
+      },
+      { role: 'toolResult', toolCallId: 'call_abc', toolName: 'get_weather', content: [{ type: 'text', text: 'sunny, 62F' }] },
+      { role: 'assistant', content: [{ type: 'text', text: "It's sunny, 62F." }] },
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!.transcript);
+    expect(parsed).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'What is the weather?' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me check.' },
+          { type: 'tool_use', name: 'get_weather', input: { city: 'SF' }, id: 'call_abc' },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', content: 'sunny, 62F', tool_use_id: 'call_abc' }] },
+      { role: 'assistant', content: [{ type: 'text', text: "It's sunny, 62F." }] },
+    ]);
+  });
+
+  it('filters operational MCP tool calls to avoid feedback loops', () => {
+    const messages = [
+      { role: 'user', content: 'recall stuff' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'c1', name: 'mcp__hindsight__recall', arguments: { query: 'x' } },
+          { type: 'toolCall', id: 'c2', name: 'mcp__other__send_message', arguments: { text: 'hi' } },
+          { type: 'text', text: 'Done.' },
+        ],
+      },
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    const parsed = JSON.parse(result!.transcript);
+    const assistantBlocks = parsed[1].content;
+    expect(assistantBlocks.some((b: any) => b.type === 'tool_use' && b.name === 'mcp__hindsight__recall')).toBe(false);
+    expect(assistantBlocks.some((b: any) => b.type === 'tool_use' && b.name === 'mcp__other__send_message')).toBe(true);
+  });
+
+  it('truncates tool_result content at 2000 chars', () => {
+    const big = 'x'.repeat(3000);
+    const messages = [
+      { role: 'user', content: 'run tool' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'noop', arguments: {} }] },
+      { role: 'toolResult', toolCallId: 'c1', content: [{ type: 'text', text: big }] },
+    ];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    const parsed = JSON.parse(result!.transcript);
+    const toolResult = parsed.find((m: any) => m.content.some((b: any) => b.type === 'tool_result')).content[0];
+    expect(toolResult.content.endsWith('... (truncated)')).toBe(true);
+    expect(toolResult.content.length).toBe(2000 + '... (truncated)'.length);
+  });
+
+  it('emits legacy text markers when retainFormat is "text"', () => {
+    const config: PluginConfig = { ...baseConfig, retainFormat: 'text' };
+    const messages = [
+      { role: 'user', content: 'Hello there' },
+      { role: 'assistant', content: 'Hi back' },
+    ];
+    const result = prepareRetentionTranscript(messages, config);
+    expect(result).not.toBeNull();
+    expect(result!.transcript).toContain('[role: user]\nHello there\n[user:end]');
+    expect(result!.transcript).toContain('[role: assistant]\nHi back\n[assistant:end]');
   });
 
   it('reports accurate messageCount excluding empty messages', () => {
@@ -498,6 +621,132 @@ describe('truncateRecallQuery', () => {
     const truncated = truncateRecallQuery(composed, latest, 180);
     expect(truncated).toContain(latest);
     expect(truncated.length).toBeLessThanOrEqual(180);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session identity + operational guardrails
+// ---------------------------------------------------------------------------
+
+describe('session identity helpers', () => {
+  const baseConfig: PluginConfig = {
+    dynamicBankId: true,
+    dynamicBankGranularity: ['agent', 'channel', 'user'],
+  };
+
+  it('parses main sessions', () => {
+    expect(parseSessionKey('agent:main:main')).toEqual({
+      agentId: 'main',
+      provider: 'main',
+      channel: 'main',
+    });
+  });
+
+  it('parses operational cron-like sessions', () => {
+    expect(parseSessionKey('agent:worker:cron:nightly:cleanup')).toEqual({
+      agentId: 'worker',
+      provider: 'cron',
+      channel: 'nightly:cleanup',
+    });
+  });
+
+  it('extracts telegram direct sender ids from channel ids', () => {
+    expect(extractTelegramDirectSenderId('direct:12345')).toBe('12345');
+    expect(extractTelegramDirectSenderId('group:12345')).toBeUndefined();
+  });
+
+  it('resolves telegram direct identity from session key when senderId is missing', () => {
+    const resolved = resolveSessionIdentity({
+      agentId: 'main',
+      sessionKey: 'agent:main:telegram:direct:12345',
+    });
+
+    expect(resolved).toMatchObject({
+      agentId: 'main',
+      messageProvider: 'telegram',
+      channelId: 'direct:12345',
+      senderId: '12345',
+    });
+  });
+
+  it('derives bank ids from resolved telegram direct identity', () => {
+    const bankId = deriveBankId(
+      {
+        agentId: 'main',
+        sessionKey: 'agent:main:telegram:direct:12345',
+      },
+      baseConfig,
+    );
+
+    expect(bankId).toBe('main::direct%3A12345::12345');
+  });
+
+  it('marks operational main sessions as skippable', () => {
+    const result = getIdentitySkipReason({ sessionKey: 'agent:main:main' });
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'internal main session agent:main:main',
+    });
+  });
+
+  it.each([
+    'agent:worker:cron:nightly:cleanup',
+    'agent:worker:heartbeat:node-1',
+    'agent:worker:subagent:abc123',
+  ])('marks operational sessions as final skips: %s', (sessionKey) => {
+    const result = getIdentitySkipReason({ sessionKey });
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: `operational session ${sessionKey}`,
+    });
+  });
+
+  it('marks temp sessions as final skips', () => {
+    const result = getIdentitySkipReason({ sessionKey: 'temp:compose:123' });
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'ephemeral temp session temp:compose:123',
+    });
+  });
+
+  it('marks missing provider as retryable', () => {
+    const result = getIdentitySkipReason({ senderId: '12345' });
+    expect(result.reason).toEqual({
+      kind: 'retryable',
+      detail: 'missing stable message provider',
+    });
+  });
+
+  it('marks missing sender as retryable', () => {
+    const result = getIdentitySkipReason({ messageProvider: 'telegram', channelId: 'group:12345' });
+    expect(result.reason).toEqual({
+      kind: 'retryable',
+      detail: 'missing stable sender identity',
+    });
+  });
+
+  it('marks telegram direct sender mismatches as final skips', () => {
+    const result = getIdentitySkipReason({
+      sessionKey: 'agent:main:telegram:direct:12345',
+      messageProvider: 'telegram',
+      channelId: 'direct:12345',
+      senderId: '99999',
+    });
+
+    expect(result.reason).toEqual({
+      kind: 'final',
+      detail: 'telegram direct identity mismatch (direct:12345 vs 99999)',
+    });
+  });
+
+  it('detects ephemeral operational text with or without transcript wrappers', () => {
+    expect(isEphemeralOperationalText('A new session was started via /reset.')).toBe(true);
+    expect(
+      isEphemeralOperationalText(
+        '[role: user]\nA new session was started via /new.\n[user:end]',
+      ),
+    ).toBe(true);
+    expect(isEphemeralOperationalText('Tell me what I said about dark mode.')).toBe(false);
   });
 });
 

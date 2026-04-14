@@ -465,6 +465,7 @@ Reranks initial search results to improve precision.
 | `local` | SentenceTransformers CrossEncoder (default) | Development, low latency |
 | `cohere` | Cohere rerank API | Production, high quality |
 | `zeroentropy` | ZeroEntropy rerank API (zerank-2) | Production, state-of-the-art accuracy |
+| `siliconflow` | SiliconFlow rerank API (Cohere-compatible `/rerank` endpoint) | Users in China or anyone on SiliconFlow's platform |
 | `tei` | HuggingFace Text Embeddings Inference | Production, self-hosted |
 | `flashrank` | FlashRank (lightweight, fast) | Resource-constrained environments |
 | `litellm` | LiteLLM proxy (unified gateway) | Multi-provider setups |
@@ -493,6 +494,15 @@ Reranks initial search results to improve precision.
 | `zerank-2` | Flagship multilingual reranker (default) |
 | `zerank-2-small` | Faster, lighter variant |
 
+### SiliconFlow Models
+
+SiliconFlow hosts a range of open-weight rerankers behind a Cohere-compatible `/rerank` endpoint:
+
+| Model | Use Case |
+|-------|----------|
+| `BAAI/bge-reranker-v2-m3` | Multilingual, strong default |
+| `Qwen/Qwen3-Reranker-8B` | Larger, higher accuracy |
+
 ### LiteLLM Supported Providers
 
 LiteLLM supports multiple reranking providers via the `/rerank` endpoint:
@@ -517,10 +527,26 @@ export HINDSIGHT_API_RERANKER_PROVIDER=cohere
 export HINDSIGHT_API_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-english-v3.0
 
+# Cohere-compatible endpoint (Azure AI Foundry, Jina, Voyage, self-hosted BGE, ...)
+# Setting COHERE_BASE_URL switches the provider off the Cohere SDK and onto a
+# plain HTTP client that speaks the standard rerank wire format:
+#   POST {base_url}  Authorization: Bearer <key>
+#   {"model","query","documents","return_documents":false}
+#   -> {"results":[{"index","relevance_score"}, ...]}
+export HINDSIGHT_API_RERANKER_PROVIDER=cohere
+export HINDSIGHT_API_RERANKER_COHERE_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_COHERE_MODEL=rerank-v3.5  # whatever model the endpoint serves
+export HINDSIGHT_API_RERANKER_COHERE_BASE_URL=https://your-endpoint.example/rerank
+
 # ZeroEntropy (state-of-the-art accuracy)
 export HINDSIGHT_API_RERANKER_PROVIDER=zeroentropy
 export HINDSIGHT_API_RERANKER_ZEROENTROPY_API_KEY=your-api-key
 export HINDSIGHT_API_RERANKER_ZEROENTROPY_MODEL=zerank-2  # default, can omit
+
+# SiliconFlow (Cohere-compatible /rerank endpoint)
+export HINDSIGHT_API_RERANKER_PROVIDER=siliconflow
+export HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY=your-api-key
+export HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL=BAAI/bge-reranker-v2-m3  # default, can omit
 
 # TEI (self-hosted)
 export HINDSIGHT_API_RERANKER_PROVIDER=tei

@@ -82,6 +82,15 @@ jobs:
         node-version: '22'
         registry-url: 'https://registry.npmjs.org'
 
+    # Guard: fail fast if the integration's lockfile resolves any dep from a
+    # monorepo workspace (link=true) or a relative file path. The release
+    # runner has no pre-built workspace `dist/` so `npm run build` would
+    # later fail at tsc with "Cannot find module". See:
+    # https://github.com/vectorize-io/hindsight/issues/… (0.6.0 openclaw retry)
+    - name: Check integration lockfile
+      if: steps.type.outputs.type == 'typescript'
+      run: ./scripts/check-integration-lockfiles.sh
+
     - name: Install dependencies
       if: steps.type.outputs.type == 'typescript'
       working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}

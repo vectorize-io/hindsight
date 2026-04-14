@@ -92,6 +92,41 @@ describe('HindsightPlugin', () => {
     });
 });
 
+describe('HindsightPlugin state sharing', () => {
+    beforeEach(() => {
+        for (const key of Object.keys(process.env)) {
+            if (key.startsWith('HINDSIGHT_')) delete process.env[key];
+        }
+        vi.clearAllMocks();
+    });
+
+    it('shares state across multiple plugin instantiations (sessions)', async () => {
+        process.env.HINDSIGHT_API_URL = 'http://localhost:8888';
+
+        // Simulate two sessions calling the plugin (OpenCode instantiates per session)
+        const result1 = await HindsightPlugin(mockPluginInput as any);
+        const result2 = await HindsightPlugin(mockPluginInput as any);
+
+        // Trigger session.created on session 1 — should track 'sess-A'
+        await result1.event!({
+            event: { type: 'session.created', properties: { info: { id: 'sess-A' } } },
+        });
+
+        // Session 2's system transform should see 'sess-A' because state is shared
+        const output = { system: [] as string[] };
+        await result2['experimental.chat.system.transform']!(
+            { sessionID: 'sess-A', model: {} },
+            output,
+        );
+
+        // The recall was attempted (state was shared — sess-A was found in recalledSessions).
+        // If state were per-instance, result2 would have an empty recalledSessions and skip recall.
+        // result2 uses the second HindsightClient instance (index 1).
+        const clientInstance = (HindsightClient as any).mock.instances[1];
+        expect(clientInstance.recall).toHaveBeenCalled();
+    });
+});
+
 describe('PluginModule default export', () => {
     it('exports correct module shape', async () => {
         const mod = await import('./index.js');

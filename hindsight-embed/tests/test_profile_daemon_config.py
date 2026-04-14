@@ -221,3 +221,176 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     assert config["llm_model"] == "claude-sonnet-4-20250514", "Should use profile's model"
     assert config["llm_api_key"] == "sk-ant-production", "Should use profile's API key"
     assert config["bank_id"] == "production-bank", "Should use profile's bank_id"
+
+
+def test_macos_forces_cpu_for_local_embeddings_and_reranker(temp_home, monkeypatch):
+    """Regression test for issue #962.
+
+    On macOS, the daemon must force CPU for local embeddings/reranker by default to
+    avoid sentence-transformers selecting MPS and hanging during startup. PR #933
+    removed this default when adding the llamacpp provider; this test guards against
+    that regression.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    # Clear any caller-supplied force-cpu env so we test the default behavior.
+    monkeypatch.delenv("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU", raising=False)
+
+    manager = DaemonEmbedManager()
+
+    captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    # is_running must return False before Popen (so _start_daemon and
+    # _start_daemon_locked don't short-circuit on the pre-Popen checks added
+    # in #1016) and True after Popen (so the readiness wait loop breaks
+    # immediately). Tying it to popen_called gives us both for free.
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),  # skip 2s stability wait
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
+    ):
+        manager._start_daemon(
+            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
+            profile="",
+        )
+
+    env = captured["env"]
+    assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "1"
+    assert env.get("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU") == "1"
+
+
+def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, monkeypatch):
+    """Regression test: HINDSIGHT_* keys in profile .env must reach the daemon subprocess env.
+
+    Previously `_start_daemon` only copied a whitelist of keys (llm_*, log_level,
+    idle_timeout) from the merged profile config into the daemon env. Anything else
+    in the profile's .env — e.g. HINDSIGHT_API_EMBEDDINGS_PROVIDER or
+    HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU on non-macOS — was silently dropped.
+    """
+    import json
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    # Write a profile .env containing non-whitelisted HINDSIGHT_API_* keys.
+    profile_dir = temp_home / ".hindsight" / "profiles"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_name = "forwarding"
+    (profile_dir / f"{profile_name}.env").write_text(
+        "HINDSIGHT_API_LLM_PROVIDER=openai\n"
+        "HINDSIGHT_API_LLM_API_KEY=sk-x\n"
+        "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
+        "HINDSIGHT_API_EMBEDDINGS_PROVIDER=tei\n"
+        "HINDSIGHT_API_EMBEDDINGS_TEI_URL=http://localhost:8080\n"
+        "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=1\n"
+    )
+    (profile_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    profile_name: {
+                        "port": 9877,
+                        "created_at": "2024-01-01T00:00:00+00:00",
+                        "last_used": "2024-01-01T00:00:00+00:00",
+                    }
+                },
+            }
+        )
+    )
+
+    # Clear shell env so we're only testing profile propagation.
+    for key in (
+        "HINDSIGHT_API_EMBEDDINGS_PROVIDER",
+        "HINDSIGHT_API_EMBEDDINGS_TEI_URL",
+        "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    manager = DaemonEmbedManager()
+    captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    # Simulate Linux so the macOS default doesn't mask the test.
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Linux"),
+    ):
+        manager._start_daemon(config={}, profile=profile_name)
+
+    env = captured["env"]
+    assert env.get("HINDSIGHT_API_EMBEDDINGS_PROVIDER") == "tei"
+    assert env.get("HINDSIGHT_API_EMBEDDINGS_TEI_URL") == "http://localhost:8080"
+    assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "1"
+
+
+def test_macos_force_cpu_respects_explicit_override(temp_home, monkeypatch):
+    """Users who explicitly disable FORCE_CPU (e.g. to use MPS) must not be overridden."""
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU", "0")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU", "0")
+
+    manager = DaemonEmbedManager()
+    captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
+    ):
+        manager._start_daemon(
+            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
+            profile="",
+        )
+
+    env = captured["env"]
+    assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "0"
+    assert env.get("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU") == "0"

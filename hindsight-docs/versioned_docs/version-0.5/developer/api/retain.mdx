@@ -119,6 +119,31 @@ When you provide a `document_id`, Hindsight upserts the document: if a document 
 
 If you omit `document_id`, Hindsight assigns a random UUID per request, so re-ingesting the same content will create duplicate memories.
 
+### update_mode
+
+Controls how Hindsight handles an existing document when you retain with a `document_id` that already exists.
+
+| Value | Behaviour |
+|-------|-----------|
+| `"replace"` *(default)* | Deletes the old document and all its memories, then processes the new content from scratch. This is the standard upsert described above. |
+| `"append"` | Concatenates the new content onto the existing document text and reprocesses the combined document. Delta retain automatically skips unchanged chunks, so only the new portion triggers LLM extraction. |
+
+Append mode requires a `document_id` — without one there is no existing document to append to.
+
+**When to use append**: Use `"append"` for content that grows incrementally — for example, a log file, a journal, or a chat transcript where you receive new messages one at a time. Instead of re-sending the entire history on each update, send only the new content with `update_mode: "append"` and Hindsight will efficiently merge it with what it already has.
+
+```json
+{
+  "items": [
+    {
+      "content": "New entry to add to the existing document.",
+      "document_id": "my-growing-doc",
+      "update_mode": "append"
+    }
+  ]
+}
+```
+
 ### entities
 
 A list of entities you want to guarantee are recognized, merged with any entities the LLM extracts automatically. Each entry has a `text` field (the entity name) and an optional `type` (e.g., `"PERSON"`, `"ORG"`, `"CONCEPT"` — defaults to `"CONCEPT"` if omitted).

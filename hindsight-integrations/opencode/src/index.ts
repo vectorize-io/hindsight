@@ -25,6 +25,15 @@ import { createTools } from './tools.js';
 import { createHooks, type PluginState } from './hooks.js';
 import { debugLog } from './config.js';
 
+// Module-level state persists across sessions (plugin is instantiated per session,
+// but the module is loaded once per OpenCode server process).
+const state: PluginState = {
+    turnCount: 0,
+    missionsSet: new Set(),
+    recalledSessions: new Set(),
+    lastRetainedTurn: new Map(),
+};
+
 const HindsightPlugin: Plugin = async (input, options) => {
     const config = loadConfig(options);
 
@@ -45,13 +54,6 @@ const HindsightPlugin: Plugin = async (input, options) => {
 
     const bankId = deriveBankId(config, input.directory);
     debugLog(config, `Initialized with bank: ${bankId}, API: ${apiUrl}`);
-
-    const state: PluginState = {
-        turnCount: 0,
-        missionsSet: new Set(),
-        recalledSessions: new Set(),
-        lastRetainedTurn: new Map(),
-    };
 
     const tools = createTools(client, bankId, config, state.missionsSet);
     const hooks = createHooks(client, bankId, config, state, input.client as unknown as Parameters<typeof createHooks>[4]);

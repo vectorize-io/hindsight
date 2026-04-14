@@ -153,6 +153,17 @@
           "assistant"
         ]
       },
+      "retainFormat": {
+        "type": "string",
+        "description": "Serialization format for retained conversation content. 'json' (default) emits a structured array of {role, content} messages, matching the Claude Code integration. 'text' emits the legacy '[role: x] ... [x:end]' markers.",
+        "enum": ["json", "text"],
+        "default": "json"
+      },
+      "retainToolCalls": {
+        "type": "boolean",
+        "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools — Hindsight's own recall/retain/search — are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
+        "default": true
+      },
       "retainEveryNTurns": {
         "type": "integer",
         "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
@@ -367,6 +378,14 @@
     "retainRoles": {
       "label": "Retain Roles",
       "placeholder": "e.g. ['user', 'assistant']"
+    },
+    "retainFormat": {
+      "label": "Retain Format",
+      "placeholder": "json (default) or text (legacy markers)"
+    },
+    "retainToolCalls": {
+      "label": "Retain Tool Calls",
+      "placeholder": "true (default) — include tool_use / tool_result blocks in retained JSON"
     },
     "retainEveryNTurns": {
       "label": "Retain Every N Turns",

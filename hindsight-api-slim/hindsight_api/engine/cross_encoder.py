@@ -30,6 +30,8 @@ from ..config import (
     DEFAULT_RERANKER_LOCAL_MODEL,
     DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE,
     DEFAULT_RERANKER_PROVIDER,
+    DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
+    DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
@@ -44,6 +46,7 @@ from ..config import (
     ENV_RERANKER_LOCAL_MODEL,
     ENV_RERANKER_LOCAL_TRUST_REMOTE_CODE,
     ENV_RERANKER_PROVIDER,
+    ENV_RERANKER_SILICONFLOW_API_KEY,
     ENV_RERANKER_TEI_BATCH_SIZE,
     ENV_RERANKER_TEI_MAX_CONCURRENT,
     ENV_RERANKER_TEI_URL,
@@ -518,6 +521,84 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         return await self._predict_async(pairs)
 
 
+class _CohereCompatibleRerankClient:
+    """
+    Internal HTTP client for Cohere-compatible /rerank endpoints.
+
+    Shared by all providers that speak the Cohere rerank wire format —
+    {model, query, documents[, top_n]} request and
+    {results: [{index, relevance_score}, ...]} response. This covers
+    SiliconFlow, ZeroEntropy, Jina, Voyage, BGE self-hosted, and Cohere
+    itself when reached via a custom base_url (e.g. Azure AI Foundry).
+
+    Not a CrossEncoderModel — providers compose it and expose their own
+    provider_name / initialization logging.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        rerank_url: str,
+        timeout: float = 60.0,
+        include_top_n: bool = True,
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.rerank_url = rerank_url
+        self.timeout = timeout
+        self.include_top_n = include_top_n
+        self._async_client: httpx.AsyncClient | None = None
+
+    async def initialize(self) -> None:
+        if self._async_client is not None:
+            return
+        self._async_client = httpx.AsyncClient(
+            timeout=self.timeout,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        if self._async_client is None:
+            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+
+        if not pairs:
+            return []
+
+        query_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (query, text) in enumerate(pairs):
+            query_groups.setdefault(query, []).append((idx, text))
+
+        all_scores = [0.0] * len(pairs)
+
+        for query, indexed_texts in query_groups.items():
+            texts = [text for _, text in indexed_texts]
+            indices = [idx for idx, _ in indexed_texts]
+
+            body: dict[str, object] = {
+                "model": self.model,
+                "query": query,
+                "documents": texts,
+                "return_documents": False,
+            }
+            if self.include_top_n:
+                body["top_n"] = len(texts)
+
+            response = await self._async_client.post(self.rerank_url, json=body)
+            response.raise_for_status()
+            result = response.json()
+
+            for item in result.get("results", []):
+                original_idx = item["index"]
+                score = item["relevance_score"]
+                all_scores[indices[original_idx]] = score
+
+        return all_scores
+
+
 class CohereCrossEncoder(CrossEncoderModel):
     """
     Cohere cross-encoder implementation using the Cohere Rerank API.
@@ -546,7 +627,20 @@ class CohereCrossEncoder(CrossEncoderModel):
         self.base_url = base_url
         self.timeout = timeout
         self._client = None
-        self._httpx_client: httpx.Client | None = None
+        # Used when base_url is set (Azure AI Foundry and other Cohere-compatible hosts).
+        # Azure endpoints already include the full invoke path, so rerank_url == base_url
+        # and top_n is omitted to match the existing Azure contract.
+        self._http_client: _CohereCompatibleRerankClient | None = (
+            _CohereCompatibleRerankClient(
+                api_key=api_key,
+                model=model,
+                rerank_url=base_url,
+                timeout=timeout,
+                include_top_n=False,
+            )
+            if base_url
+            else None
+        )
 
     @property
     def provider_name(self) -> str:
@@ -554,23 +648,15 @@ class CohereCrossEncoder(CrossEncoderModel):
 
     async def initialize(self) -> None:
         """Initialize the Cohere client."""
-        if self._client is not None or self._httpx_client is not None:
+        if self._client is not None or (self._http_client and self._http_client._async_client):
             return
 
         base_url_msg = f" at {self.base_url}" if self.base_url else ""
         logger.info(f"Reranker: initializing Cohere provider with model {self.model}{base_url_msg}")
 
-        if self.base_url:
-            # For custom endpoints (Azure AI Foundry), use httpx directly to avoid SDK path appending
-            # Azure endpoints already include the full path (e.g., /models/.../invoke)
-            self._httpx_client = httpx.Client(
-                timeout=self.timeout,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            logger.info("Reranker: Cohere provider initialized (using httpx for custom endpoint)")
+        if self._http_client is not None:
+            await self._http_client.initialize()
+            logger.info("Reranker: Cohere provider initialized (Cohere-compatible HTTP endpoint)")
         else:
             # For native Cohere API, use the official SDK
             try:
@@ -591,25 +677,24 @@ class CohereCrossEncoder(CrossEncoderModel):
         Returns:
             List of relevance scores
         """
-        if self._client is None and self._httpx_client is None:
+        if self._client is None and self._http_client is None:
             raise RuntimeError("Reranker not initialized. Call initialize() first.")
 
         if not pairs:
             return []
 
-        # Run sync Cohere API calls in thread pool
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._predict_sync, pairs)
+        if self._http_client is not None:
+            return await self._http_client.predict(pairs)
 
-    def _predict_sync(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """Synchronous predict implementation for Cohere API."""
-        # Group pairs by query for efficient batching
-        # Cohere rerank expects one query with multiple documents
+        # Run sync Cohere SDK calls in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._predict_sync_sdk, pairs)
+
+    def _predict_sync_sdk(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Synchronous predict using the native Cohere SDK."""
         query_groups: dict[str, list[tuple[int, str]]] = {}
         for idx, (query, text) in enumerate(pairs):
-            if query not in query_groups:
-                query_groups[query] = []
-            query_groups[query].append((idx, text))
+            query_groups.setdefault(query, []).append((idx, text))
 
         all_scores = [0.0] * len(pairs)
 
@@ -617,40 +702,17 @@ class CohereCrossEncoder(CrossEncoderModel):
             texts = [text for _, text in indexed_texts]
             indices = [idx for idx, _ in indexed_texts]
 
-            if self._httpx_client:
-                # Direct HTTP request for custom endpoints (Azure AI Foundry)
-                response = self._httpx_client.post(
-                    self.base_url,
-                    json={
-                        "model": self.model,
-                        "query": query,
-                        "documents": texts,
-                        "return_documents": False,
-                    },
-                )
-                response.raise_for_status()
-                result = response.json()
+            response = self._client.rerank(
+                query=query,
+                documents=texts,
+                model=self.model,
+                return_documents=False,
+            )
 
-                # Map scores back to original positions
-                # Azure Cohere response format: {"results": [{"index": 0, "relevance_score": 0.9}, ...]}
-                for item in result.get("results", []):
-                    original_idx = item["index"]
-                    score = item["relevance_score"]
-                    all_scores[indices[original_idx]] = score
-            else:
-                # Native Cohere SDK for standard API
-                response = self._client.rerank(
-                    query=query,
-                    documents=texts,
-                    model=self.model,
-                    return_documents=False,
-                )
-
-                # Map scores back to original positions
-                for result in response.results:
-                    original_idx = result.index
-                    score = result.relevance_score
-                    all_scores[indices[original_idx]] = score
+            for result in response.results:
+                original_idx = result.index
+                score = result.relevance_score
+                all_scores[indices[original_idx]] = score
 
         return all_scores
 
@@ -673,89 +735,70 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
         base_url: str | None = None,
         timeout: float = 60.0,
     ):
-        """
-        Initialize ZeroEntropy cross-encoder client.
-
-        Args:
-            api_key: ZeroEntropy API key
-            model: ZeroEntropy rerank model name (default: zerank-2)
-            base_url: Custom base URL for ZeroEntropy-compatible API (e.g., mock server or proxy)
-            timeout: Request timeout in seconds (default: 60.0)
-        """
-        self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/") if base_url else self.DEFAULT_BASE_URL
-        self.rerank_url = f"{self.base_url}{self.RERANK_PATH}"
-        self.timeout = timeout
-        self._async_client: httpx.AsyncClient | None = None
+        self._client = _CohereCompatibleRerankClient(
+            api_key=api_key,
+            model=model,
+            rerank_url=f"{self.base_url}{self.RERANK_PATH}",
+            timeout=timeout,
+        )
 
     @property
     def provider_name(self) -> str:
         return "zeroentropy"
 
     async def initialize(self) -> None:
-        """Initialize the async HTTP client."""
-        if self._async_client is not None:
+        if self._client._async_client is not None:
             return
-
         logger.info(f"Reranker: initializing ZeroEntropy provider with model {self.model}")
-        self._async_client = httpx.AsyncClient(
-            timeout=self.timeout,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
+        await self._client.initialize()
         logger.info("Reranker: ZeroEntropy provider initialized")
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
-        """
-        Score query-document pairs using the ZeroEntropy Rerank API.
+        return await self._client.predict(pairs)
 
-        Args:
-            pairs: List of (query, document) tuples to score
 
-        Returns:
-            List of relevance scores
-        """
-        if self._async_client is None:
-            raise RuntimeError("Reranker not initialized. Call initialize() first.")
+class SiliconFlowCrossEncoder(CrossEncoderModel):
+    """
+    SiliconFlow cross-encoder implementation.
 
-        if not pairs:
-            return []
+    SiliconFlow (https://siliconflow.cn) exposes a Cohere-compatible /rerank
+    endpoint. Shares the HTTP client with ZeroEntropy/Cohere-custom-endpoint
+    via _CohereCompatibleRerankClient.
+    """
 
-        # Group pairs by query for efficient batching
-        query_groups: dict[str, list[tuple[int, str]]] = {}
-        for idx, (query, text) in enumerate(pairs):
-            if query not in query_groups:
-                query_groups[query] = []
-            query_groups[query].append((idx, text))
+    RERANK_PATH = "/rerank"
 
-        all_scores = [0.0] * len(pairs)
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_RERANKER_SILICONFLOW_MODEL,
+        base_url: str = DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self._client = _CohereCompatibleRerankClient(
+            api_key=api_key,
+            model=model,
+            rerank_url=f"{self.base_url}{self.RERANK_PATH}",
+            timeout=timeout,
+        )
 
-        for query, indexed_texts in query_groups.items():
-            texts = [text for _, text in indexed_texts]
-            indices = [idx for idx, _ in indexed_texts]
+    @property
+    def provider_name(self) -> str:
+        return "siliconflow"
 
-            response = await self._async_client.post(
-                self.rerank_url,
-                json={
-                    "model": self.model,
-                    "query": query,
-                    "documents": texts,
-                    "top_n": len(texts),
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
+    async def initialize(self) -> None:
+        if self._client._async_client is not None:
+            return
+        logger.info(f"Reranker: initializing SiliconFlow provider at {self.base_url} with model {self.model}")
+        await self._client.initialize()
+        logger.info("Reranker: SiliconFlow provider initialized")
 
-            # Map scores back to original positions
-            for item in result.get("results", []):
-                original_idx = item["index"]
-                score = item["relevance_score"]
-                all_scores[indices[original_idx]] = score
-
-        return all_scores
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return await self._client.predict(pairs)
 
 
 class RRFPassthroughCrossEncoder(CrossEncoderModel):
@@ -1207,14 +1250,31 @@ class JinaMLXCrossEncoder(CrossEncoderModel):
         if self._reranker is not None:
             return
 
+        # Pre-warm transformers.AutoTokenizer to fully populate the transformers
+        # namespace before mlx_lm imports it. transformers 5.x uses _LazyModule,
+        # which has an unguarded window where `from transformers import AutoTokenizer`
+        # raises ImportError if another thread is concurrently initializing the
+        # namespace (e.g. embeddings init in an executor thread).
+        # See: https://github.com/vectorize-io/hindsight/issues/994
+        import transformers
+
+        _ = transformers.AutoTokenizer
+
         try:
             import mlx.core  # noqa: F401
             import mlx_lm  # noqa: F401
-        except ImportError:
+        except ImportError as exc:
+            # Only swallow "package not installed" errors. Anything else (e.g. a
+            # transitive import failure inside mlx_lm) must surface verbatim so
+            # the real cause is debuggable instead of being masked by a generic
+            # "install mlx" message.
+            msg = str(exc)
+            if "mlx" not in msg and "mlx_lm" not in msg:
+                raise
             raise ImportError(
                 "mlx and mlx-lm are required for JinaMLXCrossEncoder. "
                 "Install with: pip install mlx>=0.31.0 mlx-lm>=0.31.1 safetensors>=0.6.2"
-            )
+            ) from exc
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._load_model)
@@ -1513,6 +1573,17 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             api_key=api_key,
             model=config.reranker_zeroentropy_model,
         )
+    elif provider == "siliconflow":
+        api_key = config.reranker_siliconflow_api_key
+        if not api_key:
+            raise ValueError(
+                f"{ENV_RERANKER_SILICONFLOW_API_KEY} is required when {ENV_RERANKER_PROVIDER} is 'siliconflow'"
+            )
+        return SiliconFlowCrossEncoder(
+            api_key=api_key,
+            model=config.reranker_siliconflow_model,
+            base_url=config.reranker_siliconflow_base_url,
+        )
     elif provider == "google":
         project_id = config.reranker_google_project_id
         if not project_id:
@@ -1531,5 +1602,5 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
         return JinaMLXCrossEncoder()
     else:
         raise ValueError(
-            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
+            f"Unknown reranker provider: {provider}. Supported: 'local', 'tei', 'cohere', 'zeroentropy', 'siliconflow', 'google', 'flashrank', 'litellm', 'litellm-sdk', 'rrf', 'jina-mlx'"
         )

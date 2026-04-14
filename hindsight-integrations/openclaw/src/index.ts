@@ -129,14 +129,14 @@ const turnCountBySession = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 10_000;
 const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
-// Cache sender IDs discovered in before_prompt_build (where event.prompt has the metadata
-// blocks) so agent_end can look them up — event.messages in agent_end is clean history.
-const senderIdBySession = new Map<string, string>();
-const documentSequenceBySession = new Map<string, number>();
+type SessionIdentityRecord = Pick<PluginHookAgentContext, 'senderId' | 'messageProvider' | 'channelId'>;
+export type IdentitySkipReason =
+  | { kind: 'retryable'; detail: 'missing stable message provider' | 'missing stable sender identity' }
+  | { kind: 'final'; detail: string };
 
-// Guard against duplicate hook registration within a single runtime load.
-// Do not tie this to api instance identity, which can be brittle across loader phases.
-let hooksRegistered = false;
+const sessionIdentityBySession = new Map<string, SessionIdentityRecord>();
+const skipHindsightTurnBySession = new Map<string, IdentitySkipReason>();
+const documentSequenceBySession = new Map<string, number>();
 
 // Cooldown + guard to prevent concurrent reinit attempts
 let lastReinitAttempt = 0;
@@ -583,18 +583,48 @@ export function truncateRecallQuery(query: string, latestQuery: string, maxChars
 }
 
 /**
- * Derive a bank ID from the agent context.
- * Uses configurable dynamicBankGranularity to determine bank segmentation.
- * Falls back to default bank when context is unavailable.
- */
-/**
  * Parse the OpenClaw sessionKey to extract context fields.
  * Format: "agent:{agentId}:{provider}:{channelType}:{channelId}[:{extra}]"
  * Example: "agent:c0der:telegram:group:-1003825475854:topic:42"
  */
-function parseSessionKey(sessionKey: string): { agentId?: string; provider?: string; channel?: string } {
+// Some OpenClaw hook contexts populate `ctx.channelId` with the provider name
+// (e.g. "discord") instead of the actual channel ID. Treat those as missing so
+// we fall through to the sessionKey-derived channel. See issue #854.
+const PROVIDER_CHANNEL_ID_TOKENS = new Set([
+  'discord', 'telegram', 'slack', 'matrix', 'whatsapp', 'signal', 'messenger', 'sms', 'email', 'web', 'cli',
+]);
+
+function sanitizeChannelId(channelId: string | undefined, provider?: string): string | undefined {
+  if (!channelId) return undefined;
+  if (provider && channelId === provider) return undefined;
+  if (PROVIDER_CHANNEL_ID_TOKENS.has(channelId.toLowerCase())) return undefined;
+  return channelId;
+}
+
+export interface ParsedSessionKey {
+  agentId?: string;
+  provider?: string;
+  channel?: string;
+}
+
+export function parseSessionKey(sessionKey: string): ParsedSessionKey {
   const parts = sessionKey.split(':');
-  if (parts.length < 5 || parts[0] !== 'agent') return {};
+  if (parts[0] !== 'agent') return {};
+  if (parts.length === 3 && parts[2] === 'main') {
+    return {
+      agentId: parts[1],
+      provider: 'main',
+      channel: 'main',
+    };
+  }
+  if (parts.length >= 4 && ['cron', 'heartbeat', 'subagent'].includes(parts[2])) {
+    return {
+      agentId: parts[1],
+      provider: parts[2],
+      channel: parts.slice(3).join(':'),
+    };
+  }
+  if (parts.length < 5) return {};
   // parts[1] = agentId, parts[2] = provider, parts[3] = channelType, parts[4..] = channelId + extras
   return {
     agentId: parts[1],
@@ -604,6 +634,202 @@ function parseSessionKey(sessionKey: string): { agentId?: string; provider?: str
   };
 }
 
+export function extractTelegramDirectSenderId(channelId: string | undefined): string | undefined {
+  if (typeof channelId !== 'string') return undefined;
+  const match = channelId.match(/^direct:([^:]+)$/);
+  return match?.[1];
+}
+
+export function resolveSessionIdentity(
+  ctx: PluginHookAgentContext | undefined,
+): PluginHookAgentContext | undefined {
+  if (!ctx) return undefined;
+
+  const sessionParsed = ctx.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
+  const messageProvider = ctx.messageProvider || sessionParsed.provider;
+  const channelId = ctx.channelId || sessionParsed.channel;
+  const senderId =
+    ctx.senderId ||
+    (messageProvider === 'telegram' ? extractTelegramDirectSenderId(channelId) : undefined);
+
+  return {
+    ...ctx,
+    agentId: ctx.agentId || sessionParsed.agentId,
+    messageProvider,
+    channelId,
+    senderId,
+  };
+}
+
+function retryableSkipReason(
+  detail: 'missing stable message provider' | 'missing stable sender identity',
+): IdentitySkipReason {
+  return { kind: 'retryable', detail };
+}
+
+function finalSkipReason(detail: string): IdentitySkipReason {
+  return { kind: 'final', detail };
+}
+
+function formatIdentitySkipReason(reason: IdentitySkipReason | undefined): string | undefined {
+  return reason?.detail;
+}
+
+function isRetryableIdentitySkipReason(reason: IdentitySkipReason | undefined): boolean {
+  return reason?.kind === 'retryable';
+}
+
+function cacheSessionIdentity(sessionKey: string | undefined, resolvedCtx: PluginHookAgentContext | undefined): void {
+  if (!sessionKey || !resolvedCtx) return;
+  if (!resolvedCtx.messageProvider && !resolvedCtx.channelId && !resolvedCtx.senderId) return;
+
+  setCappedMapValue(sessionIdentityBySession, sessionKey, {
+    senderId: resolvedCtx.senderId,
+    messageProvider: resolvedCtx.messageProvider,
+    channelId: resolvedCtx.channelId,
+  });
+}
+
+interface ResolveAndCacheIdentityOptions {
+  sessionKey?: string;
+  ctx?: PluginHookAgentContext;
+  senderIdHint?: string;
+  dispatchChannel?: string;
+}
+
+function resolveAndCacheIdentity(
+  options: ResolveAndCacheIdentityOptions,
+): {
+  effectiveCtx: PluginHookAgentContext | undefined;
+  resolvedCtx: PluginHookAgentContext | undefined;
+  skipReason?: IdentitySkipReason;
+} {
+  const sessionKey = options.sessionKey ?? options.ctx?.sessionKey;
+  const parsedSession = sessionKey ? parseSessionKey(sessionKey) : {};
+  const cachedIdentity = sessionKey ? sessionIdentityBySession.get(sessionKey) : undefined;
+  const baseCtx = options.ctx || (sessionKey ? ({ sessionKey } as PluginHookAgentContext) : undefined);
+  const effectiveCtx =
+    baseCtx || cachedIdentity || options.senderIdHint || options.dispatchChannel || sessionKey
+      ? {
+          ...baseCtx,
+          sessionKey: baseCtx?.sessionKey || sessionKey,
+          agentId: baseCtx?.agentId || parsedSession.agentId,
+          messageProvider: baseCtx?.messageProvider ?? cachedIdentity?.messageProvider,
+          channelId: baseCtx?.channelId ?? cachedIdentity?.channelId,
+          senderId: baseCtx?.senderId || cachedIdentity?.senderId || options.senderIdHint,
+        }
+      : undefined;
+  const resolvedCtx = resolveSessionIdentity(
+    effectiveCtx
+      ? {
+          ...effectiveCtx,
+          messageProvider: effectiveCtx.messageProvider ?? parsedSession.provider ?? options.dispatchChannel,
+          channelId: effectiveCtx.channelId ?? parsedSession.channel,
+        }
+      : undefined,
+  );
+
+  if (parsedSession.provider && options.dispatchChannel && parsedSession.provider !== options.dispatchChannel) {
+    const skipReason = finalSkipReason(
+      `dispatch surface ${options.dispatchChannel} does not match session provider ${parsedSession.provider}`,
+    );
+    if (sessionKey) {
+      setCappedMapValue(skipHindsightTurnBySession, sessionKey, skipReason);
+    }
+    return { effectiveCtx, resolvedCtx, skipReason };
+  }
+
+  cacheSessionIdentity(sessionKey, resolvedCtx);
+
+  const { reason: skipReason } = getIdentitySkipReason(resolvedCtx);
+  if (sessionKey) {
+    if (skipReason) {
+      setCappedMapValue(skipHindsightTurnBySession, sessionKey, skipReason);
+    } else {
+      skipHindsightTurnBySession.delete(sessionKey);
+    }
+  }
+
+  return { effectiveCtx, resolvedCtx, skipReason };
+}
+
+export function getIdentitySkipReason(
+  ctx: PluginHookAgentContext | undefined,
+): { resolvedCtx: PluginHookAgentContext | undefined; reason?: IdentitySkipReason } {
+  const resolvedCtx = resolveSessionIdentity(ctx);
+  const sessionKey = resolvedCtx?.sessionKey;
+
+  if (typeof sessionKey === 'string') {
+    if (/^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`operational session ${sessionKey}`) };
+    }
+    if (/^agent:[^:]+:main$/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`internal main session ${sessionKey}`) };
+    }
+    if (/^temp:/.test(sessionKey)) {
+      return { resolvedCtx, reason: finalSkipReason(`ephemeral temp session ${sessionKey}`) };
+    }
+  }
+
+  if (resolvedCtx?.messageProvider && ['cron', 'heartbeat', 'subagent', 'main'].includes(resolvedCtx.messageProvider)) {
+    return { resolvedCtx, reason: finalSkipReason(`operational provider ${resolvedCtx.messageProvider}`) };
+  }
+  if (!resolvedCtx?.messageProvider || resolvedCtx.messageProvider === 'unknown') {
+    return { resolvedCtx, reason: retryableSkipReason('missing stable message provider') };
+  }
+  if (!resolvedCtx?.senderId || resolvedCtx.senderId === 'anonymous') {
+    return { resolvedCtx, reason: retryableSkipReason('missing stable sender identity') };
+  }
+  if (
+    resolvedCtx.messageProvider === 'telegram' &&
+    typeof resolvedCtx.channelId === 'string' &&
+    resolvedCtx.channelId.startsWith('direct:')
+  ) {
+    const directSenderId = extractTelegramDirectSenderId(resolvedCtx.channelId);
+    if (!directSenderId || directSenderId !== resolvedCtx.senderId) {
+      return {
+        resolvedCtx,
+        reason: finalSkipReason(
+          `telegram direct identity mismatch (${resolvedCtx.channelId} vs ${resolvedCtx.senderId})`,
+        ),
+      };
+    }
+  }
+
+  return { resolvedCtx, reason: undefined };
+}
+
+export function isEphemeralOperationalText(text: string | undefined): boolean {
+  if (!text || typeof text !== 'string') return false;
+
+  const normalized = text
+    .replace(/\[role:\s*[^\]]+\]\s*/gi, '')
+    .replace(/\[[a-z]+:end\]\s*/gi, '')
+    .trim();
+
+  // These prefixes are OpenClaw-generated operational/session-bootstrap strings,
+  // not user-authored content, so they should not create recall/retain entries.
+  return [
+    /^A new session was started via \/(?:new|reset)\./i,
+    /^Based on this conversation, generate a short 1-2/i,
+    /^This (?:script|task|job|workflow) updates .* index/i,
+  ].some(pattern => pattern.test(normalized));
+}
+
+function setCappedMapValue<K, V>(map: Map<K, V>, key: K, value: V): void {
+  // FIFO cap, not LRU: updating an existing key keeps its original insertion order.
+  map.set(key, value);
+  if (map.size > MAX_TRACKED_SESSIONS) {
+    const oldest = map.keys().next().value;
+    if (oldest) map.delete(oldest);
+  }
+}
+
+/**
+ * Derive a bank ID from the agent context.
+ * Uses configurable dynamicBankGranularity to determine bank segmentation.
+ * Falls back to default bank when context is unavailable.
+ */
 export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConfig: PluginConfig): string {
   if (pluginConfig.dynamicBankId === false) {
     return getStaticBankId(pluginConfig);
@@ -614,6 +840,7 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
     return getDefaultBankId(pluginConfig);
   }
 
+  const resolvedCtx = resolveSessionIdentity(ctx);
   const fields = pluginConfig.dynamicBankGranularity?.length ? pluginConfig.dynamicBankGranularity : ['agent', 'channel', 'user'];
 
   // Validate field names at runtime — typos silently produce 'unknown' segments
@@ -625,18 +852,21 @@ export function deriveBankId(ctx: PluginHookAgentContext | undefined, pluginConf
   }
 
   // Parse sessionKey as fallback when direct context fields are missing
-  const sessionParsed = ctx?.sessionKey ? parseSessionKey(ctx.sessionKey) : {};
+  const sessionParsed = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
 
   // Warn when 'user' is in active fields but senderId is missing — bank ID will contain "anonymous"
-  if (fields.includes('user') && ctx && !ctx.senderId) {
+  if (fields.includes('user') && resolvedCtx && !resolvedCtx.senderId) {
     debug('[Hindsight] senderId not available in context — bank ID will use "anonymous". Ensure your OpenClaw provider passes senderId.');
   }
 
   const fieldMap: Record<string, string> = {
-    agent: ctx?.agentId || sessionParsed.agentId || 'default',
-    channel: ctx?.channelId || sessionParsed.channel || 'unknown',
-    user: ctx?.senderId || 'anonymous',
-    provider: ctx?.messageProvider || sessionParsed.provider || 'unknown',
+    agent: resolvedCtx?.agentId || sessionParsed.agentId || 'default',
+    channel:
+      sanitizeChannelId(resolvedCtx?.channelId, resolvedCtx?.messageProvider || sessionParsed.provider) ||
+      sessionParsed.channel ||
+      'unknown',
+    user: resolvedCtx?.senderId || 'anonymous',
+    provider: resolvedCtx?.messageProvider || sessionParsed.provider || 'unknown',
   };
 
   const baseBankId = fields
@@ -813,6 +1043,8 @@ export function getPluginConfigFromConfig(rawConfig: MoltbotConfig): PluginConfi
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity) ? config.dynamicBankGranularity : undefined,
     autoRetain: config.autoRetain !== false, // Default: true
     retainRoles: Array.isArray(config.retainRoles) ? config.retainRoles : undefined,
+    retainFormat: config.retainFormat === 'text' ? 'text' : 'json',
+    retainToolCalls: config.retainToolCalls !== false,
     recallBudget: config.recallBudget || 'mid',
     recallMaxTokens: config.recallMaxTokens || 1024,
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ['world', 'experience'],
@@ -1385,15 +1617,77 @@ export default function (api: MoltbotPluginAPI) {
       log.warn('registerMemoryCapability is not available in this OpenClaw runtime, skipping publicArtifacts registration');
     }
 
-    // Register agent hooks for auto-recall and auto-retention
-    if (hooksRegistered) {
-      debug('[Hindsight] Hooks already registered in this runtime, skipping duplicate hook registration');
-      return;
-    }
-    hooksRegistered = true;
+    // Register agent hooks for auto-recall and auto-retention.
+    //
+    // Why no module-level "already registered" guard: each plugin entry invocation
+    // hands us a fresh `api` tied to a specific plugin registry. OpenClaw may call
+    // the plugin entry multiple times per process (CLI vs gateway vs lazy reloads),
+    // and the registry that's active when an agent actually runs is not guaranteed
+    // to be the first one we saw. A process-global flag would let the first call
+    // "win" and leave subsequent registries with zero hindsight hooks, which is
+    // exactly how auto-recall/auto-retain silently stopped firing in 0.6.x.
     debug('[Hindsight] Registering agent hooks...');
     log.info('registering agent hooks');
 
+    api.on('before_dispatch', async (event: any, ctx?: PluginHookAgentContext) => {
+      try {
+        const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        if (!sessionKey) {
+          return;
+        }
+
+        const dispatchChannel =
+          (typeof event?.channel === 'string' ? event.channel : undefined) ||
+          ctx?.messageProvider ||
+          parseSessionKey(sessionKey).provider;
+        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
+          sessionKey,
+          ctx: {
+            ...ctx,
+            sessionKey,
+            senderId:
+              (typeof event?.senderId === 'string' ? event.senderId : undefined) ||
+              ctx?.senderId,
+          },
+          dispatchChannel,
+        });
+
+        if (skipReason) {
+          debug(
+            `[Hindsight] before_dispatch marked session ${sessionKey} to skip this turn: ${formatIdentitySkipReason(skipReason)}`,
+          );
+          return;
+        }
+        if (!resolvedCtx?.senderId || typeof resolvedCtx.senderId !== 'string') {
+          return;
+        }
+
+        debug(
+          `[Hindsight] before_dispatch cached identity for ${sessionKey}: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId} sender=${resolvedCtx.senderId}`,
+        );
+      } catch (error) {
+        log.warn(`before_dispatch identity cache error: ${error}`);
+      }
+    });
+
+    api.on('before_agent_start', async (event: any, ctx?: PluginHookAgentContext) => {
+      try {
+        const sessionKey = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({ sessionKey, ctx });
+
+        if (sessionKey && skipReason) {
+          debug(`[Hindsight] before_agent_start skipping session ${sessionKey}: ${formatIdentitySkipReason(skipReason)}`);
+          return;
+        }
+        if (!resolvedCtx) {
+          return;
+        }
+        const bankId = deriveBankId(resolvedCtx, pluginConfig);
+        debug(`[Hindsight] before_agent_start - bank: ${bankId}, channel: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId}`);
+      } catch (error) {
+        log.warn(`before_agent_start identity resolution error: ${error}`);
+      }
+    });
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on('before_prompt_build', async (event: any, ctx?: PluginHookAgentContext) => {
@@ -1428,25 +1722,26 @@ export default function (api: MoltbotPluginAPI) {
           return;
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from the inbound metadata
-        // block when it's missing (agent-phase hooks don't carry senderId in ctx directly).
-        const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
-        const effectiveCtxForRecall = senderIdFromPrompt ? { ...ctx, senderId: senderIdFromPrompt } : ctx;
-
-        // Cache the resolved sender ID keyed by sessionKey so agent_end can use it.
-        // event.messages in agent_end is clean history without the metadata blocks.
-        const resolvedSenderId = effectiveCtxForRecall?.senderId;
-        const sessionKeyForCache = ctx?.sessionKey;
-        if (resolvedSenderId && sessionKeyForCache) {
-          senderIdBySession.set(sessionKeyForCache, resolvedSenderId);
-          if (senderIdBySession.size > MAX_TRACKED_SESSIONS) {
-            const oldest = senderIdBySession.keys().next().value;
-            if (oldest) senderIdBySession.delete(oldest);
-          }
+        const sessionKeyForCache = ctx?.sessionKey ?? (typeof event?.sessionKey === 'string' ? event.sessionKey : undefined);
+        const skipTurnReason = sessionKeyForCache ? skipHindsightTurnBySession.get(sessionKeyForCache) : undefined;
+        if (skipTurnReason && !isRetryableIdentitySkipReason(skipTurnReason)) {
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${formatIdentitySkipReason(skipTurnReason)}`);
+          return;
         }
 
-        const bankId = deriveBankId(effectiveCtxForRecall, pluginConfig);
-        debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${ctx?.messageProvider}/${ctx?.channelId}`);
+        const senderIdFromPrompt = !ctx?.senderId ? extractSenderIdFromText(event.prompt ?? event.rawMessage ?? '') : undefined;
+        const { resolvedCtx: resolvedCtxForRecall, skipReason: identitySkipReason } = resolveAndCacheIdentity({
+          sessionKey: sessionKeyForCache,
+          ctx,
+          senderIdHint: senderIdFromPrompt,
+        });
+        if (identitySkipReason) {
+          debug(`[Hindsight] Skipping recall for session ${sessionKeyForCache}: ${formatIdentitySkipReason(identitySkipReason)}`);
+          return;
+        }
+
+        const bankId = deriveBankId(resolvedCtxForRecall, pluginConfig);
+        debug(`[Hindsight] before_prompt_build - bank: ${bankId}, channel: ${resolvedCtxForRecall?.messageProvider}/${resolvedCtxForRecall?.channelId}`);
         debug(`[Hindsight] event keys: ${Object.keys(event).join(', ')}`);
         debug(`[Hindsight] event.context keys: ${Object.keys(event.context ?? {}).join(', ')}`);
 
@@ -1456,6 +1751,10 @@ export default function (api: MoltbotPluginAPI) {
         const extracted = extractRecallQuery(event.rawMessage, event.prompt);
         if (!extracted) {
           debug('[Hindsight] extractRecallQuery returned null, skipping recall');
+          return;
+        }
+        if (isEphemeralOperationalText(extracted)) {
+          debug('[Hindsight] Recall query is operational/ephemeral noise, skipping recall');
           return;
         }
         debug(`[Hindsight] extractRecallQuery result length: ${extracted.length}`);
@@ -1486,7 +1785,7 @@ export default function (api: MoltbotPluginAPI) {
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(effectiveCtxForRecall);
+        const client = await clientGlobal.getClientForContext(resolvedCtxForRecall);
         if (!client) {
           debug('[Hindsight] Client not initialized, skipping auto-recall');
           return;
@@ -1589,15 +1888,31 @@ ${memoriesFormatted}
           }
         }
 
-        // Derive bank ID from context — enrich ctx.senderId from the session cache.
-        // event.messages in agent_end is clean history without OpenClaw's metadata blocks;
-        // the sender ID was captured during before_prompt_build where event.prompt has them.
         const sessionKeyForLookup = effectiveCtx?.sessionKey;
-        const senderIdFromCache = !effectiveCtx?.senderId && sessionKeyForLookup
-          ? senderIdBySession.get(sessionKeyForLookup)
-          : undefined;
-        const effectiveCtxForRetain = senderIdFromCache ? { ...effectiveCtx, senderId: senderIdFromCache } : effectiveCtx;
-        const bankId = deriveBankId(effectiveCtxForRetain, pluginConfig);
+        const skipTurnReason = sessionKeyForLookup ? skipHindsightTurnBySession.get(sessionKeyForLookup) : undefined;
+        if (skipTurnReason && !isRetryableIdentitySkipReason(skipTurnReason)) {
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${formatIdentitySkipReason(skipTurnReason)}`);
+          if (sessionKeyForLookup) {
+            skipHindsightTurnBySession.delete(sessionKeyForLookup);
+          }
+          return;
+        }
+
+        const { effectiveCtx: effectiveCtxForRetain, resolvedCtx: resolvedCtxForRetain, skipReason: identitySkipReason } =
+          resolveAndCacheIdentity({ sessionKey: sessionKeyForLookup, ctx: effectiveCtx });
+
+        if (identitySkipReason) {
+          debug(`[Hindsight Hook] Skipping retain for session ${sessionKeyForLookup}: ${formatIdentitySkipReason(identitySkipReason)}`);
+          if (sessionKeyForLookup) {
+            skipHindsightTurnBySession.delete(sessionKeyForLookup);
+          }
+          return;
+        }
+        if (sessionKeyForLookup) {
+          skipHindsightTurnBySession.delete(sessionKeyForLookup);
+        }
+
+        const bankId = deriveBankId(resolvedCtxForRetain, pluginConfig);
         debug(`[Hindsight Hook] agent_end triggered - bank: ${bankId}`);
 
         if (event.success === false) {
@@ -1624,13 +1939,7 @@ ${memoriesFormatted}
         if (retainEveryN > 1) {
           const sessionTrackingKey = `${bankId}:${effectiveCtx?.sessionKey || 'session'}`;
           const turnCount = (turnCountBySession.get(sessionTrackingKey) || 0) + 1;
-          turnCountBySession.set(sessionTrackingKey, turnCount);
-          if (turnCountBySession.size > MAX_TRACKED_SESSIONS) {
-            const oldestKey = turnCountBySession.keys().next().value;
-            if (oldestKey) {
-              turnCountBySession.delete(oldestKey);
-            }
-          }
+          setCappedMapValue(turnCountBySession, sessionTrackingKey, turnCount);
 
           if (turnCount % retainEveryN !== 0) {
             const nextRetainAt = Math.ceil(turnCount / retainEveryN) * retainEveryN;
@@ -1655,6 +1964,11 @@ ${memoriesFormatted}
         }
         const { transcript, messageCount } = retention;
 
+        if (isEphemeralOperationalText(transcript)) {
+          debug('[Hindsight Hook] Transcript is operational/ephemeral noise, skipping retention');
+          return;
+        }
+
         // Wait for client to be ready
         const clientGlobal = (global as any).__hindsightClient;
         if (!clientGlobal) {
@@ -1665,7 +1979,7 @@ ${memoriesFormatted}
         await clientGlobal.waitForReady();
 
         // Get client configured for this context's bank (async to handle mission setup)
-        const client = await clientGlobal.getClientForContext(effectiveCtxForRetain);
+        const client = await clientGlobal.getClientForContext(resolvedCtxForRetain);
         if (!client) {
           log.warn('client not initialized, skipping retain');
           return;
@@ -1741,13 +2055,7 @@ function getSessionDocumentBase(effectiveCtx: PluginHookAgentContext | undefined
 function nextDocumentSequence(effectiveCtx: PluginHookAgentContext | undefined): number {
   const sequenceKey = effectiveCtx?.sessionKey || 'session';
   const next = (documentSequenceBySession.get(sequenceKey) || 0) + 1;
-  documentSequenceBySession.set(sequenceKey, next);
-  if (documentSequenceBySession.size > MAX_TRACKED_SESSIONS) {
-    const oldestKey = documentSequenceBySession.keys().next().value;
-    if (oldestKey) {
-      documentSequenceBySession.delete(oldestKey);
-    }
-  }
+  setCappedMapValue(documentSequenceBySession, sequenceKey, next);
   return next;
 }
 
@@ -1765,14 +2073,16 @@ export function buildRetainRequest(
   now = Date.now(),
   options?: { retentionScope?: 'turn' | 'window' | 'manual'; windowTurns?: number; turnIndex?: number },
 ): RetainRequest {
-  const parsedSession = effectiveCtx?.sessionKey ? parseSessionKey(effectiveCtx.sessionKey) : {};
-  const turnIndex = options?.turnIndex ?? nextDocumentSequence(effectiveCtx);
+  const resolvedCtx = resolveSessionIdentity(effectiveCtx);
+  const parsedSession = resolvedCtx?.sessionKey ? parseSessionKey(resolvedCtx.sessionKey) : {};
+  const turnIndex = options?.turnIndex ?? nextDocumentSequence(resolvedCtx);
   const retentionScope = options?.retentionScope || 'turn';
-  const documentBase = getSessionDocumentBase(effectiveCtx);
+  const documentBase = getSessionDocumentBase(resolvedCtx);
   const documentKind = retentionScope === 'window' ? 'window' : 'turn';
   const documentId = `${documentBase}:${documentKind}:${String(turnIndex).padStart(6, '0')}`;
-  const channelId = effectiveCtx?.channelId || parsedSession.channel;
   const provider = effectiveCtx?.messageProvider || parsedSession.provider;
+  const channelId = sanitizeChannelId(effectiveCtx?.channelId, provider) || parsedSession.channel;
+  const channelType = effectiveCtx?.messageProvider;
   const threadId = extractThreadId(channelId);
 
   return {
@@ -1784,13 +2094,13 @@ export function buildRetainRequest(
       source: pluginConfig.retainSource || 'openclaw',
       retention_scope: retentionScope,
       turn_index: String(turnIndex),
-      session_key: effectiveCtx?.sessionKey,
-      agent_id: effectiveCtx?.agentId || parsedSession.agentId,
+      session_key: resolvedCtx?.sessionKey,
+      agent_id: resolvedCtx?.agentId || parsedSession.agentId,
       provider,
-      channel_type: effectiveCtx?.messageProvider,
+      channel_type: channelType,
       channel_id: channelId,
       thread_id: threadId,
-      sender_id: effectiveCtx?.senderId,
+      sender_id: resolvedCtx?.senderId,
       ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
     tags: pluginConfig.retainTags && pluginConfig.retainTags.length > 0 ? pluginConfig.retainTags : undefined,
@@ -1825,7 +2135,18 @@ export function prepareRetentionTranscript(
     targetMessages = messages.slice(lastUserIdx);
   }
 
-  // Role filtering
+  const format = pluginConfig.retainFormat ?? 'json';
+  const includeToolCalls = format === 'json' && pluginConfig.retainToolCalls !== false;
+
+  if (includeToolCalls) {
+    const structured = buildAnthropicStructuredMessages(targetMessages, pluginConfig);
+    if (structured.length === 0) return null;
+    const transcript = JSON.stringify(structured);
+    if (!transcript.trim() || transcript.length < 10) return null;
+    return { transcript, messageCount: structured.length };
+  }
+
+  // Role filtering (text-only path)
   const allowedRoles = new Set(pluginConfig.retainRoles || ['user', 'assistant']);
   const filteredMessages = targetMessages.filter((m: any) => allowedRoles.has(m.role));
 
@@ -1833,37 +2154,143 @@ export function prepareRetentionTranscript(
     return null; // No messages to retain
   }
 
-  // Format messages into a transcript
-  const transcriptParts = filteredMessages
-    .map((msg: any) => {
-      const role = msg.role || 'unknown';
-      let content = '';
+  const normalized: Array<{ role: string; content: string }> = [];
+  for (const msg of filteredMessages) {
+    const role = msg.role || 'unknown';
+    let content = '';
 
-      // Handle different content formats
-      if (typeof msg.content === 'string') {
-        content = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        content = msg.content
-          .filter((block: any) => block.type === 'text')
-          .map((block: any) => block.text)
-          .join('\n');
-      }
+    if (typeof msg.content === 'string') {
+      content = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      content = msg.content
+        .filter((block: any) => block.type === 'text')
+        .map((block: any) => block.text)
+        .join('\n');
+    }
 
-      // Strip plugin-injected memory tags and metadata envelopes to prevent feedback loop
-      content = stripMemoryTags(content);
-      content = stripMetadataEnvelopes(content);
+    content = stripMemoryTags(content);
+    content = stripMetadataEnvelopes(content);
 
-      return content.trim() ? `[role: ${role}]\n${content}\n[${role}:end]` : null;
-    })
-    .filter(Boolean);
-
-  const transcript = transcriptParts.join('\n\n');
-
-  if (!transcript.trim() || transcript.length < 10) {
-    return null; // Transcript too short
+    if (content.trim()) {
+      normalized.push({ role, content });
+    }
   }
 
-  return { transcript, messageCount: transcriptParts.length };
+  if (normalized.length === 0) return null;
+
+  const transcript =
+    format === 'text'
+      ? normalized.map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`).join('\n\n')
+      : JSON.stringify(normalized);
+
+  if (!transcript.trim() || transcript.length < 10) return null;
+
+  return { transcript, messageCount: normalized.length };
+}
+
+// MCP tool name suffixes that are operational (recall/retain/search/CRUD) and
+// shouldn't be retained — preserves agent reasoning without creating feedback
+// loops on Hindsight's own MCP surface. Mirrors the claude-code integration.
+const OPERATIONAL_TOOL_PATTERN = /(?:recall|retain|reflect|search|extract|create_|delete_|update_|get_|list_)/i;
+const TOOL_RESULT_MAX_CHARS = 2000;
+
+/**
+ * Build an Anthropic-shaped message array from OpenClaw's session messages.
+ *
+ * OpenClaw stores assistant content as a block array that may contain
+ * `text`, `thinking`, and `toolCall` entries, and emits tool results as
+ * separate messages with `role: "toolResult"`. The Anthropic wire format
+ * expected by Hindsight's Claude Code integration (and downstream consumers)
+ * is: assistant messages carry `text` and `tool_use` blocks, and tool
+ * results live in a following `user` message as `tool_result` blocks.
+ * We translate to that shape here so stored documents are consistent
+ * across integrations.
+ */
+function buildAnthropicStructuredMessages(
+  messages: any[],
+  pluginConfig: PluginConfig,
+): Array<{ role: string; content: any[] }> {
+  const allowedRoles = new Set(pluginConfig.retainRoles || ['user', 'assistant']);
+  const out: Array<{ role: string; content: any[] }> = [];
+
+  for (const msg of messages) {
+    const rawRole = msg?.role;
+    if (rawRole === 'toolResult') {
+      const toolResultBlock = buildToolResultBlock(msg);
+      if (!toolResultBlock) continue;
+      // Fold tool_result into a synthetic user message (Anthropic convention),
+      // merging with an immediately-preceding synthetic user if one exists so
+      // consecutive tool results stay together.
+      const last = out[out.length - 1];
+      if (last && last.role === 'user' && last.content.every((b: any) => b.type === 'tool_result')) {
+        last.content.push(toolResultBlock);
+      } else {
+        out.push({ role: 'user', content: [toolResultBlock] });
+      }
+      continue;
+    }
+
+    if (!allowedRoles.has(rawRole)) continue;
+
+    const blocks = extractStructuredBlocks(msg.content, rawRole);
+    if (blocks.length > 0) {
+      out.push({ role: rawRole, content: blocks });
+    }
+  }
+
+  return out;
+}
+
+function extractStructuredBlocks(content: any, role: string): any[] {
+  if (typeof content === 'string') {
+    const cleaned = stripMetadataEnvelopes(stripMemoryTags(content)).trim();
+    return cleaned ? [{ type: 'text', text: cleaned }] : [];
+  }
+  if (!Array.isArray(content)) return [];
+
+  const blocks: any[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const blockType = block.type;
+
+    if (blockType === 'text') {
+      const cleaned = stripMetadataEnvelopes(stripMemoryTags(block.text ?? '')).trim();
+      if (cleaned) blocks.push({ type: 'text', text: cleaned });
+    } else if (blockType === 'toolCall' && role === 'assistant') {
+      const name = typeof block.name === 'string' ? block.name : 'unknown';
+      // Skip Hindsight's own MCP operational tools to avoid feedback loops.
+      if (name.startsWith('mcp__') && OPERATIONAL_TOOL_PATTERN.test(name.split('__').pop() ?? '')) continue;
+      const input = block.arguments && typeof block.arguments === 'object' ? block.arguments : {};
+      const id = typeof block.id === 'string' ? block.id : undefined;
+      const toolUse: any = { type: 'tool_use', name, input };
+      if (id) toolUse.id = id;
+      blocks.push(toolUse);
+    }
+    // thinking / unknown types are dropped
+  }
+  return blocks;
+}
+
+function buildToolResultBlock(msg: any): any | null {
+  const toolUseId = typeof msg.toolCallId === 'string' ? msg.toolCallId : '';
+  const raw = msg.content;
+  let text = '';
+  if (typeof raw === 'string') {
+    text = raw;
+  } else if (Array.isArray(raw)) {
+    text = raw
+      .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n');
+  }
+  text = text.trim();
+  if (!text) return null;
+  if (text.length > TOOL_RESULT_MAX_CHARS) {
+    text = text.slice(0, TOOL_RESULT_MAX_CHARS) + '... (truncated)';
+  }
+  const block: any = { type: 'tool_result', content: text };
+  if (toolUseId) block.tool_use_id = toolUseId;
+  return block;
 }
 
 export function sliceLastTurnsByUserBoundary(messages: any[], turns: number): any[] {

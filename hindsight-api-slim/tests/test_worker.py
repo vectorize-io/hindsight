@@ -217,6 +217,7 @@ class TestWorkerPoller:
             worker_id="test-worker-1",
             executor=lambda x: None,
             max_slots=3,  # Limit to 3 concurrent tasks
+            consolidation_max_slots=0,  # No reservation; all 3 slots available for non-consolidation
         )
 
         claimed = await poller.claim_batch()
@@ -1363,7 +1364,7 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
         executor=controlled_executor,
         poll_interval_ms=50,
         max_slots=3,  # Only allow 3 concurrent tasks
-        consolidation_max_slots=1,
+        consolidation_max_slots=0,  # No consolidation reservation; all 3 slots available for retain
     )
 
     # Submit 10 tasks
@@ -1420,6 +1421,106 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
 
     finally:
         for event in task_events.values():
+            event.set()
+        await poller.shutdown_graceful(timeout=2.0)
+        try:
+            await asyncio.wait_for(poll_task, timeout=1.0)
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_consolidation_slots_reserved_when_retain_saturates(pool, clean_operations):
+    """Regression: consolidation must not be starved when retain saturates the queue.
+
+    With ``max_slots=5`` and ``consolidation_max_slots=2``, retain tasks may use at
+    most 3 concurrent slots, leaving 2 slots reserved for consolidation. Without
+    the reservation (issue #1006), a continuous stream of retain tasks would fill
+    every slot and consolidation would never run.
+    """
+    from hindsight_api.worker.poller import WorkerPoller
+
+    started: dict[str, str] = {}  # op_id -> op_type
+    finish_events: dict[str, asyncio.Event] = {}
+
+    async def blocking_executor(task_dict: dict):
+        op_id = task_dict["operation_id"]
+        started[op_id] = task_dict.get("operation_type", "unknown")
+        event = asyncio.Event()
+        finish_events[op_id] = event
+        await event.wait()
+
+    poller = WorkerPoller(
+        pool=pool,
+        worker_id="test-worker-consolidation-reservation",
+        executor=blocking_executor,
+        poll_interval_ms=50,
+        max_slots=5,
+        consolidation_max_slots=2,
+    )
+
+    bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(pool, bank_id)
+
+    # Submit 10 retain tasks first — these should be claimed up to the
+    # non-consolidation cap (max_slots - consolidation_max_slots = 3).
+    for _ in range(10):
+        op_id = uuid.uuid4()
+        payload = json.dumps(
+            {"type": "test", "operation_type": "retain", "operation_id": str(op_id), "bank_id": bank_id}
+        )
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'retain', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+    # Submit 1 consolidation task. Note the payload deliberately omits operation_type
+    # to verify the poller injects it from the DB column.
+    consolidation_op_id = uuid.uuid4()
+    consolidation_payload = json.dumps({"type": "test", "operation_id": str(consolidation_op_id), "bank_id": bank_id})
+    await pool.execute(
+        """
+        INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+        VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+        """,
+        consolidation_op_id,
+        bank_id,
+        consolidation_payload,
+    )
+
+    poll_task = asyncio.create_task(poller.run())
+
+    try:
+        # Wait for the worker to fill its slots: 3 retain + 1 consolidation = 4 active.
+        for _ in range(200):
+            if len(started) >= 4:
+                break
+            await asyncio.sleep(0.01)
+
+        retain_started = [op for op, t in started.items() if t == "retain"]
+        consolidation_started = [op for op, t in started.items() if t == "consolidation"]
+
+        assert len(retain_started) == 3, (
+            f"Retain should be capped at max_slots - consolidation_max_slots = 3, "
+            f"got {len(retain_started)}"
+        )
+        assert len(consolidation_started) == 1, (
+            f"Consolidation should claim its reserved slot even while retain saturates, "
+            f"got {len(consolidation_started)}"
+        )
+        assert str(consolidation_op_id) in consolidation_started
+
+        # In-flight tracking must record the consolidation task under the right key,
+        # otherwise the consolidation pool accounting drifts on subsequent claims.
+        async with poller._in_flight_lock:
+            assert poller._in_flight_by_type.get("consolidation", 0) == 1
+
+    finally:
+        for event in finish_events.values():
             event.set()
         await poller.shutdown_graceful(timeout=2.0)
         try:

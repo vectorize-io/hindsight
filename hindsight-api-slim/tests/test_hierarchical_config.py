@@ -210,6 +210,47 @@ async def test_config_validation_rejects_static_fields(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_config_validation_rejects_malformed_entity_labels(memory, request_context):
+    """Test that passing strings instead of LabelGroup dicts to entity_labels raises ValueError.
+
+    Regression test for the fix in PR #902: entity_labels PATCH must validate the
+    format before saving to prevent silent corruption that previously caused 500s on
+    subsequent retain calls (reported in issue #946).
+    """
+    bank_id = "test-entity-labels-validation"
+
+    try:
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        resolver = ConfigResolver(pool=memory._pool)
+
+        # String list instead of LabelGroup dicts must raise ValueError, not silently accept.
+        # Previously this produced HTTP 200, then 500 on the next retain call (issue #946).
+        with pytest.raises(ValueError, match="Invalid entity_labels format"):
+            await resolver.update_bank_config(
+                bank_id,
+                {"entity_labels": ["person", "client", "tool"]},
+            )
+
+        # The correct LabelGroup format must succeed
+        await resolver.update_bank_config(
+            bank_id,
+            {
+                "entity_labels": [
+                    {
+                        "key": "kind",
+                        "type": "value",
+                        "values": [{"value": "person"}, {"value": "client"}],
+                    }
+                ]
+            },
+        )
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_config_freshness_across_updates(memory, request_context):
     """Test that config changes are immediately visible (no stale cache)."""
     bank1 = "freshness-test-1"
@@ -394,10 +435,16 @@ async def test_config_get_bank_config_no_static_or_credential_fields_leak(memory
 
         # SECURITY: Verify specific sensitive fields are NOT present
         sensitive_fields = [
-            "database_url", "api_port", "host", "worker_count",  # Infrastructure
-            "llm_api_key", "llm_base_url",  # Credentials
-            "retain_llm_api_key", "reflect_llm_api_key",  # More credentials
-            "llm_provider", "llm_model",  # Not configurable (need presets)
+            "database_url",
+            "api_port",
+            "host",
+            "worker_count",  # Infrastructure
+            "llm_api_key",
+            "llm_base_url",  # Credentials
+            "retain_llm_api_key",
+            "reflect_llm_api_key",  # More credentials
+            "llm_provider",
+            "llm_model",  # Not configurable (need presets)
         ]
         for field in sensitive_fields:
             assert field not in config, (

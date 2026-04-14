@@ -102,6 +102,17 @@ describe('deriveBankId', () => {
     expect(bankId).toBe('prod-shared-bank');
   });
 
+  it('should ignore ctx.channelId when it is a provider name and fall back to sessionKey (issue #854)', () => {
+    const ctxDiscord: PluginHookAgentContext = {
+      agentId: 'main',
+      channelId: 'discord',
+      sessionKey: 'agent:main:discord:channel:1472750640760623226',
+    };
+    const config: PluginConfig = { ...baseConfig, dynamicBankGranularity: ['agent', 'channel'] };
+    const bankId = deriveBankId(ctxDiscord, config);
+    expect(bankId).toBe('main::channel%3A1472750640760623226');
+  });
+
   it('should encode segments to prevent separator collisions', () => {
     const ctxWithSeparator: PluginHookAgentContext = {
       agentId: 'a::b',

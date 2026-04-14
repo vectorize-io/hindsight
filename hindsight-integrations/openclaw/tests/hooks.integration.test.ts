@@ -365,6 +365,53 @@ describe('before_prompt_build hook', () => {
     expect(result.prependSystemContext).toContain('User loves hiking');
     expect(result.prependSystemContext).toContain('<hindsight_memories>');
   });
+
+  it('uses identity cached in before_dispatch when later hooks lack sender metadata', async () => {
+    if (!apiReachable) return;
+    recallSpy.mockResolvedValue(EMPTY_RECALL);
+
+    await triggerHook(
+      'before_dispatch',
+      {
+        sessionKey: 'agent:main:telegram:direct:U020',
+        channel: 'telegram',
+        senderId: 'U020',
+      },
+      { sessionKey: 'agent:main:telegram:direct:U020' },
+    );
+
+    await triggerHook(
+      'before_prompt_build',
+      { rawMessage: 'What do I like?', prompt: '', messages: [] },
+      { sessionKey: 'agent:main:telegram:direct:U020' },
+    );
+
+    expect(recallSpy).toHaveBeenCalledOnce();
+  });
+
+  it('skips recall when before_dispatch detects a provider mismatch for the session', async () => {
+    if (!apiReachable) return;
+    recallSpy.mockResolvedValue(EMPTY_RECALL);
+
+    await triggerHook(
+      'before_dispatch',
+      {
+        sessionKey: 'agent:main:telegram:direct:U021',
+        channel: 'discord',
+        senderId: 'U021',
+      },
+      { sessionKey: 'agent:main:telegram:direct:U021' },
+    );
+
+    const result = await triggerHook(
+      'before_prompt_build',
+      { rawMessage: 'What do I like?', prompt: '', messages: [] },
+      { sessionKey: 'agent:main:telegram:direct:U021' },
+    );
+
+    expect(recallSpy).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -481,6 +528,57 @@ describe('agent_end hook', () => {
     expect(options?.metadata?.sender_id).toBe('U015');
     expect(options?.metadata?.retained_at).toBeDefined();
     expect(options?.metadata?.message_count).toBe('1');
+  });
+
+  it('uses identity cached in before_dispatch for retain metadata when agent_end ctx is sparse', async () => {
+    if (!apiReachable) return;
+    retainSpy.mockResolvedValue(OK_RETAIN);
+
+    await triggerHook(
+      'before_dispatch',
+      {
+        sessionKey: 'agent:main:telegram:direct:U015B',
+        channel: 'telegram',
+        senderId: 'U015B',
+      },
+      { sessionKey: 'agent:main:telegram:direct:U015B' },
+    );
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I like midnight blue.' }],
+      },
+      { sessionKey: 'agent:main:telegram:direct:U015B' },
+    );
+
+    expect(retainSpy).toHaveBeenCalledOnce();
+    const [, , options] = retainSpy.mock.calls[0];
+    expect(options?.metadata?.channel_type).toBe('telegram');
+    expect(options?.metadata?.channel_id).toBe('direct:U015B');
+    expect(options?.metadata?.sender_id).toBe('U015B');
+  });
+
+  it('keeps provider fallback without backfilling channel_type when only session parsing provides it', async () => {
+    if (!apiReachable) return;
+    retainSpy.mockResolvedValue(OK_RETAIN);
+
+    await triggerHook(
+      'agent_end',
+      {
+        success: true,
+        messages: [{ role: 'user', content: 'I prefer espresso.' }],
+      },
+      { sessionKey: 'agent:main:telegram:direct:U015C' },
+    );
+
+    expect(retainSpy).toHaveBeenCalledOnce();
+    const [, , options] = retainSpy.mock.calls[0];
+    expect(options?.metadata?.provider).toBe('telegram');
+    expect(options?.metadata?.channel_type).toBeUndefined();
+    expect(options?.metadata?.channel_id).toBe('direct:U015C');
+    expect(options?.metadata?.sender_id).toBe('U015C');
   });
 
   it('strips <hindsight_memories> tags from content before retaining', async () => {

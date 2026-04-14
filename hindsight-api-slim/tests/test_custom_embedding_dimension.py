@@ -15,7 +15,12 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from hindsight_api import MemoryEngine, RequestContext
-from hindsight_api.engine.cross_encoder import CohereCrossEncoder, LocalSTCrossEncoder, ZeroEntropyCrossEncoder
+from hindsight_api.engine.cross_encoder import (
+    CohereCrossEncoder,
+    LocalSTCrossEncoder,
+    SiliconFlowCrossEncoder,
+    ZeroEntropyCrossEncoder,
+)
 from hindsight_api.engine.embeddings import CohereEmbeddings, LocalSTEmbeddings, OpenAIEmbeddings
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
@@ -738,4 +743,59 @@ class TestZeroEntropyCrossEncoder:
         assert len(scores) == 3
         assert all(isinstance(s, float) for s in scores)
         # The first result should be most relevant
+        assert scores[0] > scores[2], "Direct answer should score higher than unrelated text"
+
+
+# =============================================================================
+# SiliconFlow Reranker Tests
+# =============================================================================
+
+
+def has_siliconflow_api_key() -> bool:
+    """Check if SiliconFlow API key is available."""
+    return bool(os.environ.get("SILICONFLOW_API_KEY"))
+
+
+def get_siliconflow_api_key() -> str:
+    """Get SiliconFlow API key from environment."""
+    return os.environ.get("SILICONFLOW_API_KEY", "")
+
+
+@pytest.fixture(scope="module")
+def siliconflow_cross_encoder():
+    """Create SiliconFlow cross-encoder instance."""
+    if not has_siliconflow_api_key():
+        pytest.skip("SiliconFlow API key not available (set SILICONFLOW_API_KEY)")
+
+    cross_encoder = SiliconFlowCrossEncoder(
+        api_key=get_siliconflow_api_key(),
+        model="BAAI/bge-reranker-v2-m3",
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(cross_encoder.initialize())
+    finally:
+        loop.close()
+    return cross_encoder
+
+
+class TestSiliconFlowCrossEncoder:
+    """Tests for SiliconFlow cross-encoder/reranker."""
+
+    def test_siliconflow_cross_encoder_initialization(self, siliconflow_cross_encoder):
+        """Test that SiliconFlow cross-encoder initializes correctly."""
+        assert siliconflow_cross_encoder.provider_name == "siliconflow"
+
+    @pytest.mark.asyncio
+    async def test_siliconflow_cross_encoder_predict(self, siliconflow_cross_encoder):
+        """Test that SiliconFlow cross-encoder can score pairs."""
+        pairs = [
+            ("What is the capital of France?", "Paris is the capital of France."),
+            ("What is the capital of France?", "The Eiffel Tower is in Paris."),
+            ("What is the capital of France?", "Python is a programming language."),
+        ]
+        scores = await siliconflow_cross_encoder.predict(pairs)
+
+        assert len(scores) == 3
+        assert all(isinstance(s, float) for s in scores)
         assert scores[0] > scores[2], "Direct answer should score higher than unrelated text"

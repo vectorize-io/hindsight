@@ -286,6 +286,12 @@ const sidebars: SidebarsConfig = {
           label: 'Skills',
           customProps: { icon: '/img/icons/skills.png' },
         },
+        {
+          type: 'link',
+          href: '/sdks/integrations/context-forge',
+          label: 'ContextForge',
+          customProps: { icon: '/img/icons/mcp.png' },
+        },
       ],
     },
     {

@@ -8,20 +8,47 @@ import PageHero from '@site/src/components/PageHero';
 
 ← OpenClaw integration
 
-## 0.6.0 (Unreleased)
-
-**Breaking Changes**
-
-- The plugin no longer reads any configuration from process environment variables. All settings — including the LLM provider, model, API key, base URL, external Hindsight API URL/token, and bank ID — must now be set through OpenClaw's plugin config (e.g. `openclaw config set plugins.entries.hindsight-openclaw.config.<field> <value>`). API keys and other secrets should be configured as `SecretRef` values via `--ref-source env|file|exec` so they're resolved from your secret store at runtime instead of being stored in plaintext on disk.
-- Removed the `llmApiKeyEnv` plugin config field. Use the new `llmApiKey` field configured as a SecretRef instead (e.g. `openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey --ref-source env --ref-id OPENAI_API_KEY`).
-- Removed automatic LLM provider detection from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GROQ_API_KEY`. Set `llmProvider` and `llmApiKey` explicitly via `openclaw config set`.
-- Removed support for the `HINDSIGHT_API_LLM_PROVIDER`, `HINDSIGHT_API_LLM_MODEL`, `HINDSIGHT_API_LLM_API_KEY`, `HINDSIGHT_API_LLM_BASE_URL`, `HINDSIGHT_EMBED_API_URL`, `HINDSIGHT_EMBED_API_TOKEN`, and `HINDSIGHT_BANK_ID` environment variables. The same values now live in plugin config — see the migration guide.
+## [0.6.2](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.2)
 
 **Features**
 
-- Added the `llmApiKey` plugin config field, marked as a sensitive field so OpenClaw resolves it as a `SecretRef` from env, file, or exec sources.
-- Added the `llmBaseUrl` plugin config field for OpenAI-compatible endpoint overrides (OpenRouter, Azure OpenAI, vLLM, etc.).
-- Marked `hindsightApiToken` as a sensitive field — it can now be configured as a `SecretRef` the same way as `llmApiKey`.
+- OpenClaw conversations are now stored in an Anthropic-style JSON format, preserving tool_use/tool_result blocks for more faithful replay and analysis. ([`adc85129`](https://github.com/vectorize-io/hindsight/commit/adc85129))
+
+**Bug Fixes**
+
+- Improved session consistency and reduced noise by stabilizing session identity and skipping non-user operational turns. ([`2ff805d6`](https://github.com/vectorize-io/hindsight/commit/2ff805d6))
+- Fixed intermittent missing behavior by ensuring agent hooks are registered on every plugin invocation. ([`1be5ff33`](https://github.com/vectorize-io/hindsight/commit/1be5ff33))
+
+## [0.6.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.1)
+
+**Bug Fixes**
+
+- Openclaw setup wizard now prompts for the actual token value instead of an environment variable name. ([`9679d813`](https://github.com/vectorize-io/hindsight/commit/9679d813))
+
+## [0.6.0](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.0)
+
+**Breaking Changes**
+
+- Configuration is now read from the plugin configuration instead of environment variables, requiring updates to existing deployments. ([`e22ae05f`](https://github.com/vectorize-io/hindsight/commit/e22ae05f))
+
+**Features**
+
+- Adds an interactive setup wizard with Cloud, API, and Embedded configuration modes. ([`87322396`](https://github.com/vectorize-io/hindsight/commit/87322396))
+- Adds a daemon lifecycle package for running the Hindsight "all" daemon. ([`576016f5`](https://github.com/vectorize-io/hindsight/commit/576016f5))
+- Adds a configuration-aware CLI to backfill historical data into Hindsight memory. ([`72fd3d59`](https://github.com/vectorize-io/hindsight/commit/72fd3d59))
+- Adds session pattern filtering to ignore or treat certain sessions as stateless. ([`5a61ac50`](https://github.com/vectorize-io/hindsight/commit/5a61ac50))
+- Adds configurable tags for retained memories. ([`b0e8ac0f`](https://github.com/vectorize-io/hindsight/commit/b0e8ac0f))
+- Adds support for bankId when using static banks. ([`0e81d1a2`](https://github.com/vectorize-io/hindsight/commit/0e81d1a2))
+
+**Improvements**
+
+- Improves startup resilience and enriches retained memory metadata. ([`1f1716bd`](https://github.com/vectorize-io/hindsight/commit/1f1716bd))
+- Adds a JSONL-backed retain queue to improve reliability when the external API is unavailable. ([`087545cc`](https://github.com/vectorize-io/hindsight/commit/087545cc))
+- Reduces CLI startup time by deferring heavy initialization until the service starts. ([`41025c3b`](https://github.com/vectorize-io/hindsight/commit/41025c3b))
+
+**Bug Fixes**
+
+- Avoids misrouting by ignoring ctx.channelId when it contains a provider name. ([`d4b8b354`](https://github.com/vectorize-io/hindsight/commit/d4b8b354))
 
 ## [0.5.1](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.5.1)
 

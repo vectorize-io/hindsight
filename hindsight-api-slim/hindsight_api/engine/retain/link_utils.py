@@ -776,17 +776,13 @@ async def compute_semantic_links_ann(
         await conn.execute("SET LOCAL hnsw.ef_search = 60")
 
         t_setup = time_mod.time()
-        await conn.execute(
-            "CREATE TEMP TABLE _ann_seeds (unit_id text, emb_text text, fact_type text) ON COMMIT DROP"
-        )
+        await conn.execute("CREATE TEMP TABLE _ann_seeds (unit_id text, emb_text text, fact_type text) ON COMMIT DROP")
 
         records = [
             (uid, emb if isinstance(emb, str) else str(emb), ft)
             for uid, emb, ft in zip(unit_ids, embeddings, fact_types)
         ]
-        await conn.copy_records_to_table(
-            "_ann_seeds", records=records, columns=["unit_id", "emb_text", "fact_type"]
-        )
+        await conn.copy_records_to_table("_ann_seeds", records=records, columns=["unit_id", "emb_text", "fact_type"])
         logger.debug(f"[ANN] Temp table setup: {time_mod.time() - t_setup:.3f}s ({len(records)} seeds)")
 
         # Run one ANN query per fact_type so each uses the right HNSW index.
