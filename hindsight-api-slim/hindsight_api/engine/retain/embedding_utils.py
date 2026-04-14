@@ -47,6 +47,16 @@ async def generate_embeddings_batch(embeddings_backend, texts: list[str]) -> lis
             embeddings_backend.encode,
             texts,
         )
-        return embeddings
     except Exception as e:
         raise Exception(f"Failed to generate batch embeddings: {str(e)}")
+
+    # Guarantee 1:1 alignment with input texts. A silent length mismatch here
+    # propagates downstream as zip() drops items, eventually surfacing as an
+    # IndexError in retain mapping (see issue #1037).
+    if len(embeddings) != len(texts):
+        raise RuntimeError(
+            f"Embeddings backend returned {len(embeddings)} vectors for {len(texts)} input texts; "
+            "expected exact 1:1 alignment"
+        )
+
+    return embeddings
