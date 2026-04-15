@@ -42,6 +42,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _filter_live_source_memories(
+    conn: "Connection",
+    bank_id: str,
+    source_memory_ids: list[uuid.UUID],
+) -> list[uuid.UUID]:
+    """Return only the source memory ids that still exist in the bank.
+
+    Uses FOR SHARE to block concurrent deletes from removing a row between the
+    check and the subsequent insert/update. Combined with the delete path running
+    its stale-observation sweep *after* deleting the source row, this closes the
+    race window where consolidation would otherwise produce an orphan observation.
+    """
+    if not source_memory_ids:
+        return []
+    rows = await conn.fetch(
+        f"""
+        SELECT id
+        FROM {fq_table("memory_units")}
+        WHERE id = ANY($1::uuid[]) AND bank_id = $2
+        FOR SHARE
+        """,
+        source_memory_ids,
+        bank_id,
+    )
+    live = {row["id"] for row in rows}
+    return [mid for mid in source_memory_ids if mid in live]
+
+
 class _CreateAction(BaseModel):
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
@@ -889,6 +917,15 @@ async def _execute_update_action(
         logger.debug(f"Update skipped: observation {observation_id} not found in recall results")
         return
 
+    live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
+    if not live_source_memory_ids:
+        logger.debug(
+            f"Update skipped: all {len(source_memory_ids)} source memories for observation "
+            f"{observation_id} were deleted concurrently"
+        )
+        return
+    source_memory_ids = live_source_memory_ids
+
     from ...config import get_config
 
     history_entry = {
@@ -1236,6 +1273,12 @@ async def _create_observation_directly(
     perf: ConsolidationPerfLog | None = None,
 ) -> dict[str, Any]:
     """Create an observation from one or more source memories with pre-processed text."""
+    live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
+    if not live_source_memory_ids:
+        logger.debug(f"Create skipped: all {len(source_memory_ids)} source memories were deleted concurrently")
+        return {"action": "skipped", "reason": "sources_deleted"}
+    source_memory_ids = live_source_memory_ids
+
     # Generate embedding for the observation (convert to string for pgvector)
     t0 = time.time()
     embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [observation_text])

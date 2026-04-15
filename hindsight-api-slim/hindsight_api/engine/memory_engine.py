@@ -3708,16 +3708,20 @@ class MemoryEngine(MemoryEngineInterface):
                     f"SELECT COUNT(*) FROM {fq_table('memory_units')} WHERE document_id = $1", document_id
                 )
 
-                # Invalidate observations referencing these memories before deletion
-                if unit_ids:
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
-
-                # Delete document (cascades to memory_units and all their links)
+                # Delete document first (cascades to memory_units and all their links).
+                # Running the stale-observation sweep AFTER the delete ensures we also
+                # catch observations inserted concurrently by consolidation — otherwise
+                # an insert that commits between the sweep and the delete would leave an
+                # orphan referencing the just-deleted source memory.
                 deleted = await conn.fetchval(
                     f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id",
                     document_id,
                     bank_id,
                 )
+
+                # Invalidate observations referencing these (now-deleted) memories
+                if unit_ids:
+                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
 
                 result = {
                     "document_deleted": 1 if deleted else 0,
@@ -3914,16 +3918,20 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id = row["bank_id"] if row else None
                 fact_type = row["fact_type"] if row else None
 
-                # Invalidate observations before deletion (only for source memory types)
+                # Delete the memory unit first (cascades to links and associations).
+                # The stale-observation sweep runs AFTER the delete so it also catches
+                # observations inserted concurrently by consolidation (otherwise a
+                # racing insert committed between the sweep and the delete would
+                # leave an orphan referencing this just-deleted source memory).
+                deleted = await conn.fetchval(
+                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
+                )
+
+                # Invalidate observations referencing this (now-deleted) source memory
                 if bank_id and fact_type in ("experience", "world"):
                     invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, [unit_id])
                     if invalidated_obs > 0:
                         bank_id_for_consolidation = bank_id
-
-                # Delete the memory unit (cascades to links and associations)
-                deleted = await conn.fetchval(
-                    f"DELETE FROM {fq_table('memory_units')} WHERE id = $1 RETURNING id", unit_id
-                )
 
                 result = {
                     "success": deleted is not None,
@@ -3988,7 +3996,11 @@ class MemoryEngine(MemoryEngineInterface):
             async with conn.transaction():
                 try:
                     if fact_type:
-                        # For source memory types, clean up observations before deletion
+                        # For source memory types, capture ids so we can invalidate
+                        # dependent observations AFTER the delete below. Running the
+                        # stale-observation sweep post-delete ensures we also catch
+                        # observations inserted concurrently by consolidation.
+                        unit_ids: list[str] = []
                         if fact_type in ("experience", "world"):
                             unit_id_rows = await conn.fetch(
                                 f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND fact_type = $2",
@@ -3996,10 +4008,6 @@ class MemoryEngine(MemoryEngineInterface):
                                 fact_type,
                             )
                             unit_ids = [str(row["id"]) for row in unit_id_rows]
-                            if unit_ids:
-                                invalidated_obs = await self._delete_stale_observations_for_memories(
-                                    conn, bank_id, unit_ids
-                                )
 
                         # Delete only memories of a specific fact type
                         units_count = await conn.fetchval(
@@ -4012,6 +4020,11 @@ class MemoryEngine(MemoryEngineInterface):
                             bank_id,
                             fact_type,
                         )
+
+                        if unit_ids:
+                            invalidated_obs = await self._delete_stale_observations_for_memories(
+                                conn, bank_id, unit_ids
+                            )
 
                         # Note: We don't delete entities when fact_type is specified,
                         # as they may be referenced by other memory units
