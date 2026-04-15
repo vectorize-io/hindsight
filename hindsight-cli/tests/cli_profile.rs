@@ -8,6 +8,15 @@
 //! a deliberately-unreachable URL so we can assert that the profile value
 //! (not the default `http://localhost:8888`) was picked up from the error
 //! message.
+//!
+//! These integration tests are Unix-only because they rely on overriding
+//! `$HOME` to redirect `dirs::home_dir()` at a tempdir. On Windows
+//! `dirs::home_dir()` resolves via `FOLDERID_Profile` (the Win32 shell API)
+//! and ignores the env var, so running these tests there would pollute the
+//! real user profile directory. The Windows runtime path is still exercised
+//! by the `config::tests::*` unit tests, which drive the path-based
+//! `save_profile_to_dir` / `load_profile_from_dir` helpers directly.
+#![cfg(unix)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};

@@ -31,6 +31,49 @@ export HINDSIGHT_API_URL=http://localhost:8888
 export HINDSIGHT_API_KEY=your-api-key
 ```
 
+### Named Profiles
+
+When you need to switch between multiple Hindsight deployments (e.g. local,
+staging, production) without constantly rewriting `~/.hindsight/config`, use
+named profiles. Each profile is a TOML file at
+`~/.hindsight/cli-profiles/<name>.toml` and is selected per-invocation with
+`-p/--profile` (or by setting `$HINDSIGHT_PROFILE`).
+
+```bash
+# Create (or overwrite) a profile
+hindsight profile create prod \
+  --api-url https://api.hindsight.vectorize.io \
+  --api-key hsk_...
+
+# List and inspect profiles
+hindsight profile list
+hindsight profile show prod
+
+# Use a profile for a single command
+hindsight -p prod bank list
+
+# Or make it sticky for the current shell
+export HINDSIGHT_PROFILE=prod
+hindsight bank list
+
+# Remove a profile
+hindsight profile delete prod -y
+```
+
+Profile files are written with `0600` permissions on Unix so the API key is
+only readable by the owner.
+
+**Configuration precedence** (highest first):
+
+1. Environment variables (`HINDSIGHT_API_URL`, `HINDSIGHT_API_KEY`)
+2. Named profile — explicit `-p <name>`, otherwise `$HINDSIGHT_PROFILE`
+3. Shared config file (`~/.hindsight/config`, written by `hindsight configure`)
+4. Default (`http://localhost:8888`)
+
+`HINDSIGHT_API_URL` / `HINDSIGHT_API_KEY` always override profile values, which
+makes it safe to use `-p` in scripts while letting CI inject credentials via
+environment.
+
 ## Core Commands
 
 ### Retain (Store Memory)
