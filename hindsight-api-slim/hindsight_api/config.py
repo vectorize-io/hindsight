@@ -265,6 +265,7 @@ ENV_PORT = "HINDSIGHT_API_PORT"
 ENV_BASE_PATH = "HINDSIGHT_API_BASE_PATH"
 ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
+ENV_LOG_JSON_FIELDS = "HINDSIGHT_API_LOG_JSON_FIELDS"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
@@ -657,6 +658,10 @@ class JsonFormatter(logging.Formatter):
         logging.CRITICAL: "CRITICAL",
     }
 
+    def __init__(self, allowed_fields: frozenset[str] | None = None):
+        super().__init__()
+        self._allowed_fields = allowed_fields
+
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
             "severity": self.SEVERITY_MAP.get(record.levelno, "DEFAULT"),
@@ -665,9 +670,19 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
 
+        # Lazy import to avoid circular dependency (engine imports from config).
+        from hindsight_api.engine.memory_engine import _current_schema
+
+        tenant = _current_schema.get()
+        if tenant:
+            log_entry["tenant"] = tenant
+
         # Add exception info if present
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
+
+        if self._allowed_fields is not None:
+            log_entry = {k: v for k, v in log_entry.items() if k in self._allowed_fields}
 
         return json.dumps(log_entry)
 
@@ -857,6 +872,7 @@ class HindsightConfig:
     base_path: str
     log_level: str
     log_format: str
+    log_json_fields: list[str] | None  # None = all fields; explicit list = allowlist
     mcp_enabled: bool
     mcp_enabled_tools: list[str] | None  # None = all tools; explicit list = allowlist
     mcp_stateless: bool  # True = stateless HTTP (POST-only); False = stateful (supports GET/SSE)
@@ -1400,6 +1416,7 @@ class HindsightConfig:
             base_path=os.getenv(ENV_BASE_PATH, DEFAULT_BASE_PATH),
             log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
             log_format=os.getenv(ENV_LOG_FORMAT, DEFAULT_LOG_FORMAT).lower(),
+            log_json_fields=_parse_str_list(os.getenv(ENV_LOG_JSON_FIELDS, "")) or None,
             mcp_enabled=os.getenv(ENV_MCP_ENABLED, str(DEFAULT_MCP_ENABLED)).lower() == "true",
             mcp_enabled_tools=[t.strip() for t in os.getenv(ENV_MCP_ENABLED_TOOLS).split(",") if t.strip()]
             if os.getenv(ENV_MCP_ENABLED_TOOLS)
@@ -1640,7 +1657,8 @@ class HindsightConfig:
         handler.setLevel(self.get_python_log_level())
 
         if self.log_format == "json":
-            handler.setFormatter(JsonFormatter())
+            allowed = frozenset(self.log_json_fields) if self.log_json_fields else None
+            handler.setFormatter(JsonFormatter(allowed_fields=allowed))
         else:
             handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
 
