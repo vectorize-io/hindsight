@@ -854,26 +854,37 @@ class MemoryEngine(MemoryEngineInterface):
             "file_content_type": task_dict["content_type"],
         }
 
-        # In one transaction: create the retain async operation AND mark this conversion as completed
+        # Include task_payload in the INSERT atomically. Previously this was a
+        # two-step process (INSERT without payload, then UPDATE to set it) which
+        # left null-payload rows when a crash or timeout occurred between the two
+        # statements. The worker claim query filters on `task_payload IS NOT NULL`,
+        # so those orphaned rows became permanently stuck as unclaimed pending tasks.
         retain_operation_id = uuid.uuid4()
+        full_retain_payload = {
+            "type": "batch_retain",
+            "operation_id": str(retain_operation_id),
+            "bank_id": bank_id,
+            **retain_task_payload,
+        }
+        payload_json = json.dumps(full_retain_payload, default=_json_default)
+
         pool = await self._get_pool()
         async with acquire_with_retry(pool) as conn:
             async with conn.transaction():
-                # Create the retain operation record
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("async_operations")}
-                    (operation_id, bank_id, operation_type, result_metadata, status)
-                    VALUES ($1, $2, $3, $4, $5)
+                    (operation_id, bank_id, operation_type, result_metadata, status, task_payload)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
                     """,
                     retain_operation_id,
                     bank_id,
                     "retain",
                     json.dumps({}),
                     "pending",
+                    payload_json,
                 )
 
-                # Mark this file_convert_retain operation as completed
                 if operation_id:
                     await conn.execute(
                         f"""
@@ -884,13 +895,8 @@ class MemoryEngine(MemoryEngineInterface):
                         uuid.UUID(operation_id),
                     )
 
-        # Submit the retain task to the task backend (outside the transaction)
-        full_retain_payload = {
-            "type": "batch_retain",
-            "operation_id": str(retain_operation_id),
-            "bank_id": bank_id,
-            **retain_task_payload,
-        }
+        # For SyncTaskBackend: executes the retain task inline.
+        # For BrokerTaskBackend: idempotent UPDATE (payload already set above).
         await self._task_backend.submit_task(full_retain_payload)
 
         logger.info(
