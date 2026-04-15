@@ -1131,7 +1131,8 @@ enum DirectiveCommands {
 }
 
 fn main() {
-    if let Err(_) = run() {
+    if let Err(e) = run() {
+        ui::print_error(&format!("{:#}", e));
         std::process::exit(1);
     }
 }
