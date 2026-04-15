@@ -823,16 +823,19 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"[FILE_CONVERT_RETAIN] on_file_convert_complete hook failed: {e}")
 
         # Build retain task payload
-        retain_contents = [
-            {
-                "content": markdown_content,
-                "document_id": document_id,
-                "context": task_dict.get("context"),
-                "metadata": task_dict.get("metadata", {}),
-                "tags": task_dict.get("tags", []),
-                "timestamp": task_dict.get("timestamp"),
-            }
-        ]
+        retain_content: dict[str, Any] = {
+            "content": markdown_content,
+            "document_id": document_id,
+            "context": task_dict.get("context"),
+            "metadata": task_dict.get("metadata", {}),
+            "tags": task_dict.get("tags", []),
+        }
+        file_timestamp = task_dict.get("timestamp")
+        if file_timestamp == "unset":
+            retain_content["event_date"] = None
+        elif file_timestamp:
+            retain_content["event_date"] = file_timestamp
+        retain_contents = [retain_content]
         document_tags = task_dict.get("document_tags")
 
         retain_task_payload: dict[str, Any] = {"contents": retain_contents}
