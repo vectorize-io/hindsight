@@ -516,6 +516,199 @@ class TestWorkerPoller:
         assert "Simulated conversion error" in row["error_message"]
 
     @pytest.mark.asyncio
+    async def test_executor_defer_requeues_without_bumping_retry_count(self, pool, clean_operations):
+        """DeferOperation requeues the task without counting as a retry.
+
+        Unlike RetryTaskAt (failure-driven), DeferOperation is intentional
+        backpressure: the row goes back to 'pending' with next_retry_at set,
+        but retry_count is unchanged and error_message stays NULL.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.exceptions import DeferOperation
+        from hindsight_api.worker.poller import ClaimedTask
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, retry_count)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'test-worker-1', now(), 0)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        defer_until = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+        async def deferring_executor(task_dict):
+            raise DeferOperation(exec_date=defer_until, reason="upstream quota window not yet open")
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=deferring_executor,
+        )
+
+        task_dict = json.loads(payload)
+        claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
+        await poller.execute_task(claimed_task)
+
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Task did not complete within timeout"
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at, retry_count, error_message, next_retry_at "
+            "FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 0, "defer must NOT increment retry_count"
+        assert row["error_message"] is None, "defer must NOT write error_message"
+        assert row["next_retry_at"] is not None
+        # exec_date should round-trip; allow 1s slack for db precision
+        assert abs((row["next_retry_at"] - defer_until).total_seconds()) < 1
+
+    @pytest.mark.asyncio
+    async def test_deferred_task_not_picked_up_until_exec_date(self, pool, clean_operations):
+        """A deferred task is invisible to claim_batch until next_retry_at <= NOW()."""
+        from datetime import datetime, timedelta, timezone
+
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+        await _ensure_bank(pool, bank_id)
+        future = datetime.now(timezone.utc) + timedelta(minutes=5)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, next_retry_at)
+            VALUES ($1, $2, 'retain', 'pending', $3::jsonb, $4)
+            """,
+            op_id,
+            bank_id,
+            payload,
+            future,
+        )
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=lambda x: None,
+        )
+
+        claimed = await poller.claim_batch()
+        assert all(c.operation_id != str(op_id) for c in claimed), "deferred task must not be claimed before exec_date"
+
+        # Move next_retry_at into the past — task becomes claimable.
+        await pool.execute(
+            "UPDATE async_operations SET next_retry_at = now() - interval '1 minute' WHERE operation_id = $1",
+            op_id,
+        )
+        claimed = await poller.claim_batch()
+        assert any(c.operation_id == str(op_id) for c in claimed), "task must be claimed once next_retry_at has passed"
+
+    @pytest.mark.asyncio
+    async def test_defer_operation_exported_from_extensions(self):
+        """DeferOperation must be importable from hindsight_api.extensions for extension authors."""
+        from hindsight_api.extensions import DeferOperation as DeferFromExtensions
+        from hindsight_api.worker.exceptions import DeferOperation as DeferFromWorker
+
+        assert DeferFromExtensions is DeferFromWorker
+
+    @pytest.mark.asyncio
+    async def test_extension_validate_retain_defer_propagates_to_poller(self, pool, clean_operations):
+        """An OperationValidatorExtension that raises DeferOperation in validate_retain
+        causes the worker to requeue the task at the requested exec_date.
+
+        Mimics the MemoryEngine flow: the executor calls validate_retain before doing
+        any real work, the exception bubbles up to the poller, which defers the row.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from hindsight_api.extensions import (
+            DeferOperation,
+            OperationValidatorExtension,
+            RecallContext,
+            ReflectContext,
+            RetainContext,
+            ValidationResult,
+        )
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.poller import ClaimedTask
+
+        defer_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        class DeferringValidator(OperationValidatorExtension):
+            def __init__(self):
+                super().__init__({})
+
+            async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+                raise DeferOperation(exec_date=defer_until, reason="quota window closed")
+
+            async def validate_recall(self, ctx: RecallContext) -> ValidationResult:
+                return ValidationResult.accept()
+
+            async def validate_reflect(self, ctx: ReflectContext) -> ValidationResult:
+                return ValidationResult.accept()
+
+        validator = DeferringValidator()
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "retain", "operation_id": str(op_id), "bank_id": bank_id})
+        await _ensure_bank(pool, bank_id)
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, retry_count)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'test-worker-1', now(), 0)
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        async def executor_calling_validator(task_dict):
+            ctx = RetainContext(
+                bank_id=task_dict["bank_id"],
+                contents=[],
+                request_context=None,  # type: ignore[arg-type]
+            )
+            await validator.validate_retain(ctx)
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=executor_calling_validator,
+        )
+
+        task_dict = json.loads(payload)
+        claimed_task = ClaimedTask(operation_id=str(op_id), task_dict=task_dict, schema=None)
+        await poller.execute_task(claimed_task)
+
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Task did not complete within timeout"
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at, retry_count, error_message, next_retry_at "
+            "FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+        assert row["retry_count"] == 0
+        assert row["error_message"] is None
+        assert abs((row["next_retry_at"] - defer_until).total_seconds()) < 1
+
+    @pytest.mark.asyncio
     async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, clean_operations):
         """Test that pending consolidation is skipped if same bank has one processing."""
         from hindsight_api.worker import WorkerPoller

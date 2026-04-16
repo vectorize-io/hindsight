@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .exceptions import RetryTaskAt
+from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
 
 if TYPE_CHECKING:
@@ -520,6 +520,25 @@ class WorkerPoller:
         )
         logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
 
+    async def _defer_operation(self, operation_id: str, exec_date: "Any", reason: str, schema: str | None):
+        """Reset task to pending for re-pickup at exec_date without counting as a retry.
+
+        Unlike `_schedule_retry`, this does not bump `retry_count` and does not
+        populate `error_message` — defer is intentional backpressure, not a failure.
+        """
+        table = fq_table("async_operations", schema)
+        await self._pool.execute(
+            f"""
+            UPDATE {table}
+            SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
+                updated_at = now()
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            exec_date,
+        )
+        logger.info(f"Task {operation_id} deferred until {exec_date}: {reason}")
+
     async def execute_task(self, task: ClaimedTask):
         """Execute a single task as a background job (fire-and-forget)."""
         task_type = task.task_dict.get("type", "unknown")
@@ -591,6 +610,8 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
+        except DeferOperation as e:
+            await self._defer_operation(task.operation_id, e.exec_date, e.reason, task.schema)
         except RetryTaskAt as e:
             await self._schedule_retry(task.operation_id, e.retry_at, str(e), task.schema)
         except Exception as e:

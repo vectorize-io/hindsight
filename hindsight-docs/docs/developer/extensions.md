@@ -211,6 +211,41 @@ class MyValidator(OperationValidatorExtension):
         pass
 ```
 
+#### Deferring an operation
+
+In addition to `accept` and `reject`, a `validate_*` hook can ask the
+worker to **requeue** the operation for a future time by raising
+`DeferOperation`. Use this for backpressure (rate-limited upstream,
+quota window not yet open, dependency warming up) — unlike a retry, it
+does not increment `retry_count` or write `error_message`. The worker
+sets `next_retry_at` to your `exec_date` and the task is invisible to
+claim queries until that time.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from hindsight_api.extensions import (
+    DeferOperation,
+    OperationValidatorExtension,
+    RetainContext,
+    ValidationResult,
+)
+
+
+class QuotaAwareValidator(OperationValidatorExtension):
+    async def validate_retain(self, ctx: RetainContext) -> ValidationResult:
+        if not await self._quota_available(ctx.bank_id):
+            raise DeferOperation(
+                exec_date=datetime.now(timezone.utc) + timedelta(minutes=5),
+                reason="bank quota window exhausted",
+            )
+        return ValidationResult.accept()
+```
+
+`DeferOperation` is **worker-only**: do not raise it from
+`validate_recall` or `validate_reflect` in synchronous HTTP request
+paths — there is no queue to defer to and it will surface as a 500.
+
 ### Example: Custom MCPExtension
 
 ```python
