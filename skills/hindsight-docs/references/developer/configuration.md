@@ -707,6 +707,27 @@ For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a cust
 
 - **`link_expansion`** (default): Fast graph expansion from semantic seeds via entity co-occurrence, semantic kNN, and causal links. Target latency under 100ms.
 
+#### Recall budget mapping
+
+The recall request takes a `budget` parameter (`low` / `mid` / `high`, default `mid`) that maps to an integer `thinking_budget` used by every retrieval method (semantic, BM25, graph, temporal). These knobs control that mapping. They are hierarchical — overridable per bank via the [config API](#hierarchical-configuration).
+
+Two functions are available:
+
+- **`fixed`** (default — preserves legacy behavior): `thinking_budget = recall_budget_fixed_<level>` (independent of `max_tokens`).
+- **`adaptive`**: `thinking_budget = round(max_tokens * recall_budget_adaptive_<level>)`, clamped to `[recall_budget_min, recall_budget_max]`. Useful when callers vary `max_tokens` and you want retrieval breadth to scale with the requested output size.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_RECALL_BUDGET_FUNCTION` | Mapping function: `fixed` or `adaptive`. | `fixed` |
+| `HINDSIGHT_API_RECALL_BUDGET_FIXED_LOW` | Items per retrieval method per fact type when `budget=low` and function is `fixed`. | `100` |
+| `HINDSIGHT_API_RECALL_BUDGET_FIXED_MID` | Items per retrieval method per fact type when `budget=mid` and function is `fixed`. | `300` |
+| `HINDSIGHT_API_RECALL_BUDGET_FIXED_HIGH` | Items per retrieval method per fact type when `budget=high` and function is `fixed`. | `1000` |
+| `HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_LOW` | Ratio of request `max_tokens` used when `budget=low` and function is `adaptive`. | `0.025` |
+| `HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_MID` | Ratio of request `max_tokens` used when `budget=mid` and function is `adaptive`. | `0.075` |
+| `HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_HIGH` | Ratio of request `max_tokens` used when `budget=high` and function is `adaptive`. | `0.25` |
+| `HINDSIGHT_API_RECALL_BUDGET_MIN` | Floor for the adaptive function (after clamping). | `20` |
+| `HINDSIGHT_API_RECALL_BUDGET_MAX` | Ceiling for the adaptive function (after clamping). | `2000` |
+
 ### Retain
 
 Controls the retain (memory ingestion) pipeline.
