@@ -3552,10 +3552,10 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         except Exception as e:
-            log_buffer.append(f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {str(e)}")
+            log_buffer.append(f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {type(e).__name__}: {e}")
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer))
-            raise Exception(f"Failed to search memories: {str(e)}")
+            raise Exception(f"Failed to search memories: {type(e).__name__}: {e}")
 
     def _filter_by_token_budget(
         self, results: list[dict[str, Any]], max_tokens: int

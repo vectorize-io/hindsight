@@ -33,6 +33,7 @@ from ..config import (
     DEFAULT_RERANKER_SILICONFLOW_BASE_URL,
     DEFAULT_RERANKER_SILICONFLOW_MODEL,
     DEFAULT_RERANKER_TEI_BATCH_SIZE,
+    DEFAULT_RERANKER_TEI_HTTP_TIMEOUT,
     DEFAULT_RERANKER_TEI_MAX_CONCURRENT,
     DEFAULT_RERANKER_ZEROENTROPY_MODEL,
     ENV_RERANKER_COHERE_API_KEY,
@@ -48,6 +49,7 @@ from ..config import (
     ENV_RERANKER_PROVIDER,
     ENV_RERANKER_SILICONFLOW_API_KEY,
     ENV_RERANKER_TEI_BATCH_SIZE,
+    ENV_RERANKER_TEI_HTTP_TIMEOUT,
     ENV_RERANKER_TEI_MAX_CONCURRENT,
     ENV_RERANKER_TEI_URL,
     ENV_RERANKER_ZEROENTROPY_API_KEY,
@@ -1506,6 +1508,7 @@ def create_cross_encoder_from_env() -> CrossEncoderModel:
             raise ValueError(f"{ENV_RERANKER_TEI_URL} is required when {ENV_RERANKER_PROVIDER} is 'tei'")
         return RemoteTEICrossEncoder(
             base_url=url,
+            timeout=config.reranker_tei_http_timeout,
             batch_size=config.reranker_tei_batch_size,
             max_concurrent=config.reranker_tei_max_concurrent,
         )

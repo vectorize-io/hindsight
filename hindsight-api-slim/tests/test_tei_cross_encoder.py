@@ -549,6 +549,29 @@ class TestRemoteTEICrossEncoderConfig:
 
         clear_config_cache()  # Clear cache after test
 
+    def test_create_from_env_with_custom_timeout(self):
+        """Test that HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT is respected."""
+        import os
+
+        from hindsight_api.config import clear_config_cache
+        from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
+
+        with patch.dict(
+            os.environ,
+            {
+                "HINDSIGHT_API_RERANKER_PROVIDER": "tei",
+                "HINDSIGHT_API_RERANKER_TEI_URL": "http://test:9000",
+                "HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT": "120.0",
+            },
+        ):
+            clear_config_cache()
+            encoder = create_cross_encoder_from_env()
+
+            assert isinstance(encoder, RemoteTEICrossEncoder)
+            assert encoder.timeout == 120.0
+
+        clear_config_cache()
+
 
 # ============================================================================
 # TEI Reranker Performance Benchmark Tests
