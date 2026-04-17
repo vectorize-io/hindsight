@@ -90,6 +90,8 @@ class WorkerPoller:
         tenant_extension: "TenantExtension | None" = None,
         max_slots: int = 10,
         consolidation_max_slots: int = 2,
+        reclaim_stale_tasks_enabled: bool = False,
+        reclaim_stale_tasks_after_seconds: int = 1800,
     ):
         """
         Initialize the worker poller.
@@ -104,6 +106,10 @@ class WorkerPoller:
                             DefaultTenantExtension with the configured schema.
             max_slots: Maximum concurrent tasks per worker
             consolidation_max_slots: Maximum concurrent consolidation tasks per worker
+            reclaim_stale_tasks_enabled: Opt-in startup recovery for stale tasks owned by
+                dead or foreign workers
+            reclaim_stale_tasks_after_seconds: Minimum age before a foreign processing task is
+                considered reclaimable
         """
         self._pool = pool
         self._worker_id = worker_id
@@ -120,6 +126,8 @@ class WorkerPoller:
         self._tenant_extension = tenant_extension
         self._max_slots = max_slots
         self._consolidation_max_slots = consolidation_max_slots
+        self._reclaim_stale_tasks_enabled = reclaim_stale_tasks_enabled
+        self._reclaim_stale_tasks_after_seconds = max(1, reclaim_stale_tasks_after_seconds)
         self._shutdown = asyncio.Event()
         self._current_tasks: set[asyncio.Task] = set()
         self._in_flight_count = 0
@@ -667,6 +675,58 @@ class WorkerPoller:
             logger.info(f"Worker {self._worker_id} recovered {total_count} stale tasks from previous run")
         return total_count
 
+    async def recover_stale_foreign_tasks(self) -> int:
+        """
+        Optionally recover stale tasks owned by dead or foreign workers.
+
+        This is intentionally opt-in and age-gated because reclaiming another
+        worker's in-flight tasks can be disruptive if worker identity is managed
+        outside the process. Only non-batch tasks are reclaimed here.
+
+        Returns:
+            Number of tasks recovered
+        """
+        if not self._reclaim_stale_tasks_enabled:
+            return 0
+
+        schemas = await self._get_schemas()
+        total_count = 0
+
+        for schema in schemas:
+            try:
+                table = fq_table("async_operations", schema)
+                result = await self._pool.execute(
+                    f"""
+                    UPDATE {table}
+                    SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                    WHERE status = 'processing'
+                      AND worker_id IS NOT NULL
+                      AND worker_id <> $1
+                      AND claimed_at IS NOT NULL
+                      AND claimed_at < now() - ($2::int * interval '1 second')
+                      AND COALESCE(result_metadata->>'batch_id', '') = ''
+                    """,
+                    self._worker_id,
+                    self._reclaim_stale_tasks_after_seconds,
+                )
+
+                count = int(result.split()[-1]) if result else 0
+                total_count += count
+            except Exception as e:
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(
+                    f"Worker {self._worker_id} failed to recover stale foreign tasks for schema {schema_display}: {e}"
+                )
+
+        if total_count > 0:
+            logger.info(
+                "Worker %s reclaimed %s stale foreign task(s) older than %ss",
+                self._worker_id,
+                total_count,
+                self._reclaim_stale_tasks_after_seconds,
+            )
+        return total_count
+
     async def _recover_batch_operations(self, schema: str | None) -> int:
         """
         Recover batch API operations that were in-flight when worker crashed.
@@ -749,6 +809,7 @@ class WorkerPoller:
         and immediately continues polling (up to slot limits).
         """
         await self.recover_own_tasks()
+        await self.recover_stale_foreign_tasks()
 
         logger.info(
             f"Worker {self._worker_id} starting polling loop "

@@ -944,6 +944,128 @@ class TestWorkerRecovery:
         recovered_count = await poller.recover_own_tasks()
         assert recovered_count == 0
 
+    @pytest.mark.asyncio
+    async def test_recover_stale_foreign_tasks_is_opt_in(self, pool, clean_operations):
+        """Foreign worker tasks should not be reclaimed unless the knob is enabled."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'worker-2', now() - interval '2 hours')
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(pool=pool, worker_id="worker-1", executor=lambda x: None)
+        recovered_count = await poller.recover_stale_foreign_tasks()
+        assert recovered_count == 0
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "worker-2"
+
+    @pytest.mark.asyncio
+    async def test_recover_stale_foreign_tasks_reclaims_old_tasks_when_enabled(self, pool, clean_operations):
+        """Opt-in foreign task recovery should release sufficiently old processing tasks."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'worker-2', now() - interval '2 hours')
+            """,
+            op_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="worker-1",
+            executor=lambda x: None,
+            reclaim_stale_tasks_enabled=True,
+            reclaim_stale_tasks_after_seconds=300,
+        )
+        recovered_count = await poller.recover_stale_foreign_tasks()
+        assert recovered_count == 1
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_recover_stale_foreign_tasks_respects_age_gate_and_batch_operations(self, pool, clean_operations):
+        """Recent tasks and batch-backed operations should be left alone."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        recent_op_id = uuid.uuid4()
+        batch_op_id = uuid.uuid4()
+        payload = json.dumps({"type": "test_task", "bank_id": bank_id})
+
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'worker-2', now() - interval '30 seconds')
+            """,
+            recent_op_id,
+            bank_id,
+            payload,
+        )
+        await pool.execute(
+            """
+            INSERT INTO async_operations (
+                operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, result_metadata
+            )
+            VALUES (
+                $1, $2, 'retain', 'processing', $3::jsonb, 'worker-3', now() - interval '2 hours',
+                '{"batch_id": "batch-123"}'::jsonb
+            )
+            """,
+            batch_op_id,
+            bank_id,
+            payload,
+        )
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="worker-1",
+            executor=lambda x: None,
+            reclaim_stale_tasks_enabled=True,
+            reclaim_stale_tasks_after_seconds=300,
+        )
+        recovered_count = await poller.recover_stale_foreign_tasks()
+        assert recovered_count == 0
+
+        rows = await pool.fetch(
+            "SELECT operation_id, status, worker_id FROM async_operations WHERE operation_id = ANY($1::uuid[])",
+            [recent_op_id, batch_op_id],
+        )
+        by_id = {row["operation_id"]: row for row in rows}
+        assert by_id[recent_op_id]["status"] == "processing"
+        assert by_id[recent_op_id]["worker_id"] == "worker-2"
+        assert by_id[batch_op_id]["status"] == "processing"
+        assert by_id[batch_op_id]["worker_id"] == "worker-3"
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""

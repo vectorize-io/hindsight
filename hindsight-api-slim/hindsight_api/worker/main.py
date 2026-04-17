@@ -223,6 +223,8 @@ def main():
             tenant_extension=tenant_extension,
             max_slots=config.worker_max_slots,
             consolidation_max_slots=config.worker_consolidation_max_slots,
+            reclaim_stale_tasks_enabled=config.worker_reclaim_stale_tasks_enabled,
+            reclaim_stale_tasks_after_seconds=config.worker_reclaim_stale_tasks_after_seconds,
         )
 
         # Create the HTTP app for metrics/health

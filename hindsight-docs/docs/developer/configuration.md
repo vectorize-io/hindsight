@@ -1161,9 +1161,15 @@ Configuration for background task processing. By default, the API processes task
 | `HINDSIGHT_API_WORKER_HTTP_PORT` | HTTP port for worker metrics/health (worker CLI only) | `8889` |
 | `HINDSIGHT_API_WORKER_MAX_SLOTS` | Maximum concurrent tasks per worker (total across all operation types) | `10` |
 | `HINDSIGHT_API_WORKER_CONSOLIDATION_MAX_SLOTS` | Slots reserved for consolidation tasks within `WORKER_MAX_SLOTS` | `2` |
+| `HINDSIGHT_API_WORKER_RECLAIM_STALE_TASKS_ENABLED` | Opt-in startup recovery for stale tasks owned by dead or foreign workers | `false` |
+| `HINDSIGHT_API_WORKER_RECLAIM_STALE_TASKS_AFTER_SECONDS` | Minimum task age before stale foreign tasks are eligible for reclamation | `1800` |
 
 :::note Slot reservation
 `WORKER_CONSOLIDATION_MAX_SLOTS` is a **reservation within** `WORKER_MAX_SLOTS`, not an additive pool. With the defaults (`MAX_SLOTS=10`, `CONSOLIDATION_MAX_SLOTS=2`), retain and other non-consolidation tasks may use at most `10 - 2 = 8` concurrent slots, leaving 2 always available for consolidation. This prevents consolidation from being starved when retain throughput continuously saturates the queue. Set `CONSOLIDATION_MAX_SLOTS=0` to give all slots to non-consolidation work.
+:::
+
+:::note Opt-in stale task reclamation
+`WORKER_RECLAIM_STALE_TASKS_ENABLED` is intentionally off by default. When enabled, a worker will, on startup, release foreign `processing` tasks older than `WORKER_RECLAIM_STALE_TASKS_AFTER_SECONDS`, excluding batch-backed operations. This is meant for orchestrated environments where worker identities are ephemeral and stale claims can block progress.
 :::
 
 ### Performance Optimization
