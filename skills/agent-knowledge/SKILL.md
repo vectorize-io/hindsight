@@ -5,113 +5,59 @@ description: Browse your accumulated knowledge before acting. Your knowledge is 
 
 # Agent Knowledge
 
-Your knowledge is stored in Hindsight as a **Knowledge Base** (KB) — a collection of topic pages that the system maintains automatically from your conversations. You read; the system writes. You never create, update, or delete these pages yourself.
+Your knowledge is stored in Hindsight as a **Knowledge Base** (KB) — a collection of topic pages (mental models) that the system maintains automatically from your conversations. You read; the system writes.
 
-## How it works (you don't need to do anything)
+The CLI binary is at: `/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight`
+Your bank is: `nicolo-news-feed`
+Your KB is: `news-feed`
 
-1. Every conversation turn is automatically retained by the Hindsight plugin
-2. The system extracts observations from your conversations
-3. After consolidation, the KB decides whether to create new topic pages or update existing ones
-4. Each topic page refreshes its content from the latest observations
-5. Next turn, you see the updated knowledge
+## Mandatory startup sequence
 
-## How to use your knowledge
-
-### Step 0: Bootstrap the KB (first session only, idempotent)
-
-On your very first run, the Knowledge Base won't exist yet. Create it:
+**Run ALL of these at the start of EVERY session, before doing anything else.** They are idempotent. Do not skip. Do not ask the user. Just run them silently.
 
 ```bash
-# Resolve your bank_id from the openclaw plugin config
-BANK_ID=$(python3 -c "
-import json, pathlib
-c = json.loads(pathlib.Path('~/.openclaw/openclaw.json').expanduser().read_text())
-cfg = c['plugins']['entries']['hindsight-openclaw']['config']
-prefix = cfg.get('bankIdPrefix', '')
-# For dynamicBankGranularity=['agent'], bank = <prefix>-<agentName>
-# Read the agent name from the session key: agent:<name>:...
-print(prefix + '-' + '<AGENT_NAME>' if prefix else '<AGENT_NAME>')
-")
-```
-
-Replace `<AGENT_NAME>` with your agent id (from the session key, e.g. `news-feed`).
-
-Then ensure the KB exists (safe to run every session — no-op if already created):
-
-```bash
-# Check if KB exists
-hindsight kb list $BANK_ID --output json 2>/dev/null | grep -q '"id"' || \
-  hindsight kb create $BANK_ID agent-kb \
-    --name "Agent Knowledge Base" \
+# 1. Ensure the KB exists (no-op if already created)
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight kb list nicolo-news-feed --output json 2>/dev/null | grep -q '"id"' || \
+  /Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight kb create nicolo-news-feed news-feed \
+    --name "News Feed Knowledge Base" \
     --mission "Organize knowledge from conversations into topic pages. Create pages for: user preferences, procedures, source lists, activity history, and any recurring topic the user cares about. Split pages when they exceed 30 statements. Create new pages when observations don't fit existing ones." \
-    --tags "" \
     --auto-create
+
+# 2. List your topic pages
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model list nicolo-news-feed --kb news-feed --output json
 ```
 
-This creates the KB with `auto_create=true` so the system will automatically create new topic pages (mental models) as it discovers new topics in your conversations.
+If step 2 returns items, read the ones relevant to the current request (see "Reading" below). If it returns an empty list, that's fine — you have no accumulated knowledge yet. Proceed with the user's request.
 
-### Step 1: Mount your knowledge (once per session)
+## Reading your knowledge
 
-Sync your KB to local files so you can browse with normal tools:
-
+**List all topic pages in your KB:**
 ```bash
-hindsight-mount $BANK_ID [agent-kb]
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model list nicolo-news-feed --kb news-feed --output json
 ```
 
-This writes markdown files to `~/.agent-knowledge/<bank_id>/`:
-- `_index.md` — one line per topic with name + summary
-- `<topic>.md` — each topic page rendered as markdown
-
-### Step 2: Browse the index
-
+**Read a specific topic page:**
 ```bash
-cat ~/.agent-knowledge/<bank_id>/_index.md
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight mental-model get nicolo-news-feed <mm_id> --output json
 ```
+The `content` field is the synthesized knowledge for that topic. Treat it as ground truth unless the user contradicts it.
 
-Scan the index to find which topics are relevant to the current request.
-
-### Step 3: Read relevant topics
-
+**Search across all knowledge (if you don't know which topic to read):**
 ```bash
-cat ~/.agent-knowledge/<bank_id>/<topic>.md
+/Users/nicoloboschi/dev/hindsight-wt3/hindsight-cli/target/release/hindsight memory recall nicolo-news-feed "<query>" --output json
 ```
-
-Read only the topics you need. Treat their content as ground truth unless the user contradicts them in this conversation.
-
-### Step 4: If you need to search
-
-If the index doesn't help or you need to search across all knowledge:
-
-```bash
-hindsight memory recall <bank_id> "<query>" --output json
-```
-
-This searches across all facts in the bank. Results may reference which topic pages contain related synthesized knowledge.
 
 ## What you DON'T do
 
-- **Never write to `~/.agent-knowledge/`** — those files are read-only snapshots. The system maintains the source of truth server-side.
-- **Never call `hindsight mental-model create/update/delete`** — the KB's auto-create mechanism handles page lifecycle.
-- **Never ask the user about knowledge structure** — which pages exist, how they're organized, when to split/merge. That's the system's job, invisible to the user.
-- **Never log activity manually** — the system extracts activity history from retained conversation transcripts automatically.
+- **Never create, update, or delete mental models** — the KB system handles page lifecycle automatically
+- **Never ask the user about knowledge structure** — which pages exist, how they're organized. Invisible to the user.
+- **Never propose creating knowledge bases or mental models to the user** — the startup sequence handles the KB, the system handles MMs
 
 ## When the user gives feedback
 
-If the user corrects you, states a preference, or gives any durable guidance:
-
 1. Acknowledge it in one declarative sentence so the retain pipeline captures it cleanly
 2. Apply it immediately in this session
-3. The system will update the relevant topic page(s) after the next consolidation cycle
-4. Next session, the updated knowledge will be in your mounted files
+3. The system updates the relevant topic page(s) after the next consolidation cycle
+4. Next session, `mental-model get` returns the updated content
 
-That's it. No file writes, no git commits, no post-response checklist.
-
-## When knowledge seems stale
-
-If the mounted files don't reflect recent feedback, re-run the mount:
-
-```bash
-hindsight-mount <bank_id>
-```
-
-Consolidation + page refresh may not have completed yet. If the user's feedback was very recent (last few minutes), it may not be reflected until the next consolidation cycle. In that case, apply the feedback from your current conversation context — it'll be in the knowledge by next session.
+No file writes. No git. No post-response checklist. Just acknowledge and move on.
