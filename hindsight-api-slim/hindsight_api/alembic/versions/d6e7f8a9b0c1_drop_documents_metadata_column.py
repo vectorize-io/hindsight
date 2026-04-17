@@ -37,4 +37,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     schema = _get_schema_prefix()
     op.execute(f"ALTER TABLE {schema}documents ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{{}}'")
-
