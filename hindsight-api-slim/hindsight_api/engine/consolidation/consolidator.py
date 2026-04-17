@@ -747,27 +747,30 @@ async def _run_knowledge_base_updates(
 
         obs_summaries = [r["text"][:200] for r in recent_obs]
 
+        existing_mm_details = ", ".join(
+            f'"{n}"' for n in existing_mm_names
+        ) if existing_mm_names else "(none yet)"
+
         prompt = (
-            "You are deciding whether a knowledge base needs NEW topic pages.\n\n"
+            "You are managing a knowledge base. You can CREATE new pages or DROP existing ones.\n\n"
             f"KB Mission: {mission}\n\n"
-            f"Existing pages: {', '.join(existing_mm_names) if existing_mm_names else '(none yet)'}\n\n"
+            f"Existing pages: {existing_mm_details}\n\n"
             f"Recent observations ({len(obs_summaries)}):\n"
             + "\n".join(f"- {s}" for s in obs_summaries[:20])
             + "\n\n"
-            "Your job: decide if any NEW pages are needed. The DEFAULT answer is [] (no new pages).\n\n"
-            "ONLY create a new page when ALL of these are true:\n"
-            "- The topic is explicitly part of the KB Mission\n"
-            "- There are multiple observations about the USER's preferences or decisions on this topic\n"
-            "- No existing page already covers this topic (even partially)\n\n"
-            "NEVER create pages for:\n"
-            "- News articles, product releases, or information the agent delivered to the user\n"
-            "- The agent's own identity, behavior, configuration, tools, or internal workings\n"
-            "- The user's name, personal details, or how to address them\n"
-            "- Anything with fewer than 3 supporting observations\n\n"
-            "The `source_query` must be a QUESTION about what the user wants/prefers, not a summary of facts. "
-            'Example: "What are the user\'s preferences for news feed format, depth, and item count?"\n\n'
-            'Respond ONLY with a JSON array: [{"id": "lowercase-with-hyphens", "name": "Human Readable Name", "source_query": "Question about user preferences..."}]\n'
-            "Almost always the right answer is: []\n"
+            "TWO possible actions:\n\n"
+            '1. CREATE a new page: {"action": "create", "id": "lowercase-id", "name": "Name", "source_query": "Question about user preferences..."}\n'
+            '2. DROP a duplicate/junk page: {"action": "drop", "id": "existing-page-id"}\n\n'
+            "WHEN TO CREATE (all must be true):\n"
+            "- Topic is explicitly part of the KB Mission\n"
+            "- Multiple observations about USER preferences/decisions exist for this topic\n"
+            "- No existing page covers this topic even partially\n\n"
+            "WHEN TO DROP:\n"
+            "- Two existing pages cover the same topic (keep the broader one, drop the narrower duplicate)\n"
+            "- A page is about something NOT in the KB Mission (agent internals, delivered content, user identity)\n\n"
+            "NEVER create pages for: news/product content the agent delivered, agent identity/behavior/tools, user name/personal details.\n\n"
+            "The `source_query` must be a QUESTION about what the user wants, not a fact summary.\n\n"
+            "Respond with a JSON array of actions. The default answer is [] (no changes needed).\n"
             "Do not include any other text."
         )
 
@@ -787,40 +790,58 @@ async def _run_knowledge_base_updates(
 
             json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
             if json_match:
-                new_mms = json.loads(json_match.group(0))
+                actions = json.loads(json_match.group(0))
             else:
-                new_mms = []
+                actions = []
 
-            for mm_spec in new_mms:
-                mm_id = mm_spec.get("id")
-                mm_name = mm_spec.get("name", mm_id)
-                source_query = mm_spec.get("source_query", "")
-                if not mm_id or not source_query:
+            existing_mm_ids = [mm["id"] for mm in existing_mms]
+
+            for action_spec in actions:
+                action = action_spec.get("action", "create")
+                mm_id = action_spec.get("id")
+                if not mm_id:
                     continue
 
-                # Check for duplicates
-                if mm_id in [mm["id"] for mm in existing_mms]:
-                    continue
+                if action == "drop":
+                    # Drop an existing MM
+                    if mm_id not in existing_mm_ids:
+                        continue
+                    try:
+                        await memory_engine.delete_mental_model(
+                            bank_id, mm_id, request_context=request_context
+                        )
+                        stats["mms_dropped"] = stats.get("mms_dropped", 0) + 1
+                        logger.info(f"[KB_UPDATE] Dropped MM '{mm_id}' from KB '{kb_id}' for bank {bank_id}")
+                    except Exception as e:
+                        logger.warning(f"[KB_UPDATE] Failed to drop MM '{mm_id}': {e}")
 
-                try:
-                    await memory_engine.create_mental_model(
-                        bank_id,
-                        mm_name,
-                        source_query,
-                        "Generating content...",
-                        mental_model_id=mm_id,
-                        kb_id=kb_id,
-                        trigger={
-                            "refresh_after_consolidation": True,
-                            "exclude_mental_models": True,
-                            "mode": "delta",
-                        },
-                        request_context=request_context,
-                    )
-                    stats["mms_created"] += 1
-                    logger.info(f"[KB_UPDATE] Created MM '{mm_id}' in KB '{kb_id}' for bank {bank_id}")
-                except Exception as e:
-                    logger.warning(f"[KB_UPDATE] Failed to create MM '{mm_id}': {e}")
+                elif action == "create":
+                    mm_name = action_spec.get("name", mm_id)
+                    source_query = action_spec.get("source_query", "")
+                    if not source_query:
+                        continue
+                    if mm_id in existing_mm_ids:
+                        continue
+
+                    try:
+                        await memory_engine.create_mental_model(
+                            bank_id,
+                            mm_name,
+                            source_query,
+                            "Generating content...",
+                            mental_model_id=mm_id,
+                            kb_id=kb_id,
+                            trigger={
+                                "refresh_after_consolidation": True,
+                                "exclude_mental_models": True,
+                                "mode": "delta",
+                            },
+                            request_context=request_context,
+                        )
+                        stats["mms_created"] += 1
+                        logger.info(f"[KB_UPDATE] Created MM '{mm_id}' in KB '{kb_id}' for bank {bank_id}")
+                    except Exception as e:
+                        logger.warning(f"[KB_UPDATE] Failed to create MM '{mm_id}': {e}")
 
         except Exception as e:
             logger.warning(f"[KB_UPDATE] LLM call failed for KB '{kb_id}': {e}")
