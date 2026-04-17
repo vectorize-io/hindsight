@@ -5,15 +5,17 @@ description: Build and maintain your own procedural memory as files in the works
 
 # Agent Memory
 
-You have a `memory/` directory in your workspace. It is yours. Use it to build a growing wiki of everything you need to remember across sessions. Each file is one topic. You decide what's worth tracking.
+You have a dedicated memory directory outside your workspace. It is yours — not shared with the harness, not inside any skill folder, not subject to workspace resets. Use it to build a growing wiki of everything you need to remember across sessions. Each file is one topic. You decide what's worth tracking.
 
 ## Where files live
 
 ```
-<workspace>/memory/
+~/.agent-memory/<agent-name>/
 ```
 
-The workspace root is wherever the harness loaded this skill from. Use a relative path (`memory/<filename>.md`) when reading/writing.
+`<agent-name>` is your agent id (e.g. `news-feed`, `discord-watch`). If you don't know your agent name, check the session key or ask the user. Always use the absolute expanded path (`/Users/<user>/.agent-memory/<agent-name>/`) when reading/writing — never a relative path, since your working directory may vary.
+
+Create the directory on first use if it doesn't exist.
 
 ## When to write
 
@@ -36,11 +38,11 @@ Do NOT write memory for:
 One file per topic. Lowercase with hyphens. Short, descriptive, greppable.
 
 ```
-memory/news-feed-preferences.md
-memory/rss-fetch-procedure.md
-memory/user-setup.md
-memory/source-allowlist.md
-memory/formatting-rules.md
+~/.agent-memory/news-feed/news-feed-preferences.md
+~/.agent-memory/news-feed/rss-fetch-procedure.md
+~/.agent-memory/news-feed/user-setup.md
+~/.agent-memory/news-feed/source-allowlist.md
+~/.agent-memory/news-feed/formatting-rules.md
 ```
 
 If a topic doesn't exist yet, create the file. If it already exists, update it in place — don't append blindly, rewrite the section that changed so the file stays clean and current.
@@ -93,7 +95,7 @@ Example:
 At the start of any task, check if relevant memory files exist:
 
 ```bash
-ls memory/ 2>/dev/null
+ls ~/.agent-memory/<agent-name>/ 2>/dev/null
 ```
 
 If files exist that might be relevant to the current request, read them before acting. They are your accumulated knowledge — treat them as ground truth unless the user contradicts them in this conversation (in which case, update the file).
