@@ -101,6 +101,10 @@ enum Commands {
     #[command(subcommand)]
     Operation(OperationCommands),
 
+    /// Manage knowledge bases
+    #[command(subcommand)]
+    Kb(KbCommands),
+
     /// Manage mental models (user-curated summaries)
     #[command(subcommand)]
     MentalModel(MentalModelCommands),
@@ -1059,6 +1063,99 @@ enum MentalModelCommands {
 }
 
 #[derive(Subcommand)]
+enum KbCommands {
+    /// List knowledge bases for a bank
+    List {
+        /// Bank ID
+        bank_id: String,
+    },
+
+    /// Get a specific knowledge base
+    Get {
+        /// Bank ID
+        bank_id: String,
+
+        /// Knowledge base ID
+        kb_id: String,
+    },
+
+    /// Create a new knowledge base
+    Create {
+        /// Bank ID
+        bank_id: String,
+
+        /// Knowledge base ID
+        kb_id: String,
+
+        /// Knowledge base name
+        #[arg(long)]
+        name: String,
+
+        /// Mission statement for the knowledge base
+        #[arg(long)]
+        mission: String,
+
+        /// Tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+
+        /// Auto-create mental models
+        #[arg(long)]
+        auto_create: bool,
+
+        /// Split threshold for mental models
+        #[arg(long, default_value = "0")]
+        split_threshold: i32,
+    },
+
+    /// Update a knowledge base
+    Update {
+        /// Bank ID
+        bank_id: String,
+
+        /// Knowledge base ID
+        kb_id: String,
+
+        /// New name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// New mission
+        #[arg(long)]
+        mission: Option<String>,
+
+        /// Replace tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+
+        /// Enable/disable auto-create
+        #[arg(long)]
+        auto_create: Option<bool>,
+
+        /// New split threshold
+        #[arg(long)]
+        split_threshold: Option<i32>,
+    },
+
+    /// Delete a knowledge base
+    Delete {
+        /// Bank ID
+        bank_id: String,
+
+        /// Knowledge base ID
+        kb_id: String,
+
+        /// Also delete associated mental models
+        #[arg(long)]
+        delete_mental_models: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum DirectiveCommands {
     /// List directives for a bank
     List {
@@ -1592,6 +1689,70 @@ fn run() -> Result<()> {
             } => {
                 commands::operation::retry(&client, &bank_id, &operation_id, verbose, output_format)
             }
+        },
+
+        // Knowledge base commands
+        Commands::Kb(kb_cmd) => match kb_cmd {
+            KbCommands::List { bank_id } => {
+                commands::kb::list(&client, &bank_id, verbose, output_format)
+            }
+            KbCommands::Get { bank_id, kb_id } => {
+                commands::kb::get(&client, &bank_id, &kb_id, verbose, output_format)
+            }
+            KbCommands::Create {
+                bank_id,
+                kb_id,
+                name,
+                mission,
+                tags,
+                auto_create,
+                split_threshold,
+            } => commands::kb::create(
+                &client,
+                &bank_id,
+                &kb_id,
+                &name,
+                &mission,
+                tags,
+                auto_create,
+                split_threshold,
+                verbose,
+                output_format,
+            ),
+            KbCommands::Update {
+                bank_id,
+                kb_id,
+                name,
+                mission,
+                tags,
+                auto_create,
+                split_threshold,
+            } => commands::kb::update(
+                &client,
+                &bank_id,
+                &kb_id,
+                name,
+                mission,
+                tags,
+                auto_create,
+                split_threshold,
+                verbose,
+                output_format,
+            ),
+            KbCommands::Delete {
+                bank_id,
+                kb_id,
+                delete_mental_models,
+                yes,
+            } => commands::kb::delete(
+                &client,
+                &bank_id,
+                &kb_id,
+                delete_mental_models,
+                yes,
+                verbose,
+                output_format,
+            ),
         },
 
         // Mental model commands
