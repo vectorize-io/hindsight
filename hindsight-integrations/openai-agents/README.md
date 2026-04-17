@@ -63,6 +63,30 @@ The agent gets three tools:
 - **`hindsight_recall`** — Search long-term memory for relevant facts
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
 
+## Auto-Inject Memories with `memory_instructions()`
+
+Instead of relying on the agent to call `hindsight_recall` explicitly, you can auto-inject relevant memories into the system prompt on every turn:
+
+```python
+from hindsight_openai_agents import create_hindsight_tools, memory_instructions
+
+agent = Agent(
+    name="assistant",
+    instructions=memory_instructions(
+        client=client,
+        bank_id="user-123",
+        base_instructions="You are a helpful assistant with long-term memory.",
+    ),
+    tools=create_hindsight_tools(
+        client=client,
+        bank_id="user-123",
+        include_recall=False,  # recall handled by memory_instructions
+    ),
+)
+```
+
+`memory_instructions()` returns an async callable compatible with `Agent(instructions=...)`. On each turn it recalls relevant memories and appends them to your base instructions. If recall fails or returns nothing, it gracefully falls back to `base_instructions` alone.
+
 ## Selecting Tools
 
 Include only the tools you need:
@@ -142,7 +166,7 @@ tools = create_hindsight_tools(
 ## Requirements
 
 - Python >= 3.10
-- openai-agents >= 0.1.0
+- openai-agents >= 0.7.0
 - hindsight-client >= 0.4.0
 
 ## Documentation

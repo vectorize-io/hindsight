@@ -10,6 +10,7 @@ Persistent long-term memory for [OpenAI Agents SDK](https://github.com/openai/op
 
 - **Memory Tools** — retain, recall, and reflect as OpenAI Agents SDK `FunctionTool` instances compatible with `Agent(tools=[...])`
 - **Async-Native** — Uses `aretain`, `arecall`, `areflect` directly — works seamlessly in the Agents SDK async runtime
+- **Auto-Inject Memories** — Use `memory_instructions()` to automatically inject relevant memories into the agent's system prompt every turn
 - **Selective Tools** — Include only the tools you need with `include_retain/recall/reflect` flags
 - **Tag-Based Scoping** — Partition memories by topic, session, or user with tags
 - **Global Configuration** — Configure once with `configure()`, create tools anywhere
@@ -71,6 +72,30 @@ The agent gets three tools it can call:
 - **`hindsight_retain`** — Store information to long-term memory
 - **`hindsight_recall`** — Search long-term memory for relevant facts
 - **`hindsight_reflect`** — Synthesize a reasoned answer from memories
+
+## Auto-Inject Memories with `memory_instructions()`
+
+Instead of relying on the agent to call `hindsight_recall` explicitly, you can auto-inject relevant memories into the system prompt on every turn:
+
+```python
+from hindsight_openai_agents import create_hindsight_tools, memory_instructions
+
+agent = Agent(
+    name="assistant",
+    instructions=memory_instructions(
+        client=client,
+        bank_id="user-123",
+        base_instructions="You are a helpful assistant with long-term memory.",
+    ),
+    tools=create_hindsight_tools(
+        client=client,
+        bank_id="user-123",
+        include_recall=False,  # recall handled by memory_instructions
+    ),
+)
+```
+
+`memory_instructions()` returns an async callable compatible with `Agent(instructions=...)`. On each turn it recalls relevant memories and appends them to your base instructions. If recall fails or returns nothing, it gracefully falls back to `base_instructions` alone.
 
 ## Selecting Tools
 
@@ -199,6 +224,23 @@ shared_tools = create_hindsight_tools(
 | `include_recall` | `True` | Include the recall (search) tool |
 | `include_reflect` | `True` | Include the reflect (synthesize) tool |
 
+### `memory_instructions()`
+
+| Parameter | Default | Description |
+|---|---|---|
+| `bank_id` | *required* | Hindsight memory bank to recall from |
+| `base_instructions` | `""` | Static instructions prepended before memories |
+| `client` | `None` | Pre-configured Hindsight client |
+| `hindsight_api_url` | `None` | API URL (used if no client provided) |
+| `api_key` | `None` | API key (used if no client provided) |
+| `query` | `"relevant context about the user"` | The recall query to find relevant memories |
+| `budget` | `"mid"` | Recall budget level (low/mid/high) |
+| `max_results` | `5` | Maximum number of memories to include |
+| `max_tokens` | `4096` | Maximum tokens for recall results |
+| `prefix` | `"\n\nRelevant memories:\n"` | Text prepended before the memory list |
+| `tags` | `None` | Tags to filter when searching |
+| `tags_match` | `"any"` | Tag matching mode |
+
 ### `configure()`
 
 | Parameter | Default | Description |
@@ -214,5 +256,5 @@ shared_tools = create_hindsight_tools(
 ## Requirements
 
 - Python >= 3.10
-- openai-agents >= 0.1.0
+- openai-agents >= 0.7.0
 - hindsight-client >= 0.4.0
