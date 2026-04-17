@@ -46,6 +46,7 @@ jobs:
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
       integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
+      integrations-superagent: ${{ steps.filter.outputs.integrations-superagent }}
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
       integrations-openai-agents: ${{ steps.filter.outputs.integrations-openai-agents }}
       integrations-pipecat: ${{ steps.filter.outputs.integrations-pipecat }}
@@ -142,6 +143,8 @@ jobs:
             - 'hindsight-integrations/n8n/**'
           integrations-cloudflare-oauth-proxy:
             - 'hindsight-integrations/cloudflare-oauth-proxy/**'
+          integrations-superagent:
+            - 'hindsight-integrations/superagent/**'
           integrations-lockfiles:
             - 'hindsight-integrations/*/package-lock.json'
             - 'hindsight-integrations/*/package.json'
@@ -3027,6 +3030,43 @@ jobs:
       working-directory: ./hindsight-integrations/vapi
       run: uv run pytest tests -v
 
+  test-superagent-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-superagent == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build superagent integration
+      working-directory: ./hindsight-integrations/superagent
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/superagent
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/superagent
+      run: uv run pytest tests -v
+
   test-litellm-integration:
     needs: [detect-changes]
     if: >-
@@ -4156,6 +4196,7 @@ jobs:
       - test-flowise-integration
       - test-crewai-integration
       - test-langgraph-integration
+      - test-superagent-integration
       - test-litellm-integration
       - test-pydantic-ai-integration
       - test-llamaindex-integration
