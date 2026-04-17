@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-ai-sdk",
-  "version": "0.4.20",
+  "version": "0.5.0",
   "description": "Hindsight memory integration for Vercel AI SDK - Give your AI agents persistent, human-like memory",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
