@@ -449,7 +449,7 @@ DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
-DEFAULT_LLM_MAX_RETRIES = 10  # Max retry attempts for LLM API calls
+DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
 DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry exponential backoff
 DEFAULT_LLM_MAX_BACKOFF = 60.0  # Max backoff cap in seconds for retry exponential backoff
 DEFAULT_LLM_TIMEOUT = 120.0  # seconds
