@@ -246,18 +246,21 @@ def register_tools(
         toolset=toolset,
         schema=RETAIN_SCHEMA,
         handler=handle_retain,
+        is_async=True,
     )
     registry.register(
         name="hindsight_recall",
         toolset=toolset,
         schema=RECALL_SCHEMA,
         handler=handle_recall,
+        is_async=True,
     )
     registry.register(
         name="hindsight_reflect",
         toolset=toolset,
         schema=REFLECT_SCHEMA,
         handler=handle_reflect,
+        is_async=True,
     )
 
 
@@ -335,18 +338,21 @@ def register(ctx: Any) -> None:
         toolset="hindsight",
         schema=RETAIN_SCHEMA,
         handler=handle_retain,
+        is_async=True,
     )
     ctx.register_tool(
         name="hindsight_recall",
         toolset="hindsight",
         schema=RECALL_SCHEMA,
         handler=handle_recall,
+        is_async=True,
     )
     ctx.register_tool(
         name="hindsight_reflect",
         toolset="hindsight",
         schema=REFLECT_SCHEMA,
         handler=handle_reflect,
+        is_async=True,
     )
 
     # ── Lifecycle hooks ──────────────────────────────────────────────────
