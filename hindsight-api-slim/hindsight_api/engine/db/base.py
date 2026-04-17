@@ -7,9 +7,16 @@ must implement. Business logic depends only on these interfaces.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+
+# TYPE_CHECKING-only import to avoid circular import at runtime.
+# DataAccessOps lives in ops.py which imports nothing from base.py,
+# so the cycle is: base -> ops (type-only) and ops -> (nothing from base).
+from typing import TYPE_CHECKING, Any
 
 from .result import ResultRow
+
+if TYPE_CHECKING:
+    from .ops import DataAccessOps
 
 
 class DatabaseConnection(ABC):
@@ -165,7 +172,14 @@ class DatabaseBackend(ABC):
 
     Manages the connection pool and provides context managers for
     acquiring connections and running transactions.
+
+    The ``ops`` property provides backend-specific data access operations
+    (the Strategy pattern — like Django's ``connection.ops``). All business
+    logic should use ``backend.ops`` instead of creating DataAccessOps
+    instances directly.
     """
+
+    _ops_instance: "DataAccessOps | None" = None
 
     # -- Backend capabilities --------------------------------------------
     # Subclasses override these to advertise what the platform supports.
@@ -175,6 +189,20 @@ class DatabaseBackend(ABC):
     def backend_type(self) -> str:
         """Return ``"postgresql"`` or ``"oracle"``."""
         return "postgresql"
+
+    @property
+    def ops(self) -> "DataAccessOps":
+        """Backend-specific data access operations (cached).
+
+        Follows the Django pattern: ``connection.ops`` provides the
+        operations handler for the current backend. Created lazily on
+        first access and cached for the lifetime of the backend.
+        """
+        if self._ops_instance is None:
+            from . import create_data_access_ops
+
+            self._ops_instance = create_data_access_ops(self.backend_type)
+        return self._ops_instance
 
     @property
     def supports_partial_indexes(self) -> bool:

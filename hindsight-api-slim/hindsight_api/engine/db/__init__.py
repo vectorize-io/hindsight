@@ -13,12 +13,15 @@ Usage:
 """
 
 from .base import DatabaseBackend, DatabaseConnection
+from .ops import DataAccessOps
 from .result import ResultRow
 
 __all__ = [
+    "DataAccessOps",
     "DatabaseBackend",
     "DatabaseConnection",
     "ResultRow",
+    "create_data_access_ops",
     "create_database_backend",
 ]
 
@@ -44,3 +47,26 @@ def create_database_backend(backend_type: str) -> DatabaseBackend:
 
         return OracleBackend()
     raise ValueError(f"Unknown database backend: {backend_type!r}. Supported backends: 'postgresql', 'oracle'.")
+
+
+def create_data_access_ops(backend_type: str) -> DataAccessOps:
+    """Factory: create a DataAccessOps by backend name.
+
+    Args:
+        backend_type: One of "postgresql" or "oracle".
+
+    Returns:
+        A DataAccessOps instance.
+
+    Raises:
+        ValueError: If backend_type is not recognized.
+    """
+    if backend_type == "postgresql":
+        from .ops_postgresql import PostgreSQLOps
+
+        return PostgreSQLOps()
+    elif backend_type == "oracle":
+        from .ops_oracle import OracleOps
+
+        return OracleOps()
+    raise ValueError(f"Unknown data access ops: {backend_type!r}. Supported: 'postgresql', 'oracle'.")

@@ -57,15 +57,12 @@ async def _bulk_insert_links(
     bank_id: str = "",
     chunk_size: int = 5000,
     skip_exists_check: bool = False,
+    ops=None,
 ) -> None:
     """Bulk-insert links using sorted INSERT FROM unnest().
 
     Sorting by (from_unit_id, to_unit_id) ensures all concurrent transactions
     acquire index locks in the same order, eliminating circular-wait deadlocks.
-
-    A single INSERT ... SELECT FROM unnest() is also faster than executemany
-    (one round-trip vs N), and acquires all locks within one statement execution
-    rather than interleaving with other transactions between rows.
 
     Args:
         conn: Database connection (must be inside a transaction).
@@ -76,6 +73,7 @@ async def _bulk_insert_links(
         skip_exists_check: Skip WHERE EXISTS checks on memory_units. Use when
                     all referenced unit IDs are guaranteed to exist (e.g., within
                     the same transaction that inserted them).
+        ops: DataAccessOps instance for backend-specific bulk operations.
     """
     if not links:
         return
@@ -84,12 +82,6 @@ async def _bulk_insert_links(
     # across concurrent transactions — prevents deadlocks.
     sorted_links = sorted(links, key=lambda lnk: (str(lnk[0]), str(lnk[1])))
 
-    from_ids = [lnk[0] for lnk in sorted_links]
-    to_ids = [lnk[1] for lnk in sorted_links]
-    types = [lnk[2] for lnk in sorted_links]
-    weights = [lnk[3] for lnk in sorted_links]
-    entity_ids = [lnk[4] for lnk in sorted_links]
-
     exists_clause = ""
     if not skip_exists_check:
         exists_clause = (
@@ -97,46 +89,15 @@ async def _bulk_insert_links(
             f"  AND EXISTS (SELECT 1 FROM {fq_table('memory_units')} mu WHERE mu.id = t)"
         )
 
-    if getattr(conn, "backend_type", "postgresql") != "postgresql":
-        # Non-PG backends: use executemany with individual INSERT rows.
-        # The backend rewrites ON CONFLICT DO NOTHING for duplicate suppression.
-        # WHERE EXISTS checks are intentionally skipped: executemany does not support
-        # correlated subqueries in this form, and callers guarantee unit validity.
-        await conn.executemany(
-            f"""
-            INSERT INTO {fq_table("memory_links")}
-                (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (from_unit_id, to_unit_id, link_type,
-                         COALESCE(entity_id, '{_NIL_ENTITY_UUID}'::uuid))
-            DO NOTHING
-            """,
-            [(from_ids[i], to_ids[i], types[i], weights[i], entity_ids[i], bank_id) for i in range(len(sorted_links))],
-        )
-        return
-
-    for chunk_start in range(0, len(sorted_links), chunk_size):
-        chunk_end = min(chunk_start + chunk_size, len(sorted_links))
-        await conn.execute(
-            f"""
-            INSERT INTO {fq_table("memory_links")}
-                (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
-            SELECT f, t, tp, w, e, $6
-            FROM unnest($1::uuid[], $2::uuid[], $3::text[], $4::float8[], $5::uuid[])
-                AS t(f, t, tp, w, e)
-            {exists_clause}
-            ON CONFLICT (from_unit_id, to_unit_id, link_type,
-                         COALESCE(entity_id, '{_NIL_ENTITY_UUID}'::uuid))
-            DO NOTHING
-            """,
-            from_ids[chunk_start:chunk_end],
-            to_ids[chunk_start:chunk_end],
-            types[chunk_start:chunk_end],
-            weights[chunk_start:chunk_end],
-            entity_ids[chunk_start:chunk_end],
-            bank_id,
-            timeout=300,
-        )
+    await ops.bulk_insert_links(
+        conn,
+        fq_table("memory_links"),
+        sorted_links,
+        bank_id,
+        _NIL_ENTITY_UUID,
+        exists_clause,
+        chunk_size,
+    )
 
 
 def _normalize_datetime(dt):
@@ -415,6 +376,7 @@ async def build_entity_links_from_resolved(
     unit_to_entity_ids: dict[str, list[str]],
     log_buffer: list[str] = None,
     skip_unit_entities_insert: bool = False,
+    ops=None,
 ) -> list["EntityLink"]:
     """
     Build entity links between units that share entities.
@@ -471,40 +433,12 @@ async def build_entity_links_from_resolved(
         entity_id_list = [uuid.UUID(eid) if isinstance(eid, str) else eid for eid in all_entity_ids]
         limit_per_entity = MAX_LINKS_PER_ENTITY + len(unit_ids)  # room for new units + existing cap
 
-        if getattr(conn, "backend_type", "postgresql") != "postgresql":
-            # Non-PG: unnest + LATERAL is not supported — query each entity individually.
-            rows = []
-            for eid in entity_id_list:
-                entity_rows = await conn.fetch(
-                    f"""
-                    SELECT $1 AS entity_id, ue.unit_id
-                    FROM {fq_table("unit_entities")} ue
-                    WHERE ue.entity_id = $1
-                    ORDER BY ue.unit_id DESC
-                    LIMIT $2
-                    """,
-                    eid,
-                    limit_per_entity,
-                )
-                rows.extend(entity_rows)
-        else:
-            # PostgreSQL: use LATERAL with LIMIT to cap rows fetched per entity at the SQL level,
-            # avoiding transfer of thousands of rows for high-cardinality entities.
-            rows = await conn.fetch(
-                f"""
-                SELECT e.entity_id, n.unit_id
-                FROM unnest($1::uuid[]) AS e(entity_id)
-                CROSS JOIN LATERAL (
-                    SELECT ue.unit_id
-                    FROM {fq_table("unit_entities")} ue
-                    WHERE ue.entity_id = e.entity_id
-                    ORDER BY ue.unit_id DESC
-                    LIMIT $2
-                ) n
-                """,
-                entity_id_list,
-                limit_per_entity,
-            )
+        rows = await ops.fetch_entity_unit_fanout(
+            conn,
+            fq_table("unit_entities"),
+            entity_id_list,
+            limit_per_entity,
+        )
         _log(
             log_buffer,
             f"      [6.3.1] Query unit_entities (LATERAL): {len(rows)} rows in {time.time() - query_start:.3f}s",
@@ -566,6 +500,7 @@ async def create_temporal_links_batch_per_fact(
     unit_ids: list[str],
     time_window_hours: int = 24,
     log_buffer: list[str] = None,
+    ops=None,
 ) -> int:
     """
     Create temporal links for multiple units, each with their own event_date.
@@ -591,29 +526,7 @@ async def create_temporal_links_batch_per_fact(
 
         # Get the event_date for each new unit
         fetch_dates_start = time_mod.time()
-        if getattr(conn, "backend_type", "postgresql") != "postgresql":
-            # Non-PG: no ANY() array binding; query each unit individually
-            rows = []
-            for uid in unit_ids:
-                row = await conn.fetchrow(
-                    f"""
-                    SELECT id, event_date, fact_type
-                    FROM {fq_table("memory_units")}
-                    WHERE id = $1
-                    """,
-                    uid,
-                )
-                if row:
-                    rows.append(row)
-        else:
-            rows = await conn.fetch(
-                f"""
-                SELECT id, event_date, fact_type
-                FROM {fq_table("memory_units")}
-                WHERE id::text = ANY($1)
-                """,
-                unit_ids,
-            )
+        rows = await ops.fetch_unit_dates(conn, fq_table("memory_units"), unit_ids)
         new_units = {str(row["id"]): (row["event_date"], row["fact_type"]) for row in rows}
         _log(
             log_buffer,
@@ -642,115 +555,22 @@ async def create_temporal_links_batch_per_fact(
             TEMPORAL_LATERAL_BATCH = 500
             half_limit = MAX_TEMPORAL_LINKS_PER_UNIT  # fetch K in each direction, take top K combined
             mu = fq_table("memory_units")
-            rows = []
 
-            if getattr(conn, "backend_type", "postgresql") != "postgresql":
-                # Non-PG: unnest + LATERAL is not supported — query each unit individually.
-                # Uses backend-specific syntax (FETCH FIRST N ROWS ONLY, timestamp arithmetic).
-                for uid, edate, ftype in zip(lateral_unit_ids, lateral_event_dates, lateral_fact_types):
-                    uid_str = str(uid) if not isinstance(uid, str) else uid
-                    # Backward scan (older events)
-                    unit_rows = await conn.fetch(
-                        f"""
-                        SELECT from_id, id, event_date, time_diff_hours FROM (
-                            SELECT sub.*, ROW_NUMBER() OVER (ORDER BY sub.time_diff_hours) AS rn
-                            FROM (
-                                SELECT $1 AS from_id, mu.id, mu.event_date,
-                                       ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
-                                           + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
-                                FROM {mu} mu
-                                WHERE mu.bank_id = $4
-                                  AND mu.fact_type = $3
-                                  AND mu.event_date <= $2
-                                  AND mu.id != $6
-                                ORDER BY mu.event_date DESC
-                                FETCH FIRST $5 ROWS ONLY
-                            ) sub
-                        ) ranked
-                        WHERE rn <= $5
-                        """,
-                        uid_str,
-                        edate,
-                        ftype,
-                        bank_id,
-                        half_limit,
-                        uid,
-                    )
-                    # Forward scan (newer events)
-                    fwd_rows = await conn.fetch(
-                        f"""
-                        SELECT from_id, id, event_date, time_diff_hours FROM (
-                            SELECT sub.*, ROW_NUMBER() OVER (ORDER BY sub.time_diff_hours) AS rn
-                            FROM (
-                                SELECT $1 AS from_id, mu.id, mu.event_date,
-                                       ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
-                                           + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
-                                FROM {mu} mu
-                                WHERE mu.bank_id = $4
-                                  AND mu.fact_type = $3
-                                  AND mu.event_date > $2
-                                  AND mu.id != $6
-                                ORDER BY mu.event_date ASC
-                                FETCH FIRST $5 ROWS ONLY
-                            ) sub
-                        ) ranked
-                        WHERE rn <= $5
-                        """,
-                        uid_str,
-                        edate,
-                        ftype,
-                        bank_id,
-                        half_limit,
-                        uid,
-                    )
-                    rows.extend(unit_rows)
-                    rows.extend(fwd_rows)
-            else:
-                for batch_start in range(0, len(new_unit_entries), TEMPORAL_LATERAL_BATCH):
-                    batch_end = batch_start + TEMPORAL_LATERAL_BATCH
-                    batch_rows = await conn.fetch(
-                        f"""
-                        SELECT from_id, id, event_date, time_diff_hours FROM (
-                            SELECT src.unit_id::text AS from_id, combined.*,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY src.unit_id
-                                       ORDER BY combined.time_diff_hours
-                                   ) AS rn
-                            FROM unnest($1::uuid[], $2::timestamptz[], $3::text[])
-                                 AS src(unit_id, event_date, fact_type)
-                            CROSS JOIN LATERAL (
-                                -- Scan backward (older events) using index order
-                                (SELECT mu.id, mu.event_date,
-                                        ABS(EXTRACT(EPOCH FROM mu.event_date - src.event_date)) / 3600.0 AS time_diff_hours
-                                 FROM {mu} mu
-                                 WHERE mu.bank_id = $4
-                                   AND mu.fact_type = src.fact_type
-                                   AND mu.event_date <= src.event_date
-                                   AND mu.id != src.unit_id
-                                 ORDER BY mu.event_date DESC
-                                 LIMIT $5)
-                                UNION ALL
-                                -- Scan forward (newer events) using index order
-                                (SELECT mu.id, mu.event_date,
-                                        ABS(EXTRACT(EPOCH FROM mu.event_date - src.event_date)) / 3600.0 AS time_diff_hours
-                                 FROM {mu} mu
-                                 WHERE mu.bank_id = $4
-                                   AND mu.fact_type = src.fact_type
-                                   AND mu.event_date > src.event_date
-                                   AND mu.id != src.unit_id
-                                 ORDER BY mu.event_date ASC
-                                 LIMIT $5)
-                            ) combined
-                        ) ranked
-                        WHERE rn <= $5
-                        """,
-                        lateral_unit_ids[batch_start:batch_end],
-                        lateral_event_dates[batch_start:batch_end],
-                        lateral_fact_types[batch_start:batch_end],
-                        bank_id,
-                        half_limit,
-                    )
-                    rows.extend(batch_rows)
+            # Bidirectional index scan: instead of scanning all units in the 24h
+            # window (O(N) — 164k rows at scale) and sorting by proximity, we scan
+            # the nearest K units in each direction using the B-tree index on
+            # (bank_id, fact_type, event_date). This reads only 2×K rows per probe
+            # regardless of bank size — 120x faster at 164k units (0.6ms vs 74ms).
+            rows = await ops.fetch_temporal_neighbors(
+                conn,
+                mu,
+                bank_id,
+                lateral_unit_ids,
+                lateral_event_dates,
+                lateral_fact_types,
+                half_limit,
+                batch_size=TEMPORAL_LATERAL_BATCH,
+            )
         else:
             rows = []
 
@@ -801,7 +621,7 @@ async def create_temporal_links_batch_per_fact(
 
         if links:
             insert_start = time_mod.time()
-            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True)
+            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
             _log(log_buffer, f"      [7.4] Insert {len(links)} temporal links: {time_mod.time() - insert_start:.3f}s")
 
         return len(links)
@@ -1004,6 +824,7 @@ async def create_semantic_links_batch(
     threshold: float = 0.7,
     log_buffer: list[str] = None,
     pre_computed_ann_links: list[tuple] | None = None,
+    ops=None,
 ) -> int:
     """
     Phase 2: Create semantic links (within-batch + pre-computed ANN results).
@@ -1052,7 +873,7 @@ async def create_semantic_links_batch(
 
         if all_links:
             insert_start = time_mod.time()
-            await _bulk_insert_links(conn, all_links, bank_id=bank_id)
+            await _bulk_insert_links(conn, all_links, bank_id=bank_id, ops=ops)
             _log(
                 log_buffer, f"      [8.3] Insert {len(all_links)} semantic links: {time_mod.time() - insert_start:.3f}s"
             )
@@ -1067,7 +888,7 @@ async def create_semantic_links_batch(
         raise
 
 
-async def insert_entity_links_batch(conn, links: list[EntityLink], bank_id: str, chunk_size: int = 5000):
+async def insert_entity_links_batch(conn, links: list[EntityLink], bank_id: str, chunk_size: int = 5000, ops=None):
     """
     Bulk-insert entity links via sorted INSERT FROM unnest().
 
@@ -1084,7 +905,7 @@ async def insert_entity_links_batch(conn, links: list[EntityLink], bank_id: str,
 
     total_start = time_mod.time()
     tuples = [(link.from_unit_id, link.to_unit_id, link.link_type, link.weight, link.entity_id) for link in links]
-    await _bulk_insert_links(conn, tuples, bank_id=bank_id, chunk_size=chunk_size)
+    await _bulk_insert_links(conn, tuples, bank_id=bank_id, chunk_size=chunk_size, ops=ops)
     logger.debug(
         f"      [9.TOTAL] Entity links batch insert ({len(tuples)} rows): {time_mod.time() - total_start:.3f}s"
     )
@@ -1095,6 +916,7 @@ async def create_causal_links_batch(
     bank_id: str,
     unit_ids: list[str],
     causal_relations_per_fact: list[list[dict]],
+    ops=None,
 ) -> int:
     """
     Create causal links between facts based on LLM-extracted causal relationships.
@@ -1163,7 +985,7 @@ async def create_causal_links_batch(
 
         if links:
             insert_start = time_mod.time()
-            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True)
+            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
             logger.debug(f"      [10.1] Insert {len(links)} causal links: {time_mod.time() - insert_start:.3f}s")
 
         return len(links)

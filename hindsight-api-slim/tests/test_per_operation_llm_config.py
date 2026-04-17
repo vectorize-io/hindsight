@@ -287,7 +287,7 @@ class TestRetryAndBackoffConfiguration:
         config = get_config()
 
         # Verify global defaults
-        assert config.llm_max_retries == 10
+        assert config.llm_max_retries == 3
         assert config.llm_initial_backoff == 1.0
         assert config.llm_max_backoff == 60.0
 
@@ -320,7 +320,7 @@ class TestRetryAndBackoffConfiguration:
             assert config.reflect_llm_max_backoff == 90.0
 
             # Verify global defaults remain unchanged
-            assert config.llm_max_retries == 10
+            assert config.llm_max_retries == 3
             assert config.llm_initial_backoff == 1.0
             assert config.llm_max_backoff == 60.0
         finally:

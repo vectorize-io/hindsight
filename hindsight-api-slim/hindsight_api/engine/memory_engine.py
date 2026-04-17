@@ -4097,7 +4097,7 @@ class MemoryEngine(MemoryEngineInterface):
             # AccessExclusiveLock deadlocks with concurrent bank deletions.
             # (DROP INDEX on memory_units conflicts with RowExclusiveLock from DELETE inside tx)
             if bank_internal_id:
-                await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id)
+                await bank_utils.drop_bank_vector_indexes(conn, bank_internal_id, ops=self._backend.ops)
 
         if invalidated_obs > 0:
             try:
@@ -6191,8 +6191,6 @@ class MemoryEngine(MemoryEngineInterface):
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
-            _is_pg = getattr(conn, "backend_type", "postgresql") == "postgresql"
-
             # Build pattern filter if provided (convert * to % for ILIKE)
             pattern_clause = ""
             params: list[Any] = [bank_id]
@@ -6202,23 +6200,14 @@ class MemoryEngine(MemoryEngineInterface):
                 pattern_clause = "AND tag ILIKE $2"
                 params.append(sql_pattern)
 
-            if not _is_pg:
-                # Non-PG: tags is CLOB JSON array, use JSON_TABLE to expand
-                tag_source = (
-                    f"{fq_table('memory_units')} mu "
-                    f"CROSS APPLY JSON_TABLE(mu.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
-                )
-                non_empty_check = "AND mu.tags IS NOT NULL AND DBMS_LOB.GETLENGTH(mu.tags) > 2"
-                tag_col = "jt.tag"
-                bank_prefix = "mu."
-            else:
-                # PostgreSQL: tags is VARCHAR[], use unnest
-                tag_source = f"{fq_table('memory_units')}, unnest(tags) AS tag"
-                non_empty_check = "AND tags IS NOT NULL AND tags != '{{}}'"
-                tag_col = "tag"
-                bank_prefix = ""
+            # Get backend-specific SQL fragments for tag listing
+            tag_parts = self._backend.ops.build_tag_listing_parts(fq_table("memory_units"))
+            tag_source = tag_parts.tag_source
+            non_empty_check = tag_parts.non_empty_check
+            tag_col = tag_parts.tag_col
+            bank_prefix = tag_parts.bank_prefix
 
-            tag_pattern_clause = pattern_clause.replace("tag", tag_col) if not _is_pg else pattern_clause
+            tag_pattern_clause = pattern_clause.replace("tag", tag_col) if tag_col != "tag" else pattern_clause
 
             # Get total count of distinct tags matching pattern
             total_row = await conn.fetchrow(

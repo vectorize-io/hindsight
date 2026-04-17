@@ -35,7 +35,7 @@ async def get_document_content(
 
 
 async def insert_facts_batch(
-    conn, bank_id: str, facts: list[ProcessedFact], document_id: str | None = None
+    conn, bank_id: str, facts: list[ProcessedFact], document_id: str | None = None, ops=None
 ) -> list[str]:
     """
     Insert facts into the database in batch.
@@ -106,112 +106,16 @@ async def insert_facts_batch(
                 pass
         text_signals_list.append(" ".join(signal_parts) if signal_parts else None)
 
-    # Batch insert all facts
-    # Note: tags are passed as JSON strings and converted back to varchar[] via jsonb_array_elements_text + array_agg
-    # Query varies based on text search backend
+    # Batch insert all facts — delegates to DataAccessOps which handles
+    # unnest (PG) vs row-by-row (Oracle) transparently.
     config = get_config()
 
-    if getattr(conn, "backend_type", "postgresql") != "postgresql":
-        # Non-PG: unnest is not available — insert rows individually.
-        # Tags and observation_scopes are stored as-is; tags are decoded from
-        # the JSON string back to a Python list so the driver can bind them.
-        unit_ids = []
-        for i in range(len(fact_texts)):
-            tags_value = json.loads(tags_list[i]) if tags_list[i] else []
-            row_id = await conn.fetchval(
-                f"""
-                INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start,
-                    occurred_end, mentioned_at, context, fact_type, metadata, chunk_id, document_id,
-                    tags, observation_scopes, text_signals)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                RETURNING id
-                """,
-                bank_id,
-                fact_texts[i],
-                embeddings[i],
-                event_dates[i],
-                occurred_starts[i],
-                occurred_ends[i],
-                mentioned_ats[i],
-                contexts[i],
-                fact_types[i],
-                metadata_jsons[i],
-                chunk_ids[i],
-                document_ids[i],
-                tags_value,
-                observation_scopes_list[i],
-                text_signals_list[i],
-            )
-            unit_ids.append(str(row_id))
-        return unit_ids
-
-    if config.text_search_extension == "vchord":
-        # VectorChord: manually tokenize and insert search_vector
-        # text_signals (entity names etc.) are included in the tokenize input for enriched BM25
-        query = f"""
-            WITH input_data AS (
-                SELECT * FROM unnest(
-                    $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                    $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
-                ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                       context, fact_type, metadata, chunk_id, document_id, tags_json,
-                       observation_scopes_json, text_signals)
-            )
-            INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                     context, fact_type, metadata, chunk_id, document_id, tags,
-                                     observation_scopes, text_signals, search_vector)
-            SELECT
-                $1,
-                text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                context, fact_type, metadata, chunk_id, document_id,
-                COALESCE(
-                    (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
-                    '{{}}'::varchar[]
-                ),
-                observation_scopes_json,
-                text_signals,
-                tokenize(
-                    COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''),
-                    'llmlingua2'
-                )::bm25_catalog.bm25vector
-            FROM input_data
-            RETURNING id
-        """
-    else:  # native or pg_textsearch
-        # Native PostgreSQL: search_vector is GENERATED ALWAYS (expression includes text_signals), don't include it
-        # pg_textsearch: indexes operate on base columns directly, don't populate search_vector
-        query = f"""
-            WITH input_data AS (
-                SELECT * FROM unnest(
-                    $2::text[], $3::vector[], $4::timestamptz[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[],
-                    $8::text[], $9::text[], $10::jsonb[], $11::text[], $12::text[], $13::jsonb[], $14::jsonb[], $15::text[]
-                ) AS t(text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                       context, fact_type, metadata, chunk_id, document_id, tags_json,
-                       observation_scopes_json, text_signals)
-            )
-            INSERT INTO {fq_table("memory_units")} (bank_id, text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                                     context, fact_type, metadata, chunk_id, document_id, tags,
-                                     observation_scopes, text_signals)
-            SELECT
-                $1,
-                text, embedding, event_date, occurred_start, occurred_end, mentioned_at,
-                context, fact_type, metadata, chunk_id, document_id,
-                COALESCE(
-                    (SELECT array_agg(elem) FROM jsonb_array_elements_text(tags_json) AS elem),
-                    '{{}}'::varchar[]
-                ),
-                observation_scopes_json,
-                text_signals
-            FROM input_data
-            RETURNING id
-        """
-
-    results = await conn.fetch(
-        query,
+    return await ops.insert_facts_batch(
+        conn,
         bank_id,
         fact_texts,
         embeddings,
-        event_dates,  # event_date: occurred_start if available, else mentioned_at
+        event_dates,
         occurred_starts,
         occurred_ends,
         mentioned_ats,
@@ -223,13 +127,11 @@ async def insert_facts_batch(
         tags_list,
         observation_scopes_list,
         text_signals_list,
+        text_search_extension=config.text_search_extension,
     )
 
-    unit_ids = [str(row["id"]) for row in results]
-    return unit_ids
 
-
-async def ensure_bank_exists(conn, bank_id: str) -> None:
+async def ensure_bank_exists(conn, bank_id: str, ops=None) -> None:
     """
     Ensure bank exists in the database.
 
@@ -256,7 +158,7 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
     )
     if inserted:
         # Fresh insert — create per-bank vector indexes
-        await create_bank_vector_indexes(conn, bank_id, str(internal_id))
+        await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
 
 async def delete_stale_observations_for_memories(

@@ -31,8 +31,9 @@ def _make_conn(pg_trgm_available: bool) -> MagicMock:
 
 
 def _make_resolver(entity_lookup: str = "trigram") -> EntityResolver:
-    """Return an EntityResolver with a None pool (not needed for unit tests)."""
-    return EntityResolver(pool=None, entity_lookup=entity_lookup)  # type: ignore[arg-type]
+    """Return an EntityResolver with a mock pool (only ops attribute is needed)."""
+    pool = MagicMock()
+    return EntityResolver(pool=pool, entity_lookup=entity_lookup)  # type: ignore[arg-type]
 
 
 class TestPgTrgmAutoDetection:
