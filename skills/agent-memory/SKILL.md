@@ -19,7 +19,11 @@ Create the directory on first use if it doesn't exist.
 
 ## When to write
 
-After any turn where you learned something durable — something that would be useful in a future session where you don't have this conversation's context. Examples:
+Two mandatory triggers. Both fire after the user's request is fulfilled, never mid-task.
+
+### Trigger 1: You learned something (knowledge files)
+
+After any turn where you learned something durable — something useful in a future session. Write or update a knowledge file. Examples:
 
 - User stated a preference ("I want short bullets, no fluff")
 - You discovered a procedure that works ("to fetch RSS, use exec + curl, not web_fetch")
@@ -27,9 +31,22 @@ After any turn where you learned something durable — something that would be u
 - A decision was made ("we agreed to use per-agent bank routing")
 - You learned a fact about the user's setup ("user runs Hindsight locally on port 8888")
 - User explicitly asked you to remember something
-- You produced output the user consumed (a news feed, a report, a draft) — log what you delivered so you can avoid repeating yourself next time
 
-Do NOT write memory for:
+### Trigger 2: You completed a task run (activity logs)
+
+**After every completed task run** — a news feed delivery, a Discord sweep, a report, a draft, anything the user consumed as output — **always** append a summary entry to the activity log. This is not optional. No exceptions. The entry records:
+
+- Date
+- What was requested (query style / trigger)
+- Sources used and any retrieval failures
+- What was delivered (headlines / item titles — not full content)
+- Notable user feedback on the output (if any in this session)
+
+This is how you deduplicate across runs and answer "what did you show me yesterday". If you skip this step, the next run will re-surface the same items.
+
+### Do NOT write memory for:
+
+- Raw step-by-step execution logs or tool call traces
 - Ephemeral task state (use the conversation for that)
 - Things already in the skill files or BRIEF.md
 - Trivial acknowledgements ("got it", "ok")
