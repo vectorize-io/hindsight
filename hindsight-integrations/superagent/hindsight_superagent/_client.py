@@ -8,7 +8,7 @@ from typing import Any
 from hindsight_client import Hindsight
 from safety_agent import SafetyClient, create_client
 
-from .config import get_config
+from .config import DEFAULT_HINDSIGHT_API_URL, get_config
 from .errors import HindsightError
 
 try:
@@ -29,13 +29,8 @@ def resolve_hindsight_client(
         return client
 
     config = get_config()
-    url = hindsight_api_url or (config.hindsight_api_url if config else None)
+    url = hindsight_api_url or (config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL)
     key = api_key or (config.api_key if config else None)
-
-    if url is None:
-        raise HindsightError(
-            "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
-        )
 
     kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:

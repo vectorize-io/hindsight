@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from hindsight_superagent import configure, reset_config
 from hindsight_superagent._client import resolve_hindsight_client, resolve_safety_client
-from hindsight_superagent.errors import HindsightError
 
 
 class TestResolveHindsightClient:
@@ -49,9 +46,12 @@ class TestResolveHindsightClient:
             call_kwargs = mock_cls.call_args.kwargs
             assert "api_key" not in call_kwargs
 
-    def test_raises_without_url(self) -> None:
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
+    def test_defaults_to_cloud_url(self) -> None:
+        with patch("hindsight_superagent._client.Hindsight") as mock_cls:
+            mock_cls.return_value = MagicMock()
             resolve_hindsight_client(None, None, None)
+            call_kwargs = mock_cls.call_args.kwargs
+            assert call_kwargs["base_url"] == "https://api.hindsight.vectorize.io"
 
     def test_explicit_args_override_config(self) -> None:
         configure(hindsight_api_url="http://config:8888", api_key="config-key")

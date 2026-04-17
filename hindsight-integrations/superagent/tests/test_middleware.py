@@ -70,10 +70,14 @@ class TestSafeHindsightInit:
     def teardown_method(self) -> None:
         reset_config()
 
-    def test_raises_without_hindsight_config(self) -> None:
+    def test_defaults_to_cloud_url_without_config(self) -> None:
         safety = _mock_safety_client()
-        with pytest.raises(HindsightError, match="No Hindsight API URL"):
-            SafeHindsight(bank_id="test", safety_client=safety)
+        with patch("hindsight_superagent._client.Hindsight") as mock_cls:
+            mock_cls.return_value = _mock_hindsight_client()
+            safe = SafeHindsight(bank_id="test", safety_client=safety)
+            call_kwargs = mock_cls.call_args.kwargs
+            assert call_kwargs["base_url"] == "https://api.hindsight.vectorize.io"
+            assert safe._bank_id == "test"
 
     def test_creates_with_explicit_clients(self) -> None:
         hindsight = _mock_hindsight_client()
