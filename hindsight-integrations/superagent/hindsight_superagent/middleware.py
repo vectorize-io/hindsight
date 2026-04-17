@@ -59,10 +59,14 @@ class SafeHindsight:
         enable_guard_on_recall: bool | None = None,
         enable_guard_on_reflect: bool | None = None,
         enable_redact_on_retain: bool | None = None,
+        enable_fallback: bool | None = None,
+        fallback_timeout: float | None = None,
     ) -> None:
         self._bank_id = bank_id
         self._hindsight = resolve_hindsight_client(hindsight_client, hindsight_api_url, api_key)
-        self._safety = resolve_safety_client(safety_client, superagent_api_key)
+        self._safety = resolve_safety_client(
+            safety_client, superagent_api_key, enable_fallback, fallback_timeout
+        )
 
         config = get_config()
         self._budget = budget or (config.budget if config else "mid")

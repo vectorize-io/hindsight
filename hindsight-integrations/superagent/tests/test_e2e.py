@@ -156,7 +156,7 @@ class TestE2ERedact:
     async def test_redact_strips_pii_from_stored_memory(self) -> None:
         """Verify redact removes PII before Hindsight stores it."""
         bank_id = f"{BANK_ID}-redact"
-        safe = _make_client(bank_id=bank_id, enable_guard_on_retain=False)
+        safe = _make_client(bank_id=bank_id, enable_guard_on_retain=False, enable_guard_on_recall=False)
         await safe.retain("Contact Bob at bob.smith@secretcorp.com for the API keys.")
         await asyncio.sleep(5)
         results = await safe.recall("What is Bob's contact info?")

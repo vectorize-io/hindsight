@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 from typing import Any
 
 from hindsight_client import Hindsight
 from safety_agent import SafetyClient, create_client
 
-from .config import DEFAULT_HINDSIGHT_API_URL, get_config
+from .config import DEFAULT_HINDSIGHT_API_URL, SUPERAGENT_API_KEY_ENV, get_config
 from .errors import HindsightError
 
 try:
@@ -41,17 +42,27 @@ def resolve_hindsight_client(
 def resolve_safety_client(
     safety_client: SafetyClient | None,
     superagent_api_key: str | None,
+    enable_fallback: bool | None = None,
+    fallback_timeout: float | None = None,
 ) -> SafetyClient:
     """Resolve a Superagent SafetyClient from explicit args or global config."""
     if safety_client is not None:
         return safety_client
 
     config = get_config()
-    key = superagent_api_key or (config.superagent_api_key if config else None)
+    key = superagent_api_key or (config.superagent_api_key if config else None) or os.environ.get(SUPERAGENT_API_KEY_ENV)
 
     if not key:
         raise HindsightError(
             "No Superagent API key configured. Pass superagent_api_key=, set SUPERAGENT_API_KEY env var, "
             "or call configure(superagent_api_key=...) first. Get a key at https://www.superagent.sh"
         )
-    return create_client(api_key=key)
+
+    resolved_fallback = enable_fallback if enable_fallback is not None else (config.enable_fallback if config else False)
+    resolved_timeout = fallback_timeout or (config.fallback_timeout if config else 5.0)
+
+    return create_client(
+        api_key=key,
+        enable_fallback=resolved_fallback,
+        fallback_timeout=resolved_timeout,
+    )

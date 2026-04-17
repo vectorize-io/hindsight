@@ -97,6 +97,11 @@ class TestConfigureDefaults:
         config = configure()
         assert config.enable_redact_on_retain is True
 
+    def test_default_fallback_disabled(self) -> None:
+        config = configure()
+        assert config.enable_fallback is False
+        assert config.fallback_timeout == 5.0
+
     def test_default_verbose_is_false(self) -> None:
         config = configure()
         assert config.verbose is False
@@ -127,6 +132,8 @@ class TestConfigureCustomValues:
             enable_guard_on_recall=False,
             enable_guard_on_reflect=False,
             enable_redact_on_retain=False,
+            enable_fallback=True,
+            fallback_timeout=10.0,
             verbose=True,
         )
         assert config.hindsight_api_url == "http://custom:9999"
@@ -145,6 +152,8 @@ class TestConfigureCustomValues:
         assert config.enable_guard_on_recall is False
         assert config.enable_guard_on_reflect is False
         assert config.enable_redact_on_retain is False
+        assert config.enable_fallback is True
+        assert config.fallback_timeout == 10.0
         assert config.verbose is True
 
 
