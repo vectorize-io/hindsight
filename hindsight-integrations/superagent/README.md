@@ -117,9 +117,9 @@ safe = SafeHindsight(bank_id="user-123")
 | `bank_id` | *required* | Hindsight memory bank ID |
 | `hindsight_client` | `None` | Pre-configured Hindsight client |
 | `safety_client` | `None` | Pre-configured Superagent SafetyClient |
-| `hindsight_api_url` | `None` | Hindsight API URL |
-| `api_key` | `None` | Hindsight API key |
-| `superagent_api_key` | `None` | Superagent API key (or `SUPERAGENT_API_KEY` env) |
+| `hindsight_api_url` | `https://api.hindsight.vectorize.io` | Hindsight API URL |
+| `api_key` | `None` | Hindsight API key (for Hindsight Cloud) |
+| `superagent_api_key` | *required* | Superagent API key (or `SUPERAGENT_API_KEY` env). Get one at [superagent.sh](https://www.superagent.sh) |
 | `budget` | `"mid"` | Recall/reflect budget (low/mid/high) |
 | `max_tokens` | `4096` | Max tokens for recall results |
 | `tags` | `[]` | Tags applied when storing memories |

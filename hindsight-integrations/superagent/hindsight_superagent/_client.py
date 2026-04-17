@@ -49,7 +49,9 @@ def resolve_safety_client(
     config = get_config()
     key = superagent_api_key or (config.superagent_api_key if config else None)
 
-    kwargs: dict[str, Any] = {}
-    if key:
-        kwargs["api_key"] = key
-    return create_client(**kwargs)
+    if not key:
+        raise HindsightError(
+            "No Superagent API key configured. Pass superagent_api_key=, set SUPERAGENT_API_KEY env var, "
+            "or call configure(superagent_api_key=...) first. Get a key at https://www.superagent.sh"
+        )
+    return create_client(api_key=key)

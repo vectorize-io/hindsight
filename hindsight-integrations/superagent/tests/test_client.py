@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hindsight_superagent import configure, reset_config
 from hindsight_superagent._client import resolve_hindsight_client, resolve_safety_client
+from hindsight_superagent.errors import HindsightError
 
 
 class TestResolveHindsightClient:
@@ -88,11 +91,9 @@ class TestResolveSafetyClient:
             resolve_safety_client(None, None)
             mock_fn.assert_called_once_with(api_key="sa-config-key")
 
-    def test_creates_client_without_key(self) -> None:
-        with patch("hindsight_superagent._client.create_client") as mock_fn:
-            mock_fn.return_value = MagicMock()
+    def test_raises_without_key(self) -> None:
+        with pytest.raises(HindsightError, match="No Superagent API key"):
             resolve_safety_client(None, None)
-            mock_fn.assert_called_once_with()
 
     def test_explicit_key_overrides_config(self) -> None:
         configure(hindsight_api_url="http://localhost:8888", superagent_api_key="config-key")
