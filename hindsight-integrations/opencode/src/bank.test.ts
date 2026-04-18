@@ -40,12 +40,20 @@ describe("deriveBankId", () => {
     expect(deriveBankId(config, "/home/user/proj")).toBe("opencode::proj");
   });
 
-  it("URL-encodes special characters", () => {
+  it("preserves raw special characters", () => {
     const config = makeConfig({
       dynamicBankId: true,
       dynamicBankGranularity: ["project"],
     });
-    expect(deriveBankId(config, "/home/user/my project")).toBe("my%20project");
+    expect(deriveBankId(config, "/home/user/my project")).toBe("my project");
+  });
+
+  it("preserves raw UTF-8 characters", () => {
+    const config = makeConfig({
+      dynamicBankId: true,
+      dynamicBankGranularity: ["project"],
+    });
+    expect(deriveBankId(config, "/home/user/мой проект")).toBe("мой проект");
   });
 
   it("uses channel/user from env vars", () => {

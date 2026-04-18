@@ -53,7 +53,8 @@ export function deriveBankId(config: HindsightConfig, directory: string): string
     user: userId || "anonymous",
   };
 
-  const segments = fields.map((f) => encodeURIComponent(fieldMap[f] || "unknown"));
+  // bank_id is stored as-is server-side; HTTP path encoding is the client layer's job.
+  const segments = fields.map((f) => fieldMap[f] || "unknown");
   const baseBankId = segments.join("::");
 
   return prefix ? `${prefix}-${baseBankId}` : baseBankId;

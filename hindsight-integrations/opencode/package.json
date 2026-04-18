@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/opencode-hindsight",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Hindsight memory plugin for OpenCode - Give your AI coding agent persistent long-term memory",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
