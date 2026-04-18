@@ -1,7 +1,6 @@
 """Tests for lib/bank.py — bank ID derivation and mission management."""
 
 import json
-import urllib.parse
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,10 +49,17 @@ class TestDeriveBankIdDynamic:
         result = derive_bank_id(_hook(cwd="/home/user/hindsight"), cfg)
         assert result == "mybot::hindsight"
 
-    def test_dynamic_url_encodes_special_chars(self):
+    def test_dynamic_preserves_raw_special_chars(self):
         cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
         result = derive_bank_id(_hook(cwd="/home/user/my project"), cfg)
-        assert "my%20project" in result
+        assert "my project" in result
+        assert "%" not in result
+
+    def test_dynamic_preserves_raw_utf8(self):
+        cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
+        result = derive_bank_id(_hook(cwd="/home/user/мой проект"), cfg)
+        assert "мой проект" in result
+        assert "%" not in result
 
     def test_dynamic_session_field(self):
         cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["session"])
