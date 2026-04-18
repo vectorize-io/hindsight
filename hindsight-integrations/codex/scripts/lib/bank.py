@@ -12,7 +12,6 @@ routing like Telegram/Discord agents.
 
 import os
 import sys
-import urllib.parse
 
 from .state import read_state, write_state
 
@@ -59,7 +58,8 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
         "user": user_id or "anonymous",
     }
 
-    segments = [urllib.parse.quote(field_map.get(f, "unknown"), safe="") for f in fields]
+    # bank_id is stored as-is server-side; HTTP path encoding is the client layer's job.
+    segments = [field_map.get(f, "unknown") for f in fields]
     base_bank_id = "::".join(segments)
 
     return f"{prefix}-{base_bank_id}" if prefix else base_bank_id
