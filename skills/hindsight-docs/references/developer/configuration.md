@@ -749,7 +749,7 @@ Controls the retain (memory ingestion) pipeline.
 | `HINDSIGHT_API_RETAIN_DEFAULT_STRATEGY` | Default retain strategy name. When set, all retain calls without an explicit `strategy` parameter use this strategy. | - |
 | `HINDSIGHT_API_RETAIN_BATCH_POLL_INTERVAL_SECONDS` | Batch API polling interval in seconds | `60` |
 
-> **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](/developer/api/memory-banks#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](/developer/retain#entity-labels) for details.
+> **Entity labels** (`entity_labels`) and **free-form entity extraction** (`entities_allow_free_form`) are configured per bank via the [bank config API](api/memory-banks.md#retain-configuration), not as global environment variables — each bank can have its own controlled vocabulary. See [Entity Labels](retain.md#entity-labels) for details.
 
 #### Customizing retain: when to use what
 
