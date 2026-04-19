@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: Request,
@@ -12,7 +12,7 @@ export async function GET(
   const qs = new URLSearchParams({ limit });
   if (cursor) qs.set("cursor", cursor);
   const res = await fetch(
-    `${DATAPLANE_URL}/v1/default/banks/${bankId}/webhooks/${webhookId}/deliveries?${qs}`,
+    dataplaneBankUrl(bankId, `/webhooks/${encodeURIComponent(webhookId)}/deliveries?${qs}`),
     {
       headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
     }

@@ -1,7 +1,7 @@
 """Fix per-bank vector indexes to match configured extension
 
 Revision ID: a4b5c6d7e8f9
-Revises: d6e7f8a9b0c1
+Revises: 2eee35aa3cfc
 Create Date: 2026-04-01
 
 Migration d5e6f7a8b9c0 hardcoded HNSW when creating per-bank partial vector
@@ -21,7 +21,7 @@ from alembic import context, op
 from sqlalchemy import text
 
 revision: str = "a4b5c6d7e8f9"
-down_revision: str | Sequence[str] | None = "d6e7f8a9b0c1"
+down_revision: str | Sequence[str] | None = "2eee35aa3cfc"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-pydantic-ai"
-version = "0.4.19"
+version = "0.4.20"
 description = "Pydantic AI integration for Hindsight - persistent memory tools for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"

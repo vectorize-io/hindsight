@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 ← Claude Code integration
 
+## [0.3.1](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.3.1)
+
+**Bug Fixes**
+
+- All Claude Code integration HTTP requests now include an identifying User-Agent for better compatibility and observability. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
 ## [0.3.0](https://github.com/vectorize-io/hindsight/tree/integrations/claude-code/v0.3.0)
 
 **Features**

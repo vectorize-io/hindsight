@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { BankSelector } from "@/components/bank-selector";
 import { useBank } from "@/lib/bank-context";
+import { bankRoute } from "@/lib/bank-url";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -12,7 +13,7 @@ export default function DashboardPage() {
   // Redirect to bank page if a bank is selected
   useEffect(() => {
     if (currentBank) {
-      router.push(`/banks/${currentBank}?view=data`);
+      router.push(bankRoute(currentBank, "?view=data"));
     }
   }, [currentBank, router]);
 

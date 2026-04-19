@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: Request,
@@ -16,7 +16,7 @@ export async function GET(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models/${mentalModelId}`,
+      dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
       { method: "GET", headers: getDataplaneHeaders() }
     );
 
@@ -54,7 +54,7 @@ export async function PATCH(
     const body = await request.json();
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models/${mentalModelId}`,
+      dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
       {
         method: "PATCH",
         headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
@@ -94,7 +94,7 @@ export async function DELETE(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models/${mentalModelId}`,
+      dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}`),
       { method: "DELETE", headers: getDataplaneHeaders() }
     );
 

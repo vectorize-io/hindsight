@@ -224,6 +224,85 @@ async def ensure_bank_exists(conn, bank_id: str) -> None:
         await create_bank_vector_indexes(conn, bank_id, str(internal_id))
 
 
+async def delete_stale_observations_for_memories(
+    conn,
+    bank_id: str,
+    fact_ids: "list[str | uuid.UUID]",
+) -> int:
+    """Delete observations whose source memories are about to be removed.
+
+    Mirrors the cleanup performed by ``MemoryEngine.delete_document`` so that
+    every code path that removes ``memory_units`` also removes the
+    observations derived from them. Without this, ingesting a fresh version
+    of a document via the retain pipeline (which does a full-replace
+    ``DELETE FROM documents`` cascade) used to leave orphan observations
+    pointing at memory IDs that no longer existed.
+
+    For each observation referencing any of ``fact_ids``:
+    1. Delete the observation row (its text is stale once even one source
+       memory disappears).
+    2. Reset ``consolidated_at = NULL`` on the surviving source memories so
+       they get re-consolidated under fresh observations on the next run.
+
+    Must be called within an active transaction, before the source memories
+    are deleted.
+
+    Returns the number of observations deleted.
+    """
+    if not fact_ids:
+        return 0
+
+    fact_uuids = [uuid.UUID(str(fid)) if not isinstance(fid, uuid.UUID) else fid for fid in fact_ids]
+
+    affected_obs = await conn.fetch(
+        f"""
+        SELECT id, source_memory_ids
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1
+          AND fact_type = 'observation'
+          AND source_memory_ids && $2::uuid[]
+        """,
+        bank_id,
+        fact_uuids,
+    )
+
+    if not affected_obs:
+        return 0
+
+    deleted_set = {str(uid) for uid in fact_uuids}
+    obs_ids = [obs["id"] for obs in affected_obs]
+    seen_remaining: set[str] = set()
+    remaining_source_ids: list[uuid.UUID] = []
+    for obs in affected_obs:
+        for src_id in obs["source_memory_ids"] or []:
+            src_str = str(src_id)
+            if src_str not in deleted_set and src_str not in seen_remaining:
+                remaining_source_ids.append(src_id)
+                seen_remaining.add(src_str)
+
+    await conn.execute(
+        f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
+        obs_ids,
+    )
+
+    if remaining_source_ids:
+        await conn.execute(
+            f"""
+            UPDATE {fq_table("memory_units")}
+            SET consolidated_at = NULL
+            WHERE id = ANY($1::uuid[])
+              AND fact_type IN ('experience', 'world')
+            """,
+            remaining_source_ids,
+        )
+
+    logger.info(
+        f"[OBSERVATIONS] Deleted {len(obs_ids)} observations, reset {len(remaining_source_ids)} "
+        f"source memories for re-consolidation in bank {bank_id}"
+    )
+    return len(obs_ids)
+
+
 async def handle_document_tracking(
     conn,
     bank_id: str,
@@ -254,9 +333,29 @@ async def handle_document_tracking(
     combined_content = _sanitize_text(combined_content) or ""
     content_hash = hashlib.sha256(combined_content.encode()).hexdigest()
 
-    # Delete old document first (cascades to units and links)
-    # Only delete on the first batch to avoid deleting data we just inserted
+    # Delete old document first (cascades to units and links).
+    # Only delete on the first batch to avoid deleting data we just inserted.
+    # Before the cascade, fan out to delete observations derived from the
+    # outgoing memory_units — otherwise the FK ON DELETE CASCADE removes the
+    # source memory_units but leaves observation rows pointing at IDs that
+    # no longer exist (consolidated_at on co-source memories also stays
+    # frozen). Same cleanup the explicit ``delete_document`` API performs.
     if is_first_batch:
+        existing_unit_rows = await conn.fetch(
+            f"""
+            SELECT id FROM {fq_table("memory_units")}
+            WHERE document_id = $1 AND fact_type IN ('experience', 'world')
+            """,
+            document_id,
+        )
+        existing_unit_ids = [row["id"] for row in existing_unit_rows]
+        if existing_unit_ids:
+            invalidated = await delete_stale_observations_for_memories(conn, bank_id, existing_unit_ids)
+            if invalidated:
+                logger.info(
+                    f"[RETAIN] Document {document_id} re-ingested: invalidated "
+                    f"{invalidated} observation(s) derived from {len(existing_unit_ids)} outgoing memory_units"
+                )
         await conn.fetchval(
             f"DELETE FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2 RETURNING id",
             document_id,

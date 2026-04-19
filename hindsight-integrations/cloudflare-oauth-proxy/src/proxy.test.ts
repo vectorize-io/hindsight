@@ -98,7 +98,7 @@ describe("proxyRequest", () => {
             "X-Custom-Leak": "yes",
             "Mcp-Session-Id": "session-123",
           },
-        }),
+        })
     );
     const request = new Request("https://hindsight.mydomain.com/mcp", { method: "GET" });
 

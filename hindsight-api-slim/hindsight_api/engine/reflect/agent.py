@@ -652,6 +652,46 @@ async def run_reflect_agent(
             if result.content:
                 answer = _clean_answer_text(result.content.strip())
 
+                # The call_with_tools call above is intentionally uncapped so the
+                # LLM has headroom to emit tool-call JSON plus any intermediate
+                # reasoning. But when the LLM short-circuits and returns text
+                # directly, that text becomes the user-visible final answer and
+                # must respect max_tokens like the forced-final paths do. If it
+                # overshoots, run one extra capped call to rewrite it within
+                # the cap.
+                if max_tokens is not None and len(_TIKTOKEN_ENCODING.encode(answer)) > max_tokens:
+                    rewrite_start = time.time()
+                    rewritten, rewrite_usage = await llm_config.call(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Rewrite the user's text so it fits within the requested token "
+                                    "budget. Preserve the key facts and structure; drop lower-priority "
+                                    "detail. Respond with the rewritten text only, no preamble."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Target budget: {max_tokens} tokens.\n\nText to rewrite:\n{answer}",
+                            },
+                        ],
+                        scope="reflect",
+                        max_completion_tokens=max_tokens,
+                        return_usage=True,
+                    )
+                    total_input_tokens += rewrite_usage.input_tokens
+                    total_output_tokens += rewrite_usage.output_tokens
+                    llm_trace.append(
+                        {
+                            "scope": "final_rewrite",
+                            "duration_ms": int((time.time() - rewrite_start) * 1000),
+                            "input_tokens": rewrite_usage.input_tokens,
+                            "output_tokens": rewrite_usage.output_tokens,
+                        }
+                    )
+                    answer = _clean_answer_text(rewritten.strip())
+
                 # Generate structured output if schema provided
                 structured_output = None
                 if response_schema and answer:

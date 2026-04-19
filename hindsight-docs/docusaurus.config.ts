@@ -182,6 +182,21 @@ const config: Config = {
         sidebarPath: false,
       },
     ],
+    [
+      '@docusaurus/plugin-content-blog',
+      {
+        id: 'guides',
+        routeBasePath: 'guides',
+        path: './guides',
+        showReadingTime: true,
+        postsPerPage: 'ALL',
+        blogSidebarCount: 0,
+        blogTitle: 'Guides',
+        blogDescription: 'In-depth guides for AI memory and agent development',
+        feedOptions: {type: []},
+        onUntruncatedBlogPosts: 'ignore',
+      },
+    ],
   ],
 
   themes: [
@@ -350,6 +365,10 @@ const config: Config = {
             {
               label: 'Changelog',
               to: '/changelog',
+            },
+            {
+              label: 'Guides',
+              to: '/guides',
             },
             {
               label: 'Hindsight Cloud',

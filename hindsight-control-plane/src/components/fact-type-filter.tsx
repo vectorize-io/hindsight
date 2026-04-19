@@ -10,28 +10,29 @@ const FACT_TYPE_CONFIG: Record<
   FactType,
   { label: string; active: string; inactive: string; dot: string }
 > = {
+  // Aligned with the stats-chart palette (bank-stats-view.tsx CHART_COLORS).
   world: {
     label: "World",
-    active: "bg-blue-500/15 text-blue-700 border-blue-400 dark:text-blue-300 dark:border-blue-500",
+    active:
+      "bg-violet-500/15 text-violet-700 border-violet-400 dark:text-violet-300 dark:border-violet-500",
     inactive:
-      "border-border text-muted-foreground hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400",
-    dot: "bg-blue-500",
+      "border-border text-muted-foreground hover:border-violet-300 hover:text-violet-600 dark:hover:text-violet-400",
+    dot: "bg-violet-500",
   },
   experience: {
     label: "Experience",
-    active:
-      "bg-emerald-500/15 text-emerald-700 border-emerald-400 dark:text-emerald-300 dark:border-emerald-500",
+    active: "bg-pink-500/15 text-pink-700 border-pink-400 dark:text-pink-300 dark:border-pink-500",
     inactive:
-      "border-border text-muted-foreground hover:border-emerald-300 hover:text-emerald-600 dark:hover:text-emerald-400",
-    dot: "bg-emerald-500",
+      "border-border text-muted-foreground hover:border-pink-300 hover:text-pink-600 dark:hover:text-pink-400",
+    dot: "bg-pink-500",
   },
   observation: {
     label: "Observation",
     active:
-      "bg-amber-500/15 text-amber-700 border-amber-400 dark:text-amber-300 dark:border-amber-500",
+      "bg-indigo-500/15 text-indigo-700 border-indigo-400 dark:text-indigo-300 dark:border-indigo-500",
     inactive:
-      "border-border text-muted-foreground hover:border-amber-300 hover:text-amber-600 dark:hover:text-amber-400",
-    dot: "bg-amber-500",
+      "border-border text-muted-foreground hover:border-indigo-300 hover:text-indigo-600 dark:hover:text-indigo-400",
+    dot: "bg-indigo-500",
   },
 };
 

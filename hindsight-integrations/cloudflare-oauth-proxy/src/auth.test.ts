@@ -25,13 +25,11 @@ function createMockProvider(): OAuthHelpers & {
       async (): Promise<OAuthReqInfo> => ({
         clientId: "test-client",
         scope: "mcp:full",
-      }),
+      })
     ),
-    completeAuthorization: vi.fn(
-      async () => ({
-        redirectTo: "https://claude.ai/oauth/callback?code=abc",
-      }),
-    ),
+    completeAuthorization: vi.fn(async () => ({
+      redirectTo: "https://claude.ai/oauth/callback?code=abc",
+    })),
   };
 }
 
@@ -79,7 +77,7 @@ describe("handleDefaultRequest", () => {
     it("returns { status: 'ok' }", async () => {
       const response = await handleDefaultRequest(
         new Request("https://hindsight.mydomain.com/health"),
-        env,
+        env
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ status: "ok" });
@@ -90,7 +88,7 @@ describe("handleDefaultRequest", () => {
     it("returns the service identifier", async () => {
       const response = await handleDefaultRequest(
         new Request("https://hindsight.mydomain.com/"),
-        env,
+        env
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ service: "Hindsight MCP OAuth Proxy" });
@@ -101,7 +99,7 @@ describe("handleDefaultRequest", () => {
     it("returns 404", async () => {
       const response = await handleDefaultRequest(
         new Request("https://hindsight.mydomain.com/nope"),
-        env,
+        env
       );
       expect(response.status).toBe(404);
     });
@@ -111,7 +109,7 @@ describe("handleDefaultRequest", () => {
     it("stores OAuth state in KV and renders the login page", async () => {
       const response = await handleDefaultRequest(
         new Request("https://hindsight.mydomain.com/authorize?client_id=x"),
-        env,
+        env
       );
 
       expect(response.status).toBe(200);
@@ -143,14 +141,14 @@ describe("handleDefaultRequest", () => {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body,
         }),
-        e,
+        e
       );
     }
 
     it("returns 401 and re-renders the login page on wrong password", async () => {
       await env.OAUTH_KV.put(
         "auth_state:state-1",
-        JSON.stringify({ clientId: "c", scope: "mcp:full" }),
+        JSON.stringify({ clientId: "c", scope: "mcp:full" })
       );
       const response = await postForm({ password: "wrong", stateKey: "state-1" });
       expect(response.status).toBe(401);
@@ -185,20 +183,18 @@ describe("handleDefaultRequest", () => {
     it("happy path: calls completeAuthorization and redirects", async () => {
       await env.OAUTH_KV.put(
         "auth_state:state-2",
-        JSON.stringify({ clientId: "test-client", scope: "mcp:full" }),
+        JSON.stringify({ clientId: "test-client", scope: "mcp:full" })
       );
       const response = await postForm({
         password: "correct-horse-battery-staple",
         stateKey: "state-2",
       });
       expect(response.status).toBe(302);
-      expect(response.headers.get("Location")).toBe(
-        "https://claude.ai/oauth/callback?code=abc",
-      );
+      expect(response.headers.get("Location")).toBe("https://claude.ai/oauth/callback?code=abc");
 
       expect(env.OAUTH_PROVIDER.completeAuthorization).toHaveBeenCalledTimes(1);
-      const call = (env.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>)
-        .mock.calls[0][0];
+      const call = (env.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(call.userId).toBe("test@example.com");
       expect(call.scope).toBe("mcp:full");
       expect(call.props.email).toBe("test@example.com");
@@ -209,34 +205,31 @@ describe("handleDefaultRequest", () => {
     });
 
     it("defaults scope to mcp:full when the OAuth request carries none", async () => {
-      await env.OAUTH_KV.put(
-        "auth_state:state-3",
-        JSON.stringify({ clientId: "test-client" }),
-      );
+      await env.OAUTH_KV.put("auth_state:state-3", JSON.stringify({ clientId: "test-client" }));
       await postForm({
         password: "correct-horse-battery-staple",
         stateKey: "state-3",
       });
 
-      const call = (env.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>)
-        .mock.calls[0][0];
+      const call = (env.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(call.scope).toBe("mcp:full");
     });
 
     it("returns 500 when completeAuthorization throws", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const broken = createEnv();
-      (broken.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new Error("library error"),
-      );
+      (
+        broken.OAUTH_PROVIDER.completeAuthorization as ReturnType<typeof vi.fn>
+      ).mockRejectedValueOnce(new Error("library error"));
       await broken.OAUTH_KV.put(
         "auth_state:state-4",
-        JSON.stringify({ clientId: "test-client", scope: "mcp:full" }),
+        JSON.stringify({ clientId: "test-client", scope: "mcp:full" })
       );
 
       const response = await postForm(
         { password: "correct-horse-battery-staple", stateKey: "state-4" },
-        broken,
+        broken
       );
       expect(response.status).toBe(500);
       errorSpy.mockRestore();

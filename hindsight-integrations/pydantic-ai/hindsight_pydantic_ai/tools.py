@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from importlib import metadata
 from typing import Any
 
 from hindsight_client import Hindsight
@@ -17,6 +18,12 @@ from .config import get_config
 from .errors import HindsightError
 
 logger = logging.getLogger(__name__)
+
+try:
+    _VERSION = metadata.version("hindsight-pydantic-ai")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-pydantic-ai/{_VERSION}"
 
 
 def _resolve_client(
@@ -34,11 +41,10 @@ def _resolve_client(
 
     if url is None:
         raise HindsightError(
-            "No Hindsight API URL configured. "
-            "Pass client= or hindsight_api_url=, or call configure() first."
+            "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
         )
 
-    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0}
+    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
     return Hindsight(**kwargs)
@@ -90,9 +96,7 @@ def create_hindsight_tools(
     # Resolve defaults from global config
     config = get_config()
     effective_tags = tags if tags is not None else (config.tags if config else None)
-    effective_recall_tags = (
-        recall_tags if recall_tags is not None else (config.recall_tags if config else None)
-    )
+    effective_recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
     effective_recall_tags_match = recall_tags_match or (config.recall_tags_match if config else "any")
     effective_budget = budget or (config.budget if config else "mid")
     effective_max_tokens = max_tokens or (config.max_tokens if config else 4096)

@@ -8,6 +8,12 @@ import PageHero from '@site/src/components/PageHero';
 
 [← Codex CLI integration](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/codex)
 
+## [0.2.1](https://github.com/vectorize-io/hindsight/tree/integrations/codex/v0.2.1)
+
+**Improvements**
+
+- All Codex integration HTTP requests now include an identifying User-Agent header for better request tracking and compatibility. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
 ## [0.2.0](https://github.com/vectorize-io/hindsight/tree/integrations/codex/v0.2.0)
 
 **Features**

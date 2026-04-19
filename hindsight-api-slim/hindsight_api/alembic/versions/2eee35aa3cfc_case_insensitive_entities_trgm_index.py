@@ -4,8 +4,8 @@ The previous GIN trigram index on canonical_name was case-sensitive, causing
 "Alice" and "alice" to have different trigram sets. This recreates it on
 LOWER(canonical_name) so the % operator matches case-insensitively.
 
-Revision ID: d6e7f8a9b0c1
-Revises: c5d6e7f8a9b0
+Revision ID: 2eee35aa3cfc
+Revises: d6e7f8a9b0c1
 Create Date: 2026-03-31
 """
 
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 
 from alembic import context, op
 
-revision: str = "d6e7f8a9b0c1"
-down_revision: str | Sequence[str] | None = "c5d6e7f8a9b0"
+revision: str = "2eee35aa3cfc"
+down_revision: str | Sequence[str] | None = "d6e7f8a9b0c1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

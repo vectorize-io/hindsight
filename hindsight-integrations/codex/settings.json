@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "hindsightApiUrl": "",
   "bankId": "codex",
   "bankMission": "You are a Codex AI coding assistant. Focus on technical decisions, code changes, debugging sessions, and project context relevant to the user's work.",

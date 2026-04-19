@@ -14,12 +14,21 @@ export async function GET(request: NextRequest) {
     const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
     const type = searchParams.get("type") || searchParams.get("fact_type") || undefined;
     const q = searchParams.get("q") || undefined;
+    const consolidationStateParam =
+      searchParams.get("consolidation_state") || searchParams.get("consolidationState");
+    const consolidationState =
+      consolidationStateParam === "failed" ||
+      consolidationStateParam === "pending" ||
+      consolidationStateParam === "done"
+        ? consolidationStateParam
+        : undefined;
 
     const response = await hindsightClient.listMemories(bankId, {
       limit,
       offset,
       type,
       q,
+      consolidationState,
     });
 
     return NextResponse.json(response, { status: 200 });

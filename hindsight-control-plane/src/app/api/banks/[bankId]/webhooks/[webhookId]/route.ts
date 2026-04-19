@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function PATCH(
   request: Request,
@@ -7,7 +7,7 @@ export async function PATCH(
 ) {
   const { bankId, webhookId } = await params;
   const body = await request.json();
-  const res = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/webhooks/${webhookId}`, {
+  const res = await fetch(dataplaneBankUrl(bankId, `/webhooks/${encodeURIComponent(webhookId)}`), {
     method: "PATCH",
     headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
@@ -22,7 +22,7 @@ export async function DELETE(
   { params }: { params: Promise<{ bankId: string; webhookId: string }> }
 ) {
   const { bankId, webhookId } = await params;
-  const res = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/webhooks/${webhookId}`, {
+  const res = await fetch(dataplaneBankUrl(bankId, `/webhooks/${encodeURIComponent(webhookId)}`), {
     method: "DELETE",
     headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
   });

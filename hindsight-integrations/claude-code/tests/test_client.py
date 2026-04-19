@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lib.client import HindsightClient, _validate_api_url
+from lib.client import USER_AGENT, HindsightClient, _validate_api_url
 
 
 class TestValidateApiUrl:
@@ -105,6 +105,22 @@ class TestHindsightClientRecall:
             c.recall("bank", "query")
 
         assert "Authorization" not in captured["headers"]
+
+    def test_sends_user_agent_header(self):
+        # Regression test for #1041: the stdlib default "Python-urllib/X.Y" UA
+        # is blocked by Cloudflare with error 1010, so we must always send our own.
+        c = HindsightClient("http://localhost:9077")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["ua"] = req.get_header("User-agent")
+            return FakeResp({"results": []})
+
+        with patch("urllib.request.urlopen", side_effect=fake_open):
+            c.recall("bank", "query")
+
+        assert captured["ua"] == USER_AGENT
+        assert captured["ua"].startswith("hindsight-claude-code/")
 
     def test_http_error_raises_runtime_error(self):
         c = HindsightClient("http://localhost:9077")

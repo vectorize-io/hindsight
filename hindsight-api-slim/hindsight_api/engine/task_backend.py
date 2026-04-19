@@ -193,17 +193,21 @@ class BrokerTaskBackend(TaskBackend):
         table = fq_table("async_operations", schema)
 
         if operation_id:
-            # Update existing operation with task payload
+            # Callers now include task_payload in the same INSERT that creates the
+            # async_operations row (see MemoryEngine._submit_async_operation). The
+            # WHERE clause guards against overwriting that payload — the UPDATE is a
+            # no-op when the row is already claimable, and only fills in a NULL payload
+            # for any legacy caller that still creates the row first.
             await pool.execute(
                 f"""
                 UPDATE {table}
                 SET task_payload = $1::jsonb, updated_at = now()
-                WHERE operation_id = $2
+                WHERE operation_id = $2 AND task_payload IS NULL
                 """,
                 payload_json,
                 operation_id,
             )
-            logger.debug(f"Updated task payload for operation {operation_id}")
+            logger.debug(f"submit_task UPDATE for operation {operation_id} (no-op if payload already set)")
         else:
             # Insert new operation (for tasks without pre-created records)
             # e.g., access_count_update tasks

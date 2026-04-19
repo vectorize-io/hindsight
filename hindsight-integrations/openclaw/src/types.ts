@@ -29,7 +29,10 @@ export interface MoltbotPluginAPI {
   registerService(config: ServiceConfig): void;
   registerMemoryCapability?(capability: MemoryPluginCapability): void;
   // OpenClaw hook handler signature: (event, ctx?) where ctx contains channel/sender info
-  on(event: string, handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>): void;
+  on(
+    event: string,
+    handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>
+  ): void;
   // OpenClaw framework logger — handles coloring/formatting consistently across plugins
   logger: {
     info(msg: string): void;
@@ -90,19 +93,20 @@ export interface PluginConfig {
   dynamicBankId?: boolean; // Enable per-channel memory banks (default: true)
   bankId?: string; // Static bank ID used when dynamicBankId is false.
   bankIdPrefix?: string; // Prefix for bank IDs (e.g. 'prod' -> 'prod-slack-C123')
-  retainTags?: string[]; // Tags applied to all retained documents (e.g. ['source_system:openclaw', 'agent:agentname'])
+  retainTags?: string[]; // Tags applied to all retained documents after trimming and deduplication; auto-retain merges these with inline per-message retain-tag directives (e.g. ['source_system:openclaw', 'agent:agentname'])
   retainSource?: string; // Source written into retained document metadata (default: 'openclaw')
   excludeProviders?: string[]; // Message providers to exclude from recall/retain (e.g. ['telegram', 'discord'])
   autoRecall?: boolean; // Auto-recall memories on every prompt (default: true). Set to false when agent has its own recall tool.
-  dynamicBankGranularity?: Array<'agent' | 'provider' | 'channel' | 'user'>; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
+  dynamicBankGranularity?: Array<"agent" | "provider" | "channel" | "user">; // Fields for bank ID derivation. Default: ['agent', 'channel', 'user']
   autoRetain?: boolean; // Default: true
-  retainRoles?: Array<'user' | 'assistant' | 'system' | 'tool'>; // Roles to include in retained transcript. Default: ['user', 'assistant']
-  retainFormat?: 'json' | 'text'; // Serialization format for retained conversation content. Default: 'json' (structured array of {role, content}); 'text' emits legacy '[role: x] ... [x:end]' markers.
+  retainRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include in retained transcript. Default: ['user', 'assistant']
+  retainFormat?: "json" | "text"; // Serialization format for retained conversation content. Default: 'json' (structured array of {role, content}); 'text' emits legacy '[role: x] ... [x:end]' markers.
   retainToolCalls?: boolean; // When true (default) and retainFormat='json', each message's content is an Anthropic-shaped array of typed blocks (text, tool_use, tool_result) including the agent's tool calls and their results. When false, content is a flat string with only text.
-  recallBudget?: 'low' | 'mid' | 'high'; // Recall effort. Default: 'mid'
+  recallBudget?: "low" | "mid" | "high"; // Recall effort. Default: 'mid'
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
-  recallTypes?: Array<'world' | 'experience' | 'observation'>; // Memory types to recall. Default: ['world', 'experience']
-  recallRoles?: Array<'user' | 'assistant' | 'system' | 'tool'>; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
+  recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['world', 'experience']
+  recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
+  retainDocumentScope?: "session" | "turn"; // Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session (`openclaw:{sessionKey}`). 'turn' produces a new document per retain (`openclaw:{sessionKey}:turn:NNNNNN` / `:window:NNNNNN`).
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.
   retainOverlapTurns?: number; // Extra prior turns included when chunked retention fires (default: 0). Window = retainEveryNTurns + retainOverlapTurns.
   recallTopK?: number; // Max number of memories to inject. Default: unlimited
@@ -110,12 +114,12 @@ export interface PluginConfig {
   recallTimeoutMs?: number; // Timeout for auto-recall in milliseconds. Default: 10000
   recallMaxQueryChars?: number; // Max chars for composed recall query. Default: 800
   recallPromptPreamble?: string; // Prompt preamble placed above recalled memories. Default: built-in guidance text.
-  recallInjectionPosition?: 'prepend' | 'append' | 'user'; // Where to inject recalled memories. 'prepend' = start of system prompt (default), 'append' = end of system prompt (preserves prompt cache), 'user' = before user message.
+  recallInjectionPosition?: "prepend" | "append" | "user"; // Where to inject recalled memories. 'prepend' = start of system prompt (default), 'append' = end of system prompt (preserves prompt cache), 'user' = before user message.
   ignoreSessionPatterns?: string[]; // Session key glob patterns to skip entirely (no recall, no retain). E.g. ["agent:main:**", "agent:*:cron:**"]
   statelessSessionPatterns?: string[]; // Session key glob patterns for read-only sessions (recall allowed, retain skipped). E.g. ["agent:*:subagent:**"]
   skipStatelessSessions?: boolean; // When true (default), stateless sessions also skip recall. When false, they recall but never retain.
   debug?: boolean; // Enable debug logging (default: false)
-  logLevel?: 'off' | 'error' | 'warning' | 'info' | 'debug'; // Console log verbosity (default: 'info').
+  logLevel?: "off" | "error" | "warning" | "info" | "debug"; // Console log verbosity (default: 'info').
   logSummaryIntervalMs?: number; // Batch retain/recall log summaries over this interval in ms. 0 = log every event. Default: 300000 (5 min).
   retainQueuePath?: string; // Path to JSONL file for buffering failed retains. Default: ~/.openclaw/data/hindsight-retain-queue.jsonl
   retainQueueMaxAgeMs?: number; // Max age in ms for queued items. -1 = keep forever (default: -1)
@@ -135,7 +139,11 @@ export interface ServiceConfig {
 // MemoryResult / RecallResponse / ReflectResponse come from the generated
 // hindsight-client SDK. We alias MemoryResult → RecallResult so existing code
 // paths (formatMemories, etc.) keep the old name.
-export type { RecallResult as MemoryResult, RecallResponse, ReflectResponse } from '@vectorize-io/hindsight-client';
+export type {
+  RecallResult as MemoryResult,
+  RecallResponse,
+  ReflectResponse,
+} from "@vectorize-io/hindsight-client";
 
 /**
  * Internal retain payload shape built by `buildRetainRequest`. Not a
@@ -150,6 +158,14 @@ export interface RetainRequest {
   documentId?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
+  /**
+   * `'append'` concatenates this content to the existing document text
+   * (Hindsight ≥ 0.5 only — older versions silently ignore the field and
+   * overwrite). The plugin only sets this when capability detection at
+   * service.start() confirmed support; otherwise it falls back to a
+   * per-turn document id and leaves this unset.
+   */
+  updateMode?: "replace" | "append";
 }
 
 /**

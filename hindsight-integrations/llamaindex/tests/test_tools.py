@@ -140,9 +140,9 @@ class TestCreateHindsightTools:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["base_url"] == "http://localhost:8888"
+            assert mock_cls.call_args.kwargs["timeout"] == 30.0
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
@@ -151,9 +151,9 @@ class TestCreateHindsightTools:
             create_hindsight_tools(
                 bank_id="test", hindsight_api_url="http://explicit:9999"
             )
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            mock_cls.assert_called_once()
+            assert mock_cls.call_args.kwargs["base_url"] == "http://explicit:9999"
+            assert mock_cls.call_args.kwargs["timeout"] == 30.0
 
 
 class TestRetainTool:

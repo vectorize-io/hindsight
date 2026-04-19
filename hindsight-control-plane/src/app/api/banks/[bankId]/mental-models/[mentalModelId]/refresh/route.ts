@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(
   request: Request,
@@ -16,7 +16,7 @@ export async function POST(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/mental-models/${mentalModelId}/refresh`,
+      dataplaneBankUrl(bankId, `/mental-models/${encodeURIComponent(mentalModelId)}/refresh`),
       { method: "POST", headers: getDataplaneHeaders() }
     );
 

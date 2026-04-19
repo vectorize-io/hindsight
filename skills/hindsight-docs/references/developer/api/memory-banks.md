@@ -287,6 +287,40 @@ Controls content filtering thresholds for Gemini and VertexAI providers. Accepts
 
 Only applies when `HINDSIGHT_API_LLM_PROVIDER` is `gemini` or `vertexai`.
 
+### recall_budget_function {#recall-budget-configuration}
+
+Selects how the [`recall` request's `budget` parameter](./recall) (`low` / `mid` / `high`) maps to the internal `thinking_budget` integer used by every retrieval method (semantic, BM25, graph, temporal). Two functions are supported:
+
+| Function | Behaviour |
+|----------|-----------|
+| `fixed` *(default)* | `thinking_budget = recall_budget_fixed_<level>` — independent of `max_tokens`. Preserves legacy behavior. |
+| `adaptive` | `thinking_budget = round(max_tokens * recall_budget_adaptive_<level>)`, clamped to `[recall_budget_min, recall_budget_max]`. Retrieval breadth scales with the requested output size. |
+
+```json
+{
+  "recall_budget_function": "adaptive",
+  "recall_budget_adaptive_low": 0.05,
+  "recall_budget_adaptive_mid": 0.1,
+  "recall_budget_adaptive_high": 0.3,
+  "recall_budget_min": 30,
+  "recall_budget_max": 1500
+}
+```
+
+### recall_budget_fixed_low / recall_budget_fixed_mid / recall_budget_fixed_high
+
+When `recall_budget_function` is `fixed` (the default), these positive integers are used directly as the per-method retrieval limit for each `budget` level. Defaults: `100` / `300` / `1000` — exactly matching the legacy hardcoded mapping.
+
+### recall_budget_adaptive_low / recall_budget_adaptive_mid / recall_budget_adaptive_high
+
+When `recall_budget_function` is `adaptive`, these positive ratios multiply the request's `max_tokens` to derive the per-method retrieval limit. Defaults: `0.025` / `0.075` / `0.25` — chosen to roughly match the fixed defaults at `max_tokens = 4096`.
+
+### recall_budget_min / recall_budget_max
+
+Floor and ceiling applied to the result of the adaptive function (after the ratio multiplication). Both must be positive integers and `min ≤ max`. Defaults: `20` / `2000`.
+
+See [Recall budget mapping](../configuration.md#recall-budget-mapping) for environment variable names and full defaults.
+
 ---
 
 ## Updating Configuration

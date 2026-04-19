@@ -58,9 +58,7 @@ def __getattr__(name: str):
             raise ImportError(
                 f"'{name}' requires langgraph. Install with: pip install hindsight-langgraph[langgraph]"
             ) from None
-        return (
-            create_recall_node if name == "create_recall_node" else create_retain_node
-        )
+        return create_recall_node if name == "create_recall_node" else create_retain_node
 
     if name == "HindsightStore":
         try:

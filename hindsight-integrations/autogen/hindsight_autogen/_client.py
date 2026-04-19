@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from importlib import metadata
 from typing import Any
 
 from hindsight_client import Hindsight
 
 from .config import get_config
 from .errors import HindsightError
+
+try:
+    _VERSION = metadata.version("hindsight-autogen")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-autogen/{_VERSION}"
 
 
 def resolve_client(
@@ -28,7 +35,7 @@ def resolve_client(
             "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
         )
 
-    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0}
+    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
     return Hindsight(**kwargs)

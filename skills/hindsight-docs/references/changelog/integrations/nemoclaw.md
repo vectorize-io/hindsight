@@ -8,6 +8,10 @@ import PageHero from '@site/src/components/PageHero';
 
 ← NemoClaw integration
 
+## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/nemoclaw/v0.1.2)
+
+*This release contains internal maintenance and infrastructure changes only.*
+
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/nemoclaw/v0.1.1)
 
 **Features**

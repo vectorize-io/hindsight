@@ -83,24 +83,12 @@ def create_hindsight_tools(
 
     config = get_config()
     effective_tags = tags if tags is not None else (config.tags if config else None)
-    effective_recall_tags = (
-        recall_tags
-        if recall_tags is not None
-        else (config.recall_tags if config else None)
-    )
+    effective_recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
     effective_recall_tags_match = (
-        recall_tags_match
-        if recall_tags_match is not None
-        else (config.recall_tags_match if config else "any")
+        recall_tags_match if recall_tags_match is not None else (config.recall_tags_match if config else "any")
     )
-    effective_budget = (
-        budget if budget is not None else (config.budget if config else "mid")
-    )
-    effective_max_tokens = (
-        max_tokens
-        if max_tokens is not None
-        else (config.max_tokens if config else 4096)
-    )
+    effective_budget = budget if budget is not None else (config.budget if config else "mid")
+    effective_max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
 
     tools: list = []
 
@@ -197,12 +185,8 @@ def create_hindsight_tools(
                 if reflect_response_schema:
                     reflect_kwargs["response_schema"] = reflect_response_schema
                 # Reflect tags: use reflect-specific or fall back to recall tags
-                effective_reflect_tags = (
-                    reflect_tags if reflect_tags is not None else effective_recall_tags
-                )
-                effective_reflect_tags_match = (
-                    reflect_tags_match or effective_recall_tags_match
-                )
+                effective_reflect_tags = reflect_tags if reflect_tags is not None else effective_recall_tags
+                effective_reflect_tags_match = reflect_tags_match or effective_recall_tags_match
                 if effective_reflect_tags:
                     reflect_kwargs["tags"] = effective_reflect_tags
                     reflect_kwargs["tags_match"] = effective_reflect_tags_match

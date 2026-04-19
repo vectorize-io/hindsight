@@ -2,7 +2,7 @@
 
 # Observations: Knowledge Consolidation
 
-After memories are retained, Hindsight automatically consolidates related facts into **observations** — synthesized knowledge representations that capture patterns and learnings.
+After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs the bank has built up from multiple memories. Each observation tracks its supporting evidence (with exact quotes), a proof count, and a computed freshness trend, and is refined rather than overwritten when new evidence arrives.
 
 ```mermaid
 graph LR
@@ -18,7 +18,7 @@ graph LR
 
 ## What Are Observations?
 
-Observations are **consolidated knowledge** synthesized from multiple facts. Unlike raw facts which are individual pieces of information, observations represent patterns, preferences, and learnings that emerge from accumulated evidence.
+Observations are **consolidated knowledge** built from multiple facts. Unlike raw facts — which are individual pieces of information — observations represent deduplicated beliefs, preferences, and learnings grounded in accumulated evidence. They are not summaries the LLM invents on the fly: each observation is backed by specific source memories, carries a proof count, and evolves as new evidence supports, contradicts, or extends it.
 
 | Raw Facts | Observation |
 |-----------|--------------|
@@ -27,8 +27,10 @@ Observations are **consolidated knowledge** synthesized from multiple facts. Unl
 | "Alice recommends type hints" | |
 
 Observations provide:
-- **Synthesis**: Patterns that emerge from multiple facts
-- **Context**: Richer understanding than individual facts
+- **Deduplication**: One durable belief instead of many overlapping facts
+- **Grounding**: Every observation references the specific memories (with quotes) that support it
+- **Evolution**: Refined as evidence strengthens, weakens, or contradicts it — history is preserved
+- **Freshness signal**: A computed trend (stable / strengthening / weakening / new / stale) tells you whether the belief still holds
 - **Efficiency**: Condensed knowledge for faster retrieval
 
 ---

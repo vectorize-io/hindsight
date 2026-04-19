@@ -79,12 +79,12 @@ On first connection, you'll be redirected to a login page. Enter the `SESSION_SE
 
 ## Secrets reference
 
-| Secret | Purpose |
-|--------|---------|
-| `SESSION_SECRET` | Password shown on the login page to authorize a session |
-| `PROXY_SECRET` | Value sent as `X-Proxy-Secret` header to the origin (for WAF validation) |
-| `HINDSIGHT_API_TOKEN` | Bearer token for authenticating with the Hindsight API |
-| `ALLOWED_EMAIL` | Your email address, used as the OAuth user identity |
+| Secret                | Purpose                                                                  |
+| --------------------- | ------------------------------------------------------------------------ |
+| `SESSION_SECRET`      | Password shown on the login page to authorize a session                  |
+| `PROXY_SECRET`        | Value sent as `X-Proxy-Secret` header to the origin (for WAF validation) |
+| `HINDSIGHT_API_TOKEN` | Bearer token for authenticating with the Hindsight API                   |
+| `ALLOWED_EMAIL`       | Your email address, used as the OAuth user identity                      |
 
 ## Security notes
 

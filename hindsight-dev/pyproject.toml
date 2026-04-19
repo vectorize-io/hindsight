@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hindsight-dev"
-version = "0.5.1"
+version = "0.5.3"
 description = "Development utilities for Hindsight"
 requires-python = ">=3.11"
 dependencies = [
@@ -32,6 +32,7 @@ hindsight-api = { workspace = true }
 
 [project.scripts]
 generate-openapi = "hindsight_dev.generate_openapi:generate_openapi_spec"
+generate-bank-template-schema = "hindsight_dev.generate_bank_template_schema:main"
 generate-changelog = "hindsight_dev.generate_changelog:main"
 sync-cookbook = "hindsight_dev.sync_cookbook:main"
 generate-llms-full = "hindsight_dev.generate_llms_full:main"

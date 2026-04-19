@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createHindsightTools, type HindsightClient } from './index.js';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHindsightTools, type HindsightClient } from "./index.js";
 
-describe('createHindsightTools', () => {
+describe("createHindsightTools", () => {
   let mockClient: HindsightClient;
 
   beforeEach(() => {
@@ -9,59 +9,61 @@ describe('createHindsightTools', () => {
       retain: vi.fn(),
       recall: vi.fn(),
       reflect: vi.fn(),
+      getMentalModel: vi.fn(),
+      getDocument: vi.fn(),
     };
   });
 
-  describe('tool creation', () => {
-    it('should create all tools', () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+  describe("tool creation", () => {
+    it("should create all tools", () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
 
-      expect(tools).toHaveProperty('retain');
-      expect(tools).toHaveProperty('recall');
-      expect(tools).toHaveProperty('reflect');
-      expect(tools).toHaveProperty('getMentalModel');
-      expect(tools).toHaveProperty('getDocument');
-      expect(typeof tools.retain.execute).toBe('function');
-      expect(typeof tools.recall.execute).toBe('function');
-      expect(typeof tools.reflect.execute).toBe('function');
+      expect(tools).toHaveProperty("retain");
+      expect(tools).toHaveProperty("recall");
+      expect(tools).toHaveProperty("reflect");
+      expect(tools).toHaveProperty("getMentalModel");
+      expect(tools).toHaveProperty("getDocument");
+      expect(typeof tools.retain.execute).toBe("function");
+      expect(typeof tools.recall.execute).toBe("function");
+      expect(typeof tools.reflect.execute).toBe("function");
     });
 
-    it('should use default descriptions when not provided', () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+    it("should use default descriptions when not provided", () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
 
-      expect(tools.retain.description).toContain('Store information in long-term memory');
-      expect(tools.recall.description).toContain('Search memory for relevant information');
-      expect(tools.reflect.description).toContain('Analyze memories to form insights');
+      expect(tools.retain.description).toContain("Store information in long-term memory");
+      expect(tools.recall.description).toContain("Search memory for relevant information");
+      expect(tools.reflect.description).toContain("Analyze memories to form insights");
     });
 
-    it('should use custom descriptions from nested options', () => {
+    it("should use custom descriptions from nested options", () => {
       const tools = createHindsightTools({
         client: mockClient,
-        bankId: 'test-bank',
-        retain: { description: 'Custom retain description' },
-        recall: { description: 'Custom recall description' },
-        reflect: { description: 'Custom reflect description' },
+        bankId: "test-bank",
+        retain: { description: "Custom retain description" },
+        recall: { description: "Custom recall description" },
+        reflect: { description: "Custom reflect description" },
       });
 
-      expect(tools.retain.description).toBe('Custom retain description');
-      expect(tools.recall.description).toBe('Custom recall description');
-      expect(tools.reflect.description).toBe('Custom reflect description');
+      expect(tools.retain.description).toBe("Custom retain description");
+      expect(tools.recall.description).toBe("Custom recall description");
+      expect(tools.reflect.description).toBe("Custom reflect description");
     });
   });
 
-  describe('retain tool', () => {
-    it('should call client.retain with agent inputs and constructor defaults', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+  describe("retain tool", () => {
+    it("should call client.retain with agent inputs and constructor defaults", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.retain).mockResolvedValue({
         success: true,
-        bank_id: 'test-bank',
+        bank_id: "test-bank",
         items_count: 5,
         async: false,
       });
 
-      const result = await tools.retain.execute({ content: 'Test content' });
+      const result = await tools.retain.execute({ content: "Test content" });
 
-      expect(mockClient.retain).toHaveBeenCalledWith('test-bank', 'Test content', {
+      expect(mockClient.retain).toHaveBeenCalledWith("test-bank", "Test content", {
         documentId: undefined,
         timestamp: undefined,
         context: undefined,
@@ -72,299 +74,447 @@ describe('createHindsightTools', () => {
       expect(result).toEqual({ success: true, itemsCount: 5 });
     });
 
-    it('should pass agent-provided optional inputs', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+    it("should pass agent-provided optional inputs", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.retain).mockResolvedValue({
         success: true,
-        bank_id: 'test-bank',
+        bank_id: "test-bank",
         items_count: 3,
         async: false,
       });
 
       await tools.retain.execute({
-        content: 'Test content',
-        documentId: 'doc-123',
-        timestamp: '2024-01-01T00:00:00Z',
-        context: 'Test context',
+        content: "Test content",
+        documentId: "doc-123",
+        timestamp: "2024-01-01T00:00:00Z",
+        context: "Test context",
       });
 
-      expect(mockClient.retain).toHaveBeenCalledWith('test-bank', 'Test content', {
-        documentId: 'doc-123',
-        timestamp: '2024-01-01T00:00:00Z',
-        context: 'Test context',
+      expect(mockClient.retain).toHaveBeenCalledWith("test-bank", "Test content", {
+        documentId: "doc-123",
+        timestamp: "2024-01-01T00:00:00Z",
+        context: "Test context",
         tags: undefined,
         metadata: undefined,
         async: false,
       });
     });
 
-    it('should apply constructor-level retain options', async () => {
+    it("should apply constructor-level retain options", async () => {
       const tools = createHindsightTools({
         client: mockClient,
-        bankId: 'test-bank',
+        bankId: "test-bank",
         retain: {
           async: true,
-          tags: ['env:prod', 'app:support'],
-          metadata: { version: '1.0' },
+          tags: ["env:prod", "app:support"],
+          metadata: { version: "1.0" },
         },
       });
       vi.mocked(mockClient.retain).mockResolvedValue({
         success: true,
-        bank_id: 'test-bank',
+        bank_id: "test-bank",
         items_count: 1,
         async: true,
       });
 
-      await tools.retain.execute({ content: 'Test content' });
+      await tools.retain.execute({ content: "Test content" });
 
-      expect(mockClient.retain).toHaveBeenCalledWith('test-bank', 'Test content', {
+      expect(mockClient.retain).toHaveBeenCalledWith("test-bank", "Test content", {
         documentId: undefined,
         timestamp: undefined,
         context: undefined,
-        tags: ['env:prod', 'app:support'],
-        metadata: { version: '1.0' },
+        tags: ["env:prod", "app:support"],
+        metadata: { version: "1.0" },
         async: true,
       });
     });
   });
 
-  describe('recall tool', () => {
-    it('should call client.recall with agent inputs and constructor defaults', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+  describe("recall tool", () => {
+    it("should call client.recall with agent inputs and constructor defaults", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.recall).mockResolvedValue({
-        results: [{ id: 'fact-1', text: 'Test fact', type: 'preference' }],
+        results: [{ id: "fact-1", text: "Test fact", type: "preference" }],
       });
 
-      const result = await tools.recall.execute({ query: 'Test query' });
+      const result = await tools.recall.execute({ query: "Test query" });
 
-      expect(mockClient.recall).toHaveBeenCalledWith('test-bank', 'Test query', {
+      expect(mockClient.recall).toHaveBeenCalledWith("test-bank", "Test query", {
         types: undefined,
         maxTokens: undefined,
-        budget: 'mid',
+        budget: "mid",
         queryTimestamp: undefined,
         includeEntities: false,
         includeChunks: false,
       });
       expect(result.results).toHaveLength(1);
-      expect(result.results[0].id).toBe('fact-1');
+      expect(result.results[0].id).toBe("fact-1");
     });
 
-    it('should pass agent-provided queryTimestamp', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+    it("should pass agent-provided queryTimestamp", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.recall).mockResolvedValue({ results: [] });
 
       await tools.recall.execute({
-        query: 'Test query',
-        queryTimestamp: '2024-01-01T00:00:00Z',
+        query: "Test query",
+        queryTimestamp: "2024-01-01T00:00:00Z",
       });
 
-      expect(mockClient.recall).toHaveBeenCalledWith('test-bank', 'Test query', {
+      expect(mockClient.recall).toHaveBeenCalledWith("test-bank", "Test query", {
         types: undefined,
         maxTokens: undefined,
-        budget: 'mid',
-        queryTimestamp: '2024-01-01T00:00:00Z',
+        budget: "mid",
+        queryTimestamp: "2024-01-01T00:00:00Z",
         includeEntities: false,
         includeChunks: false,
       });
     });
 
-    it('should apply constructor-level recall options', async () => {
+    it("should apply constructor-level recall options", async () => {
       const tools = createHindsightTools({
         client: mockClient,
-        bankId: 'test-bank',
+        bankId: "test-bank",
         recall: {
-          types: ['preference', 'fact'],
+          types: ["preference", "fact"],
           maxTokens: 1000,
-          budget: 'high',
+          budget: "high",
           includeEntities: true,
           includeChunks: true,
         },
       });
       vi.mocked(mockClient.recall).mockResolvedValue({ results: [] });
 
-      await tools.recall.execute({ query: 'Test query' });
+      await tools.recall.execute({ query: "Test query" });
 
-      expect(mockClient.recall).toHaveBeenCalledWith('test-bank', 'Test query', {
-        types: ['preference', 'fact'],
+      expect(mockClient.recall).toHaveBeenCalledWith("test-bank", "Test query", {
+        types: ["preference", "fact"],
         maxTokens: 1000,
-        budget: 'high',
+        budget: "high",
         queryTimestamp: undefined,
         includeEntities: true,
         includeChunks: true,
       });
     });
 
-    it('should handle empty results', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+    it("should handle empty results", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.recall).mockResolvedValue({ results: undefined as any });
 
-      const result = await tools.recall.execute({ query: 'Test query' });
+      const result = await tools.recall.execute({ query: "Test query" });
 
       expect(result.results).toEqual([]);
     });
 
-    it('should include entities when present', async () => {
+    it("should include entities when present", async () => {
       const tools = createHindsightTools({
         client: mockClient,
-        bankId: 'test-bank',
+        bankId: "test-bank",
         recall: { includeEntities: true },
       });
       const entities = {
-        'entity-1': {
-          entity_id: 'entity-1',
-          canonical_name: 'Alice',
-          observations: [{ text: 'Alice loves hiking' }],
+        "entity-1": {
+          entity_id: "entity-1",
+          canonical_name: "Alice",
+          observations: [{ text: "Alice loves hiking" }],
         },
       };
       vi.mocked(mockClient.recall).mockResolvedValue({ results: [], entities });
 
-      const result = await tools.recall.execute({ query: 'Test query' });
+      const result = await tools.recall.execute({ query: "Test query" });
 
       expect(result.entities).toEqual(entities);
     });
   });
 
-  describe('reflect tool', () => {
-    it('should call client.reflect with agent inputs and constructor defaults', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+  describe("reflect tool", () => {
+    it("should call client.reflect with agent inputs and constructor defaults", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.reflect).mockResolvedValue({
-        text: 'Reflection result',
-        based_on: [{ id: 'fact-1', text: 'Supporting fact' }],
+        text: "Reflection result",
+        based_on: { memories: [{ id: "fact-1", text: "Supporting fact" }] },
       });
 
-      const result = await tools.reflect.execute({ query: 'What are my preferences?' });
+      const result = await tools.reflect.execute({ query: "What are my preferences?" });
 
-      expect(mockClient.reflect).toHaveBeenCalledWith('test-bank', 'What are my preferences?', {
+      expect(mockClient.reflect).toHaveBeenCalledWith("test-bank", "What are my preferences?", {
         context: undefined,
-        budget: 'mid',
+        budget: "mid",
       });
-      expect(result.text).toBe('Reflection result');
-      expect(result.basedOn).toHaveLength(1);
+      expect(result.text).toBe("Reflection result");
+      expect(result.basedOn?.memories).toHaveLength(1);
     });
 
-    it('should pass agent-provided context', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.reflect).mockResolvedValue({ text: 'Reflection result' });
+    it("should pass agent-provided context", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.reflect).mockResolvedValue({ text: "Reflection result" });
 
       await tools.reflect.execute({
-        query: 'What are my preferences?',
-        context: 'User context',
+        query: "What are my preferences?",
+        context: "User context",
       });
 
-      expect(mockClient.reflect).toHaveBeenCalledWith('test-bank', 'What are my preferences?', {
-        context: 'User context',
-        budget: 'mid',
+      expect(mockClient.reflect).toHaveBeenCalledWith("test-bank", "What are my preferences?", {
+        context: "User context",
+        budget: "mid",
       });
     });
 
-    it('should apply constructor-level reflect budget', async () => {
+    it("should apply constructor-level reflect budget", async () => {
       const tools = createHindsightTools({
         client: mockClient,
-        bankId: 'test-bank',
-        reflect: { budget: 'low' },
+        bankId: "test-bank",
+        reflect: { budget: "low" },
       });
-      vi.mocked(mockClient.reflect).mockResolvedValue({ text: 'Reflection result' });
+      vi.mocked(mockClient.reflect).mockResolvedValue({ text: "Reflection result" });
 
-      await tools.reflect.execute({ query: 'Test query' });
+      await tools.reflect.execute({ query: "Test query" });
 
-      expect(mockClient.reflect).toHaveBeenCalledWith('test-bank', 'Test query', {
+      expect(mockClient.reflect).toHaveBeenCalledWith("test-bank", "Test query", {
         context: undefined,
-        budget: 'low',
+        budget: "low",
       });
     });
 
-    it('should handle empty text response with fallback', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
+    it("should handle empty text response with fallback", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.reflect).mockResolvedValue({ text: undefined as any });
 
-      const result = await tools.reflect.execute({ query: 'Test query' });
+      const result = await tools.reflect.execute({ query: "Test query" });
 
-      expect(result.text).toBe('No insights available yet.');
+      expect(result.text).toBe("No insights available yet.");
     });
 
-    it('should include basedOn facts when present', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      const basedOn = [
-        { id: 'fact-1', text: 'User prefers spicy food', type: 'preference' },
-        { id: 'fact-2', text: 'User is allergic to nuts', type: 'health' },
-      ];
+    it("should include basedOn facts when present", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      const basedOn = {
+        memories: [
+          { id: "fact-1", text: "User prefers spicy food", type: "preference" },
+          { id: "fact-2", text: "User is allergic to nuts", type: "health" },
+        ],
+      };
       vi.mocked(mockClient.reflect).mockResolvedValue({
-        text: 'Based on your history, you prefer spicy Asian cuisine',
+        text: "Based on your history, you prefer spicy Asian cuisine",
         based_on: basedOn,
       });
 
-      const result = await tools.reflect.execute({ query: 'What do I like?' });
+      const result = await tools.reflect.execute({ query: "What do I like?" });
 
       expect(result.basedOn).toEqual(basedOn);
     });
+
+    it("should pass through based_on with mental_models and directives", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      const basedOn = {
+        memories: [{ id: "fact-1", text: "User likes coffee" }],
+        mental_models: [{ id: "mm-1", name: "Preferences", content: "Likes coffee" }],
+        directives: [{ id: "dir-1", content: "Be concise" }],
+      };
+      vi.mocked(mockClient.reflect).mockResolvedValue({
+        text: "You like coffee",
+        based_on: basedOn,
+      });
+
+      const result = await tools.reflect.execute({ query: "What do I like?" });
+
+      expect(result.basedOn?.memories).toHaveLength(1);
+      expect(result.basedOn?.mental_models).toHaveLength(1);
+      expect(result.basedOn?.directives).toHaveLength(1);
+    });
+
+    it("should handle null based_on", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.reflect).mockResolvedValue({
+        text: "No memories found",
+        based_on: null,
+      });
+
+      const result = await tools.reflect.execute({ query: "Test" });
+
+      expect(result.text).toBe("No memories found");
+      expect(result.basedOn).toBeNull();
+    });
   });
 
-  describe('error handling', () => {
-    it('should propagate errors from client.retain', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.retain).mockRejectedValue(new Error('Retain failed'));
+  describe("getMentalModel tool", () => {
+    it("should call client.getMentalModel with bankId and mentalModelId", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getMentalModel).mockResolvedValue({
+        id: "mm-123",
+        bank_id: "test-bank",
+        name: "User Preferences",
+        content: "Likes functional programming",
+        source_query: "What are user preferences?",
+        tags: ["preferences"],
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-02T00:00:00Z",
+      });
 
-      await expect(tools.retain.execute({ content: 'Test content' })).rejects.toThrow('Retain failed');
+      const result = await tools.getMentalModel.execute({ mentalModelId: "mm-123" });
+
+      expect(mockClient.getMentalModel).toHaveBeenCalledWith("test-bank", "mm-123");
+      expect(result.content).toBe("Likes functional programming");
+      expect(result.name).toBe("User Preferences");
+      expect(result.updatedAt).toBe("2024-01-02T00:00:00Z");
     });
 
-    it('should propagate errors from client.recall', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.recall).mockRejectedValue(new Error('Recall failed'));
+    it("should handle null content with fallback", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getMentalModel).mockResolvedValue({
+        id: "mm-123",
+        bank_id: "test-bank",
+        name: "Empty Model",
+        content: null,
+        created_at: null,
+        updated_at: null,
+      });
 
-      await expect(tools.recall.execute({ query: 'Test query' })).rejects.toThrow('Recall failed');
+      const result = await tools.getMentalModel.execute({ mentalModelId: "mm-123" });
+
+      expect(result.content).toBe("No content available yet.");
+      expect(result.name).toBe("Empty Model");
+      expect(result.updatedAt).toBeNull();
     });
 
-    it('should propagate errors from client.reflect', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.reflect).mockRejectedValue(new Error('Reflect failed'));
+    it("should propagate errors from client.getMentalModel", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getMentalModel).mockRejectedValue(new Error("Not found"));
 
-      await expect(tools.reflect.execute({ query: 'Test query' })).rejects.toThrow('Reflect failed');
+      await expect(tools.getMentalModel.execute({ mentalModelId: "mm-bad" })).rejects.toThrow(
+        "Not found"
+      );
     });
   });
 
-  describe('budget defaults', () => {
-    it('should default recall budget to mid', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.recall).mockResolvedValue({ results: [] });
+  describe("getDocument tool", () => {
+    it("should call client.getDocument with bankId and documentId", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getDocument).mockResolvedValue({
+        id: "doc-123",
+        bank_id: "test-bank",
+        original_text: "Hello world",
+        content_hash: "abc123",
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-02T00:00:00Z",
+        memory_unit_count: 3,
+        tags: ["greeting"],
+      });
 
-      await tools.recall.execute({ query: 'Test' });
+      const result = await tools.getDocument.execute({ documentId: "doc-123" });
 
-      expect(mockClient.recall).toHaveBeenCalledWith('test-bank', 'Test', expect.objectContaining({ budget: 'mid' }));
+      expect(mockClient.getDocument).toHaveBeenCalledWith("test-bank", "doc-123");
+      expect(result).toEqual({
+        originalText: "Hello world",
+        id: "doc-123",
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-02T00:00:00Z",
+      });
     });
 
-    it('should default reflect budget to mid', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank' });
-      vi.mocked(mockClient.reflect).mockResolvedValue({ text: 'ok' });
+    it("should return null when document not found", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getDocument).mockResolvedValue(null);
 
-      await tools.reflect.execute({ query: 'Test' });
+      const result = await tools.getDocument.execute({ documentId: "doc-missing" });
 
-      expect(mockClient.reflect).toHaveBeenCalledWith('test-bank', 'Test', expect.objectContaining({ budget: 'mid' }));
+      expect(result).toBeNull();
     });
 
-    it('should accept low/mid/high budget values', async () => {
+    it("should propagate errors from client.getDocument", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.getDocument).mockRejectedValue(new Error("Server error"));
+
+      await expect(tools.getDocument.execute({ documentId: "doc-bad" })).rejects.toThrow(
+        "Server error"
+      );
+    });
+  });
+
+  describe("error handling", () => {
+    it("should propagate errors from client.retain", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.retain).mockRejectedValue(new Error("Retain failed"));
+
+      await expect(tools.retain.execute({ content: "Test content" })).rejects.toThrow(
+        "Retain failed"
+      );
+    });
+
+    it("should propagate errors from client.recall", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.recall).mockRejectedValue(new Error("Recall failed"));
+
+      await expect(tools.recall.execute({ query: "Test query" })).rejects.toThrow("Recall failed");
+    });
+
+    it("should propagate errors from client.reflect", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.reflect).mockRejectedValue(new Error("Reflect failed"));
+
+      await expect(tools.reflect.execute({ query: "Test query" })).rejects.toThrow(
+        "Reflect failed"
+      );
+    });
+  });
+
+  describe("budget defaults", () => {
+    it("should default recall budget to mid", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
       vi.mocked(mockClient.recall).mockResolvedValue({ results: [] });
 
-      for (const budget of ['low', 'mid', 'high'] as const) {
-        const tools = createHindsightTools({ client: mockClient, bankId: 'test-bank', recall: { budget } });
-        await tools.recall.execute({ query: 'Test' });
-        expect(mockClient.recall).toHaveBeenCalledWith('test-bank', 'Test', expect.objectContaining({ budget }));
+      await tools.recall.execute({ query: "Test" });
+
+      expect(mockClient.recall).toHaveBeenCalledWith(
+        "test-bank",
+        "Test",
+        expect.objectContaining({ budget: "mid" })
+      );
+    });
+
+    it("should default reflect budget to mid", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "test-bank" });
+      vi.mocked(mockClient.reflect).mockResolvedValue({ text: "ok" });
+
+      await tools.reflect.execute({ query: "Test" });
+
+      expect(mockClient.reflect).toHaveBeenCalledWith(
+        "test-bank",
+        "Test",
+        expect.objectContaining({ budget: "mid" })
+      );
+    });
+
+    it("should accept low/mid/high budget values", async () => {
+      vi.mocked(mockClient.recall).mockResolvedValue({ results: [] });
+
+      for (const budget of ["low", "mid", "high"] as const) {
+        const tools = createHindsightTools({
+          client: mockClient,
+          bankId: "test-bank",
+          recall: { budget },
+        });
+        await tools.recall.execute({ query: "Test" });
+        expect(mockClient.recall).toHaveBeenCalledWith(
+          "test-bank",
+          "Test",
+          expect.objectContaining({ budget })
+        );
       }
     });
   });
 
-  describe('bankId enforcement', () => {
-    it('should always use the bankId from constructor options', async () => {
-      const tools = createHindsightTools({ client: mockClient, bankId: 'forced-bank' });
+  describe("bankId enforcement", () => {
+    it("should always use the bankId from constructor options", async () => {
+      const tools = createHindsightTools({ client: mockClient, bankId: "forced-bank" });
       vi.mocked(mockClient.retain).mockResolvedValue({
         success: true,
-        bank_id: 'forced-bank',
+        bank_id: "forced-bank",
         items_count: 1,
         async: false,
       });
 
-      await tools.retain.execute({ content: 'Test' });
+      await tools.retain.execute({ content: "Test" });
 
-      expect(mockClient.retain).toHaveBeenCalledWith('forced-bank', 'Test', expect.anything());
+      expect(mockClient.retain).toHaveBeenCalledWith("forced-bank", "Test", expect.anything());
     });
   });
 });

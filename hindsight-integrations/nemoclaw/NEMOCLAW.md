@@ -63,12 +63,12 @@ Add the plugin config to `~/.openclaw/openclaw.json` under `plugins.entries.hind
 
 **Config notes:**
 
-| Field | Value | Why |
-|-------|-------|-----|
-| `hindsightApiUrl` + `hindsightApiToken` | External API URL + key | Skips the local daemon; no `uvx`/`uv` required inside the sandbox |
-| `llmProvider: "claude-code"` | `"claude-code"` | Satisfies LLM detection without a separate API key — Claude Code is available in the sandbox via the `claude_code` policy |
-| `dynamicBankId: false` | `false` | All conversations write to one bank; easier to verify during testing |
-| `bankIdPrefix` | e.g. `"my-sandbox"` | Results in bank ID `my-sandbox-openclaw` |
+| Field                                   | Value                  | Why                                                                                                                       |
+| --------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `hindsightApiUrl` + `hindsightApiToken` | External API URL + key | Skips the local daemon; no `uvx`/`uv` required inside the sandbox                                                         |
+| `llmProvider: "claude-code"`            | `"claude-code"`        | Satisfies LLM detection without a separate API key — Claude Code is available in the sandbox via the `claude_code` policy |
+| `dynamicBankId: false`                  | `false`                | All conversations write to one bank; easier to verify during testing                                                      |
+| `bankIdPrefix`                          | e.g. `"my-sandbox"`    | Results in bank ID `my-sandbox-openclaw`                                                                                  |
 
 > **Note:** The gateway log will say `Dynamic bank IDs disabled - using static bank: openclaw` — this is a misleading log message. The actual bank ID used at runtime correctly applies the prefix (e.g. `my-sandbox-openclaw`). You can verify by watching for `[Hindsight] Default bank: my-sandbox-openclaw` in the logs after full initialization.
 
@@ -183,6 +183,7 @@ openclaw plugins install /path/to/hindsight-integrations/openclaw  # no --link
 **`[Hindsight] Failed to retain memory (HTTP 403)`**
 
 The sandbox network policy is blocking the outbound call. Check that:
+
 1. The `hindsight` network policy block is present in your policy YAML
 2. The policy was applied and shows `Status: Loaded` (`openshell policy get <name>`)
 3. The `binaries` list includes `/usr/local/bin/openclaw`

@@ -1,5 +1,5 @@
-import { runSetup } from './setup.js';
-import type { CliArgs } from './types.js';
+import { runSetup } from "./setup.js";
+import type { CliArgs } from "./types.js";
 
 function usage(): void {
   process.stdout.write(`
@@ -32,12 +32,12 @@ Example:
 function parseArgs(argv: string[]): CliArgs | null {
   const args = argv.slice(2);
 
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     usage();
     return null;
   }
 
-  if (args[0] !== 'setup') {
+  if (args[0] !== "setup") {
     process.stderr.write(`Unknown command: ${args[0]}\nRun with --help for usage.\n`);
     process.exit(1);
   }
@@ -48,19 +48,21 @@ function parseArgs(argv: string[]): CliArgs | null {
     return args[idx + 1];
   };
 
-  const sandbox = get('--sandbox');
-  const apiUrl = get('--api-url');
-  const apiToken = get('--api-token');
-  const bankPrefix = get('--bank-prefix');
+  const sandbox = get("--sandbox");
+  const apiUrl = get("--api-url");
+  const apiToken = get("--api-token");
+  const bankPrefix = get("--bank-prefix");
 
   const missing: string[] = [];
-  if (!sandbox) missing.push('--sandbox');
-  if (!apiUrl) missing.push('--api-url');
-  if (!apiToken) missing.push('--api-token');
-  if (!bankPrefix) missing.push('--bank-prefix');
+  if (!sandbox) missing.push("--sandbox");
+  if (!apiUrl) missing.push("--api-url");
+  if (!apiToken) missing.push("--api-token");
+  if (!bankPrefix) missing.push("--bank-prefix");
 
   if (missing.length > 0) {
-    process.stderr.write(`Missing required options: ${missing.join(', ')}\nRun with --help for usage.\n`);
+    process.stderr.write(
+      `Missing required options: ${missing.join(", ")}\nRun with --help for usage.\n`
+    );
     process.exit(1);
   }
 
@@ -69,15 +71,15 @@ function parseArgs(argv: string[]): CliArgs | null {
     apiUrl: apiUrl!,
     apiToken: apiToken!,
     bankPrefix: bankPrefix!,
-    skipPolicy: args.includes('--skip-policy'),
-    skipPluginInstall: args.includes('--skip-plugin-install'),
-    dryRun: args.includes('--dry-run'),
+    skipPolicy: args.includes("--skip-policy"),
+    skipPluginInstall: args.includes("--skip-plugin-install"),
+    dryRun: args.includes("--dry-run"),
   };
 }
 
 const args = parseArgs(process.argv);
 if (args) {
-  runSetup(args).catch(err => {
+  runSetup(args).catch((err) => {
     process.stderr.write(`\nError: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   });

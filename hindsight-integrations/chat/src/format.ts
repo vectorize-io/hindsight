@@ -1,7 +1,7 @@
-import type { RecallResult, EntityState, MemoryPromptOptions } from './types.js';
+import type { RecallResult, EntityState, MemoryPromptOptions } from "./types.js";
 
 const DEFAULT_PREAMBLE =
-  'You have access to the following memories about this user from previous interactions:';
+  "You have access to the following memories about this user from previous interactions:";
 
 /**
  * Formats recalled memories and entity observations into a system prompt string.
@@ -24,9 +24,7 @@ export function formatMemoriesAsSystemPrompt(
   let filtered = memories;
 
   if (includeTypes && includeTypes.length > 0) {
-    filtered = filtered.filter(
-      (m) => m.type != null && includeTypes.includes(m.type as never)
-    );
+    filtered = filtered.filter((m) => m.type != null && includeTypes.includes(m.type as never));
   }
 
   if (maxMemories != null && maxMemories > 0) {
@@ -38,31 +36,31 @@ export function formatMemoriesAsSystemPrompt(
   const hasEntities = includeEntities && entityEntries.length > 0;
 
   if (!hasMemories && !hasEntities) {
-    return '';
+    return "";
   }
 
-  const parts: string[] = [preamble, ''];
+  const parts: string[] = [preamble, ""];
 
   if (hasMemories) {
-    parts.push('<memories>');
+    parts.push("<memories>");
     for (const memory of filtered) {
-      const typeSuffix = memory.type ? ` [${memory.type}]` : '';
+      const typeSuffix = memory.type ? ` [${memory.type}]` : "";
       parts.push(`- ${memory.text}${typeSuffix}`);
     }
-    parts.push('</memories>');
+    parts.push("</memories>");
   }
 
   if (hasEntities) {
-    if (hasMemories) parts.push('');
-    parts.push('<entity_observations>');
+    if (hasMemories) parts.push("");
+    parts.push("<entity_observations>");
     for (const entity of entityEntries) {
       parts.push(`## ${entity.canonical_name}`);
       for (const obs of entity.observations) {
         parts.push(`- ${obs.text}`);
       }
     }
-    parts.push('</entity_observations>');
+    parts.push("</entity_observations>");
   }
 
-  return parts.join('\n');
+  return parts.join("\n");
 }

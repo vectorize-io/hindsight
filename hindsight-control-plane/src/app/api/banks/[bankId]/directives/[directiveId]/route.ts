@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: Request,
@@ -13,7 +13,7 @@ export async function GET(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/directives/${directiveId}`,
+      dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
       { method: "GET", headers: getDataplaneHeaders() }
     );
 
@@ -45,7 +45,7 @@ export async function PATCH(
     const body = await request.json();
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/directives/${directiveId}`,
+      dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
       {
         method: "PATCH",
         headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
@@ -82,7 +82,7 @@ export async function DELETE(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/directives/${directiveId}`,
+      dataplaneBankUrl(bankId, `/directives/${encodeURIComponent(directiveId)}`),
       { method: "DELETE", headers: getDataplaneHeaders() }
     );
 

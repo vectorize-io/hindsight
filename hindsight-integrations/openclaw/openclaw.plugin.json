@@ -36,15 +36,7 @@
       "llmProvider": {
         "type": "string",
         "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code').",
-        "enum": [
-          "openai",
-          "anthropic",
-          "gemini",
-          "groq",
-          "ollama",
-          "openai-codex",
-          "claude-code"
-        ]
+        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
       },
       "llmModel": {
         "type": "string",
@@ -117,19 +109,10 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "agent",
-            "channel",
-            "user",
-            "provider"
-          ]
+          "enum": ["agent", "channel", "user", "provider"]
         },
         "description": "Fields used to derive bank ID. Controls memory isolation granularity. Default: ['agent', 'channel', 'user'].",
-        "default": [
-          "agent",
-          "channel",
-          "user"
-        ]
+        "default": ["agent", "channel", "user"]
       },
       "autoRetain": {
         "type": "boolean",
@@ -140,18 +123,10 @@
         "type": "array",
         "items": {
           "type": "string",
-          "enum": [
-            "user",
-            "assistant",
-            "system",
-            "tool"
-          ]
+          "enum": ["user", "assistant", "system", "tool"]
         },
         "description": "Message roles to include in retained transcript. Default: ['user', 'assistant'].",
-        "default": [
-          "user",
-          "assistant"
-        ]
+        "default": ["user", "assistant"]
       },
       "retainFormat": {
         "type": "string",

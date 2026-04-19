@@ -106,18 +106,14 @@ def create_recall_node(
     """
     resolved_client = resolve_client(client, hindsight_api_url, api_key)
 
-    async def recall_node(
-        state: MessagesState, config: Optional[RunnableConfig] = None
-    ) -> dict[str, Any]:
+    async def recall_node(state: MessagesState, config: Optional[RunnableConfig] = None) -> dict[str, Any]:
         resolved_bank_id = bank_id
         if resolved_bank_id is None and config:
             configurable = config.get("configurable", {})
             resolved_bank_id = configurable.get(bank_id_from_config)
 
         if not resolved_bank_id:
-            logger.warning(
-                "No bank_id available for recall node, skipping memory injection."
-            )
+            logger.warning("No bank_id available for recall node, skipping memory injection.")
             if output_key:
                 return {output_key: None}
             return {"messages": []}
@@ -160,11 +156,7 @@ def create_recall_node(
 
             if output_key:
                 return {output_key: memory_text}
-            return {
-                "messages": [
-                    SystemMessage(content=memory_text, id="hindsight_memory_context")
-                ]
-            }
+            return {"messages": [SystemMessage(content=memory_text, id="hindsight_memory_context")]}
         except Exception as e:
             logger.error(f"Recall node failed: {e}")
             if output_key:
@@ -206,18 +198,14 @@ def create_retain_node(
     """
     resolved_client = resolve_client(client, hindsight_api_url, api_key)
 
-    async def retain_node(
-        state: MessagesState, config: Optional[RunnableConfig] = None
-    ) -> dict[str, Any]:
+    async def retain_node(state: MessagesState, config: Optional[RunnableConfig] = None) -> dict[str, Any]:
         resolved_bank_id = bank_id
         if resolved_bank_id is None and config:
             configurable = config.get("configurable", {})
             resolved_bank_id = configurable.get(bank_id_from_config)
 
         if not resolved_bank_id:
-            logger.warning(
-                "No bank_id available for retain node, skipping memory storage."
-            )
+            logger.warning("No bank_id available for retain node, skipping memory storage.")
             return {"messages": []}
 
         # Only retain the latest human and/or AI message to avoid

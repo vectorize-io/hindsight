@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+from importlib import metadata
 from typing import Any
+
+try:
+    _VERSION = metadata.version("hindsight-strands")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-strands/{_VERSION}"
 
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
@@ -23,6 +30,7 @@ def _run_in_thread(fn: Any, *args: Any, **kwargs: Any) -> Any:
     an already-running loop. Running in a separate thread gives a fresh loop.
     """
     return _executor.submit(fn, *args, **kwargs).result()
+
 
 from hindsight_client import Hindsight
 from strands import tool
@@ -48,11 +56,10 @@ def _resolve_client(
 
     if url is None:
         raise HindsightError(
-            "No Hindsight API URL configured. "
-            "Pass client= or hindsight_api_url=, or call configure() first."
+            "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
         )
 
-    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0}
+    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
     return Hindsight(**kwargs)
@@ -104,14 +111,8 @@ def create_hindsight_tools(
     # Resolve defaults from global config
     config = get_config()
     effective_tags = tags if tags is not None else (config.tags if config else None)
-    effective_recall_tags = (
-        recall_tags
-        if recall_tags is not None
-        else (config.recall_tags if config else None)
-    )
-    effective_recall_tags_match = recall_tags_match or (
-        config.recall_tags_match if config else "any"
-    )
+    effective_recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
+    effective_recall_tags_match = recall_tags_match or (config.recall_tags_match if config else "any")
     effective_budget = budget or (config.budget if config else "mid")
     effective_max_tokens = max_tokens or (config.max_tokens if config else 4096)
 

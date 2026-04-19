@@ -1,0 +1,29 @@
+line-length = 120
+target-version = "py311"
+exclude = [
+    "tests/",
+    "**/tests/",
+    "**/.venv/",
+    "**/dist/",
+    "**/build/",
+]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module import not at top of file
+    "F401",   # unused import (too noisy during development)
+    "F841",   # unused variable (too noisy during development)
+    "F811",   # redefined while unused
+    "F821",   # undefined name (forward references in type hints)
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"

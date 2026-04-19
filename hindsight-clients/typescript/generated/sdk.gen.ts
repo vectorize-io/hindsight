@@ -81,10 +81,16 @@ import type {
   GetDocumentResponses,
   GetEntityData,
   GetEntityErrors,
+  GetEntityGraphData,
+  GetEntityGraphErrors,
+  GetEntityGraphResponses,
   GetEntityResponses,
   GetGraphData,
   GetGraphErrors,
   GetGraphResponses,
+  GetMemoriesTimeseriesData,
+  GetMemoriesTimeseriesErrors,
+  GetMemoriesTimeseriesResponses,
   GetMemoryData,
   GetMemoryErrors,
   GetMemoryResponses,
@@ -391,6 +397,23 @@ export const getAgentStats = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/stats", ...options });
 
 /**
+ * Memory ingestion time-series
+ *
+ * Memories ingested over a period, bucketed by time and broken down by fact type.
+ */
+export const getMemoriesTimeseries = <ThrowOnError extends boolean = false>(
+  options: Options<GetMemoriesTimeseriesData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetMemoriesTimeseriesResponses,
+    GetMemoriesTimeseriesErrors,
+    ThrowOnError
+  >({
+    url: "/v1/default/banks/{bank_id}/stats/memories-timeseries",
+    ...options,
+  });
+
+/**
  * List entities
  *
  * List all entities (people, organizations, etc.) known by the bank, ordered by mention count. Supports pagination.
@@ -403,6 +426,20 @@ export const listEntities = <ThrowOnError extends boolean = false>(
     ListEntitiesErrors,
     ThrowOnError
   >({ url: "/v1/default/banks/{bank_id}/entities", ...options });
+
+/**
+ * Get entity co-occurrence graph
+ *
+ * Return a graph of entities (nodes) and their co-occurrences (edges) for visualization.
+ */
+export const getEntityGraph = <ThrowOnError extends boolean = false>(
+  options: Options<GetEntityGraphData, ThrowOnError>,
+) =>
+  (options.client ?? client).get<
+    GetEntityGraphResponses,
+    GetEntityGraphErrors,
+    ThrowOnError
+  >({ url: "/v1/default/banks/{bank_id}/entities/graph", ...options });
 
 /**
  * Get entity details

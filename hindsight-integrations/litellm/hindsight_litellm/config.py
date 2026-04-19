@@ -17,7 +17,14 @@ This module provides a clean API for configuring Hindsight integration:
 import os
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
+from importlib import metadata
 from typing import Any, Dict, List, Optional
+
+try:
+    _VERSION = metadata.version("hindsight-litellm")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+USER_AGENT = f"hindsight-litellm/{_VERSION}"
 
 # Default Hindsight API URL (production)
 DEFAULT_HINDSIGHT_API_URL = "https://api.hindsight.vectorize.io"
@@ -129,9 +136,7 @@ class HindsightCallSettings:
         return self.session_id if self.session_id is not None else self.document_id
 
 
-def _merge_call_settings(
-    defaults: HindsightCallSettings, kwargs: Dict[str, Any]
-) -> HindsightCallSettings:
+def _merge_call_settings(defaults: HindsightCallSettings, kwargs: Dict[str, Any]) -> HindsightCallSettings:
     """Merge per-call kwargs (hindsight_*) with defaults.
 
     This automatically handles all fields in HindsightCallSettings.
@@ -186,9 +191,7 @@ class HindsightConfig:
     api_key: Optional[str] = None
     excluded_models: List[str] = field(default_factory=list)
     sync_storage: bool = False
-    default_settings: HindsightCallSettings = field(
-        default_factory=HindsightCallSettings
-    )
+    default_settings: HindsightCallSettings = field(default_factory=HindsightCallSettings)
 
     # Backward compatibility properties - delegate to default_settings
     @property
@@ -439,34 +442,20 @@ def set_defaults(
         bank_id=bank_id if bank_id is not None else current.bank_id,
         document_id=document_id if document_id is not None else current.document_id,
         session_id=session_id if session_id is not None else current.session_id,
-        store_conversations=store_conversations
-        if store_conversations is not None
-        else current.store_conversations,
-        inject_memories=inject_memories
-        if inject_memories is not None
-        else current.inject_memories,
-        injection_mode=injection_mode
-        if injection_mode is not None
-        else current.injection_mode,
+        store_conversations=store_conversations if store_conversations is not None else current.store_conversations,
+        inject_memories=inject_memories if inject_memories is not None else current.inject_memories,
+        injection_mode=injection_mode if injection_mode is not None else current.injection_mode,
         budget=budget if budget is not None else current.budget,
         fact_types=fact_types if fact_types is not None else current.fact_types,
         max_memories=max_memories if max_memories is not None else current.max_memories,
-        max_memory_tokens=max_memory_tokens
-        if max_memory_tokens is not None
-        else current.max_memory_tokens,
-        include_entities=include_entities
-        if include_entities is not None
-        else current.include_entities,
+        max_memory_tokens=max_memory_tokens if max_memory_tokens is not None else current.max_memory_tokens,
+        include_entities=include_entities if include_entities is not None else current.include_entities,
         trace=trace if trace is not None else current.trace,
         tags=tags if tags is not None else current.tags,
         recall_tags=recall_tags if recall_tags is not None else current.recall_tags,
-        recall_tags_match=recall_tags_match
-        if recall_tags_match is not None
-        else current.recall_tags_match,
+        recall_tags_match=recall_tags_match if recall_tags_match is not None else current.recall_tags_match,
         use_reflect=use_reflect if use_reflect is not None else current.use_reflect,
-        reflect_context=reflect_context
-        if reflect_context is not None
-        else current.reflect_context,
+        reflect_context=reflect_context if reflect_context is not None else current.reflect_context,
         reflect_response_schema=reflect_response_schema
         if reflect_response_schema is not None
         else current.reflect_response_schema,
@@ -508,7 +497,7 @@ def _create_or_update_bank(
     try:
         from hindsight_client import Hindsight
 
-        client = Hindsight(base_url=hindsight_api_url, api_key=api_key)
+        client = Hindsight(base_url=hindsight_api_url, api_key=api_key, user_agent=USER_AGENT)
         client.create_bank(
             bank_id=bank_id,
             name=name,
@@ -517,24 +506,19 @@ def _create_or_update_bank(
         if verbose:
             import logging
 
-            logging.getLogger("hindsight_litellm").info(
-                f"Created/updated bank '{bank_id}' with mission"
-            )
+            logging.getLogger("hindsight_litellm").info(f"Created/updated bank '{bank_id}' with mission")
     except ImportError:
         if verbose:
             import logging
 
             logging.getLogger("hindsight_litellm").warning(
-                "hindsight_client not installed. Cannot create bank. "
-                "Install with: pip install hindsight-client"
+                "hindsight_client not installed. Cannot create bank. Install with: pip install hindsight-client"
             )
     except Exception as e:
         if verbose:
             import logging
 
-            logging.getLogger("hindsight_litellm").warning(
-                f"Failed to create/update bank: {e}"
-            )
+            logging.getLogger("hindsight_litellm").warning(f"Failed to create/update bank: {e}")
 
 
 def get_config() -> Optional[HindsightConfig]:
@@ -572,5 +556,3 @@ def reset_config() -> None:
     """Reset all global configuration to None."""
     global _global_config
     _global_config = None
-
-

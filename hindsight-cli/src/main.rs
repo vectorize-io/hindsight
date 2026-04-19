@@ -45,6 +45,12 @@ struct Cli {
     #[arg(short = 'v', long, global = true)]
     verbose: bool,
 
+    /// Named profile to load from ~/.hindsight/cli-profiles/<name>.toml
+    /// (env var HINDSIGHT_PROFILE is used if this flag is omitted).
+    /// Environment variables (HINDSIGHT_API_URL / HINDSIGHT_API_KEY) still override profile values.
+    #[arg(short = 'p', long, global = true, env = "HINDSIGHT_PROFILE")]
+    profile: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -129,7 +135,7 @@ enum Commands {
 
     /// Configure the CLI (API URL, API key, etc.)
     #[command(
-        after_help = "Configuration priority:\n  1. Environment variables (HINDSIGHT_API_URL, HINDSIGHT_API_KEY) - highest priority\n  2. Config file (~/.hindsight/config)\n  3. Default (http://localhost:8888)"
+        after_help = "Configuration priority:\n  1. Environment variables (HINDSIGHT_API_URL, HINDSIGHT_API_KEY) - highest priority\n  2. Named profile (-p / HINDSIGHT_PROFILE, see 'hindsight profile')\n  3. Config file (~/.hindsight/config)\n  4. Default (http://localhost:8888)"
     )]
     Configure {
         /// API URL to connect to (interactive prompt if not provided)
@@ -138,6 +144,40 @@ enum Commands {
         /// API key for authentication (sent as Bearer token)
         #[arg(long)]
         api_key: Option<String>,
+    },
+
+    /// Manage named connection profiles (~/.hindsight/cli-profiles/<name>.toml)
+    #[command(subcommand)]
+    Profile(ProfileCommands),
+}
+
+#[derive(Subcommand)]
+enum ProfileCommands {
+    /// Create or overwrite a profile
+    Create {
+        /// Profile name (used with -p/--profile or $HINDSIGHT_PROFILE)
+        name: String,
+        /// API URL (required)
+        #[arg(long)]
+        api_url: String,
+        /// API key (optional; stored in profile file with 0600 permissions)
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+    /// List all known profiles
+    List,
+    /// Show the contents of a profile
+    Show {
+        /// Profile name
+        name: String,
+    },
+    /// Delete a profile
+    Delete {
+        /// Profile name
+        name: String,
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -1091,7 +1131,8 @@ enum DirectiveCommands {
 }
 
 fn main() {
-    if let Err(_) = run() {
+    if let Err(e) = run() {
+        ui::print_error(&format!("{:#}", e));
         std::process::exit(1);
     }
 }
@@ -1101,19 +1142,25 @@ fn run() -> Result<()> {
 
     let output_format: OutputFormat = cli.output.into();
     let verbose = cli.verbose;
+    let profile = cli.profile.clone();
 
     // Handle configure command before loading full config (it doesn't need API client)
     if let Commands::Configure { api_url, api_key } = cli.command {
         return handle_configure(api_url, api_key, output_format);
     }
 
+    // Handle profile management commands — no API client required.
+    if let Commands::Profile(cmd) = cli.command {
+        return handle_profile(cmd, output_format);
+    }
+
     // Handle ui command - needs config but not API client
     if let Commands::Ui = cli.command {
-        return handle_ui(output_format);
+        return handle_ui(profile.as_deref(), output_format);
     }
 
     // Load configuration
-    let config = Config::from_env().unwrap_or_else(|e| {
+    let config = Config::load_with_profile(profile.as_deref()).unwrap_or_else(|e| {
         ui::print_error(&format!("Configuration error: {}", e));
         errors::print_config_help();
         std::process::exit(1);
@@ -1130,6 +1177,7 @@ fn run() -> Result<()> {
     // Execute command and handle errors
     let result: Result<()> = match cli.command {
         Commands::Configure { .. } => unreachable!(), // Handled above
+        Commands::Profile(_) => unreachable!(),       // Handled above
         Commands::Ui => unreachable!(),               // Handled above
         Commands::Explore => commands::explore::run(&client),
 
@@ -1875,11 +1923,11 @@ fn handle_configure(
     Ok(())
 }
 
-fn handle_ui(output_format: OutputFormat) -> Result<()> {
+fn handle_ui(profile: Option<&str>, output_format: OutputFormat) -> Result<()> {
     use std::process::Command;
 
     // Load configuration to get the API URL
-    let config = Config::load().unwrap_or_else(|e| {
+    let config = Config::load_with_profile(profile).unwrap_or_else(|e| {
         ui::print_error(&format!("Configuration error: {}", e));
         errors::print_config_help();
         std::process::exit(1);
@@ -1920,4 +1968,119 @@ fn handle_ui(output_format: OutputFormat) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn mask_api_key(key: &str) -> String {
+    if key.len() > 8 {
+        format!("{}...{}", &key[..4], &key[key.len() - 4..])
+    } else {
+        "****".to_string()
+    }
+}
+
+fn handle_profile(cmd: ProfileCommands, output_format: OutputFormat) -> Result<()> {
+    match cmd {
+        ProfileCommands::Create {
+            name,
+            api_url,
+            api_key,
+        } => {
+            let path = Config::save_profile(&name, &api_url, api_key.as_deref())?;
+            if output_format == OutputFormat::Pretty {
+                ui::print_success(&format!("Profile '{}' saved to {}", name, path.display()));
+                println!();
+                println!("  API URL: {}", api_url);
+                if let Some(ref key) = api_key {
+                    println!("  API Key: {}", mask_api_key(key));
+                }
+                println!();
+                println!(
+                    "Use with: hindsight -p {} <command>  (or export HINDSIGHT_PROFILE={})",
+                    name, name
+                );
+            } else {
+                let result = serde_json::json!({
+                    "name": name,
+                    "api_url": api_url,
+                    "api_key_set": api_key.is_some(),
+                    "path": path.display().to_string(),
+                });
+                output::print_output(&result, output_format)?;
+            }
+            Ok(())
+        }
+        ProfileCommands::List => {
+            let names = Config::list_profiles()?;
+            if output_format == OutputFormat::Pretty {
+                if names.is_empty() {
+                    ui::print_info("No profiles found.");
+                    println!();
+                    println!("Create one with: hindsight profile create <name> --api-url <url>");
+                } else {
+                    ui::print_info("Profiles:");
+                    for name in &names {
+                        println!("  • {}", name);
+                    }
+                }
+            } else {
+                output::print_output(&serde_json::json!({ "profiles": names }), output_format)?;
+            }
+            Ok(())
+        }
+        ProfileCommands::Show { name } => {
+            let (api_url, api_key) = Config::load_profile(&name)?;
+            let path = Config::profile_file_path(&name)
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            if output_format == OutputFormat::Pretty {
+                ui::print_info(&format!("Profile '{}'", name));
+                println!();
+                println!("  Path:    {}", path);
+                println!("  API URL: {}", api_url);
+                if let Some(ref key) = api_key {
+                    println!("  API Key: {}", mask_api_key(key));
+                }
+            } else {
+                let result = serde_json::json!({
+                    "name": name,
+                    "path": path,
+                    "api_url": api_url,
+                    "api_key_set": api_key.is_some(),
+                });
+                output::print_output(&result, output_format)?;
+            }
+            Ok(())
+        }
+        ProfileCommands::Delete { name, yes } => {
+            let path = Config::profile_file_path(&name)
+                .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+            if !path.exists() {
+                anyhow::bail!("profile '{}' not found at {}", name, path.display());
+            }
+            if !yes && output_format == OutputFormat::Pretty {
+                print!("Delete profile '{}' at {}? [y/N]: ", name, path.display());
+                std::io::Write::flush(&mut std::io::stdout())?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+                    ui::print_info("Aborted.");
+                    return Ok(());
+                }
+            }
+            let deleted = Config::delete_profile(&name)?;
+            if output_format == OutputFormat::Pretty {
+                ui::print_success(&format!("Deleted profile '{}' ({})", name, deleted.display()));
+            } else {
+                output::print_output(
+                    &serde_json::json!({
+                        "name": name,
+                        "path": deleted.display().to_string(),
+                        "deleted": true,
+                    }),
+                    output_format,
+                )?;
+            }
+            Ok(())
+        }
+    }
 }

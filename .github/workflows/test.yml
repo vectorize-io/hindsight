@@ -49,6 +49,7 @@ jobs:
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
+      integrations-openai-agents: ${{ steps.filter.outputs.integrations-openai-agents }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
       # Secrets are available for internal PRs, pull_request_review, and workflow_dispatch.
@@ -133,6 +134,8 @@ jobs:
             - 'hindsight-integrations/*/package-lock.json'
             - 'hindsight-integrations/*/package.json'
             - 'scripts/check-integration-lockfiles.sh'
+          integrations-openai-agents:
+            - 'hindsight-integrations/openai-agents/**'
           dev:
             - 'hindsight-dev/**'
           ci:
@@ -2043,6 +2046,43 @@ jobs:
       working-directory: ./hindsight-integrations/llamaindex
       run: uv run pytest tests -v
 
+  test-openai-agents-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-openai-agents == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build openai-agents integration
+      working-directory: ./hindsight-integrations/openai-agents
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/openai-agents
+      run: uv sync --frozen
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/openai-agents
+      run: uv run pytest tests -v
+
   test-pip-slim:
     needs: [detect-changes]
     if: >-
@@ -2547,6 +2587,9 @@ jobs:
     - name: Run generate-openapi
       run: ./scripts/generate-openapi.sh
 
+    - name: Run generate-bank-template-schema
+      run: ./scripts/generate-bank-template-schema.sh
+
     - name: Run generate-clients
       run: ./scripts/generate-clients.sh
 
@@ -2566,6 +2609,7 @@ jobs:
           echo ""
           echo "Please run the following commands locally and commit the changes:"
           echo "  ./scripts/generate-openapi.sh"
+          echo "  ./scripts/generate-bank-template-schema.sh"
           echo "  ./scripts/generate-clients.sh"
           echo "  ./scripts/generate-docs-skill.sh"
           echo "  ./scripts/hooks/lint.sh"

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   try {
@@ -13,7 +13,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const { searchParams } = new URL(request.url);
     const query = searchParams.toString();
 
-    const url = `${DATAPLANE_URL}/v1/default/banks/${bankId}/audit-logs${query ? `?${query}` : ""}`;
+    const url = dataplaneBankUrl(bankId, `/audit-logs${query ? `?${query}` : ""}`);
     const response = await fetch(url, {
       method: "GET",
       headers: getDataplaneHeaders(),

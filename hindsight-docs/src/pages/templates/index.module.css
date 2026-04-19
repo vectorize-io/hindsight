@@ -564,6 +564,24 @@
 .submitBannerText {
   font-size: 0.9rem;
   color: var(--ifm-color-emphasis-600);
-  margin-bottom: 0;
+  margin-bottom: 1.25rem;
   line-height: 1.6;
+}
+
+.submitButton {
+  display: inline-block;
+  padding: 0.55rem 1.4rem;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #0074d9, #009296);
+  color: #fff !important;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.submitButton:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  color: #fff !important;
 }

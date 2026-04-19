@@ -376,6 +376,16 @@ class OperationValidatorExtension(Extension, ABC):
         2. [operation executes]
         3. on_*_complete (post-operation)
 
+    Outcomes for `validate_*` hooks:
+        - accept: return `ValidationResult.accept()` (or `accept_with(...)`)
+        - reject: return `ValidationResult.reject(reason, status_code)`
+          (raises `OperationValidationError` upstream)
+        - defer: raise `DeferOperation(exec_date, reason)` from
+          `hindsight_api.worker.exceptions` to requeue the task for a
+          future time without bumping `retry_count`. Worker-only — do
+          not raise from `validate_recall` / `validate_reflect` in
+          synchronous HTTP request paths, where it surfaces as a 500.
+
     Supported operations:
         - retain, recall, reflect (core memory operations)
         - consolidate (mental models consolidation)

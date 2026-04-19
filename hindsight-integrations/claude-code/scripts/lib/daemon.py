@@ -20,6 +20,7 @@ import time
 import urllib.error
 import urllib.request
 
+from .client import USER_AGENT
 from .llm import detect_llm_config, get_llm_env_vars
 from .state import read_state, write_state
 
@@ -74,7 +75,7 @@ def _check_health(base_url: str, timeout: int = 2) -> bool:
     """Quick health check against a Hindsight server."""
     try:
         url = f"{base_url.rstrip('/')}/health"
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(url, method="GET", headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
     except Exception:

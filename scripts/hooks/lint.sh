@@ -57,6 +57,38 @@ run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "uv run ruff check --fi
 run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "uv run ruff format ."
 run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "uv run ty check hindsight_embed"
 
+# Integrations: lint packages with modifications vs HEAD locally; lint all in CI.
+# Python integrations use shared ruff.toml; Node integrations use shared .prettierrc.json.
+INTEGRATIONS_DIR="$REPO_ROOT/hindsight-integrations"
+if [ -n "$CI" ] || [ -n "$LINT_ALL_INTEGRATIONS" ]; then
+    LINT_ALL=1
+    CHANGED_FILES=""
+else
+    LINT_ALL=0
+    CHANGED_FILES=$( { git -C "$REPO_ROOT" diff --name-only HEAD -- "hindsight-integrations/"; \
+                       git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "hindsight-integrations/"; } | sort -u )
+fi
+
+integration_changed() {
+    [ "$LINT_ALL" = "1" ] && return 0
+    local rel="hindsight-integrations/$1/"
+    echo "$CHANGED_FILES" | grep -q "^$rel" && return 0 || return 1
+}
+
+if [ -d "$INTEGRATIONS_DIR" ] && { [ "$LINT_ALL" = "1" ] || [ -n "$CHANGED_FILES" ]; }; then
+    for dir in "$INTEGRATIONS_DIR"/*/; do
+        name=$(basename "$dir")
+        integration_changed "$name" || continue
+
+        if [ -f "$dir/pyproject.toml" ]; then
+            run_task "ruff-int-$name-check" "$dir" "uv run --no-project ruff check --fix --config $REPO_ROOT/ruff.toml ."
+            run_task "ruff-int-$name-format" "$dir" "uv run --no-project ruff format --config $REPO_ROOT/ruff.toml ."
+        elif [ -f "$dir/package.json" ]; then
+            run_task "prettier-int-$name" "$dir" "npx --yes prettier --write --config $REPO_ROOT/.prettierrc.json --ignore-path $REPO_ROOT/.gitignore ."
+        fi
+    done
+fi
+
 # Wait for all tasks to complete
 for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true

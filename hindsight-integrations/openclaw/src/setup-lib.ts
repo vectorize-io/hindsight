@@ -7,22 +7,22 @@
  * variable. All config writing is an atomic rename over the OpenClaw config JSON.
  */
 
-import { readFile, writeFile, mkdir, rename } from 'fs/promises';
-import { homedir } from 'os';
-import { join, dirname } from 'path';
+import { readFile, writeFile, mkdir, rename } from "fs/promises";
+import { homedir } from "os";
+import { join, dirname } from "path";
 
-export const PLUGIN_ID = 'hindsight-openclaw';
+export const PLUGIN_ID = "hindsight-openclaw";
 
 /**
  * Default Hindsight Cloud endpoint. Update this when the hosted service URL is
  * finalized, or users can override it at the prompt.
  */
-export const HINDSIGHT_CLOUD_URL = 'https://api.hindsight.vectorize.io';
+export const HINDSIGHT_CLOUD_URL = "https://api.hindsight.vectorize.io";
 
-export const DEFAULT_OPENCLAW_CONFIG_PATH = join(homedir(), '.openclaw', 'openclaw.json');
+export const DEFAULT_OPENCLAW_CONFIG_PATH = join(homedir(), ".openclaw", "openclaw.json");
 
 export interface SecretRef {
-  source: 'env' | 'file' | 'exec';
+  source: "env" | "file" | "exec";
   provider: string;
   id: string;
 }
@@ -40,23 +40,21 @@ export interface OpenClawConfigShape {
   [key: string]: unknown;
 }
 
-export type SetupMode = 'cloud' | 'api' | 'embedded';
+export type SetupMode = "cloud" | "api" | "embedded";
 
 export const NO_KEY_PROVIDERS: ReadonlySet<string> = new Set([
-  'claude-code',
-  'openai-codex',
-  'ollama',
+  "claude-code",
+  "openai-codex",
+  "ollama",
 ]);
 
 export async function loadConfig(path: string): Promise<OpenClawConfigShape> {
   try {
-    const raw = await readFile(path, 'utf8');
+    const raw = await readFile(path, "utf8");
     return JSON.parse(raw) as OpenClawConfigShape;
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
-    throw new Error(
-      `Failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return {};
+    throw new Error(`Failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -64,7 +62,7 @@ export async function saveConfig(path: string, cfg: OpenClawConfigShape): Promis
   await mkdir(dirname(path), { recursive: true });
   const serialized = `${JSON.stringify(cfg, null, 2)}\n`;
   const tmpPath = `${path}.tmp-${Date.now()}`;
-  await writeFile(tmpPath, serialized, 'utf8');
+  await writeFile(tmpPath, serialized, "utf8");
   await rename(tmpPath, path);
 }
 
@@ -82,7 +80,7 @@ export function ensurePluginConfig(cfg: OpenClawConfigShape): Record<string, unk
 }
 
 export function envSecretRef(id: string): SecretRef {
-  return { source: 'env', provider: 'default', id };
+  return { source: "env", provider: "default", id };
 }
 
 export function clearCloudFields(pluginConfig: Record<string, unknown>): void {
@@ -104,7 +102,7 @@ export function isValidEnvVarName(value: string | undefined): boolean {
 }
 
 export function defaultApiKeyEnvVar(provider: string): string {
-  return `${provider.toUpperCase().replace(/-/g, '_')}_API_KEY`;
+  return `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
 }
 
 /**
@@ -138,12 +136,12 @@ export interface EmbeddedSetupInput {
 
 function pickCredential(
   token: string | undefined,
-  tokenEnvVar: string | undefined,
+  tokenEnvVar: string | undefined
 ): string | SecretRef | undefined {
   const hasToken = token && token.trim().length > 0;
   const hasEnvVar = tokenEnvVar && tokenEnvVar.trim().length > 0;
   if (hasToken && hasEnvVar) {
-    throw new Error('provide either a direct value or an env var name — not both');
+    throw new Error("provide either a direct value or an env var name — not both");
   }
   if (hasToken) return token!.trim();
   if (hasEnvVar) return envSecretRef(tokenEnvVar!.trim());
@@ -158,11 +156,11 @@ function pickCredential(
  */
 export function applyCloudMode(
   pluginConfig: Record<string, unknown>,
-  input: CloudSetupInput,
+  input: CloudSetupInput
 ): void {
   const token = pickCredential(input.token, input.tokenEnvVar);
   if (token === undefined) {
-    throw new Error('Cloud mode requires either `token` or `tokenEnvVar`');
+    throw new Error("Cloud mode requires either `token` or `tokenEnvVar`");
   }
   clearLocalLlmFields(pluginConfig);
   pluginConfig.hindsightApiUrl = (input.apiUrl ?? HINDSIGHT_CLOUD_URL).trim();
@@ -175,10 +173,7 @@ export function applyCloudMode(
  * and strips any leftover local-LLM fields so mode switches don't carry
  * stale state.
  */
-export function applyApiMode(
-  pluginConfig: Record<string, unknown>,
-  input: ApiSetupInput,
-): void {
+export function applyApiMode(pluginConfig: Record<string, unknown>, input: ApiSetupInput): void {
   const token = pickCredential(input.token, input.tokenEnvVar);
   clearLocalLlmFields(pluginConfig);
   pluginConfig.hindsightApiUrl = input.apiUrl.trim();
@@ -197,7 +192,7 @@ export function applyApiMode(
  */
 export function applyEmbeddedMode(
   pluginConfig: Record<string, unknown>,
-  input: EmbeddedSetupInput,
+  input: EmbeddedSetupInput
 ): void {
   const key = pickCredential(input.apiKey, input.apiKeyEnvVar);
   clearCloudFields(pluginConfig);
@@ -206,7 +201,9 @@ export function applyEmbeddedMode(
     delete pluginConfig.llmApiKey;
   } else {
     if (key === undefined) {
-      throw new Error(`llmProvider "${input.llmProvider}" requires either \`apiKey\` or \`apiKeyEnvVar\``);
+      throw new Error(
+        `llmProvider "${input.llmProvider}" requires either \`apiKey\` or \`apiKeyEnvVar\``
+      );
     }
     pluginConfig.llmApiKey = key;
   }
@@ -222,9 +219,9 @@ function credentialSuffix(token: string | undefined, tokenEnvVar: string | undef
     return ` (token from \${${tokenEnvVar.trim()}})`;
   }
   if (token && token.trim().length > 0) {
-    return ' (token stored inline)';
+    return " (token stored inline)";
   }
-  return ' (no auth)';
+  return " (no auth)";
 }
 
 export function summarizeCloud(input: CloudSetupInput): string {
@@ -240,6 +237,8 @@ export function summarizeEmbedded(input: EmbeddedSetupInput): string {
   if (NO_KEY_PROVIDERS.has(input.llmProvider)) {
     return `Embedded daemon → ${input.llmProvider}`;
   }
-  const keyHint = input.apiKeyEnvVar ? ` (key from \${${input.apiKeyEnvVar.trim()}})` : ' (key stored inline)';
+  const keyHint = input.apiKeyEnvVar
+    ? ` (key from \${${input.apiKeyEnvVar.trim()}})`
+    : " (key stored inline)";
   return `Embedded daemon → ${input.llmProvider}${keyHint}`;
 }

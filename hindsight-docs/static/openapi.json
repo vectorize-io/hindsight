@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "version": "0.5.1"
+    "version": "0.5.3"
   },
   "paths": {
     "/health": {
@@ -253,6 +253,22 @@
                 }
               ],
               "title": "Q"
+            }
+          },
+          {
+            "name": "consolidation_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Consolidation State"
             }
           },
           {
@@ -695,6 +711,75 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/stats/memories-timeseries": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Memory ingestion time-series",
+        "description": "Memories ingested over a period, bucketed by time and broken down by fact type.",
+        "operationId": "get_memories_timeseries",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "7d",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoriesTimeseriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/entities": {
       "get": {
         "tags": [
@@ -761,6 +846,89 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EntityListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/banks/{bank_id}/entities/graph": {
+      "get": {
+        "tags": [
+          "Entities"
+        ],
+        "summary": "Get entity co-occurrence graph",
+        "description": "Return a graph of entities (nodes) and their co-occurrences (edges) for visualization.",
+        "operationId": "get_entity_graph",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of co-occurrence edges to return",
+              "default": 1000,
+              "title": "Limit"
+            },
+            "description": "Maximum number of co-occurrence edges to return"
+          },
+          {
+            "name": "min_count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Minimum cooccurrence_count to include an edge",
+              "default": 1,
+              "title": "Min Count"
+            },
+            "description": "Minimum cooccurrence_count to include an edge"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityGraphResponse"
                 }
               }
             }
@@ -2533,6 +2701,18 @@
               "type": "string",
               "title": "Operation Id"
             }
+          },
+          {
+            "name": "include_payload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include the raw task payload (submission params) in the response. May be large.",
+              "default": false,
+              "title": "Include Payload"
+            },
+            "description": "Include the raw task payload (submission params) in the response. May be large."
           },
           {
             "name": "authorization",
@@ -5069,6 +5249,14 @@
             "type": "integer",
             "title": "Failed Operations"
           },
+          "operations_by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Operations By Status",
+            "description": "Async operations grouped by status (pending, in_progress, completed, failed, cancelled)."
+          },
           "last_consolidated_at": {
             "anyOf": [
               {
@@ -5085,6 +5273,12 @@
             "type": "integer",
             "title": "Pending Consolidation",
             "description": "Number of memories not yet processed into observations",
+            "default": 0
+          },
+          "failed_consolidation": {
+            "type": "integer",
+            "title": "Failed Consolidation",
+            "description": "Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
             "default": 0
           },
           "total_observations": {
@@ -5111,6 +5305,7 @@
         "description": "Response model for bank statistics endpoint.",
         "example": {
           "bank_id": "user123",
+          "failed_consolidation": 0,
           "failed_operations": 0,
           "last_consolidated_at": "2024-01-15T10:30:00Z",
           "links_breakdown": {
@@ -5298,6 +5493,239 @@
             ],
             "title": "Entities Allow Free Form",
             "description": "Allow entities outside the label vocabulary"
+          },
+          "retain_default_strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Default Strategy",
+            "description": "Name of the default retain strategy (key into retain_strategies map)"
+          },
+          "retain_strategies": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Strategies",
+            "description": "Map of retain strategy name to per-strategy config dict"
+          },
+          "retain_chunk_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Chunk Batch Size",
+            "description": "Max chunks per streaming batch (0 disables batching)"
+          },
+          "mcp_enabled_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Enabled Tools",
+            "description": "MCP tool allowlist for this bank (None = all tools)"
+          },
+          "consolidation_llm_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Llm Batch Size",
+            "description": "LLM batch size for observation consolidation"
+          },
+          "consolidation_source_facts_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens",
+            "description": "Max tokens of source facts per consolidation batch"
+          },
+          "consolidation_source_facts_max_tokens_per_observation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consolidation Source Facts Max Tokens Per Observation",
+            "description": "Max tokens of source facts per observation"
+          },
+          "max_observations_per_scope": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Observations Per Scope",
+            "description": "Max observations to retain per consolidation scope"
+          },
+          "reflect_source_facts_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Source Facts Max Tokens",
+            "description": "Max tokens of source facts per reflect call"
+          },
+          "llm_gemini_safety_settings": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Gemini Safety Settings",
+            "description": "Per-bank Gemini/VertexAI safety filter settings"
+          },
+          "recall_budget_function": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Function",
+            "description": "Recall budget mapping function: 'fixed' or 'adaptive'"
+          },
+          "recall_budget_fixed_low": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Fixed Low",
+            "description": "Fixed thinking_budget for budget=low (function='fixed')"
+          },
+          "recall_budget_fixed_mid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Fixed Mid",
+            "description": "Fixed thinking_budget for budget=mid (function='fixed')"
+          },
+          "recall_budget_fixed_high": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Fixed High",
+            "description": "Fixed thinking_budget for budget=high (function='fixed')"
+          },
+          "recall_budget_adaptive_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Adaptive Low",
+            "description": "Ratio of max_tokens for budget=low (function='adaptive')"
+          },
+          "recall_budget_adaptive_mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Adaptive Mid",
+            "description": "Ratio of max_tokens for budget=mid (function='adaptive')"
+          },
+          "recall_budget_adaptive_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Adaptive High",
+            "description": "Ratio of max_tokens for budget=high (function='adaptive')"
+          },
+          "recall_budget_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Min",
+            "description": "Floor for the adaptive function (after clamping)"
+          },
+          "recall_budget_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Budget Max",
+            "description": "Ceiling for the adaptive function (after clamping)"
           }
         },
         "type": "object",
@@ -6546,6 +6974,85 @@
           ]
         }
       },
+      "EntityGraphResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "total_entities": {
+            "type": "integer",
+            "title": "Total Entities"
+          },
+          "total_edges": {
+            "type": "integer",
+            "title": "Total Edges"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges",
+          "total_entities",
+          "total_edges",
+          "limit"
+        ],
+        "title": "EntityGraphResponse",
+        "description": "Response model for entity co-occurrence graph endpoint.",
+        "example": {
+          "edges": [
+            {
+              "data": {
+                "color": "#ffd700",
+                "id": "uuid-1-uuid-2",
+                "lastCooccurred": "2024-02-01T14:00:00Z",
+                "lineStyle": "solid",
+                "linkType": "cooccurrence",
+                "source": "uuid-1",
+                "target": "uuid-2",
+                "weight": 5
+              }
+            }
+          ],
+          "limit": 1000,
+          "nodes": [
+            {
+              "data": {
+                "color": "#42a5f5",
+                "id": "uuid-1",
+                "label": "Alice",
+                "mentionCount": 12
+              }
+            },
+            {
+              "data": {
+                "color": "#42a5f5",
+                "id": "uuid-2",
+                "label": "Google",
+                "mentionCount": 8
+              }
+            }
+          ],
+          "total_edges": 1,
+          "total_entities": 2
+        }
+      },
       "EntityIncludeOptions": {
         "properties": {
           "max_tokens": {
@@ -7106,6 +7613,40 @@
           "total": 25
         }
       },
+      "MemoriesTimeseriesResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period",
+            "description": "One of: 1h, 12h, 1d, 7d, 30d, 90d."
+          },
+          "trunc": {
+            "type": "string",
+            "title": "Trunc",
+            "description": "Bucket granularity: minute, hour, day."
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTimeseriesBucket"
+            },
+            "type": "array",
+            "title": "Buckets",
+            "description": "Per-bucket counts, always returned fully padded for the requested period."
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "period",
+          "trunc"
+        ],
+        "title": "MemoriesTimeseriesResponse",
+        "description": "Time-series of memory ingestion bucketed by time and fact type."
+      },
       "MemoryItem": {
         "properties": {
           "content": {
@@ -7280,6 +7821,39 @@
           "timestamp": "2024-01-15T10:30:00Z"
         }
       },
+      "MemoryTimeseriesBucket": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time",
+            "description": "Bucket start timestamp in ISO-8601 (UTC)."
+          },
+          "world": {
+            "type": "integer",
+            "title": "World",
+            "description": "World-fact memories ingested in this bucket.",
+            "default": 0
+          },
+          "experience": {
+            "type": "integer",
+            "title": "Experience",
+            "description": "Experience memories ingested in this bucket.",
+            "default": 0
+          },
+          "observation": {
+            "type": "integer",
+            "title": "Observation",
+            "description": "Observations recorded in this bucket.",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "time"
+        ],
+        "title": "MemoryTimeseriesBucket",
+        "description": "One bucket in the memory ingestion time-series."
+      },
       "MentalModelListResponse": {
         "properties": {
           "items": {
@@ -7397,6 +7971,18 @@
             ],
             "title": "Reflect Response",
             "description": "Full reflect API response payload including based_on facts and observations"
+          },
+          "is_stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Stale",
+            "description": "True when new memories matching this mental model's tag/fact_type scope have been ingested since last_refreshed_at, or consolidation has pending items. Only populated when detail=full."
           }
         },
         "type": "object",
@@ -7410,6 +7996,16 @@
       },
       "MentalModelTrigger-Input": {
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Mode",
+            "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",
+            "default": "full"
+          },
           "refresh_after_consolidation": {
             "type": "boolean",
             "title": "Refresh After Consolidation",
@@ -7502,6 +8098,42 @@
             ],
             "title": "Tag Groups",
             "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping."
+          },
+          "include_chunks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Chunks",
+            "description": "Override whether the internal recall used during refresh returns raw chunk text. None means use the bank/global config default (recall_include_chunks)."
+          },
+          "recall_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Max Tokens",
+            "description": "Override the token budget for facts returned by the internal recall during refresh. None means use the bank/global config default (recall_max_tokens)."
+          },
+          "recall_chunks_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Chunks Max Tokens",
+            "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
           }
         },
         "type": "object",
@@ -7510,6 +8142,16 @@
       },
       "MentalModelTrigger-Output": {
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "delta"
+            ],
+            "title": "Mode",
+            "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",
+            "default": "full"
+          },
           "refresh_after_consolidation": {
             "type": "boolean",
             "title": "Refresh After Consolidation",
@@ -7602,6 +8244,42 @@
             ],
             "title": "Tag Groups",
             "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping."
+          },
+          "include_chunks": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Chunks",
+            "description": "Override whether the internal recall used during refresh returns raw chunk text. None means use the bank/global config default (recall_include_chunks)."
+          },
+          "recall_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Max Tokens",
+            "description": "Override the token budget for facts returned by the internal recall during refresh. None means use the bank/global config default (recall_max_tokens)."
+          },
+          "recall_chunks_max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Chunks Max Tokens",
+            "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens)."
           }
         },
         "type": "object",
@@ -7770,6 +8448,19 @@
             ],
             "title": "Child Operations",
             "description": "Child operations for batch operations (if applicable)"
+          },
+          "task_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Payload",
+            "description": "Raw task payload (params the operation was submitted with). Only populated when include_payload=true."
           }
         },
         "type": "object",

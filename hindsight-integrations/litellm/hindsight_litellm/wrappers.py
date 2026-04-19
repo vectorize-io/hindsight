@@ -18,10 +18,13 @@ from .config import (
     DEFAULT_BANK_ID,
     DEFAULT_HINDSIGHT_API_URL,
     HINDSIGHT_API_KEY_ENV,
+    USER_AGENT,
     HindsightCallSettings,
-    _merge_call_settings as _merge_settings,
     get_config,
     get_defaults,
+)
+from .config import (
+    _merge_call_settings as _merge_settings,
 )
 
 # Background thread support for async retain
@@ -40,7 +43,7 @@ def _get_client(api_url: str, api_key: Optional[str] = None):
     """
     from hindsight_client import Hindsight
 
-    return Hindsight(base_url=api_url, api_key=api_key, timeout=30.0)
+    return Hindsight(base_url=api_url, api_key=api_key, timeout=30.0, user_agent=USER_AGENT)
 
 
 def _close_client():
@@ -150,9 +153,7 @@ def recall(
     target_max_tokens = max_tokens or (defaults.max_memory_tokens if defaults else 4096)
 
     if not api_url or not target_bank_id:
-        raise RuntimeError(
-            "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
-        )
+        raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
 
     client = None
     try:
@@ -174,9 +175,7 @@ def recall(
             for r in results:
                 if hasattr(r, "text"):
                     # Object with attributes
-                    fact_type = getattr(r, "type", None) or getattr(
-                        r, "fact_type", "unknown"
-                    )
+                    fact_type = getattr(r, "type", None) or getattr(r, "fact_type", "unknown")
                     recall_results.append(
                         RecallResult(
                             text=r.text,
@@ -322,9 +321,7 @@ def reflect(
     target_budget = budget or (defaults.budget if defaults else "mid")
 
     if not api_url or not target_bank_id:
-        raise RuntimeError(
-            "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
-        )
+        raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
 
     client = None
     try:
@@ -607,9 +604,7 @@ def retain(
     verbose = config.verbose if config else False
 
     if not api_url or not target_bank_id:
-        raise RuntimeError(
-            "Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url."
-        )
+        raise RuntimeError("Hindsight not configured. Call configure() or provide bank_id and hindsight_api_url.")
 
     api_key = config.api_key if config else None
 
@@ -732,9 +727,7 @@ class _StreamWrapper:
             assistant_output = "".join(self._collected_content)
             if assistant_output:
                 try:
-                    self._wrapper._store_conversation(
-                        self._user_query, assistant_output, self._model, self._settings
-                    )
+                    self._wrapper._store_conversation(self._user_query, assistant_output, self._model, self._settings)
                 except Exception as e:
                     if self._settings.verbose:
                         logger.warning(f"Failed to store streamed conversation: {e}")
@@ -803,9 +796,7 @@ class _AnthropicStreamWrapper:
             assistant_output = "".join(self._collected_content)
             if assistant_output:
                 try:
-                    self._wrapper._store_conversation(
-                        self._user_query, assistant_output, self._model, self._settings
-                    )
+                    self._wrapper._store_conversation(self._user_query, assistant_output, self._model, self._settings)
                 except Exception as e:
                     if self._settings.verbose:
                         logger.warning(f"Failed to store streamed conversation: {e}")
@@ -880,9 +871,7 @@ class HindsightOpenAI:
         else:
             # Filter kwargs to only valid HindsightCallSettings fields
             valid_fields = {f.name for f in fields(HindsightCallSettings)}
-            settings_kwargs = {
-                k: v for k, v in setting_kwargs.items() if k in valid_fields
-            }
+            settings_kwargs = {k: v for k, v in setting_kwargs.items() if k in valid_fields}
             self._default_settings = HindsightCallSettings(**settings_kwargs)
 
         # Create wrapped chat.completions interface
@@ -897,6 +886,7 @@ class HindsightOpenAI:
                 base_url=self._api_url,
                 api_key=self._api_key,
                 timeout=30.0,
+                user_agent=USER_AGENT,
             )
         return self._hindsight_client
 
@@ -932,15 +922,11 @@ class HindsightOpenAI:
             if not results:
                 return ""
 
-            results_to_use = (
-                results[: settings.max_memories] if settings.max_memories else results
-            )
+            results_to_use = results[: settings.max_memories] if settings.max_memories else results
             memory_lines = []
             for i, r in enumerate(results_to_use, 1):
                 text = r.text if hasattr(r, "text") else str(r)
-                fact_type = getattr(r, "type", None) or getattr(
-                    r, "fact_type", "memory"
-                )
+                fact_type = getattr(r, "type", None) or getattr(r, "fact_type", "memory")
 
                 # Build memory line with available context
                 line_parts = [f"{i}. [{fact_type.upper()}]"]
@@ -980,8 +966,7 @@ class HindsightOpenAI:
             return (
                 f"# Relevant Memories\n"
                 f"Current date/time: {current_time}\n"
-                f"The following information from memory may be relevant:\n\n"
-                + "\n".join(memory_lines)
+                f"The following information from memory may be relevant:\n\n" + "\n".join(memory_lines)
             )
 
         except Exception as e:
@@ -1032,9 +1017,7 @@ class HindsightOpenAI:
                 logger.warning(f"Failed to reflect: {e}")
             return ""
 
-    def _get_document_content(
-        self, bank_id: str, document_id: str
-    ) -> Optional[str]:
+    def _get_document_content(self, bank_id: str, document_id: str) -> Optional[str]:
         """Fetch existing document content using the low-level API.
 
         Returns:
@@ -1095,15 +1078,11 @@ class HindsightOpenAI:
             # If document_id is set, fetch existing content and append
             conversation_text = new_exchange
             if settings.effective_document_id:
-                existing_content = self._get_document_content(
-                    settings.bank_id, settings.effective_document_id
-                )
+                existing_content = self._get_document_content(settings.bank_id, settings.effective_document_id)
                 if existing_content:
                     conversation_text = f"{existing_content}\n\n{new_exchange}"
                     if settings.verbose:
-                        logger.debug(
-                            f"Appending to existing document: {settings.effective_document_id}"
-                        )
+                        logger.debug(f"Appending to existing document: {settings.effective_document_id}")
 
             metadata = {
                 "source": "openai-wrapper",
@@ -1124,9 +1103,7 @@ class HindsightOpenAI:
             client.retain(**retain_kwargs)
 
             if settings.verbose:
-                logger.info(
-                    f"Stored conversation to Hindsight bank: {settings.bank_id}"
-                )
+                logger.info(f"Stored conversation to Hindsight bank: {settings.bank_id}")
 
         except Exception as e:
             if settings.verbose:
@@ -1167,9 +1144,7 @@ class _WrappedCompletions:
         settings = _merge_settings(self._wrapper._default_settings, kwargs)
 
         # Remove hindsight_* kwargs before passing to OpenAI
-        openai_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("hindsight_")
-        }
+        openai_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("hindsight_")}
 
         messages = list(openai_kwargs.get("messages", []))
         model = openai_kwargs.get("model", "gpt-4")
@@ -1243,9 +1218,7 @@ class _WrappedCompletions:
                 if response.choices and response.choices[0].message:
                     assistant_output = response.choices[0].message.content or ""
                     if assistant_output:
-                        self._wrapper._store_conversation(
-                            user_query, assistant_output, model, settings
-                        )
+                        self._wrapper._store_conversation(user_query, assistant_output, model, settings)
             return response
 
 
@@ -1309,9 +1282,7 @@ class HindsightAnthropic:
         else:
             # Filter kwargs to only valid HindsightCallSettings fields
             valid_fields = {f.name for f in fields(HindsightCallSettings)}
-            settings_kwargs = {
-                k: v for k, v in setting_kwargs.items() if k in valid_fields
-            }
+            settings_kwargs = {k: v for k, v in setting_kwargs.items() if k in valid_fields}
             self._default_settings = HindsightCallSettings(**settings_kwargs)
 
         # Create wrapped messages interface
@@ -1326,6 +1297,7 @@ class HindsightAnthropic:
                 base_url=self._api_url,
                 api_key=self._api_key,
                 timeout=30.0,
+                user_agent=USER_AGENT,
             )
         return self._hindsight_client
 
@@ -1361,15 +1333,11 @@ class HindsightAnthropic:
             if not results:
                 return ""
 
-            results_to_use = (
-                results[: settings.max_memories] if settings.max_memories else results
-            )
+            results_to_use = results[: settings.max_memories] if settings.max_memories else results
             memory_lines = []
             for i, r in enumerate(results_to_use, 1):
                 text = r.text if hasattr(r, "text") else str(r)
-                fact_type = getattr(r, "type", None) or getattr(
-                    r, "fact_type", "memory"
-                )
+                fact_type = getattr(r, "type", None) or getattr(r, "fact_type", "memory")
 
                 # Build memory line with available context
                 line_parts = [f"{i}. [{fact_type.upper()}]"]
@@ -1409,8 +1377,7 @@ class HindsightAnthropic:
             return (
                 f"# Relevant Memories\n"
                 f"Current date/time: {current_time}\n"
-                f"The following information from memory may be relevant:\n\n"
-                + "\n".join(memory_lines)
+                f"The following information from memory may be relevant:\n\n" + "\n".join(memory_lines)
             )
 
         except Exception as e:
@@ -1461,9 +1428,7 @@ class HindsightAnthropic:
                 logger.warning(f"Failed to reflect: {e}")
             return ""
 
-    def _get_document_content(
-        self, bank_id: str, document_id: str
-    ) -> Optional[str]:
+    def _get_document_content(self, bank_id: str, document_id: str) -> Optional[str]:
         """Fetch existing document content using the low-level API.
 
         Returns:
@@ -1524,15 +1489,11 @@ class HindsightAnthropic:
             # If document_id is set, fetch existing content and append
             conversation_text = new_exchange
             if settings.effective_document_id:
-                existing_content = self._get_document_content(
-                    settings.bank_id, settings.effective_document_id
-                )
+                existing_content = self._get_document_content(settings.bank_id, settings.effective_document_id)
                 if existing_content:
                     conversation_text = f"{existing_content}\n\n{new_exchange}"
                     if settings.verbose:
-                        logger.debug(
-                            f"Appending to existing document: {settings.effective_document_id}"
-                        )
+                        logger.debug(f"Appending to existing document: {settings.effective_document_id}")
 
             metadata = {
                 "source": "anthropic-wrapper",
@@ -1553,9 +1514,7 @@ class HindsightAnthropic:
             client.retain(**retain_kwargs)
 
             if settings.verbose:
-                logger.info(
-                    f"Stored conversation to Hindsight bank: {settings.bank_id}"
-                )
+                logger.info(f"Stored conversation to Hindsight bank: {settings.bank_id}")
 
         except Exception as e:
             if settings.verbose:
@@ -1588,9 +1547,7 @@ class _WrappedAnthropicMessages:
         settings = _merge_settings(self._wrapper._default_settings, kwargs)
 
         # Remove hindsight_* kwargs before passing to Anthropic
-        anthropic_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("hindsight_")
-        }
+        anthropic_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("hindsight_")}
 
         messages = list(anthropic_kwargs.get("messages", []))
         model = anthropic_kwargs.get("model", "claude-sonnet-4-20250514")
@@ -1657,9 +1614,7 @@ class _WrappedAnthropicMessages:
                         if hasattr(block, "text"):
                             assistant_output += block.text
                     if assistant_output:
-                        self._wrapper._store_conversation(
-                            user_query, assistant_output, model, settings
-                        )
+                        self._wrapper._store_conversation(user_query, assistant_output, model, settings)
             return response
 
 
@@ -1744,7 +1699,7 @@ def wrap_openai(
         try:
             from hindsight_client import Hindsight
 
-            hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key)
+            hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],
                 name=bank_name,
@@ -1846,7 +1801,7 @@ def wrap_anthropic(
         try:
             from hindsight_client import Hindsight
 
-            hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key)
+            hs_client = Hindsight(base_url=resolved_api_url, api_key=resolved_api_key, user_agent=USER_AGENT)
             hs_client.create_bank(
                 bank_id=settings_kwargs["bank_id"],
                 name=bank_name,

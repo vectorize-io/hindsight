@@ -162,9 +162,31 @@ Mental models can be configured to **automatically refresh** when observations a
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
+| `mode` | `"full"` \| `"delta"` | `"full"` | Refresh strategy. See [Refresh Mode](#refresh-mode) below. |
 | `refresh_after_consolidation` | bool | false | Automatically refresh after observations consolidation |
 
 When `refresh_after_consolidation` is enabled, the mental model will be re-generated every time the bank's observations are consolidated — ensuring it always reflects the latest synthesized knowledge.
+
+### Refresh Mode
+
+Two strategies are available for how a refresh produces the new content:
+
+- **`full`** *(default)* — every refresh regenerates the entire content from scratch. Simple and predictable: the LLM synthesises a fresh document from the retrieved memories. Best when the document is short, when you want every refresh to potentially restructure the output, or when you're not yet sure what the final shape should be.
+
+- **`delta`** — refresh emits a list of typed *operations* (add a section, append a bullet, replace a block, remove a stale paragraph) against the document's existing structure, then renders the result. Sections that aren't targeted by any operation are copied through **byte-identical** — no paraphrasing, no whitespace drift, no list-style normalisation. Best for long-lived "playbook"–style mental models where you want stability across refreshes and only the genuinely changed parts to move.
+
+Delta mode falls back to a full regeneration automatically in two cases:
+1. The mental model has no existing content yet (nothing to anchor edits on).
+2. The `source_query` has changed since the last refresh (the topic has shifted; the existing structure may no longer apply).
+
+If the LLM call fails or returns an empty answer, the existing content is preserved — refreshes never overwrite a populated document with an empty one.
+
+| Use Case | Recommended Mode | Why |
+|----------|-----------------|-----|
+| Skill / playbook docs | `delta` | Sections live for many refreshes; only specific rules change |
+| Onboarding summaries | `delta` | Adding new team members shouldn't restructure the doc |
+| Real-time dashboards | `full` | Each refresh is a fresh snapshot |
+| Short FAQ summaries | `full` | Whole-document regeneration is cheap and unambiguous |
 
 ### Python
 

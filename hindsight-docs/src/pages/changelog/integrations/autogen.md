@@ -10,6 +10,12 @@ For the source code, see [`hindsight-integrations/autogen`](https://github.com/v
 
 ← [Back to main changelog](/changelog)
 
+## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/autogen/v0.1.2)
+
+**Bug Fixes**
+
+- Ensure all HTTP requests include an identifying User-Agent header for better reliability and service compatibility. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
 ## [0.1.1](https://github.com/vectorize-io/hindsight/tree/integrations/autogen/v0.1.1)
 
 **Features**

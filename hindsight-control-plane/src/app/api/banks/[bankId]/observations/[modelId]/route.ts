@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: Request,
@@ -13,7 +13,7 @@ export async function GET(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/memories/${modelId}`,
+      dataplaneBankUrl(bankId, `/memories/${encodeURIComponent(modelId)}`),
       { method: "GET", headers: getDataplaneHeaders() }
     );
 

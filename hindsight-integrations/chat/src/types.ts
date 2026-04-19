@@ -1,12 +1,12 @@
 /**
  * Budget levels for recall/reflect operations.
  */
-export type Budget = 'low' | 'mid' | 'high';
+export type Budget = "low" | "mid" | "high";
 
 /**
  * Fact types for filtering recall results.
  */
-export type FactType = 'world' | 'experience' | 'observation';
+export type FactType = "world" | "experience" | "observation";
 
 /**
  * Recall result item from Hindsight.

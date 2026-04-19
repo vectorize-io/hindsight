@@ -1,11 +1,23 @@
 #!/usr/bin/env node
-import { existsSync, realpathSync } from 'fs';
-import { join, resolve } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-import { HindsightServer } from '@vectorize-io/hindsight-all';
-import { HindsightClient } from '@vectorize-io/hindsight-client';
-import { detectExternalApi, detectLLMConfig } from './index.js';
-import type { BankStats, PluginConfig } from './types.js';
+import { existsSync, readFileSync, realpathSync } from "fs";
+import { dirname, join, resolve } from "path";
+import { fileURLToPath, pathToFileURL } from "url";
+import { HindsightServer } from "@vectorize-io/hindsight-all";
+import { HindsightClient } from "@vectorize-io/hindsight-client";
+
+function loadPackageVersion(): string {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const USER_AGENT = `hindsight-openclaw/${loadPackageVersion()}`;
+import { detectExternalApi, detectLLMConfig } from "./index.js";
+import type { BankStats, PluginConfig } from "./types.js";
 import {
   buildBackfillPlan,
   checkpointKey,
@@ -17,7 +29,7 @@ import {
   type BackfillCheckpoint,
   type BackfillPlanEntry,
   type BackfillCliOptions,
-} from './backfill-lib.js';
+} from "./backfill-lib.js";
 
 interface ParsedArgs {
   openclawRoot: string;
@@ -29,7 +41,7 @@ interface ParsedArgs {
   json: boolean;
   resume: boolean;
   checkpointPath: string;
-  bankStrategy: 'mirror-config' | 'agent' | 'fixed';
+  bankStrategy: "mirror-config" | "agent" | "fixed";
   fixedBank?: string;
   apiUrl?: string;
   apiToken?: string;
@@ -52,40 +64,40 @@ interface BankRuntime {
 
 function usage(): string {
   return [
-    'Usage: hindsight-openclaw-backfill [options]',
-    '',
-    'Options:',
-    '  --openclaw-root <path>        OpenClaw root directory (default: ~/.openclaw)',
-    '  --profile <name>              Logical profile name for reporting (default: openclaw)',
-    '  --agent <id>                  Restrict import to a specific agent (repeatable)',
-    '  --include-archive             Include migration archives (default)',
-    '  --exclude-archive             Exclude migration archives',
-    '  --limit <n>                   Stop after enqueueing N sessions',
-    '  --dry-run                     Build and print the import plan without enqueueing',
-    '  --json                        Print final summary as JSON',
-    '  --resume                      Skip entries already marked completed in the checkpoint',
-    '  --checkpoint <path>           Path to checkpoint JSON',
-    '  --bank-strategy <mode>        mirror-config | agent | fixed',
-    '  --fixed-bank <id>             Required when bank strategy is fixed',
-    '  --api-url <url>               Hindsight API base URL override',
-    '  --api-token <token>           Hindsight API bearer token override',
-    '  --max-pending-operations <n>  Wait until target bank queue is <= n before enqueueing',
-    '  --wait-until-drained          Wait for touched banks to drain and finalize checkpoint state',
-    '  -h, --help                    Show this help',
-  ].join('\n');
+    "Usage: hindsight-openclaw-backfill [options]",
+    "",
+    "Options:",
+    "  --openclaw-root <path>        OpenClaw root directory (default: ~/.openclaw)",
+    "  --profile <name>              Logical profile name for reporting (default: openclaw)",
+    "  --agent <id>                  Restrict import to a specific agent (repeatable)",
+    "  --include-archive             Include migration archives (default)",
+    "  --exclude-archive             Exclude migration archives",
+    "  --limit <n>                   Stop after enqueueing N sessions",
+    "  --dry-run                     Build and print the import plan without enqueueing",
+    "  --json                        Print final summary as JSON",
+    "  --resume                      Skip entries already marked completed in the checkpoint",
+    "  --checkpoint <path>           Path to checkpoint JSON",
+    "  --bank-strategy <mode>        mirror-config | agent | fixed",
+    "  --fixed-bank <id>             Required when bank strategy is fixed",
+    "  --api-url <url>               Hindsight API base URL override",
+    "  --api-token <token>           Hindsight API bearer token override",
+    "  --max-pending-operations <n>  Wait until target bank queue is <= n before enqueueing",
+    "  --wait-until-drained          Wait for touched banks to drain and finalize checkpoint state",
+    "  -h, --help                    Show this help",
+  ].join("\n");
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
   const args: ParsedArgs = {
     openclawRoot: defaultOpenClawRoot(),
-    profile: 'openclaw',
+    profile: "openclaw",
     agents: [],
     includeArchive: true,
     dryRun: false,
     json: false,
     resume: false,
-    checkpointPath: '',
-    bankStrategy: 'mirror-config',
+    checkpointPath: "",
+    bankStrategy: "mirror-config",
     waitUntilDrained: false,
   };
 
@@ -100,61 +112,61 @@ function parseArgs(argv: string[]): ParsedArgs {
     };
 
     switch (arg) {
-      case '--openclaw-root':
+      case "--openclaw-root":
         args.openclawRoot = resolve(next());
         break;
-      case '--profile':
+      case "--profile":
         args.profile = next();
         break;
-      case '--agent':
+      case "--agent":
         args.agents.push(next());
         break;
-      case '--include-archive':
+      case "--include-archive":
         args.includeArchive = true;
         break;
-      case '--exclude-archive':
+      case "--exclude-archive":
         args.includeArchive = false;
         break;
-      case '--limit':
+      case "--limit":
         args.limit = Number(next());
         break;
-      case '--dry-run':
+      case "--dry-run":
         args.dryRun = true;
         break;
-      case '--json':
+      case "--json":
         args.json = true;
         break;
-      case '--resume':
+      case "--resume":
         args.resume = true;
         break;
-      case '--checkpoint':
+      case "--checkpoint":
         args.checkpointPath = resolve(next());
         break;
-      case '--bank-strategy': {
+      case "--bank-strategy": {
         const value = next();
-        if (value !== 'mirror-config' && value !== 'agent' && value !== 'fixed') {
+        if (value !== "mirror-config" && value !== "agent" && value !== "fixed") {
           throw new Error(`invalid bank strategy: ${value}`);
         }
         args.bankStrategy = value;
         break;
       }
-      case '--fixed-bank':
+      case "--fixed-bank":
         args.fixedBank = next();
         break;
-      case '--api-url':
+      case "--api-url":
         args.apiUrl = next();
         break;
-      case '--api-token':
+      case "--api-token":
         args.apiToken = next();
         break;
-      case '--max-pending-operations':
+      case "--max-pending-operations":
         args.maxPendingOperations = Number(next());
         break;
-      case '--wait-until-drained':
+      case "--wait-until-drained":
         args.waitUntilDrained = true;
         break;
-      case '-h':
-      case '--help':
+      case "-h":
+      case "--help":
         console.log(usage());
         process.exit(0);
       default:
@@ -165,25 +177,32 @@ function parseArgs(argv: string[]): ParsedArgs {
   if (!args.checkpointPath) {
     args.checkpointPath = defaultCheckpointPath(args.openclawRoot);
   }
-  if (args.bankStrategy === 'fixed' && !args.fixedBank) {
-    throw new Error('--fixed-bank is required when --bank-strategy fixed is used');
+  if (args.bankStrategy === "fixed" && !args.fixedBank) {
+    throw new Error("--fixed-bank is required when --bank-strategy fixed is used");
   }
   return args;
 }
 
-function inferApiSettings(pluginConfig: PluginConfig, explicitApiUrl?: string, explicitApiToken?: string): { apiUrl: string; apiToken?: string } {
-  const apiUrl = explicitApiUrl
-    || pluginConfig.hindsightApiUrl
-    || `http://127.0.0.1:${pluginConfig.apiPort || 9077}`;
+function inferApiSettings(
+  pluginConfig: PluginConfig,
+  explicitApiUrl?: string,
+  explicitApiToken?: string
+): { apiUrl: string; apiToken?: string } {
+  const apiUrl =
+    explicitApiUrl ||
+    pluginConfig.hindsightApiUrl ||
+    `http://127.0.0.1:${pluginConfig.apiPort || 9077}`;
   const apiToken = explicitApiToken || pluginConfig.hindsightApiToken;
   return { apiUrl, apiToken: apiToken || undefined };
 }
 
 async function checkHealth(apiUrl: string, apiToken?: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiUrl.replace(/\/$/, '')}/health`, {
-      method: 'GET',
-      headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
+    const headers: Record<string, string> = { "User-Agent": USER_AGENT };
+    if (apiToken) headers.Authorization = `Bearer ${apiToken}`;
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/health`, {
+      method: "GET",
+      headers,
       signal: AbortSignal.timeout(5000),
     });
     return response.ok;
@@ -192,23 +211,29 @@ async function checkHealth(apiUrl: string, apiToken?: string): Promise<boolean> 
   }
 }
 
-export function filterEntriesForResume(entries: BackfillPlanEntry[], checkpoint: BackfillCheckpoint, resume: boolean): BackfillPlanEntry[] {
+export function filterEntriesForResume(
+  entries: BackfillPlanEntry[],
+  checkpoint: BackfillCheckpoint,
+  resume: boolean
+): BackfillPlanEntry[] {
   if (!resume) {
     return entries;
   }
-  return entries.filter((entry) => checkpoint.entries[checkpointKey(entry)]?.status !== 'completed');
+  return entries.filter(
+    (entry) => checkpoint.entries[checkpointKey(entry)]?.status !== "completed"
+  );
 }
 
 export function splitResumeEntries(
   entries: BackfillPlanEntry[],
   checkpoint: BackfillCheckpoint,
-  waitUntilDrained: boolean,
+  waitUntilDrained: boolean
 ): { entriesToEnqueue: BackfillPlanEntry[]; alreadyEnqueuedKeys: string[] } {
   const entriesToEnqueue: BackfillPlanEntry[] = [];
   const alreadyEnqueuedKeys: string[] = [];
   for (const entry of entries) {
     const status = checkpoint.entries[checkpointKey(entry)]?.status;
-    if (status === 'enqueued') {
+    if (status === "enqueued") {
       if (waitUntilDrained) {
         alreadyEnqueuedKeys.push(checkpointKey(entry));
       } else {
@@ -225,7 +250,7 @@ export function applyDrainResults(
   checkpoint: BackfillCheckpoint,
   touchedEntriesByBank: Map<string, string[]>,
   finalStatsByBank: Map<string, BankStats>,
-  initialFailedOperationsByBank: Map<string, number>,
+  initialFailedOperationsByBank: Map<string, number>
 ): { completed: number; unresolved: number; warnings: string[] } {
   let completed = 0;
   let unresolved = 0;
@@ -238,23 +263,23 @@ export function applyDrainResults(
 
     if (hasNewFailures) {
       warnings.push(
-        `bank ${bankId} reported ${stats!.failed_operations - initialFailed} new failed operations during drain; leaving ${entryKeys.length} checkpoint entries enqueued`,
+        `bank ${bankId} reported ${stats!.failed_operations - initialFailed} new failed operations during drain; leaving ${entryKeys.length} checkpoint entries enqueued`
       );
     } else if (!stats || stats.pending_operations > 0) {
       warnings.push(
-        `bank ${bankId} did not finish draining cleanly; leaving ${entryKeys.length} checkpoint entries enqueued`,
+        `bank ${bankId} did not finish draining cleanly; leaving ${entryKeys.length} checkpoint entries enqueued`
       );
     }
 
     for (const entryKey of entryKeys) {
       const existing = checkpoint.entries[entryKey];
-      if (!existing || existing.status !== 'enqueued') {
+      if (!existing || existing.status !== "enqueued") {
         continue;
       }
       if (!hasNewFailures && stats && stats.pending_operations === 0) {
         checkpoint.entries[entryKey] = {
           ...existing,
-          status: 'completed',
+          status: "completed",
           updatedAt: new Date().toISOString(),
           error: undefined,
         };
@@ -271,11 +296,16 @@ export function applyDrainResults(
 export async function createBackfillRuntime(
   pluginConfig: PluginConfig,
   explicitApiUrl?: string,
-  explicitApiToken?: string,
+  explicitApiToken?: string
 ): Promise<BackfillRuntime> {
   const explicit = inferApiSettings(pluginConfig, explicitApiUrl, explicitApiToken);
   const externalApi = detectExternalApi(pluginConfig);
-  const useExternalApi = !!(explicitApiUrl || explicitApiToken || externalApi.apiUrl || pluginConfig.hindsightApiUrl);
+  const useExternalApi = !!(
+    explicitApiUrl ||
+    explicitApiToken ||
+    externalApi.apiUrl ||
+    pluginConfig.hindsightApiUrl
+  );
 
   if (useExternalApi) {
     return {
@@ -295,13 +325,13 @@ export async function createBackfillRuntime(
 
   const llmConfig = detectLLMConfig(pluginConfig);
   const manager = new HindsightServer({
-    profile: 'openclaw',
+    profile: "openclaw",
     port: pluginConfig.apiPort || 9077,
     embedVersion: pluginConfig.embedVersion,
     embedPackagePath: pluginConfig.embedPackagePath,
     env: {
-      HINDSIGHT_API_LLM_PROVIDER: llmConfig.provider || '',
-      HINDSIGHT_API_LLM_API_KEY: llmConfig.apiKey || '',
+      HINDSIGHT_API_LLM_PROVIDER: llmConfig.provider || "",
+      HINDSIGHT_API_LLM_API_KEY: llmConfig.apiKey || "",
       HINDSIGHT_API_LLM_MODEL: llmConfig.model,
       HINDSIGHT_API_LLM_BASE_URL: llmConfig.baseUrl,
       HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: String(pluginConfig.daemonIdleTimeout ?? 0),
@@ -322,12 +352,18 @@ export async function createBackfillRuntime(
  * Fetch stats for a single bank over HTTP. The high-level `HindsightClient`
  * doesn't yet wrap this endpoint, so we go direct — it's one call.
  */
-async function fetchBankStats(baseUrl: string, apiToken: string | undefined, bankId: string): Promise<BankStats> {
-  const headers: Record<string, string> = {};
+async function fetchBankStats(
+  baseUrl: string,
+  apiToken: string | undefined,
+  bankId: string
+): Promise<BankStats> {
+  const headers: Record<string, string> = { "User-Agent": USER_AGENT };
   if (apiToken) headers.Authorization = `Bearer ${apiToken}`;
-  const res = await fetch(`${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/stats`, { headers });
+  const res = await fetch(`${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/stats`, {
+    headers,
+  });
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
+    throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
   }
   return res.json() as Promise<BankStats>;
 }
@@ -336,7 +372,7 @@ async function waitForBankQueue(
   apiUrl: string,
   apiToken: string | undefined,
   bankId: string,
-  maxPendingOperations: number,
+  maxPendingOperations: number
 ): Promise<void> {
   for (;;) {
     try {
@@ -345,7 +381,7 @@ async function waitForBankQueue(
         return;
       }
     } catch (error) {
-      if (error instanceof Error && error.message.includes('HTTP 404')) {
+      if (error instanceof Error && error.message.includes("HTTP 404")) {
         return;
       }
       throw error;
@@ -357,12 +393,12 @@ async function waitForBankQueue(
 async function getInitialBankStats(
   apiUrl: string,
   apiToken: string | undefined,
-  bankId: string,
+  bankId: string
 ): Promise<BankStats | null> {
   try {
     return await fetchBankStats(apiUrl, apiToken, bankId);
   } catch (error) {
-    if (error instanceof Error && error.message.includes('HTTP 404')) {
+    if (error instanceof Error && error.message.includes("HTTP 404")) {
       return null;
     }
     throw error;
@@ -372,12 +408,12 @@ async function getInitialBankStats(
 async function waitForBanksToDrain(
   apiUrl: string,
   apiToken: string | undefined,
-  bankIds: Iterable<string>,
+  bankIds: Iterable<string>
 ): Promise<Map<string, BankStats>> {
   const ids = Array.from(bankIds);
   for (;;) {
     const stats = await Promise.all(
-      ids.map(async (bankId) => ({ bankId, stats: await fetchBankStats(apiUrl, apiToken, bankId) })),
+      ids.map(async (bankId) => ({ bankId, stats: await fetchBankStats(apiUrl, apiToken, bankId) }))
     );
     const statsByBank = new Map(stats.map(({ bankId, stats: bankStats }) => [bankId, bankStats]));
     const pending = stats.filter(({ stats: bankStats }) => bankStats.pending_operations > 0);
@@ -386,8 +422,11 @@ async function waitForBanksToDrain(
     }
     console.log(
       pending
-        .map(({ bankId, stats: bankStats }) => `${bankId}\tpending_operations=${bankStats.pending_operations}\tfailed_operations=${bankStats.failed_operations}\tpending_consolidation=${bankStats.pending_consolidation}`)
-        .join('\n'),
+        .map(
+          ({ bankId, stats: bankStats }) =>
+            `${bankId}\tpending_operations=${bankStats.pending_operations}\tfailed_operations=${bankStats.failed_operations}\tpending_consolidation=${bankStats.pending_consolidation}`
+        )
+        .join("\n")
     );
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
@@ -395,7 +434,7 @@ async function waitForBanksToDrain(
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
-  if (!existsSync(join(args.openclawRoot, 'openclaw.json'))) {
+  if (!existsSync(join(args.openclawRoot, "openclaw.json"))) {
     throw new Error(`could not find openclaw.json under ${args.openclawRoot}`);
   }
 
@@ -409,13 +448,22 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     fixedBank: args.fixedBank,
   };
   const checkpoint = loadCheckpoint(args.checkpointPath);
-  const { entries, discoveredSessions, skippedEmpty } = buildBackfillPlan(pluginConfig, backfillOptions);
+  const { entries, discoveredSessions, skippedEmpty } = buildBackfillPlan(
+    pluginConfig,
+    backfillOptions
+  );
   const plannedEntries = filterEntriesForResume(entries, checkpoint, args.resume);
-  const { entriesToEnqueue, alreadyEnqueuedKeys } = splitResumeEntries(plannedEntries, checkpoint, args.waitUntilDrained);
+  const { entriesToEnqueue, alreadyEnqueuedKeys } = splitResumeEntries(
+    plannedEntries,
+    checkpoint,
+    args.waitUntilDrained
+  );
 
   if (args.dryRun) {
     for (const entry of plannedEntries) {
-      console.log(`${entry.agentId}\t${entry.bankId}\t${entry.sessionId}\tmsgs=${entry.messageCount}\tchars=${entry.transcript.length}`);
+      console.log(
+        `${entry.agentId}\t${entry.bankId}\t${entry.sessionId}\tmsgs=${entry.messageCount}\tchars=${entry.transcript.length}`
+      );
     }
     const summary = {
       profile: args.profile,
@@ -449,7 +497,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
           bankId: checkpointEntry.bankId,
           touchedEntryKeys: [],
           initialFailedOperations:
-            (await getInitialBankStats(runtime.apiUrl, runtime.apiToken, checkpointEntry.bankId))?.failed_operations ?? 0,
+            (await getInitialBankStats(runtime.apiUrl, runtime.apiToken, checkpointEntry.bankId))
+              ?.failed_operations ?? 0,
           missionApplied: false,
         };
         bankRuntimes.set(checkpointEntry.bankId, bankRuntime);
@@ -464,7 +513,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
           bankId: entry.bankId,
           touchedEntryKeys: [],
           initialFailedOperations:
-            (await getInitialBankStats(runtime.apiUrl, runtime.apiToken, entry.bankId))?.failed_operations ?? 0,
+            (await getInitialBankStats(runtime.apiUrl, runtime.apiToken, entry.bankId))
+              ?.failed_operations ?? 0,
           missionApplied: false,
         };
         bankRuntimes.set(entry.bankId, bankRuntime);
@@ -474,13 +524,18 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
         await client.createBank(entry.bankId, { reflectMission: pluginConfig.bankMission });
       }
 
-      if (typeof args.maxPendingOperations === 'number' && args.maxPendingOperations >= 0) {
-        await waitForBankQueue(runtime.apiUrl, runtime.apiToken, entry.bankId, args.maxPendingOperations);
+      if (typeof args.maxPendingOperations === "number" && args.maxPendingOperations >= 0) {
+        await waitForBankQueue(
+          runtime.apiUrl,
+          runtime.apiToken,
+          entry.bankId,
+          args.maxPendingOperations
+        );
       }
 
       try {
         const metadata: Record<string, string> = {
-          source: 'openclaw-backfill',
+          source: "openclaw-backfill",
           file_path: entry.filePath,
           agent_id: entry.agentId,
           session_id: entry.sessionId,
@@ -495,7 +550,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
           async: true,
         });
         checkpoint.entries[checkpointKey(entry)] = {
-          status: 'enqueued',
+          status: "enqueued",
           bankId: entry.bankId,
           filePath: entry.filePath,
           sessionId: entry.sessionId,
@@ -511,7 +566,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
         imported += 1;
       } catch (error) {
         checkpoint.entries[checkpointKey(entry)] = {
-          status: 'failed',
+          status: "failed",
           bankId: entry.bankId,
           filePath: entry.filePath,
           sessionId: entry.sessionId,
@@ -520,15 +575,36 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
         };
         saveCheckpoint(args.checkpointPath, checkpoint);
         failed += 1;
-        console.error(`${entry.agentId}\t${entry.bankId}\t${entry.sessionId}\tfailed\t${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `${entry.agentId}\t${entry.bankId}\t${entry.sessionId}\tfailed\t${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
 
     if (args.waitUntilDrained && bankRuntimes.size > 0) {
-      const finalStatsByBank = await waitForBanksToDrain(runtime.apiUrl, runtime.apiToken, bankRuntimes.keys());
-      const touchedEntriesByBank = new Map(Array.from(bankRuntimes.entries()).map(([bankId, value]) => [bankId, value.touchedEntryKeys]));
-      const initialFailedByBank = new Map(Array.from(bankRuntimes.entries()).map(([bankId, value]) => [bankId, value.initialFailedOperations]));
-      const finalization = applyDrainResults(checkpoint, touchedEntriesByBank, finalStatsByBank, initialFailedByBank);
+      const finalStatsByBank = await waitForBanksToDrain(
+        runtime.apiUrl,
+        runtime.apiToken,
+        bankRuntimes.keys()
+      );
+      const touchedEntriesByBank = new Map(
+        Array.from(bankRuntimes.entries()).map(([bankId, value]) => [
+          bankId,
+          value.touchedEntryKeys,
+        ])
+      );
+      const initialFailedByBank = new Map(
+        Array.from(bankRuntimes.entries()).map(([bankId, value]) => [
+          bankId,
+          value.initialFailedOperations,
+        ])
+      );
+      const finalization = applyDrainResults(
+        checkpoint,
+        touchedEntriesByBank,
+        finalStatsByBank,
+        initialFailedByBank
+      );
       finalized = finalization.completed;
       for (const warning of finalization.warnings) {
         console.warn(warning);
@@ -554,20 +630,38 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   console.log(args.json ? JSON.stringify(summary, null, 2) : JSON.stringify(summary));
 }
 
-function canonicalizeExecutionPath(path: string): string {
-  const resolved = resolve(path);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
+function resolveSymlinks(path: string): string {
+  const seen = new Set<string>();
+  let current = path;
+  while (true) {
+    if (seen.has(current)) return current;
+    seen.add(current);
+    let target: string;
+    try {
+      target = realpathSync(current);
+    } catch {
+      return current;
+    }
+    if (target === current) return current;
+    current = target;
   }
 }
 
-export function isDirectExecution(entrypoint: string | undefined = process.argv[1], moduleUrl: string = import.meta.url): boolean {
+function canonicalizeExecutionPath(path: string): string {
+  const resolved = resolve(path);
+  return resolveSymlinks(resolved);
+}
+
+export function isDirectExecution(
+  entrypoint: string | undefined = process.argv[1],
+  moduleUrl: string = import.meta.url
+): boolean {
   if (!entrypoint) {
     return false;
   }
-  return canonicalizeExecutionPath(entrypoint) === canonicalizeExecutionPath(fileURLToPath(moduleUrl));
+  return (
+    canonicalizeExecutionPath(entrypoint) === canonicalizeExecutionPath(fileURLToPath(moduleUrl))
+  );
 }
 
 if (isDirectExecution()) {

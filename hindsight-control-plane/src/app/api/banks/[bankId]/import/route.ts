@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(
   request: NextRequest,
@@ -11,7 +11,7 @@ export async function POST(
     const dryRun = request.nextUrl.searchParams.get("dry_run") === "true";
 
     // Direct fetch since the SDK doesn't have this operation yet
-    const url = `${DATAPLANE_URL}/v1/default/banks/${encodeURIComponent(bankId)}/import${dryRun ? "?dry_run=true" : ""}`;
+    const url = dataplaneBankUrl(bankId, `/import${dryRun ? "?dry_run=true" : ""}`);
     const response = await fetch(url, {
       method: "POST",
       headers: getDataplaneHeaders({ "Content-Type": "application/json" }),

@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { stripAnsi, extractPolicyYaml, parseSandboxPolicy } from './policy-reader.js';
-import { serializePolicy } from './policy-writer.js';
+import { describe, it, expect } from "vitest";
+import { stripAnsi, extractPolicyYaml, parseSandboxPolicy } from "./policy-reader.js";
+import { serializePolicy } from "./policy-writer.js";
 
 // Fixture: actual output of `openshell sandbox get my-assistant`
 // (ANSI codes represented as escape sequences)
@@ -36,63 +36,68 @@ const FIXTURE_RAW = `\x1b[1m\x1b[36mSandbox:\x1b[39m\x1b[0m
       \x1b[2m- \x1b[0mpath: /usr/local/bin/claude
 `;
 
-describe('stripAnsi', () => {
-  it('removes ANSI escape codes', () => {
-    expect(stripAnsi('\x1b[1m\x1b[36mHello\x1b[39m\x1b[0m')).toBe('Hello');
+describe("stripAnsi", () => {
+  it("removes ANSI escape codes", () => {
+    expect(stripAnsi("\x1b[1m\x1b[36mHello\x1b[39m\x1b[0m")).toBe("Hello");
   });
 
-  it('leaves plain strings unchanged', () => {
-    expect(stripAnsi('version: 1')).toBe('version: 1');
+  it("leaves plain strings unchanged", () => {
+    expect(stripAnsi("version: 1")).toBe("version: 1");
   });
 
-  it('handles strings with no ANSI codes', () => {
-    expect(stripAnsi('  - /usr')).toBe('  - /usr');
-  });
-});
-
-describe('extractPolicyYaml', () => {
-  it('extracts the Policy: section and dedents by 2 spaces', () => {
-    const result = extractPolicyYaml(FIXTURE_RAW);
-    expect(result).toContain('version: 1');
-    expect(result).toContain('filesystem_policy:');
-    expect(result).toContain('network_policies:');
-  });
-
-  it('does not include the Sandbox: section', () => {
-    const result = extractPolicyYaml(FIXTURE_RAW);
-    expect(result).not.toContain('Sandbox:');
-    expect(result).not.toContain('my-assistant');
-  });
-
-  it('throws if Policy: section is missing', () => {
-    expect(() => extractPolicyYaml('no policy here')).toThrow('Could not find "Policy:"');
+  it("handles strings with no ANSI codes", () => {
+    expect(stripAnsi("  - /usr")).toBe("  - /usr");
   });
 });
 
-describe('parseSandboxPolicy', () => {
-  it('parses version field', () => {
+describe("extractPolicyYaml", () => {
+  it("extracts the Policy: section and dedents by 2 spaces", () => {
+    const result = extractPolicyYaml(FIXTURE_RAW);
+    expect(result).toContain("version: 1");
+    expect(result).toContain("filesystem_policy:");
+    expect(result).toContain("network_policies:");
+  });
+
+  it("does not include the Sandbox: section", () => {
+    const result = extractPolicyYaml(FIXTURE_RAW);
+    expect(result).not.toContain("Sandbox:");
+    expect(result).not.toContain("my-assistant");
+  });
+
+  it("throws if Policy: section is missing", () => {
+    expect(() => extractPolicyYaml("no policy here")).toThrow('Could not find "Policy:"');
+  });
+});
+
+describe("parseSandboxPolicy", () => {
+  it("parses version field", () => {
     const policy = parseSandboxPolicy(FIXTURE_RAW);
     expect(policy.version).toBe(1);
   });
 
-  it('parses filesystem_policy', () => {
+  it("parses filesystem_policy", () => {
     const policy = parseSandboxPolicy(FIXTURE_RAW);
     expect(policy.filesystem_policy?.include_workdir).toBe(true);
-    expect(policy.filesystem_policy?.read_only).toContain('/usr');
+    expect(policy.filesystem_policy?.read_only).toContain("/usr");
   });
 
-  it('parses network_policies', () => {
+  it("parses network_policies", () => {
     const policy = parseSandboxPolicy(FIXTURE_RAW);
     expect(policy.network_policies).toBeDefined();
     expect(policy.network_policies?.claude_code).toBeDefined();
-    expect(policy.network_policies?.claude_code?.name).toBe('claude_code');
+    expect(policy.network_policies?.claude_code?.name).toBe("claude_code");
   });
 
-  it('is idempotent — parse → serialize → parse yields same structure', () => {
+  it("is idempotent — parse → serialize → parse yields same structure", () => {
     const policy1 = parseSandboxPolicy(FIXTURE_RAW);
     const yamlStr = serializePolicy(policy1);
     // Re-wrap in a Policy: header to match the expected format
-    const wrapped = 'Policy:\n' + yamlStr.split('\n').map((l: string) => `  ${l}`).join('\n');
+    const wrapped =
+      "Policy:\n" +
+      yamlStr
+        .split("\n")
+        .map((l: string) => `  ${l}`)
+        .join("\n");
     const policy2 = parseSandboxPolicy(wrapped);
     expect(policy2.version).toBe(policy1.version);
     expect(Object.keys(policy2.network_policies ?? {})).toEqual(

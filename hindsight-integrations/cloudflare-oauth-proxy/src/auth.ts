@@ -12,10 +12,7 @@ const AUTH_STATE_TTL_SECONDS = 300;
  * Constant-time password comparison. Both inputs are hashed with SHA-256 first
  * so the comparison length is fixed regardless of input length.
  */
-export async function verifyPassword(
-  provided: string,
-  expected: string,
-): Promise<boolean> {
+export async function verifyPassword(provided: string, expected: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const [a, b] = await Promise.all([
     crypto.subtle.digest("SHA-256", encoder.encode(provided)),
@@ -47,11 +44,9 @@ function htmlResponse(body: string, init: ResponseInit = {}): Response {
 async function handleAuthorizeGet(request: Request, env: Env): Promise<Response> {
   const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
   const stateKey = crypto.randomUUID();
-  await env.OAUTH_KV.put(
-    AUTH_STATE_PREFIX + stateKey,
-    JSON.stringify(oauthReqInfo),
-    { expirationTtl: AUTH_STATE_TTL_SECONDS },
-  );
+  await env.OAUTH_KV.put(AUTH_STATE_PREFIX + stateKey, JSON.stringify(oauthReqInfo), {
+    expirationTtl: AUTH_STATE_TTL_SECONDS,
+  });
   return htmlResponse(loginPage(stateKey));
 }
 
@@ -77,10 +72,9 @@ async function handleAuthorizePost(request: Request, env: Env): Promise<Response
   await env.OAUTH_KV.delete(AUTH_STATE_PREFIX + stateKey);
 
   if (!stored) {
-    return new Response(
-      "Authorization expired. Please try connecting again from Claude.",
-      { status: 400 },
-    );
+    return new Response("Authorization expired. Please try connecting again from Claude.", {
+      status: 400,
+    });
   }
 
   const oauthReqInfo = JSON.parse(stored) as OAuthReqInfo;
@@ -103,10 +97,7 @@ async function handleAuthorizePost(request: Request, env: Env): Promise<Response
   }
 }
 
-export async function handleDefaultRequest(
-  request: Request,
-  env: Env,
-): Promise<Response> {
+export async function handleDefaultRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
   if (url.pathname === "/health") {

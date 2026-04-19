@@ -118,12 +118,16 @@ pub fn create(
     // behaviour is preserved otherwise.
     let trigger = if trigger_refresh_after_consolidation {
         Some(types::MentalModelTriggerInput {
+            mode: types::Mode::Full,
             refresh_after_consolidation: true,
             exclude_mental_models: false,
             exclude_mental_model_ids: None,
             fact_types: None,
             tag_groups: None,
             tags_match: None,
+            include_chunks: None,
+            recall_max_tokens: None,
+            recall_chunks_max_tokens: None,
         })
     } else {
         None
@@ -192,12 +196,16 @@ pub fn update(
     // Only build a trigger override when the user actually passed the flag;
     // sending None leaves the existing trigger config untouched on the server.
     let trigger = trigger_refresh_after_consolidation.map(|refresh| types::MentalModelTriggerInput {
+        mode: types::Mode::Full,
         refresh_after_consolidation: refresh,
         exclude_mental_models: false,
         exclude_mental_model_ids: None,
         fact_types: None,
         tag_groups: None,
         tags_match: None,
+        include_chunks: None,
+        recall_max_tokens: None,
+        recall_chunks_max_tokens: None,
     });
 
     let request = types::UpdateMentalModelRequest {

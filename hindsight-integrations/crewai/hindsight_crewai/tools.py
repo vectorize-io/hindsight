@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from importlib import metadata
 from typing import Any
 
 from crewai.tools import BaseTool
@@ -18,6 +19,12 @@ from .config import get_config
 from .errors import HindsightError
 
 logger = logging.getLogger(__name__)
+
+try:
+    _VERSION = metadata.version("hindsight-crewai")
+except metadata.PackageNotFoundError:
+    _VERSION = "0.0.0"
+_USER_AGENT = f"hindsight-crewai/{_VERSION}"
 
 
 class HindsightReflectTool(BaseTool):
@@ -58,9 +65,7 @@ class HindsightReflectTool(BaseTool):
     hindsight_api_url: str | None = Field(default=None, description="Override API URL")
     api_key: str | None = Field(default=None, description="Override API key")
     budget: str = Field(default="mid", description="Reflect budget (low/mid/high)")
-    reflect_context: str | None = Field(
-        default=None, description="Additional context for reflect reasoning"
-    )
+    reflect_context: str | None = Field(default=None, description="Additional context for reflect reasoning")
 
     _local: Any = PrivateAttr(default_factory=threading.local)
 
@@ -71,15 +76,14 @@ class HindsightReflectTool(BaseTool):
             from hindsight_client import Hindsight
 
             config = get_config()
-            api_url = self.hindsight_api_url or (
-                config.hindsight_api_url if config else "http://localhost:8888"
-            )
+            api_url = self.hindsight_api_url or (config.hindsight_api_url if config else "http://localhost:8888")
             api_key = self.api_key or (config.api_key if config else None)
 
             client = Hindsight(
                 base_url=api_url,
                 api_key=api_key,
                 timeout=30.0,
+                user_agent=_USER_AGENT,
             )
             self._local.client = client
         return client

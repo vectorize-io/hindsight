@@ -1,16 +1,19 @@
 {
   "name": "@vectorize-io/hindsight-paperclip",
-  "version": "0.1.1",
-  "description": "Persistent memory for Paperclip AI agents using Hindsight",
+  "version": "0.2.1",
+  "description": "Persistent long-term memory for Paperclip agents via Hindsight — recall before every heartbeat, retain after every run",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
   "keywords": [
     "paperclip",
     "hindsight",
     "memory",
     "agents",
-    "ai"
+    "ai",
+    "plugin"
   ],
   "author": "Vectorize <support@vectorize.io>",
   "license": "MIT",
@@ -24,32 +27,24 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
     "clean": "rm -rf dist",
     "test": "vitest run tests",
     "test:watch": "vitest tests",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run clean && npm run build"
   },
-  "peerDependencies": {
-    "express": ">=4"
-  },
-  "peerDependenciesMeta": {
-    "express": {
-      "optional": true
-    }
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.403.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
     "@types/node": "^20.0.0",
-    "express": "^5.0.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.3.0",
     "vitest": "^4.0.0"
   },
   "engines": {
     "node": ">=20"
-  },
-  "overrides": {
-    "vite": ">=8.0.5"
   }
 }

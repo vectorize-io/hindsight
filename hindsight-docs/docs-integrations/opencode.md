@@ -10,28 +10,46 @@ Persistent long-term memory plugin for [OpenCode](https://opencode.ai) using [Hi
 
 ## Quick Start
 
-```bash
-# 1. Install the plugin
-npm install @vectorize-io/opencode-hindsight
-```
-
-Add to your `opencode.json`:
+Add to your `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": ["@vectorize-io/opencode-hindsight"]
 }
 ```
 
+OpenCode auto-installs plugins in the `"plugin"` array on startup — no `npm install` required.
+
+Point the plugin at your Hindsight server and start OpenCode:
+
 ```bash
-# 2. Configure your Hindsight server
 export HINDSIGHT_API_URL="http://localhost:8888"
-
-# Optional: API key for Hindsight Cloud
-export HINDSIGHT_API_TOKEN="your-api-key"
-
-# 3. Start OpenCode — the plugin activates automatically
 opencode
+```
+
+### Using Hindsight Cloud
+
+Get an API key at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect):
+
+```bash
+export HINDSIGHT_API_URL="https://api.hindsight.vectorize.io"
+export HINDSIGHT_API_TOKEN="your-api-key"
+opencode
+```
+
+Or configure inline via plugin options in `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    ["@vectorize-io/opencode-hindsight", {
+      "hindsightApiUrl": "https://api.hindsight.vectorize.io",
+      "hindsightApiToken": "your-api-key"
+    }]
+  ]
+}
 ```
 
 ## Features

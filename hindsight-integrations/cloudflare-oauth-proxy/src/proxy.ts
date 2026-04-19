@@ -75,7 +75,7 @@ export interface ProxyOptions {
 export async function proxyRequest(
   request: Request,
   env: ProxyEnv,
-  options: ProxyOptions = {},
+  options: ProxyOptions = {}
 ): Promise<Response> {
   const fetchImpl = options.fetchImpl ?? fetch;
 

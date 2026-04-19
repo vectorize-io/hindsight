@@ -72,7 +72,7 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 | **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Works out of the box with no external services except the LLM. |
 | **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
 
-The slim image corresponds to the [`hindsight-api-slim`](#package-variants) pip package. See [Configuration](./configuration#embeddings) for external provider options.
+The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
 
 ### Available Tags
 

@@ -8,6 +8,17 @@ import PageHero from '@site/src/components/PageHero';
 
 [← LiteLLM integration](/sdks/integrations/litellm)
 
+## [0.5.1](https://github.com/vectorize-io/hindsight/tree/integrations/litellm/v0.5.1)
+
+**Improvements**
+
+- Add bundled type information for better type-checking support when using the integration in typed Python projects. ([`d054b884`](https://github.com/vectorize-io/hindsight/commit/d054b884))
+- Improve security and stability by updating and constraining the LiteLLM dependency, including excluding a compromised version. ([`8a2388a4`](https://github.com/vectorize-io/hindsight/commit/8a2388a4))
+
+**Bug Fixes**
+
+- Set an identifying User-Agent header on all HTTP requests to improve compatibility with providers and proxies. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
 ## [0.5.0](https://github.com/vectorize-io/hindsight/tree/integrations/litellm/v0.5.0)
 
 **Features**

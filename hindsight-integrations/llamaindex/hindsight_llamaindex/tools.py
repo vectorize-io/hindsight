@@ -106,32 +106,18 @@ class HindsightToolSpec(BaseToolSpec):
         # Resolve effective values using None-sentinel config fallback
         config = get_config()
         self._tags = tags if tags is not None else (config.tags if config else None)
-        self._recall_tags = (
-            recall_tags
-            if recall_tags is not None
-            else (config.recall_tags if config else None)
-        )
+        self._recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
         self._recall_tags_match = (
-            recall_tags_match
-            if recall_tags_match is not None
-            else (config.recall_tags_match if config else "any")
+            recall_tags_match if recall_tags_match is not None else (config.recall_tags_match if config else "any")
         )
-        self._budget = (
-            budget if budget is not None else (config.budget if config else "mid")
-        )
-        self._max_tokens = (
-            max_tokens
-            if max_tokens is not None
-            else (config.max_tokens if config else 4096)
-        )
+        self._budget = budget if budget is not None else (config.budget if config else "mid")
+        self._max_tokens = max_tokens if max_tokens is not None else (config.max_tokens if config else 4096)
 
         # Retain-specific
         self._retain_metadata = retain_metadata
         self._retain_document_id = retain_document_id
         self._retain_context = (
-            retain_context
-            if retain_context is not None
-            else (config.context if config else "llamaindex")
+            retain_context if retain_context is not None else (config.context if config else "llamaindex")
         )
 
         # Recall-specific
@@ -146,9 +132,7 @@ class HindsightToolSpec(BaseToolSpec):
         self._reflect_tags_match = reflect_tags_match
 
         # Bank management
-        self._mission = (
-            mission if mission is not None else (config.mission if config else None)
-        )
+        self._mission = mission if mission is not None else (config.mission if config else None)
 
     def _ensure_bank(self) -> None:
         """Create/update the bank with mission if not already done."""
@@ -230,12 +214,8 @@ class HindsightToolSpec(BaseToolSpec):
             kwargs["max_tokens"] = effective_reflect_max
         if self._reflect_response_schema:
             kwargs["response_schema"] = self._reflect_response_schema
-        effective_reflect_tags = (
-            self._reflect_tags if self._reflect_tags is not None else self._recall_tags
-        )
-        effective_reflect_tags_match = (
-            self._reflect_tags_match or self._recall_tags_match
-        )
+        effective_reflect_tags = self._reflect_tags if self._reflect_tags is not None else self._recall_tags
+        effective_reflect_tags_match = self._reflect_tags_match or self._recall_tags_match
         if effective_reflect_tags:
             kwargs["tags"] = effective_reflect_tags
             kwargs["tags_match"] = effective_reflect_tags_match

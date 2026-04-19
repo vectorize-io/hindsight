@@ -9,13 +9,17 @@ npm install @vectorize-io/hindsight-chat
 ```
 
 ```typescript
-import { Chat } from 'chat';
-import { HindsightClient } from '@vectorize-io/hindsight-client';
-import { withHindsightChat } from '@vectorize-io/hindsight-chat';
-import { streamText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { Chat } from "chat";
+import { HindsightClient } from "@vectorize-io/hindsight-client";
+import { withHindsightChat } from "@vectorize-io/hindsight-chat";
+import { streamText } from "ai";
+import { openai } from "@ai-sdk/openai";
 
-const chat = new Chat({ connectors: [/* your connectors */] });
+const chat = new Chat({
+  connectors: [
+    /* your connectors */
+  ],
+});
 const hindsight = new HindsightClient({ apiKey: process.env.HINDSIGHT_API_KEY });
 
 chat.onNewMention(
@@ -28,9 +32,9 @@ chat.onNewMention(
       await thread.subscribe();
 
       const result = await streamText({
-        model: openai('gpt-4o'),
+        model: openai("gpt-4o"),
         system: ctx.memoriesAsSystemPrompt(),
-        messages: [{ role: 'user', content: message.text }],
+        messages: [{ role: "user", content: message.text }],
       });
 
       // Stream the response
@@ -38,13 +42,11 @@ chat.onNewMention(
       for await (const chunk of result.textStream) {
         chunks.push(chunk);
       }
-      const fullResponse = chunks.join('');
+      const fullResponse = chunks.join("");
       await thread.post(fullResponse);
 
       // Store the conversation in memory
-      await ctx.retain(
-        `User: ${message.text}\nAssistant: ${fullResponse}`
-      );
+      await ctx.retain(`User: ${message.text}\nAssistant: ${fullResponse}`);
     }
   )
 );
@@ -58,33 +60,33 @@ Returns a standard Chat SDK handler `(thread, message) => Promise<void>`.
 
 #### Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `client` | `HindsightClient` | *required* | Hindsight client instance |
-| `bankId` | `string \| (msg) => string` | *required* | Memory bank ID or resolver function |
-| `recall.enabled` | `boolean` | `true` | Auto-recall memories before handler |
-| `recall.budget` | `'low' \| 'mid' \| 'high'` | `'mid'` | Processing budget for recall |
-| `recall.maxTokens` | `number` | API default | Max tokens for recall results |
-| `recall.types` | `FactType[]` | all | Filter to specific fact types |
-| `recall.includeEntities` | `boolean` | `true` | Include entity observations |
-| `retain.enabled` | `boolean` | `false` | Auto-retain inbound messages |
-| `retain.async` | `boolean` | `true` | Fire-and-forget retain |
-| `retain.tags` | `string[]` | – | Tags for retained memories |
-| `retain.metadata` | `Record<string, string>` | – | Metadata for retained memories |
+| Option                   | Type                        | Default     | Description                         |
+| ------------------------ | --------------------------- | ----------- | ----------------------------------- |
+| `client`                 | `HindsightClient`           | _required_  | Hindsight client instance           |
+| `bankId`                 | `string \| (msg) => string` | _required_  | Memory bank ID or resolver function |
+| `recall.enabled`         | `boolean`                   | `true`      | Auto-recall memories before handler |
+| `recall.budget`          | `'low' \| 'mid' \| 'high'`  | `'mid'`     | Processing budget for recall        |
+| `recall.maxTokens`       | `number`                    | API default | Max tokens for recall results       |
+| `recall.types`           | `FactType[]`                | all         | Filter to specific fact types       |
+| `recall.includeEntities` | `boolean`                   | `true`      | Include entity observations         |
+| `retain.enabled`         | `boolean`                   | `false`     | Auto-retain inbound messages        |
+| `retain.async`           | `boolean`                   | `true`      | Fire-and-forget retain              |
+| `retain.tags`            | `string[]`                  | –           | Tags for retained memories          |
+| `retain.metadata`        | `Record<string, string>`    | –           | Metadata for retained memories      |
 
 ### Context (`ctx`)
 
 The third argument passed to your handler:
 
-| Property/Method | Description |
-|----------------|-------------|
-| `ctx.bankId` | Resolved bank ID |
-| `ctx.memories` | Array of recalled memories |
-| `ctx.entities` | Entity observations (or null) |
+| Property/Method                        | Description                           |
+| -------------------------------------- | ------------------------------------- |
+| `ctx.bankId`                           | Resolved bank ID                      |
+| `ctx.memories`                         | Array of recalled memories            |
+| `ctx.entities`                         | Entity observations (or null)         |
 | `ctx.memoriesAsSystemPrompt(options?)` | Format memories for LLM system prompt |
-| `ctx.retain(content, options?)` | Store content in memory |
-| `ctx.recall(query, options?)` | Search memories |
-| `ctx.reflect(query, options?)` | Reason over memories |
+| `ctx.retain(content, options?)`        | Store content in memory               |
+| `ctx.recall(query, options?)`          | Search memories                       |
+| `ctx.reflect(query, options?)`         | Reason over memories                  |
 
 ## Examples
 
@@ -96,13 +98,13 @@ chat.onSubscribedMessage(
     {
       client: hindsight,
       bankId: (msg) => msg.author.userId,
-      recall: { budget: 'high', maxTokens: 1000 },
+      recall: { budget: "high", maxTokens: 1000 },
     },
     async (thread, message, ctx) => {
       const result = await generateText({
-        model: openai('gpt-4o'),
+        model: openai("gpt-4o"),
         system: ctx.memoriesAsSystemPrompt(),
-        messages: [{ role: 'user', content: message.text }],
+        messages: [{ role: "user", content: message.text }],
       });
       await thread.post(result.text);
     }
@@ -118,20 +120,20 @@ chat.onNewMention(
     {
       client: hindsight,
       bankId: (msg) => msg.author.userId,
-      retain: { enabled: true, tags: ['slack', 'inbound'] },
+      retain: { enabled: true, tags: ["slack", "inbound"] },
     },
     async (thread, message, ctx) => {
       // Inbound message is already being retained automatically
       const result = await generateText({
-        model: openai('gpt-4o'),
+        model: openai("gpt-4o"),
         system: ctx.memoriesAsSystemPrompt(),
-        messages: [{ role: 'user', content: message.text }],
+        messages: [{ role: "user", content: message.text }],
       });
       await thread.post(result.text);
 
       // Retain the assistant response separately
       await ctx.retain(`Assistant: ${result.text}`, {
-        tags: ['slack', 'outbound'],
+        tags: ["slack", "outbound"],
       });
     }
   )
@@ -144,7 +146,7 @@ chat.onNewMention(
 // All users share the same memory bank
 chat.onNewMention(
   withHindsightChat(
-    { client: hindsight, bankId: 'shared-team-memory' },
+    { client: hindsight, bankId: "shared-team-memory" },
     async (thread, message, ctx) => {
       // ...
     }

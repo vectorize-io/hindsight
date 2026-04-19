@@ -26,6 +26,15 @@ export function getDataplaneHeaders(extra?: Record<string, string>): Record<stri
 }
 
 /**
+ * Build a dataplane URL for a bank-scoped endpoint with the bank id properly encoded.
+ * Bank ids may contain `:`, `/`, `%`, etc. (e.g. openclaw `agent::channel::user`),
+ * which must be percent-encoded before being interpolated into a URL path.
+ */
+export function dataplaneBankUrl(bankId: string, suffix = ""): string {
+  return `${DATAPLANE_URL}/v1/default/banks/${encodeURIComponent(bankId)}${suffix}`;
+}
+
+/**
  * High-level client with convenience methods
  */
 export const hindsightClient = new HindsightClient({

@@ -8,10 +8,18 @@ easy-to-use interface on top of the auto-generated OpenAPI client.
 import asyncio
 import json
 from datetime import datetime
+from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
 
 import hindsight_client_api
+
+try:
+    _CLIENT_VERSION = metadata.version("hindsight-client")
+except metadata.PackageNotFoundError:
+    _CLIENT_VERSION = "0.0.0"
+
+DEFAULT_USER_AGENT = f"hindsight-client-python/{_CLIENT_VERSION}"
 from hindsight_client_api.api import (
     banks_api,
     directives_api,
@@ -119,7 +127,13 @@ class Hindsight:
         - ``client.monitoring``: Health/version checks (MonitoringApi)
     """
 
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 300.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        timeout: float = 300.0,
+        user_agent: str | None = None,
+    ):
         """
         Initialize the Hindsight client.
 
@@ -127,9 +141,14 @@ class Hindsight:
             base_url: The base URL of the Hindsight API server
             api_key: Optional API key for authentication (sent as Bearer token)
             timeout: Request timeout in seconds (default: 300.0)
+            user_agent: Override the default ``User-Agent`` header. Integrations
+                should set this to identify themselves (e.g.
+                ``"hindsight-crewai/1.2.0"``). Defaults to
+                ``hindsight-client-python/<version>``.
         """
         config = hindsight_client_api.Configuration(host=base_url, access_token=api_key)
         self._api_client = hindsight_client_api.ApiClient(config)
+        self._api_client.user_agent = user_agent or DEFAULT_USER_AGENT
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key

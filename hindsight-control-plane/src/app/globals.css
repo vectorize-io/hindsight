@@ -261,3 +261,34 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 .dark .prose tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.05);
 }
+
+/* Themed scrollbars — match the app surface instead of the default white track.
+   Theme tokens are oklch, so wrap with color-mix to apply opacity. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

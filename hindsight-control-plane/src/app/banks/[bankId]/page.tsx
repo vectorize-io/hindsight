@@ -19,6 +19,7 @@ import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
 import { useFeatures } from "@/lib/features-context";
 import { useBank } from "@/lib/bank-context";
+import { bankRoute } from "@/lib/bank-url";
 import { client } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,15 +69,18 @@ export default function BankPage() {
   const [isResettingConfig, setIsResettingConfig] = useState(false);
 
   const handleTabChange = (tab: NavItem) => {
-    router.push(`/banks/${bankId}?view=${tab}`);
+    if (!bankId) return;
+    router.push(bankRoute(bankId, `?view=${tab}`));
   };
 
   const handleDataSubTabChange = (newSubTab: DataSubTab) => {
-    router.push(`/banks/${bankId}?view=data&subTab=${newSubTab}`);
+    if (!bankId) return;
+    router.push(bankRoute(bankId, `?view=data&subTab=${newSubTab}`));
   };
 
   const handleBankConfigTabChange = (newTab: BankConfigTab) => {
-    router.push(`/banks/${bankId}?view=profile&bankConfigTab=${newTab}`);
+    if (!bankId) return;
+    router.push(bankRoute(bankId, `?view=profile&bankConfigTab=${newTab}`));
   };
 
   const handleDeleteBank = async () => {

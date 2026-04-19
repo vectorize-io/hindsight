@@ -7,7 +7,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: Hindsight HTTP API
-  version: 0.5.1
+  version: 0.5.3
 servers:
 - url: /
 paths:
@@ -161,6 +161,14 @@ paths:
       - explode: true
         in: query
         name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: consolidation_state
         required: false
         schema:
           nullable: true
@@ -464,6 +472,53 @@ paths:
       summary: Get statistics for memory bank
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/stats/memories-timeseries:
+    get:
+      description: "Memories ingested over a period, bucketed by time and broken down\
+        \ by fact type."
+      operationId: get_memories_timeseries
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: true
+        in: query
+        name: period
+        required: false
+        schema:
+          default: 7d
+          title: Period
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoriesTimeseriesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Memory ingestion time-series
+      tags:
+      - Banks
   /v1/default/banks/{bank_id}/entities:
     get:
       description: "List all entities (people, organizations, etc.) known by the bank,\
@@ -522,6 +577,66 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: List entities
+      tags:
+      - Entities
+  /v1/default/banks/{bank_id}/entities/graph:
+    get:
+      description: Return a graph of entities (nodes) and their co-occurrences (edges)
+        for visualization.
+      operationId: get_entity_graph
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Maximum number of co-occurrence edges to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 1000
+          description: Maximum number of co-occurrence edges to return
+          title: Limit
+          type: integer
+        style: form
+      - description: Minimum cooccurrence_count to include an edge
+        explode: true
+        in: query
+        name: min_count
+        required: false
+        schema:
+          default: 1
+          description: Minimum cooccurrence_count to include an edge
+          title: Min Count
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityGraphResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get entity co-occurrence graph
       tags:
       - Entities
   /v1/default/banks/{bank_id}/entities/{entity_id}:
@@ -1781,6 +1896,19 @@ paths:
           title: Operation Id
           type: string
         style: simple
+      - description: Include the raw task payload (submission params) in the response.
+          May be large.
+        explode: true
+        in: query
+        name: include_payload
+        required: false
+        schema:
+          default: false
+          description: Include the raw task payload (submission params) in the response.
+            May be large.
+          title: Include Payload
+          type: boolean
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -3439,6 +3567,7 @@ components:
       description: Response model for bank statistics endpoint.
       example:
         bank_id: user123
+        failed_consolidation: 0
         failed_operations: 0
         last_consolidated_at: 2024-01-15T10:30:00Z
         links_breakdown:
@@ -3500,6 +3629,12 @@ components:
         failed_operations:
           title: Failed Operations
           type: integer
+        operations_by_status:
+          additionalProperties:
+            type: integer
+          description: "Async operations grouped by status (pending, in_progress,\
+            \ completed, failed, cancelled)."
+          title: Operations By Status
         last_consolidated_at:
           nullable: true
           type: string
@@ -3507,6 +3642,12 @@ components:
           default: 0
           description: Number of memories not yet processed into observations
           title: Pending Consolidation
+          type: integer
+        failed_consolidation:
+          default: 0
+          description: Number of source memories (world/experience) whose consolidation
+            permanently failed and can be retried via the consolidation recovery endpoint.
+          title: Failed Consolidation
           type: integer
         total_observations:
           default: 0
@@ -3576,6 +3717,66 @@ components:
         entities_allow_free_form:
           nullable: true
           type: boolean
+        retain_default_strategy:
+          nullable: true
+          type: string
+        retain_strategies:
+          additionalProperties: {}
+          nullable: true
+        retain_chunk_batch_size:
+          nullable: true
+          type: integer
+        mcp_enabled_tools:
+          items:
+            type: string
+          nullable: true
+          type: array
+        consolidation_llm_batch_size:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens:
+          nullable: true
+          type: integer
+        consolidation_source_facts_max_tokens_per_observation:
+          nullable: true
+          type: integer
+        max_observations_per_scope:
+          nullable: true
+          type: integer
+        reflect_source_facts_max_tokens:
+          nullable: true
+          type: integer
+        llm_gemini_safety_settings:
+          items: {}
+          nullable: true
+          type: array
+        recall_budget_function:
+          nullable: true
+          type: string
+        recall_budget_fixed_low:
+          nullable: true
+          type: integer
+        recall_budget_fixed_mid:
+          nullable: true
+          type: integer
+        recall_budget_fixed_high:
+          nullable: true
+          type: integer
+        recall_budget_adaptive_low:
+          nullable: true
+          type: number
+        recall_budget_adaptive_mid:
+          nullable: true
+          type: number
+        recall_budget_adaptive_high:
+          nullable: true
+          type: number
+        recall_budget_min:
+          nullable: true
+          type: integer
+        recall_budget_max:
+          nullable: true
+          type: integer
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-
@@ -4381,6 +4582,58 @@ components:
       - mention_count
       - observations
       title: EntityDetailResponse
+    EntityGraphResponse:
+      description: Response model for entity co-occurrence graph endpoint.
+      example:
+        edges:
+        - data:
+            color: '#ffd700'
+            id: uuid-1-uuid-2
+            lastCooccurred: 2024-02-01T14:00:00Z
+            lineStyle: solid
+            linkType: cooccurrence
+            source: uuid-1
+            target: uuid-2
+            weight: 5
+        limit: 1000
+        nodes:
+        - data:
+            color: '#42a5f5'
+            id: uuid-1
+            label: Alice
+            mentionCount: 12
+        - data:
+            color: '#42a5f5'
+            id: uuid-2
+            label: Google
+            mentionCount: 8
+        total_edges: 1
+        total_entities: 2
+      properties:
+        nodes:
+          items:
+            additionalProperties: {}
+          type: array
+        edges:
+          items:
+            additionalProperties: {}
+          type: array
+        total_entities:
+          title: Total Entities
+          type: integer
+        total_edges:
+          title: Total Edges
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+      required:
+      - edges
+      - limit
+      - nodes
+      - total_edges
+      - total_entities
+      title: EntityGraphResponse
     EntityIncludeOptions:
       description: Options for including entity observations in recall results.
       properties:
@@ -4736,6 +4989,44 @@ components:
       - offset
       - total
       title: ListTagsResponse
+    MemoriesTimeseriesResponse:
+      description: Time-series of memory ingestion bucketed by time and fact type.
+      example:
+        period: period
+        trunc: trunc
+        bank_id: bank_id
+        buckets:
+        - world: 0
+          observation: 1
+          time: time
+          experience: 6
+        - world: 0
+          observation: 1
+          time: time
+          experience: 6
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        period:
+          description: "One of: 1h, 12h, 1d, 7d, 30d, 90d."
+          title: Period
+          type: string
+        trunc:
+          description: "Bucket granularity: minute, hour, day."
+          title: Trunc
+          type: string
+        buckets:
+          description: "Per-bucket counts, always returned fully padded for the requested\
+            \ period."
+          items:
+            $ref: '#/components/schemas/MemoryTimeseriesBucket'
+          type: array
+      required:
+      - bank_id
+      - period
+      - trunc
+      title: MemoriesTimeseriesResponse
     MemoryItem:
       description: Single memory item for retain.
       example:
@@ -4793,6 +5084,36 @@ components:
       required:
       - content
       title: MemoryItem
+    MemoryTimeseriesBucket:
+      description: One bucket in the memory ingestion time-series.
+      example:
+        world: 0
+        observation: 1
+        time: time
+        experience: 6
+      properties:
+        time:
+          description: Bucket start timestamp in ISO-8601 (UTC).
+          title: Time
+          type: string
+        world:
+          default: 0
+          description: World-fact memories ingested in this bucket.
+          title: World
+          type: integer
+        experience:
+          default: 0
+          description: Experience memories ingested in this bucket.
+          title: Experience
+          type: integer
+        observation:
+          default: 0
+          description: Observations recorded in this bucket.
+          title: Observation
+          type: integer
+      required:
+      - time
+      title: MemoryTimeseriesBucket
     MentalModelListResponse:
       description: Response model for listing mental models.
       example:
@@ -4806,7 +5127,9 @@ components:
           created_at: created_at
           id: id
           trigger:
+            mode: full
             refresh_after_consolidation: false
+            recall_chunks_max_tokens: 1
             tag_groups:
             - match: any_strict
               tags:
@@ -4822,9 +5145,12 @@ components:
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
+            include_chunks: true
             tags_match: any
             exclude_mental_models: false
+            recall_max_tokens: 6
           last_refreshed_at: last_refreshed_at
+          is_stale: true
           content: content
           tags:
           - tags
@@ -4838,7 +5164,9 @@ components:
           created_at: created_at
           id: id
           trigger:
+            mode: full
             refresh_after_consolidation: false
+            recall_chunks_max_tokens: 1
             tag_groups:
             - match: any_strict
               tags:
@@ -4854,9 +5182,12 @@ components:
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
+            include_chunks: true
             tags_match: any
             exclude_mental_models: false
+            recall_max_tokens: 6
           last_refreshed_at: last_refreshed_at
+          is_stale: true
           content: content
           tags:
           - tags
@@ -4881,7 +5212,9 @@ components:
         created_at: created_at
         id: id
         trigger:
+          mode: full
           refresh_after_consolidation: false
+          recall_chunks_max_tokens: 1
           tag_groups:
           - match: any_strict
             tags:
@@ -4897,9 +5230,12 @@ components:
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
+          include_chunks: true
           tags_match: any
           exclude_mental_models: false
+          recall_max_tokens: 6
         last_refreshed_at: last_refreshed_at
+        is_stale: true
         content: content
         tags:
         - tags
@@ -4939,6 +5275,9 @@ components:
         reflect_response:
           additionalProperties: {}
           nullable: true
+        is_stale:
+          nullable: true
+          type: boolean
       required:
       - bank_id
       - id
@@ -4947,6 +5286,19 @@ components:
     MentalModelTrigger-Input:
       description: Trigger settings for a mental model.
       properties:
+        mode:
+          default: full
+          description: "Refresh mode. 'full' (default) regenerates the mental model\
+            \ content from scratch on each refresh. 'delta' performs surgical edits\
+            \ against the existing content: unchanged sections are preserved byte-for-byte,\
+            \ stale content is removed, new content is added. If the mental model\
+            \ has no existing content, or if the source_query has changed since the\
+            \ last refresh, delta mode falls back to a full regeneration automatically."
+          enum:
+          - full
+          - delta
+          title: Mode
+          type: string
         refresh_after_consolidation:
           default: false
           description: "If true, refresh this mental model after observations consolidation\
@@ -4986,11 +5338,22 @@ components:
             $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
           nullable: true
           type: array
+        include_chunks:
+          nullable: true
+          type: boolean
+        recall_max_tokens:
+          nullable: true
+          type: integer
+        recall_chunks_max_tokens:
+          nullable: true
+          type: integer
       title: MentalModelTrigger
     MentalModelTrigger-Output:
       description: Trigger settings for a mental model.
       example:
+        mode: full
         refresh_after_consolidation: false
+        recall_chunks_max_tokens: 1
         tag_groups:
         - match: any_strict
           tags:
@@ -5006,9 +5369,24 @@ components:
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
+        include_chunks: true
         tags_match: any
         exclude_mental_models: false
+        recall_max_tokens: 6
       properties:
+        mode:
+          default: full
+          description: "Refresh mode. 'full' (default) regenerates the mental model\
+            \ content from scratch on each refresh. 'delta' performs surgical edits\
+            \ against the existing content: unchanged sections are preserved byte-for-byte,\
+            \ stale content is removed, new content is added. If the mental model\
+            \ has no existing content, or if the source_query has changed since the\
+            \ last refresh, delta mode falls back to a full regeneration automatically."
+          enum:
+          - full
+          - delta
+          title: Mode
+          type: string
         refresh_after_consolidation:
           default: false
           description: "If true, refresh this mental model after observations consolidation\
@@ -5048,6 +5426,15 @@ components:
             $ref: '#/components/schemas/MentalModelTrigger_Output_tag_groups_inner'
           nullable: true
           type: array
+        include_chunks:
+          nullable: true
+          type: boolean
+        recall_max_tokens:
+          nullable: true
+          type: integer
+        recall_chunks_max_tokens:
+          nullable: true
+          type: integer
       title: MentalModelTrigger
     OperationResponse:
       description: Response model for a single async operation.
@@ -5131,6 +5518,9 @@ components:
             $ref: '#/components/schemas/ChildOperationStatus'
           nullable: true
           type: array
+        task_payload:
+          additionalProperties: {}
+          nullable: true
       required:
       - operation_id
       - status

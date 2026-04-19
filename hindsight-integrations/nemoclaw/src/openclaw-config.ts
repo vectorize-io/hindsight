@@ -1,9 +1,9 @@
-import { readFile, writeFile, rename } from 'fs/promises';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
-import { randomBytes } from 'crypto';
+import { readFile, writeFile, rename } from "fs/promises";
+import { join, dirname } from "path";
+import { homedir } from "os";
+import { randomBytes } from "crypto";
 
-const CONFIG_PATH = join(homedir(), '.openclaw', 'openclaw.json');
+const CONFIG_PATH = join(homedir(), ".openclaw", "openclaw.json");
 
 export interface HindsightPluginConfig {
   hindsightApiUrl: string;
@@ -26,13 +26,13 @@ export interface OpenClawConfig {
 export async function readOpenClawConfig(configPath = CONFIG_PATH): Promise<OpenClawConfig> {
   let raw: string;
   try {
-    raw = await readFile(configPath, 'utf8');
+    raw = await readFile(configPath, "utf8");
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
+    if (code === "ENOENT") {
       throw new Error(
         `OpenClaw config not found at ${configPath}.\n` +
-        `Run \`openclaw\` once to initialize it, then re-run setup.`
+          `Run \`openclaw\` once to initialize it, then re-run setup.`
       );
     }
     throw err;
@@ -46,7 +46,7 @@ export function mergePluginConfig(
 ): OpenClawConfig {
   const plugins = config.plugins ?? {};
   const entries = plugins.entries ?? {};
-  const existing = entries['hindsight-openclaw'] ?? { enabled: true };
+  const existing = entries["hindsight-openclaw"] ?? { enabled: true };
 
   return {
     ...config,
@@ -54,11 +54,11 @@ export function mergePluginConfig(
       ...plugins,
       slots: {
         ...(plugins.slots ?? {}),
-        memory: 'hindsight-openclaw',
+        memory: "hindsight-openclaw",
       },
       entries: {
         ...entries,
-        'hindsight-openclaw': {
+        "hindsight-openclaw": {
           ...existing,
           enabled: true,
           config: {
@@ -73,9 +73,9 @@ export function mergePluginConfig(
       },
       installs: {
         ...(plugins.installs ?? {}),
-        'hindsight-openclaw': {
-          source: 'npm',
-          version: 'latest',
+        "hindsight-openclaw": {
+          source: "npm",
+          version: "latest",
           installedAt: new Date().toISOString(),
         },
       },
@@ -87,9 +87,9 @@ export async function writeOpenClawConfig(
   config: OpenClawConfig,
   configPath = CONFIG_PATH
 ): Promise<void> {
-  const contents = JSON.stringify(config, null, 2) + '\n';
-  const tmp = `${configPath}.${randomBytes(6).toString('hex')}.tmp`;
-  await writeFile(tmp, contents, 'utf8');
+  const contents = JSON.stringify(config, null, 2) + "\n";
+  const tmp = `${configPath}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tmp, contents, "utf8");
   await rename(tmp, configPath);
 }
 

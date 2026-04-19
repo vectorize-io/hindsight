@@ -131,14 +131,10 @@ class HindsightStore(BaseStore):
         # Per-bank locks for concurrency-safe bank creation
         self._bank_locks: dict[str, asyncio.Lock] = {}
 
-    def batch(
-        self, ops: Iterable[GetOp | PutOp | SearchOp | ListNamespacesOp]
-    ) -> list[Result]:
+    def batch(self, ops: Iterable[GetOp | PutOp | SearchOp | ListNamespacesOp]) -> list[Result]:
         raise NotImplementedError("Use abatch() for async operation.")
 
-    async def abatch(
-        self, ops: Iterable[GetOp | PutOp | SearchOp | ListNamespacesOp]
-    ) -> list[Result]:
+    async def abatch(self, ops: Iterable[GetOp | PutOp | SearchOp | ListNamespacesOp]) -> list[Result]:
         results: list[Result] = []
         for op in ops:
             if isinstance(op, GetOp):
@@ -199,11 +195,7 @@ class HindsightStore(BaseStore):
                 self._created_banks.add(bank_id)
             except Exception as e:
                 error_str = str(e).lower()
-                if (
-                    "already exists" in error_str
-                    or "conflict" in error_str
-                    or "409" in error_str
-                ):
+                if "already exists" in error_str or "conflict" in error_str or "409" in error_str:
                     # Bank already exists — safe to cache
                     self._created_banks.add(bank_id)
                 else:
@@ -222,9 +214,7 @@ class HindsightStore(BaseStore):
 
         try:
             await self._ensure_bank(bank_id)
-            content = (
-                json.dumps(op.value) if isinstance(op.value, dict) else str(op.value)
-            )
+            content = json.dumps(op.value) if isinstance(op.value, dict) else str(op.value)
             retain_kwargs: dict[str, Any] = {
                 "bank_id": bank_id,
                 "content": content,
@@ -258,25 +248,15 @@ class HindsightStore(BaseStore):
             all_items = []
             for i, result in enumerate(response.results):
                 value = _parse_value(result.text)
-                doc_id = getattr(result, "document_id", None) or _content_key(
-                    result.text
-                )
-                score = max(
-                    0.0, 1.0 - (i * 0.01)
-                )  # Approximate score from rank position
+                doc_id = getattr(result, "document_id", None) or _content_key(result.text)
+                score = max(0.0, 1.0 - (i * 0.01))  # Approximate score from rank position
                 ts = getattr(result, "occurred_start", None)
-                all_items.append(
-                    _make_search_item(
-                        op.namespace_prefix, doc_id, value, score=score, created_at=ts
-                    )
-                )
+                all_items.append(_make_search_item(op.namespace_prefix, doc_id, value, score=score, created_at=ts))
 
             # Apply filters BEFORE pagination so offset/limit operate on
             # the filtered set rather than discarding matching items.
             if op.filter:
-                all_items = [
-                    item for item in all_items if _matches_filter(item.value, op.filter)
-                ]
+                all_items = [item for item in all_items if _matches_filter(item.value, op.filter)]
 
             limit = op.limit or 10
             offset = op.offset or 0
@@ -285,9 +265,7 @@ class HindsightStore(BaseStore):
             logger.error(f"Store search failed for {op.namespace_prefix}: {e}")
             return []
 
-    async def _handle_list_namespaces(
-        self, op: ListNamespacesOp
-    ) -> list[tuple[str, ...]]:
+    async def _handle_list_namespaces(self, op: ListNamespacesOp) -> list[tuple[str, ...]]:
         """List known namespaces. Limited to namespaces seen via put() in this session."""
         namespaces = list(self._known_namespaces)
 

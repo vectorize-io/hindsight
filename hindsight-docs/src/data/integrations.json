@@ -191,6 +191,16 @@
       "icon": "/img/icons/opencode.svg"
     },
     {
+      "id": "openai-agents",
+      "name": "OpenAI Agents SDK",
+      "description": "Give OpenAI Agents SDK agents persistent long-term memory with Hindsight FunctionTool instances for retain, recall, and reflect.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/openai-agents",
+      "icon": "/img/icons/openai-agents.svg"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",

@@ -22,6 +22,45 @@
 // Include the generated client code (which already exports Error and ResponseValue)
 include!(concat!(env!("OUT_DIR"), "/hindsight_client_generated.rs"));
 
+/// Semantic version of this Rust client, kept in sync with the other language
+/// wrappers when a coordinated release is cut.
+pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Default `User-Agent` header sent on every request unless overridden.
+pub const DEFAULT_USER_AGENT: &str = concat!("hindsight-client-rust/", env!("CARGO_PKG_VERSION"));
+
+/// Build a [`reqwest::Client`] with the given `User-Agent` header.
+///
+/// Integrations should use this to identify themselves (e.g.
+/// `"hindsight-cli/0.6.2"`) so self-hosted deployments behind Cloudflare or
+/// other UA-based filters accept the traffic. Pass the resulting client to
+/// [`Client::new_with_client`].
+pub fn reqwest_client_with_user_agent(
+    user_agent: impl Into<String>,
+) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder().user_agent(user_agent.into()).build()
+}
+
+/// Construct a [`Client`] with a custom `User-Agent` header.
+///
+/// Equivalent to [`Client::new`] but sets the UA string. Use this instead of
+/// the bare `Client::new` when pointing at a hosted Hindsight deployment.
+pub fn client_with_user_agent(
+    base_url: &str,
+    user_agent: impl Into<String>,
+) -> Result<Client, reqwest::Error> {
+    let http = reqwest_client_with_user_agent(user_agent)?;
+    Ok(Client::new_with_client(base_url, http))
+}
+
+/// Construct a [`Client`] with the default Hindsight `User-Agent`.
+///
+/// Prefer this over `Client::new` — the bare `Client::new` uses reqwest's
+/// default UA which is blocked by some reverse proxies (e.g. Cloudflare).
+pub fn default_client(base_url: &str) -> Result<Client, reqwest::Error> {
+    client_with_user_agent(base_url, DEFAULT_USER_AGENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

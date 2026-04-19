@@ -1,5 +1,5 @@
-export { withHindsightChat } from './wrapper.js';
-export { formatMemoriesAsSystemPrompt } from './format.js';
+export { withHindsightChat } from "./wrapper.js";
+export { formatMemoriesAsSystemPrompt } from "./format.js";
 export type {
   Budget,
   FactType,
@@ -19,4 +19,4 @@ export type {
   HindsightChatOptions,
   HindsightChatContext,
   HindsightChatHandler,
-} from './types.js';
+} from "./types.js";

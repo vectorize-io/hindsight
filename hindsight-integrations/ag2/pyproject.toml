@@ -1,6 +1,6 @@
 [project]
 name = "hindsight-ag2"
-version = "0.1.1"
+version = "0.1.2"
 description = "AG2 integration for Hindsight - persistent memory tools for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"

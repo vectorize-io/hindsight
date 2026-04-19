@@ -15,7 +15,12 @@ from typing import Any
 
 import asyncpg
 
-from hindsight_api.config import HindsightConfig, _get_raw_config, normalize_config_dict
+from hindsight_api.config import (
+    RECALL_BUDGET_FUNCTIONS,
+    HindsightConfig,
+    _get_raw_config,
+    normalize_config_dict,
+)
 from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
 from hindsight_api.models import RequestContext
@@ -256,6 +261,9 @@ class ConfigResolver:
                     "Strategy names must not be empty strings. Remove entries with empty names before saving."
                 )
 
+        # Validate recall budget fields
+        _validate_recall_budget_updates(normalized_updates)
+
         # Merge with existing config (JSONB || operator)
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -290,6 +298,53 @@ class ConfigResolver:
             )
 
         logger.info(f"Reset bank config for {bank_id} to defaults")
+
+
+_RECALL_BUDGET_FIXED_KEYS = (
+    "recall_budget_fixed_low",
+    "recall_budget_fixed_mid",
+    "recall_budget_fixed_high",
+)
+_RECALL_BUDGET_ADAPTIVE_KEYS = (
+    "recall_budget_adaptive_low",
+    "recall_budget_adaptive_mid",
+    "recall_budget_adaptive_high",
+)
+
+
+def _validate_recall_budget_updates(updates: dict[str, Any]) -> None:
+    """Validate recall budget config updates. Raises ValueError on invalid input."""
+    if "recall_budget_function" in updates:
+        function = updates["recall_budget_function"]
+        if not isinstance(function, str) or function.lower() not in RECALL_BUDGET_FUNCTIONS:
+            raise ValueError(
+                f"recall_budget_function must be one of {sorted(RECALL_BUDGET_FUNCTIONS)}, got {function!r}"
+            )
+
+    for key in _RECALL_BUDGET_FIXED_KEYS:
+        if key in updates:
+            value = updates[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{key} must be a positive integer, got {value!r}")
+
+    for key in _RECALL_BUDGET_ADAPTIVE_KEYS:
+        if key in updates:
+            value = updates[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"{key} must be a positive number, got {value!r}")
+
+    for key in ("recall_budget_min", "recall_budget_max"):
+        if key in updates:
+            value = updates[key]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{key} must be a positive integer, got {value!r}")
+
+    if "recall_budget_min" in updates and "recall_budget_max" in updates:
+        if updates["recall_budget_min"] > updates["recall_budget_max"]:
+            raise ValueError(
+                f"recall_budget_min ({updates['recall_budget_min']}) must be <= "
+                f"recall_budget_max ({updates['recall_budget_max']})"
+            )
 
 
 def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConfig:

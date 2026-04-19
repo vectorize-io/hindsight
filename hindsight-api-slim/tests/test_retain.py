@@ -378,6 +378,7 @@ async def test_mentioned_at_vs_occurred(memory, request_context):
             content="Alice graduated from MIT in March 2020.",
             context="education history",
             event_date=conversation_date,  # When this conversation happened
+            fact_type_override="world",
             request_context=request_context,
         )
 
@@ -1149,6 +1150,7 @@ async def test_chunk_fact_mapping(memory, request_context):
             content=content,
             context="technical documentation",
             document_id=document_id,
+            fact_type_override="world",
             request_context=request_context,
         )
 

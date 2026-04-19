@@ -72,7 +72,6 @@ from . import (
 from .types import (
     ChunkMetadata,
     EntityResolutionResult,
-    ExtractedFact,
     Phase1Result,
     Phase3Context,
     ProcessedFact,
@@ -302,8 +301,11 @@ async def _insert_facts_and_links(
         causal_link_count = await link_creation.create_causal_links_batch(conn, bank_id, unit_ids, processed_facts)
         log_buffer.append(f"  Causal links: {causal_link_count} links in {time.time() - step_start:.3f}s")
 
-    # Map results back to original content items
-    result_unit_ids = _map_results_to_contents(contents, extracted_facts, unit_ids if unit_ids else [])
+    # Map results back to original content items. Use processed_facts (not
+    # extracted_facts) because unit_ids has 1:1 alignment with processed_facts —
+    # any upstream drop between extraction and processing would otherwise cause
+    # an IndexError (see issue #1037).
+    result_unit_ids = _map_results_to_contents(contents, processed_facts, unit_ids if unit_ids else [])
 
     if outbox_callback:
         await outbox_callback(conn)
@@ -487,8 +489,8 @@ async def retain_batch(
             return result_unit_ids, total_usage
 
     # Resolve effective document_id early so both delta and streaming paths
-    # can find existing chunks from a prior attempt. On retry, the generated
-    # document_id is recovered from operation result_metadata.
+    # can find existing chunks from a prior attempt. On retry, a generated
+    # document_id is recovered from operation result_metadata.document_ids[0].
     effective_doc_id = document_id
     if not effective_doc_id:
         doc_ids = {item.get("document_id") for item in contents_dicts if item.get("document_id")}
@@ -507,26 +509,41 @@ async def retain_batch(
                         if isinstance(row["result_metadata"], dict)
                         else json.loads(row["result_metadata"])
                     )
-                    effective_doc_id = meta.get("generated_document_id")
+                    recovered = meta.get("document_ids") or []
+                    if recovered:
+                        effective_doc_id = recovered[0]
         except Exception:
             pass
     if not effective_doc_id:
         effective_doc_id = str(uuid.uuid4())
-        # Persist so retries reuse the same document_id
-        if operation_id:
-            try:
-                async with acquire_with_retry(pool) as conn:
-                    await conn.execute(
-                        f"""
-                        UPDATE {fq_table("async_operations")}
-                        SET result_metadata = result_metadata || $1::jsonb, updated_at = now()
-                        WHERE operation_id = $2
-                        """,
-                        json.dumps({"generated_document_id": effective_doc_id}),
-                        uuid.UUID(operation_id),
-                    )
-            except Exception:
-                logger.warning("Failed to persist generated document_id", exc_info=True)
+
+    # Record effective_doc_id on the operation (idempotent set-append). Captures
+    # both user-provided and generated ids so the operation shows every document
+    # it touched, and lets retries reuse the same generated id.
+    if operation_id:
+        try:
+            async with acquire_with_retry(pool) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {fq_table("async_operations")}
+                    SET result_metadata = jsonb_set(
+                        COALESCE(result_metadata, '{{}}'::jsonb),
+                        '{{document_ids}}',
+                        CASE
+                            WHEN COALESCE(result_metadata->'document_ids', '[]'::jsonb) @> $1::jsonb
+                                THEN result_metadata->'document_ids'
+                            ELSE COALESCE(result_metadata->'document_ids', '[]'::jsonb) || $1::jsonb
+                        END,
+                        true
+                    ),
+                    updated_at = now()
+                    WHERE operation_id = $2
+                    """,
+                    json.dumps([effective_doc_id]),
+                    uuid.UUID(operation_id),
+                )
+        except Exception:
+            logger.warning("Failed to persist document_id", exc_info=True)
 
     # --- Append mode: prepend existing document content to new content ---
     # When update_mode="append", fetch the existing document text and prepend it
@@ -1550,12 +1567,19 @@ def _build_delta_contents(
 
 def _map_results_to_contents(
     contents: list[RetainContent],
-    extracted_facts: list[ExtractedFact],
+    processed_facts: list[ProcessedFact],
     unit_ids: list[str],
 ) -> list[list[str]]:
-    """Map created unit IDs back to original content items."""
+    """Map created unit IDs back to original content items.
+
+    `processed_facts` and `unit_ids` must have the same length: each unit_id
+    corresponds to the processed_fact at the same index.
+    """
+    if len(processed_facts) != len(unit_ids):
+        raise ValueError(f"processed_facts ({len(processed_facts)}) and unit_ids ({len(unit_ids)}) length mismatch")
+
     facts_by_content: dict[int, list[int]] = {i: [] for i in range(len(contents))}
-    for i, fact in enumerate(extracted_facts):
+    for i, fact in enumerate(processed_facts):
         # Normalize content_index: some LLM providers return 1-indexed values.
         # Clamp to valid range to prevent KeyError.
         idx = fact.content_index
@@ -1564,12 +1588,8 @@ def _map_results_to_contents(
         facts_by_content[idx].append(i)
 
     result_unit_ids = []
-    unit_idx = 0
     for content_index in range(len(contents)):
-        content_unit_ids = []
-        for _ in facts_by_content[content_index]:
-            content_unit_ids.append(unit_ids[unit_idx])
-            unit_idx += 1
+        content_unit_ids = [unit_ids[i] for i in facts_by_content[content_index]]
         result_unit_ids.append(content_unit_ids)
 
     return result_unit_ids

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useBank } from "@/lib/bank-context";
 import { client, AuditLogEntry, AuditStatsBucket } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -140,10 +141,10 @@ function AuditChart({ bankId }: { bankId: string }) {
   }));
 
   return (
-    <div className="border rounded-md p-4 space-y-3">
-      <div className="flex items-center gap-3">
-        <h3 className="text-sm font-semibold">Request Volume</h3>
-        <div className="flex gap-2 ml-auto">
+    <Card>
+      <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 gap-3">
+        <CardTitle className="text-sm font-semibold">Request Volume</CardTitle>
+        <div className="flex gap-2">
           <Select
             value={chartAction || "all"}
             onValueChange={(v) => {
@@ -178,48 +179,50 @@ function AuditChart({ bankId }: { bankId: string }) {
             </Button>
           ))}
         </div>
-      </div>
-      <div className="h-[120px]">
-        {loading ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            Loading...
-          </div>
-        ) : chartData.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            No data for this period
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: 5 }}>
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                className="text-muted-foreground"
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "hsl(var(--popover))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  padding: "4px 8px",
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="total"
-                stroke="hsl(var(--primary))"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 3 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-    </div>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[120px]">
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              Loading...
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              No data for this period
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: 5 }}>
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                  className="text-muted-foreground"
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "var(--popover)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                    padding: "4px 8px",
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="total"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 3 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -383,46 +386,44 @@ export function AuditLogsView() {
       </div>
 
       {/* Table */}
-      <div className="border rounded-md">
-        <Table>
-          <TableHeader>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[200px]">Time</TableHead>
+            <TableHead>Action</TableHead>
+            <TableHead className="w-[100px]">Transport</TableHead>
+            <TableHead className="w-[100px]">Duration</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {logs.length === 0 ? (
             <TableRow>
-              <TableHead className="w-[200px]">Time</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead className="w-[100px]">Transport</TableHead>
-              <TableHead className="w-[100px]">Duration</TableHead>
+              <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                {loading ? "Loading..." : "No audit logs found"}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {logs.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                  {loading ? "Loading..." : "No audit logs found"}
+          ) : (
+            logs.map((log) => (
+              <TableRow
+                key={log.id}
+                className="cursor-pointer hover:bg-muted/50"
+                onClick={() => handleLogClick(log)}
+              >
+                <TableCell className="text-sm font-mono">
+                  {formatDateTime(log.started_at)}
+                </TableCell>
+                <TableCell className="font-medium">{log.action}</TableCell>
+                <TableCell>
+                  <TransportBadge transport={log.transport} />
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground font-mono">
+                  {formatDuration(log.started_at, log.ended_at)}
                 </TableCell>
               </TableRow>
-            ) : (
-              logs.map((log) => (
-                <TableRow
-                  key={log.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => handleLogClick(log)}
-                >
-                  <TableCell className="text-sm font-mono">
-                    {formatDateTime(log.started_at)}
-                  </TableCell>
-                  <TableCell className="font-medium">{log.action}</TableCell>
-                  <TableCell>
-                    <TransportBadge transport={log.transport} />
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground font-mono">
-                    {formatDuration(log.started_at, log.ended_at)}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            ))
+          )}
+        </TableBody>
+      </Table>
 
       {/* Pagination */}
       {totalPages > 1 && (

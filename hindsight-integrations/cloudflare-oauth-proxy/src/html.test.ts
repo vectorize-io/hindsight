@@ -8,7 +8,7 @@ describe("escapeHtml", () => {
 
   it("escapes all reserved characters", () => {
     expect(escapeHtml(`<script>alert("x&'y")</script>`)).toBe(
-      "&lt;script&gt;alert(&quot;x&amp;&#39;y&quot;)&lt;/script&gt;",
+      "&lt;script&gt;alert(&quot;x&amp;&#39;y&quot;)&lt;/script&gt;"
     );
   });
 

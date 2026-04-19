@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useBank } from "@/lib/bank-context";
+import { bankRoute } from "@/lib/bank-url";
 import { useFeatures } from "@/lib/features-context";
 import {
   Search,
@@ -53,7 +54,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
-            const href = `/banks/${currentBank}?view=${item.id}`;
+            const href = bankRoute(currentBank, `?view=${item.id}`);
 
             return (
               <li key={item.id}>

@@ -286,6 +286,34 @@ async def test_full_api_workflow(api_client, test_bank_id):
         )
         assert response.status_code == 410  # Deprecated endpoint
 
+    # Entity co-occurrence graph — shape is stable even when there are no
+    # co-occurrences; every edge must reference two nodes that are also present.
+    response = await api_client.get(f"/v1/default/banks/{test_bank_id}/entities/graph")
+    assert response.status_code == 200
+    entity_graph = response.json()
+    assert set(entity_graph.keys()) >= {"nodes", "edges", "total_entities", "total_edges", "limit"}
+    assert entity_graph["limit"] == 1000
+    assert len(entity_graph["nodes"]) == entity_graph["total_entities"]
+    assert len(entity_graph["edges"]) == entity_graph["total_edges"]
+    node_ids = {n["data"]["id"] for n in entity_graph["nodes"]}
+    for edge in entity_graph["edges"]:
+        assert edge["data"]["source"] in node_ids
+        assert edge["data"]["target"] in node_ids
+        assert edge["data"]["linkType"] == "cooccurrence"
+        assert edge["data"]["weight"] >= 1
+
+    # min_count filter — raising the threshold can only shrink the edge set.
+    response = await api_client.get(
+        f"/v1/default/banks/{test_bank_id}/entities/graph?min_count=1000000"
+    )
+    assert response.status_code == 200
+    filtered_graph = response.json()
+    assert filtered_graph["total_edges"] == 0
+
+    # "graph" must route to the graph endpoint, not be parsed as an entity_id.
+    # Regression guard in case someone reorders the FastAPI route registration.
+    assert entity_graph["total_entities"] >= 0
+
     # ================================================================
     # 9. List All Banks (should include our test bank)
     # ================================================================

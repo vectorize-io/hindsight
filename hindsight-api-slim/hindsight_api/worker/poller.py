@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .exceptions import RetryTaskAt
+from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
 
 if TYPE_CHECKING:
@@ -130,6 +130,9 @@ class WorkerPoller:
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
         # Track in-flight tasks by operation type
         self._in_flight_by_type: dict[str, int] = {}
+        # Rotation offset for per-tenant fair claiming. Advances past the last
+        # schema we serviced so a busy tenant can't monopolize the poll order.
+        self._next_schema_idx: int = 0
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
@@ -196,6 +199,15 @@ class WorkerPoller:
 
         Uses FOR UPDATE SKIP LOCKED to ensure no conflicts with other workers.
 
+        Schema iteration is round-robin to prevent one busy tenant from
+        starving others. Each poll starts at ``self._next_schema_idx`` and
+        wraps around the full list. First pass caps at 1 claim per schema
+        so every tenant with pending work gets a fair chance; a second
+        pass backfills remaining slots from any schema when there's spare
+        capacity. After the call, the offset advances past the last
+        schema we serviced (or by 1 if nothing was claimed) so the next
+        poll starts at a different position.
+
         Returns:
             List of ClaimedTask objects containing operation_id, task_dict, and schema
         """
@@ -206,15 +218,29 @@ class WorkerPoller:
             return []
 
         schemas = await self._get_schemas()
+        if not schemas:
+            return []
+
+        # Rotate the schema order so no tenant is always first.
+        start = self._next_schema_idx % len(schemas)
+        rotated = list(enumerate(schemas))
+        rotated = rotated[start:] + rotated[:start]
+
         all_tasks: list[ClaimedTask] = []
         remaining_non_consolidation = non_consolidation_available
         remaining_consolidation = consolidation_available
+        last_serviced_idx: int | None = None
 
-        for schema in schemas:
+        # Pass 1: fairness pass — at most 1 claim per pool per schema,
+        # so every tenant with pending work is considered before we
+        # return to a tenant we already claimed from.
+        for orig_idx, schema in rotated:
             if remaining_non_consolidation <= 0 and remaining_consolidation <= 0:
                 break
 
-            tasks = await self._claim_batch_for_schema(schema, remaining_non_consolidation, remaining_consolidation)
+            nc_limit = min(1, remaining_non_consolidation)
+            c_limit = min(1, remaining_consolidation)
+            tasks = await self._claim_batch_for_schema(schema, nc_limit, c_limit)
 
             for task in tasks:
                 op_type = task.task_dict.get("operation_type", "unknown")
@@ -223,7 +249,40 @@ class WorkerPoller:
                 else:
                     remaining_non_consolidation -= 1
 
+            if tasks:
+                last_serviced_idx = orig_idx
+
             all_tasks.extend(tasks)
+
+        # Pass 2: capacity pass — fill any remaining slots from whichever
+        # schemas still have work. Preserves rotation order so a tenant
+        # earlier in the rotation doesn't monopolize again when only one
+        # tenant has more work.
+        if remaining_non_consolidation > 0 or remaining_consolidation > 0:
+            for orig_idx, schema in rotated:
+                if remaining_non_consolidation <= 0 and remaining_consolidation <= 0:
+                    break
+
+                tasks = await self._claim_batch_for_schema(schema, remaining_non_consolidation, remaining_consolidation)
+
+                for task in tasks:
+                    op_type = task.task_dict.get("operation_type", "unknown")
+                    if op_type == "consolidation":
+                        remaining_consolidation -= 1
+                    else:
+                        remaining_non_consolidation -= 1
+
+                if tasks:
+                    last_serviced_idx = orig_idx
+
+                all_tasks.extend(tasks)
+
+        # Advance offset past the last schema we serviced, or by 1 if
+        # nothing was claimed (so we don't keep re-hitting an empty head).
+        if last_serviced_idx is not None:
+            self._next_schema_idx = (last_serviced_idx + 1) % len(schemas)
+        else:
+            self._next_schema_idx = (start + 1) % len(schemas)
 
         return all_tasks
 
@@ -461,6 +520,25 @@ class WorkerPoller:
         )
         logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
 
+    async def _defer_operation(self, operation_id: str, exec_date: "Any", reason: str, schema: str | None):
+        """Reset task to pending for re-pickup at exec_date without counting as a retry.
+
+        Unlike `_schedule_retry`, this does not bump `retry_count` and does not
+        populate `error_message` — defer is intentional backpressure, not a failure.
+        """
+        table = fq_table("async_operations", schema)
+        await self._pool.execute(
+            f"""
+            UPDATE {table}
+            SET status = 'pending', next_retry_at = $2, worker_id = NULL, claimed_at = NULL,
+                updated_at = now()
+            WHERE operation_id = $1
+            """,
+            operation_id,
+            exec_date,
+        )
+        logger.info(f"Task {operation_id} deferred until {exec_date}: {reason}")
+
     async def execute_task(self, task: ClaimedTask):
         """Execute a single task as a background job (fire-and-forget)."""
         task_type = task.task_dict.get("type", "unknown")
@@ -532,6 +610,8 @@ class WorkerPoller:
                 task.task_dict["_schema"] = task.schema
             await self._executor(task.task_dict)
             logger.debug(f"Task {task.operation_id} execution finished")
+        except DeferOperation as e:
+            await self._defer_operation(task.operation_id, e.exec_date, e.reason, task.schema)
         except RetryTaskAt as e:
             await self._schedule_retry(task.operation_id, e.retry_at, str(e), task.schema)
         except Exception as e:
@@ -812,13 +892,42 @@ class WorkerPoller:
             schemas = await self._get_schemas()
             global_pending = 0
             all_worker_counts: dict[str, int] = {}
+            # operation_type -> aggregated bucket counts across schemas
+            pending_breakdown: dict[str, dict[str, int]] = {}
 
             async with self._pool.acquire() as conn:
                 for schema in schemas:
                     table = fq_table("async_operations", schema)
 
-                    row = await conn.fetchrow(f"SELECT COUNT(*) as count FROM {table} WHERE status = 'pending'")
-                    global_pending += row["count"] if row else 0
+                    # Bucket pending rows by the same predicates the claim query
+                    # filters on, so an operator can see why pending > 0 but
+                    # nothing is being claimed (orphaned batch_retain parents,
+                    # retry backoff, etc.).
+                    breakdown_rows = await conn.fetch(
+                        f"""
+                        SELECT
+                            operation_type,
+                            COUNT(*) AS total,
+                            COUNT(*) FILTER (WHERE task_payload IS NULL) AS payload_null,
+                            COUNT(*) FILTER (
+                                WHERE next_retry_at IS NOT NULL AND next_retry_at > now()
+                            ) AS retry_blocked,
+                            COUNT(*) FILTER (WHERE worker_id IS NOT NULL) AS assigned
+                        FROM {table}
+                        WHERE status = 'pending'
+                        GROUP BY operation_type
+                        """
+                    )
+                    for br in breakdown_rows:
+                        op_type = br["operation_type"] or "unknown"
+                        bucket = pending_breakdown.setdefault(
+                            op_type, {"total": 0, "payload_null": 0, "retry_blocked": 0, "assigned": 0}
+                        )
+                        bucket["total"] += br["total"]
+                        bucket["payload_null"] += br["payload_null"]
+                        bucket["retry_blocked"] += br["retry_blocked"]
+                        bucket["assigned"] += br["assigned"]
+                        global_pending += br["total"]
 
                     worker_rows = await conn.fetch(
                         f"""
@@ -855,6 +964,13 @@ class WorkerPoller:
                 f"proc: {proc_str} | "
                 f"my_active: {processing_str}"
             )
+
+            # Pending breakdown - explains why pending rows aren't being claimed
+            # (orphaned batch_retain parents have payload_null > 0, retry storms
+            # show up as retry_blocked, etc.). Skip when nothing is pending so
+            # the line doesn't add noise on idle deployments.
+            if global_pending > 0:
+                self._log_pending_breakdown(pending_breakdown)
 
             # Per-task lines, sorted oldest-first so stuck tasks bubble to the top.
             self._log_per_task_lines(active_tasks, now=time.monotonic())
@@ -895,7 +1011,14 @@ class WorkerPoller:
             min_size = pool.get_min_size() if hasattr(pool, "get_min_size") else None
             max_size = pool.get_max_size() if hasattr(pool, "get_max_size") else None
             queue = getattr(pool, "_queue", None)
-            waiters = queue.qsize() if queue is not None and hasattr(queue, "qsize") else None
+            # asyncpg's _queue is a LifoQueue pre-filled to max_size with
+            # PoolConnectionHolder objects. qsize() therefore counts *available
+            # holders*, not callers waiting on the pool — the previous "waiters"
+            # label here was the opposite of what it suggested. The actual count
+            # of awaiters is len(_queue._getters), nonzero only when qsize()==0.
+            free_holders = queue.qsize() if queue is not None and hasattr(queue, "qsize") else None
+            getters = getattr(queue, "_getters", None) if queue is not None else None
+            pending_acquires = len(getters) if getters is not None else None
 
             parts = [f"size={size}"]
             if min_size is not None and max_size is not None:
@@ -903,12 +1026,43 @@ class WorkerPoller:
             if free is not None:
                 parts.append(f"idle={free}")
                 parts.append(f"in_use={size - free}")
-            if waiters is not None:
-                parts.append(f"waiters={waiters}")
+            if free_holders is not None:
+                parts.append(f"free_holders={free_holders}")
+            if pending_acquires is not None:
+                parts.append(f"pending_acquires={pending_acquires}")
             return " ".join(parts)
         except Exception as e:
             logger.debug(f"Pool stats unavailable: {e}")
             return "unavailable"
+
+    def _log_pending_breakdown(self, breakdown: dict[str, dict[str, int]]) -> None:
+        """Emit one [PENDING_BREAKDOWN] line bucketing pending rows by claimability.
+
+        Each bucket mirrors a predicate in the claim query:
+          * payload_null   - row has no task_payload (e.g. batch_retain parent
+                             whose reconciliation never fired); claim query
+                             skips it forever
+          * retry_blocked  - next_retry_at is still in the future
+          * assigned       - worker_id already set; another worker owns it
+
+        ``claimable`` is the residual that *should* be picked up on the next
+        poll. If ``claimable > 0`` while workers report free slots, the bug is
+        somewhere else (lock contention, tenant discovery, etc.) - this line
+        narrows the search.
+        """
+        if not breakdown:
+            return
+
+        parts = []
+        for op_type in sorted(breakdown):
+            b = breakdown[op_type]
+            claimable = b["total"] - b["payload_null"] - b["retry_blocked"] - b["assigned"]
+            parts.append(
+                f"{op_type}: total={b['total']} claimable={claimable} "
+                f"payload_null={b['payload_null']} retry_blocked={b['retry_blocked']} "
+                f"assigned={b['assigned']}"
+            )
+        logger.info(f"[PENDING_BREAKDOWN] {' | '.join(parts)}")
 
     def _log_per_task_lines(self, active_tasks: dict[str, ActiveTaskInfo], now: float) -> None:
         """Emit one [WORKER_TASK] line per in-flight task and dump stuck stacks.

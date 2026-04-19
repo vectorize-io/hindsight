@@ -1,9 +1,9 @@
 // Type definitions for moltbot plugin SDK
 // These are minimal types based on the documentation
 
-declare module 'moltbot/plugin-sdk' {
+declare module "moltbot/plugin-sdk" {
   export interface HookEvent {
-    type: 'command' | 'session' | 'agent' | 'gateway' | 'tool_result_persist';
+    type: "command" | "session" | "agent" | "gateway" | "tool_result_persist";
     action?: string;
     sessionKey?: string;
     timestamp?: string;

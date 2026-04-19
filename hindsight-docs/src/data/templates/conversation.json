@@ -1,0 +1,28 @@
+{
+  "version": "1",
+  "bank": {
+    "retain_mission": "Extract user preferences, stated facts about themselves, requests they've made, topics they care about, and any commitments or follow-ups. Ignore small talk and filler.",
+    "enable_observations": true,
+    "observations_mission": "Track stable user preferences, communication style, recurring topics, and how the user's needs evolve over time."
+  },
+  "mental_models": [
+    {
+      "id": "user-profile",
+      "name": "User Profile",
+      "source_query": "What do we know about this user? What are their preferences, background, and how do they like to interact?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "open-threads",
+      "name": "Open Threads",
+      "source_query": "What topics, tasks, or follow-ups are still open or unresolved from past conversations?",
+      "max_tokens": 1024,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ]
+}

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 const DEFAULT_API_URL: &str = "http://localhost:8888";
 const CONFIG_FILE_NAME: &str = "config";
 const CONFIG_DIR_NAME: &str = ".hindsight";
+const PROFILE_DIR_NAME: &str = "cli-profiles";
+const PROFILE_ENV_VAR: &str = "HINDSIGHT_PROFILE";
 
 #[derive(Debug)]
 pub struct Config {
@@ -18,6 +20,7 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigSource {
     LocalFile,
+    Profile(String),
     Environment,
     Default,
 }
@@ -26,6 +29,7 @@ impl std::fmt::Display for ConfigSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigSource::LocalFile => write!(f, "config file"),
+            ConfigSource::Profile(name) => write!(f, "profile '{}'", name),
             ConfigSource::Environment => write!(f, "environment variable"),
             ConfigSource::Default => write!(f, "default"),
         }
@@ -33,27 +37,43 @@ impl std::fmt::Display for ConfigSource {
 }
 
 impl Config {
-    /// Load configuration with the following priority:
-    /// 1. Environment variable (HINDSIGHT_API_URL, HINDSIGHT_API_KEY) - highest priority, for overrides
-    /// 2. Local config file (~/.hindsight/config.toml)
-    /// 3. Default (http://localhost:8888)
+    /// Load configuration with no explicit profile. See [`Self::load_with_profile`].
     pub fn load() -> Result<Self> {
-        // Load API key from environment (highest priority)
+        Self::load_with_profile(None)
+    }
+
+    /// Load configuration with the following priority:
+    /// 1. Environment variable (HINDSIGHT_API_URL/HINDSIGHT_API_KEY) - highest priority
+    /// 2. Named profile (from `profile_name` arg, else `$HINDSIGHT_PROFILE`)
+    ///    at `~/.hindsight/cli-profiles/<name>.toml`
+    /// 3. Local config file (`~/.hindsight/config`)
+    /// 4. Default (http://localhost:8888)
+    pub fn load_with_profile(profile_name: Option<&str>) -> Result<Self> {
         let env_api_key = env::var("HINDSIGHT_API_KEY").ok();
 
-        // 1. Environment variable takes highest priority (for overrides)
+        // 1. Environment variable takes highest priority
         if let Ok(api_url) = env::var("HINDSIGHT_API_URL") {
             return Self::validate_and_create(api_url, env_api_key, ConfigSource::Environment);
         }
 
-        // 2. Try local config file
+        // 2. Named profile (explicit flag takes precedence over env var)
+        let resolved_profile: Option<String> = profile_name
+            .map(|s| s.to_string())
+            .or_else(|| env::var(PROFILE_ENV_VAR).ok().filter(|s| !s.is_empty()));
+
+        if let Some(name) = resolved_profile {
+            let (api_url, file_api_key) = Self::load_profile(&name)?;
+            let api_key = env_api_key.or(file_api_key);
+            return Self::validate_and_create(api_url, api_key, ConfigSource::Profile(name));
+        }
+
+        // 3. Local config file
         if let Some((api_url, file_api_key)) = Self::load_from_file()? {
-            // Environment api_key takes precedence over file api_key
             let api_key = env_api_key.or(file_api_key);
             return Self::validate_and_create(api_url, api_key, ConfigSource::LocalFile);
         }
 
-        // 3. Fall back to default
+        // 4. Fall back to default
         Self::validate_and_create(DEFAULT_API_URL.to_string(), env_api_key, ConfigSource::Default)
     }
 
@@ -151,6 +171,173 @@ impl Config {
     pub fn api_url(&self) -> &str {
         &self.api_url
     }
+
+    // ---------- profile support ----------
+
+    pub fn profile_dir() -> Option<PathBuf> {
+        Self::config_dir().map(|dir| dir.join(PROFILE_DIR_NAME))
+    }
+
+    pub fn profile_file_path(name: &str) -> Option<PathBuf> {
+        Self::profile_dir().map(|dir| dir.join(format!("{}.toml", name)))
+    }
+
+    /// Load a named profile. Returns (api_url, api_key) or an error if the profile
+    /// file is missing / malformed.
+    pub fn load_profile(name: &str) -> Result<(String, Option<String>)> {
+        validate_profile_name(name)?;
+        let dir = Self::profile_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        load_profile_from_dir(&dir, name)
+    }
+
+    /// Save a named profile to `~/.hindsight/cli-profiles/<name>.toml`.
+    /// Sets file permissions to 0600 on Unix to protect the API key.
+    pub fn save_profile(name: &str, api_url: &str, api_key: Option<&str>) -> Result<PathBuf> {
+        validate_profile_name(name)?;
+        let dir = Self::profile_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        save_profile_to_dir(&dir, name, api_url, api_key)
+    }
+
+    /// List profile names (without `.toml` extension), sorted alphabetically.
+    pub fn list_profiles() -> Result<Vec<String>> {
+        let dir = match Self::profile_dir() {
+            Some(d) => d,
+            None => return Ok(vec![]),
+        };
+        list_profiles_in_dir(&dir)
+    }
+
+    /// Delete a named profile. Returns Ok(path) on success. Errors if the profile
+    /// does not exist.
+    pub fn delete_profile(name: &str) -> Result<PathBuf> {
+        validate_profile_name(name)?;
+        let path = Self::profile_file_path(name)
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        if !path.exists() {
+            anyhow::bail!("profile '{}' not found at {}", name, path.display());
+        }
+        fs::remove_file(&path)
+            .with_context(|| format!("Failed to delete profile file: {}", path.display()))?;
+        Ok(path)
+    }
+}
+
+fn load_profile_from_dir(dir: &std::path::Path, name: &str) -> Result<(String, Option<String>)> {
+    let path = dir.join(format!("{}.toml", name));
+    if !path.exists() {
+        anyhow::bail!(
+            "profile '{}' not found at {}; create with: hindsight profile create {} --api-url <url>",
+            name,
+            path.display(),
+            name
+        );
+    }
+
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read profile file: {}", path.display()))?;
+
+    let mut api_url: Option<String> = None;
+    let mut api_key: Option<String> = None;
+
+    for line in content.lines() {
+        if let Some(v) = parse_config_value(line, "api_url") {
+            api_url = Some(v);
+        } else if let Some(v) = parse_config_value(line, "api_key") {
+            api_key = Some(v);
+        }
+    }
+
+    let api_url = api_url.ok_or_else(|| {
+        anyhow::anyhow!(
+            "profile '{}' at {} is missing required 'api_url' field",
+            name,
+            path.display()
+        )
+    })?;
+
+    Ok((api_url, api_key))
+}
+
+fn save_profile_to_dir(
+    dir: &std::path::Path,
+    name: &str,
+    api_url: &str,
+    api_key: Option<&str>,
+) -> Result<PathBuf> {
+    if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
+        anyhow::bail!(
+            "Invalid API URL: {}. Must start with http:// or https://",
+            api_url
+        );
+    }
+
+    if !dir.exists() {
+        fs::create_dir_all(dir)
+            .with_context(|| format!("Failed to create profile directory: {}", dir.display()))?;
+    }
+
+    let path = dir.join(format!("{}.toml", name));
+    let mut content = format!("api_url = \"{}\"\n", api_url);
+    if let Some(key) = api_key {
+        content.push_str(&format!("api_key = \"{}\"\n", key));
+    }
+
+    fs::write(&path, content)
+        .with_context(|| format!("Failed to write profile file: {}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&path, perms).with_context(|| {
+            format!("Failed to set permissions on profile file: {}", path.display())
+        })?;
+    }
+
+    Ok(path)
+}
+
+fn list_profiles_in_dir(dir: &std::path::Path) -> Result<Vec<String>> {
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .with_context(|| format!("Failed to read profile directory: {}", dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                return None;
+            }
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// Reject empty, path-like, or hidden profile names so they can't escape the
+/// profile directory.
+fn validate_profile_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("profile name cannot be empty");
+    }
+    if name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.contains(char::is_whitespace)
+    {
+        anyhow::bail!(
+            "invalid profile name '{}': must not contain path separators, whitespace, or start with '.'",
+            name
+        );
+    }
+    Ok(())
 }
 
 /// Prompt user for API URL interactively
@@ -197,6 +384,104 @@ mod tests {
         assert_eq!(format!("{}", ConfigSource::LocalFile), "config file");
         assert_eq!(format!("{}", ConfigSource::Environment), "environment variable");
         assert_eq!(format!("{}", ConfigSource::Default), "default");
+        assert_eq!(
+            format!("{}", ConfigSource::Profile("prod".to_string())),
+            "profile 'prod'"
+        );
+    }
+
+    fn tempdir() -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("hindsight-cli-test-{}-{}-{}", pid, nanos, n));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_validate_profile_name_ok() {
+        assert!(validate_profile_name("prod").is_ok());
+        assert!(validate_profile_name("staging-1").is_ok());
+        assert!(validate_profile_name("openclaw-plugin").is_ok());
+        assert!(validate_profile_name("a_b_c").is_ok());
+    }
+
+    #[test]
+    fn test_validate_profile_name_rejects_unsafe() {
+        assert!(validate_profile_name("").is_err());
+        assert!(validate_profile_name(".hidden").is_err());
+        assert!(validate_profile_name("a/b").is_err());
+        assert!(validate_profile_name("a\\b").is_err());
+        assert!(validate_profile_name("..").is_err());
+        assert!(validate_profile_name("foo bar").is_err());
+    }
+
+    #[test]
+    fn test_save_and_load_profile_roundtrip() {
+        let dir = tempdir();
+        let path = save_profile_to_dir(&dir, "prod", "https://api.example.com", Some("hsk_abc"))
+            .unwrap();
+        assert!(path.exists());
+
+        let (url, key) = load_profile_from_dir(&dir, "prod").unwrap();
+        assert_eq!(url, "https://api.example.com");
+        assert_eq!(key.as_deref(), Some("hsk_abc"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn test_save_profile_rejects_invalid_url() {
+        let dir = tempdir();
+        let err = save_profile_to_dir(&dir, "foo", "localhost:8888", None).unwrap_err();
+        assert!(err.to_string().contains("Invalid API URL"));
+    }
+
+    #[test]
+    fn test_load_profile_missing_returns_helpful_error() {
+        let dir = tempdir();
+        let err = load_profile_from_dir(&dir, "nope").unwrap_err().to_string();
+        assert!(err.contains("profile 'nope' not found"));
+        assert!(err.contains("hindsight profile create nope"));
+    }
+
+    #[test]
+    fn test_load_profile_missing_api_url_fails() {
+        let dir = tempdir();
+        let path = dir.join("broken.toml");
+        std::fs::write(&path, "api_key = \"x\"\n").unwrap();
+        let err = load_profile_from_dir(&dir, "broken").unwrap_err().to_string();
+        assert!(err.contains("missing required 'api_url'"));
+    }
+
+    #[test]
+    fn test_list_profiles_returns_sorted_names() {
+        let dir = tempdir();
+        save_profile_to_dir(&dir, "prod", "https://prod.example.com", None).unwrap();
+        save_profile_to_dir(&dir, "dev", "https://dev.example.com", None).unwrap();
+        save_profile_to_dir(&dir, "staging", "https://staging.example.com", None).unwrap();
+        // Non-toml files should be ignored.
+        std::fs::write(dir.join("README"), "hi").unwrap();
+
+        let names = list_profiles_in_dir(&dir).unwrap();
+        assert_eq!(names, vec!["dev", "prod", "staging"]);
+    }
+
+    #[test]
+    fn test_list_profiles_missing_dir_is_empty() {
+        let dir = tempdir().join("nonexistent");
+        let names = list_profiles_in_dir(&dir).unwrap();
+        assert!(names.is_empty());
     }
 
     #[test]

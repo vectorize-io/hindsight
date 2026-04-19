@@ -9,9 +9,10 @@ Usage:
   uv run python test_manual.py
 """
 
-from hindsight_crewai import configure, HindsightStorage, HindsightReflectTool
-from crewai.memory.external.external_memory import ExternalMemory
 from crewai import Agent, Crew, Task
+from crewai.memory.external.external_memory import ExternalMemory
+
+from hindsight_crewai import HindsightReflectTool, HindsightStorage, configure
 
 BANK_ID = "crewai-test"
 HINDSIGHT_URL = "http://localhost:8888"
@@ -62,10 +63,7 @@ writer = Agent(
 )
 
 research_task = Task(
-    description=(
-        "Research the benefits of functional programming. "
-        "List at least 3 key benefits with examples."
-    ),
+    description=("Research the benefits of functional programming. List at least 3 key benefits with examples."),
     expected_output="A list of functional programming benefits with examples.",
     agent=researcher,
 )

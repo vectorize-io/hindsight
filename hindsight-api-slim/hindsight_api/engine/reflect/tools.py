@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 async def tool_search_mental_models(
+    memory_engine: "MemoryEngine",
     conn: "Connection",
     bank_id: str,
     query: str,
@@ -32,7 +33,6 @@ async def tool_search_mental_models(
     tags_match: str = "any",
     tag_groups: "list | None" = None,
     exclude_ids: list[str] | None = None,
-    pending_consolidation: int = 0,
 ) -> dict[str, Any]:
     """
     Search user-curated mental models by semantic similarity.
@@ -82,7 +82,7 @@ async def tool_search_mental_models(
         f"""
         SELECT
             id, name, content,
-            tags, created_at, last_refreshed_at,
+            tags, created_at, last_refreshed_at, trigger,
             1 - (embedding <=> $2::vector) as relevance
         FROM {fq_table("mental_models")}
         WHERE bank_id = $1 AND embedding IS NOT NULL {filters}
@@ -99,10 +99,9 @@ async def tool_search_mental_models(
         if last_refreshed_at and last_refreshed_at.tzinfo is None:
             last_refreshed_at = last_refreshed_at.replace(tzinfo=timezone.utc)
 
-        # A mental model is stale when there are memories that haven't been consolidated yet —
-        # the same signal used for observations staleness.
-        is_stale = pending_consolidation > 0
-        staleness_reason = f"{pending_consolidation} memories pending consolidation" if is_stale else None
+        # Per-MM staleness: new in-scope memories since last refresh (includes pending).
+        is_stale = await memory_engine.compute_mental_model_is_stale(conn, bank_id, row)
+        staleness_reason = "new in-scope memories ingested since last refresh" if is_stale else None
 
         mental_models.append(
             {
@@ -214,6 +213,7 @@ async def tool_recall(
     connection_budget: int = 1,
     max_chunk_tokens: int = 1000,
     fact_types: list[str] | None = None,
+    include_chunks: bool = True,
 ) -> dict[str, Any]:
     """
     Search memories using TEMPR retrieval.
@@ -230,15 +230,15 @@ async def tool_recall(
         tags: Filter by tags (includes untagged memories)
         tags_match: How to match tags - "any" (OR), "all" (AND), or "exact"
         connection_budget: Max DB connections for this recall (default 1 for internal ops)
-        max_chunk_tokens: Maximum tokens for raw source chunk text (default 1000, always included)
+        max_chunk_tokens: Maximum tokens for raw source chunk text (default 1000)
         fact_types: Optional filter for fact types to retrieve. Defaults to ["experience", "world"].
+        include_chunks: Whether to fetch raw chunk text alongside facts (default True).
 
     Returns:
-        Dict with list of matching memories including raw chunk text
+        Dict with list of matching memories including raw chunk text (when include_chunks)
     """
     # Only world/experience are valid for raw recall (observation is handled by search_observations)
     recall_fact_type = [ft for ft in (fact_types or ["experience", "world"]) if ft in ("world", "experience")]
-    include_chunks = True
     internal_ctx = replace(request_context, internal=True)
     result = await memory_engine.recall_async(
         bank_id=bank_id,

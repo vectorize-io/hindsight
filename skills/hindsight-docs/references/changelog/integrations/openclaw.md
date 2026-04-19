@@ -8,6 +8,33 @@ import PageHero from '@site/src/components/PageHero';
 
 ← OpenClaw integration
 
+## [0.6.5](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.5)
+
+**Bug Fixes**
+
+- Fix per-session memory retention so saving a new turn no longer overwrites earlier turns in the same session.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/1f897314" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>1f897314</a>
+- Improve direct-execution detection by correctly resolving full symlink chains, preventing incorrect behavior when invoked through symlinked paths.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/D2758695161" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@D2758695161</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7ceaa22a" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7ceaa22a</a>
+
+## [0.6.4](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.4)
+
+**Features**
+
+- Openclaw now uses a session-scoped document ID and records structured timestamps for each message, improving session consistency and message ordering. ([`33645e08`](https://github.com/vectorize-io/hindsight/commit/33645e08))
+
+## [0.6.3](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.3)
+
+**Features**
+
+- Inline retain tags are now merged with default retain tags, improving consistency of retention behavior without extra configuration. ([`b79ab2b7`](https://github.com/vectorize-io/hindsight/commit/b79ab2b7))
+
+**Improvements**
+
+- All HTTP requests now include an identifying User-Agent, improving request attribution and compatibility with stricter endpoints. ([`9372462e`](https://github.com/vectorize-io/hindsight/commit/9372462e))
+
+**Bug Fixes**
+
+- Per-agent banking now respects identity skip-filter configuration, preventing incorrect identity filtering. ([`90a22016`](https://github.com/vectorize-io/hindsight/commit/90a22016))
+
 ## [0.6.2](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v0.6.2)
 
 **Features**

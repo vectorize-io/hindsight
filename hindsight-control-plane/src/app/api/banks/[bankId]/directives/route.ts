@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(request: Request, { params }: { params: Promise<{ bankId: string }> }) {
   try {
@@ -20,7 +20,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
       queryParams.append("tags_match", tagsMatch);
     }
 
-    const url = `${DATAPLANE_URL}/v1/default/banks/${bankId}/directives${queryParams.toString() ? `?${queryParams}` : ""}`;
+    const url = dataplaneBankUrl(
+      bankId,
+      `/directives${queryParams.toString() ? `?${queryParams}` : ""}`
+    );
     const response = await fetch(url, { method: "GET", headers: getDataplaneHeaders() });
 
     if (!response.ok) {
@@ -47,7 +50,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ban
 
     const body = await request.json();
 
-    const response = await fetch(`${DATAPLANE_URL}/v1/default/banks/${bankId}/directives`, {
+    const response = await fetch(dataplaneBankUrl(bankId, "/directives"), {
       method: "POST",
       headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),

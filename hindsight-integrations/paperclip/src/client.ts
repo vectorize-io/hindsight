@@ -1,53 +1,38 @@
 /**
- * HTTP client for the Hindsight REST API.
+ * Minimal Hindsight HTTP client for use inside the plugin worker.
  *
  * Uses native fetch (Node 20+). No external dependencies.
  */
 
-import type { PaperclipMemoryConfig } from './config.js';
-
 export interface Memory {
   text: string;
   type?: string;
-  mentionedAt?: string;
 }
 
 export interface RecallResponse {
   results: Memory[];
 }
 
-export interface RetainResponse {
-  success: boolean;
-  bankId?: string;
-}
-
 export class HindsightClient {
   private readonly baseUrl: string;
   private readonly token: string | undefined;
-  private readonly timeoutMs: number;
 
-  constructor(config: PaperclipMemoryConfig) {
-    const url = config.hindsightApiUrl.trim();
-    if (!url) throw new Error('hindsightApiUrl is required');
-    this.baseUrl = url.replace(/\/$/, '');
-    this.token = config.hindsightApiToken;
-    this.timeoutMs = config.timeoutMs ?? 15_000;
+  constructor(baseUrl: string, token?: string) {
+    const url = baseUrl.trim();
+    if (!url) throw new Error("hindsightApiUrl is required");
+    this.baseUrl = url.replace(/\/$/, "");
+    this.token = token;
   }
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.token) h['Authorization'] = `Bearer ${this.token}`;
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;
   }
 
-  private async request<T>(
-    method: string,
-    path: string,
-    body?: unknown,
-    timeoutMs?: number,
-  ): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs ?? this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), 15_000);
 
     try {
       const resp = await fetch(`${this.baseUrl}${path}`, {
@@ -58,7 +43,7 @@ export class HindsightClient {
       });
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await resp.text().catch(() => "");
         throw new Error(`HTTP ${resp.status} from ${path}: ${text}`);
       }
 
@@ -68,43 +53,29 @@ export class HindsightClient {
     }
   }
 
-  async recall(
-    bankId: string,
-    query: string,
-    options?: { budget?: string; maxTokens?: number },
-  ): Promise<RecallResponse> {
+  async recall(bankId: string, query: string, budget = "mid"): Promise<RecallResponse> {
     const path = `/v1/default/banks/${encodeURIComponent(bankId)}/memories/recall`;
-    return this.request<RecallResponse>('POST', path, {
+    return this.request<RecallResponse>("POST", path, {
       query,
-      budget: options?.budget ?? 'mid',
-      max_tokens: options?.maxTokens ?? 1024,
+      budget,
+      max_tokens: 1024,
     });
   }
 
   async retain(
     bankId: string,
     content: string,
-    options?: {
-      documentId?: string;
-      context?: string;
-      metadata?: Record<string, string>;
-      tags?: string[];
-    },
-  ): Promise<RetainResponse> {
+    documentId?: string,
+    metadata?: Record<string, string>
+  ): Promise<void> {
     const path = `/v1/default/banks/${encodeURIComponent(bankId)}/memories`;
-    const item: Record<string, unknown> = { content };
-    if (options?.documentId) item['document_id'] = options.documentId;
-    if (options?.context) item['context'] = options.context;
-    if (options?.metadata) item['metadata'] = options.metadata;
-    if (options?.tags) item['tags'] = options.tags;
-    return this.request<RetainResponse>('POST', path, { items: [item], async: true });
-  }
-
-  async setBankMission(bankId: string, mission: string, retainMission?: string): Promise<void> {
-    const path = `/v1/default/banks/${encodeURIComponent(bankId)}/config`;
-    const updates: Record<string, string> = { reflect_mission: mission };
-    if (retainMission) updates['retain_mission'] = retainMission;
-    await this.request('PATCH', path, { updates });
+    const item: Record<string, unknown> = {
+      content,
+      context: "paperclip",
+    };
+    if (documentId) item["document_id"] = documentId;
+    if (metadata) item["metadata"] = metadata;
+    await this.request("POST", path, { items: [item], async: true });
   }
 
   async health(): Promise<boolean> {
@@ -118,4 +89,9 @@ export class HindsightClient {
       return false;
     }
   }
+}
+
+export function formatMemories(memories: Memory[]): string {
+  if (memories.length === 0) return "";
+  return memories.map((m) => `- ${m.text}`).join("\n");
 }

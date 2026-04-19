@@ -42,6 +42,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _filter_live_source_memories(
+    conn: "Connection",
+    bank_id: str,
+    source_memory_ids: list[uuid.UUID],
+) -> list[uuid.UUID]:
+    """Return only the source memory ids that still exist in the bank.
+
+    Uses FOR SHARE to block concurrent deletes from removing a row between the
+    check and the subsequent insert/update. Combined with the delete path running
+    its stale-observation sweep *after* deleting the source row, this closes the
+    race window where consolidation would otherwise produce an orphan observation.
+    """
+    if not source_memory_ids:
+        return []
+    rows = await conn.fetch(
+        f"""
+        SELECT id
+        FROM {fq_table("memory_units")}
+        WHERE id = ANY($1::uuid[]) AND bank_id = $2
+        FOR SHARE
+        """,
+        source_memory_ids,
+        bank_id,
+    )
+    live = {row["id"] for row in rows}
+    return [mid for mid in source_memory_ids if mid in live]
+
+
 class _CreateAction(BaseModel):
     text: str
     source_fact_ids: list[str]  # memory UUIDs from the NEW FACTS list
@@ -219,6 +247,7 @@ async def run_consolidation_job(
 
     perf = ConsolidationPerfLog(bank_id)
     max_memories_per_batch = config.consolidation_batch_size
+    max_memories_per_round = config.consolidation_max_memories_per_round
     llm_batch_size = max(1, config.consolidation_llm_batch_size)
 
     # Check if consolidation is enabled
@@ -281,8 +310,17 @@ async def run_consolidation_job(
     # Track all unique tags from consolidated memories for mental model refresh filtering
     consolidated_tags: set[str] = set()
 
+    round_limit_enabled = max_memories_per_round > 0
+    round_remaining = max_memories_per_round if round_limit_enabled else float("inf")
+    hit_round_limit = False
+
     llm_batch_num = 0
     while True:
+        # Cap fetch size by remaining round budget
+        fetch_limit = (
+            min(max_memories_per_batch, int(round_remaining)) if round_limit_enabled else max_memories_per_batch
+        )
+
         # Fetch next batch of unconsolidated memories
         async with pool.acquire() as conn:
             t0 = time.time()
@@ -299,7 +337,7 @@ async def run_consolidation_job(
                 LIMIT $2
                 """,
                 bank_id,
-                max_memories_per_batch,
+                fetch_limit,
             )
             perf.record_timing("fetch_memories", time.time() - t0)
 
@@ -524,6 +562,25 @@ async def run_consolidation_job(
                 f" | avg={llm_batch_time / len(llm_batch):.3f}s/memory"
             )
 
+        # Update round budget after processing this DB fetch batch
+        if round_limit_enabled:
+            round_remaining -= len(memories)
+            if round_remaining <= 0:
+                hit_round_limit = True
+                break
+
+    # Re-submit consolidation if we hit the round limit and there's likely more work
+    if hit_round_limit:
+        remaining = total_count - stats["memories_processed"]
+        logger.info(
+            f"[CONSOLIDATION] bank={bank_id} hit round limit of {max_memories_per_round} memories,"
+            f" ~{remaining} remaining. Re-queuing consolidation."
+        )
+        try:
+            await memory_engine.submit_async_consolidation(bank_id=bank_id, request_context=request_context)
+        except Exception as e:
+            logger.warning(f"[CONSOLIDATION] bank={bank_id} failed to re-queue consolidation: {e}")
+
     # Build summary
     perf.log(
         f"[3] Results: {stats['memories_processed']} memories -> "
@@ -552,16 +609,21 @@ async def run_consolidation_job(
     if timing_parts:
         perf.log(f"[4] Timing breakdown: {', '.join(timing_parts)}")
 
-    # Trigger mental model refreshes for models with refresh_after_consolidation=true
-    # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
-    mental_models_refreshed = await _trigger_mental_model_refreshes(
-        memory_engine=memory_engine,
-        bank_id=bank_id,
-        request_context=request_context,
-        consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
-        perf=perf,
-    )
-    stats["mental_models_refreshed"] = mental_models_refreshed
+    # Trigger mental model refreshes only on the final round (when all memories are processed).
+    # If we hit the round limit and re-queued, skip MM refresh — the next round will handle it.
+    if hit_round_limit:
+        stats["mental_models_refreshed"] = 0
+        logger.info(f"[CONSOLIDATION] bank={bank_id} skipping mental model refresh (round limit hit, re-queued)")
+    else:
+        # SECURITY: Only refresh mental models with matching tags (or all if no tags were consolidated)
+        mental_models_refreshed = await _trigger_mental_model_refreshes(
+            memory_engine=memory_engine,
+            bank_id=bank_id,
+            request_context=request_context,
+            consolidated_tags=list(consolidated_tags) if consolidated_tags else None,
+            perf=perf,
+        )
+        stats["mental_models_refreshed"] = mental_models_refreshed
 
     perf.flush()
 
@@ -593,17 +655,15 @@ async def _trigger_mental_model_refreshes(
     """
     pool = memory_engine._pool
 
-    # Find mental models with refresh_after_consolidation=true
-    # SECURITY: Control which mental models get refreshed based on tags
+    # Find mental models with refresh_after_consolidation=true that are actually stale.
+    # The tag filter on the SELECT enforces the security boundary (never look outside the
+    # relevant tag scope); compute_mental_model_is_stale then verifies that new memories
+    # in the MM's scope really were ingested since its last refresh.
     async with pool.acquire() as conn:
         if consolidated_tags:
-            # Tagged memories were consolidated - refresh:
-            # 1. Mental models with overlapping tags (security boundary)
-            # 2. Untagged mental models (they're "global" and available to all contexts)
-            # DO NOT refresh mental models with different tags
-            rows = await conn.fetch(
+            candidates = await conn.fetch(
                 f"""
-                SELECT id, name, tags
+                SELECT id, name, tags, last_refreshed_at, trigger
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
@@ -616,11 +676,9 @@ async def _trigger_mental_model_refreshes(
                 consolidated_tags,
             )
         else:
-            # Untagged memories were consolidated - only refresh untagged mental models
-            # SECURITY: Tagged mental models are NOT refreshed when untagged memories are consolidated
-            rows = await conn.fetch(
+            candidates = await conn.fetch(
                 f"""
-                SELECT id, name, tags
+                SELECT id, name, tags, last_refreshed_at, trigger
                 FROM {fq_table("mental_models")}
                 WHERE bank_id = $1
                   AND (trigger->>'refresh_after_consolidation')::boolean = true
@@ -628,6 +686,11 @@ async def _trigger_mental_model_refreshes(
                 """,
                 bank_id,
             )
+
+        rows = []
+        for candidate in candidates:
+            if await memory_engine.compute_mental_model_is_stale(conn, bank_id, candidate):
+                rows.append(candidate)
 
     if not rows:
         return 0
@@ -889,6 +952,15 @@ async def _execute_update_action(
         logger.debug(f"Update skipped: observation {observation_id} not found in recall results")
         return
 
+    live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
+    if not live_source_memory_ids:
+        logger.debug(
+            f"Update skipped: all {len(source_memory_ids)} source memories for observation "
+            f"{observation_id} were deleted concurrently"
+        )
+        return
+    source_memory_ids = live_source_memory_ids
+
     from ...config import get_config
 
     history_entry = {
@@ -1131,11 +1203,13 @@ async def _consolidate_batch_with_llm(
     memories: list[dict[str, Any]],
     union_observations: "list[MemoryFact]",
     union_source_facts: "dict[str, MemoryFact]",
-    config: Any = None,
+    config: Any,
     remaining_observation_slots: int | None = None,
     max_observations_per_scope: int = -1,
 ) -> _BatchLLMResult:
     """Single LLM call for a batch of facts against a pooled set of observations."""
+    if config is None:
+        raise ValueError("config is required for _consolidate_batch_with_llm")
     if union_observations:
         obs_list = _build_observations_for_llm(union_observations, union_source_facts)
         observations_text = json.dumps(obs_list, indent=2)
@@ -1172,8 +1246,7 @@ async def _consolidate_batch_with_llm(
                 f"(out of {max_observations_per_scope}). Prefer UPDATE over CREATE when possible."
             )
 
-    observations_mission = config.observations_mission if config is not None else None
-    prompt_template = build_batch_consolidation_prompt(observations_mission, observation_capacity_note)
+    prompt_template = build_batch_consolidation_prompt(config.observations_mission, observation_capacity_note)
     prompt = prompt_template.format(
         facts_text=facts_lines,
         observations_text=observations_text,
@@ -1182,15 +1255,29 @@ async def _consolidate_batch_with_llm(
     # Use a constrained response model when observation limit is active
     response_model = _build_response_model(max_creates=remaining_observation_slots)
 
-    max_attempts = 3
+    max_attempts = config.consolidation_max_attempts
+    inner_max_retries = config.consolidation_llm_max_retries
     last_exc: Exception | None = None
+    # Pre-compute a stable identifier set for the batch so failure logs name the
+    # exact memories whose consolidation is failing — without this, an opaque
+    # "LLM batch call failed" line gives operators no way to find the offending
+    # input until adaptive bisection narrows the batch down to a single memory.
+    memory_ids = [str(m.get("id")) for m in memories]
+    if len(memory_ids) <= 5:
+        ids_label = ", ".join(memory_ids)
+    else:
+        ids_label = f"{', '.join(memory_ids[:3])}, ... +{len(memory_ids) - 3} more"
+    batch_label = f"{len(memory_ids)} memories [{ids_label}]"
     for attempt in range(1, max_attempts + 1):
         try:
-            response: _ConsolidationBatchResponse = await llm_config.call(
-                messages=[{"role": "user", "content": prompt}],
-                response_format=response_model,
-                scope="consolidation",
-            )
+            call_kwargs: dict[str, Any] = {
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": response_model,
+                "scope": "consolidation",
+            }
+            if inner_max_retries is not None:
+                call_kwargs["max_retries"] = inner_max_retries
+            response: _ConsolidationBatchResponse = await llm_config.call(**call_kwargs)
             # Defensive truncation: some LLM providers may not enforce JSON schema max_length
             creates = response.creates
             if remaining_observation_slots is not None and remaining_observation_slots >= 0:
@@ -1209,10 +1296,13 @@ async def _consolidate_batch_with_llm(
             )
         except Exception as exc:
             last_exc = exc
-            logger.warning(f"[CONSOLIDATION] LLM batch call failed (attempt {attempt}/{max_attempts}): {exc}")
+            logger.warning(
+                f"[CONSOLIDATION] LLM batch call failed (attempt {attempt}/{max_attempts}) for {batch_label}: {exc}"
+            )
 
     logger.error(
-        f"[CONSOLIDATION] LLM batch call failed after {max_attempts} attempts, skipping batch. Last error: {last_exc}"
+        f"[CONSOLIDATION] LLM batch call failed after {max_attempts} attempts for {batch_label}, "
+        f"skipping batch. Last error: {last_exc}"
     )
     return _BatchLLMResult(obs_count=len(union_observations), prompt_chars=len(prompt), failed=True)
 
@@ -1231,6 +1321,12 @@ async def _create_observation_directly(
     perf: ConsolidationPerfLog | None = None,
 ) -> dict[str, Any]:
     """Create an observation from one or more source memories with pre-processed text."""
+    live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
+    if not live_source_memory_ids:
+        logger.debug(f"Create skipped: all {len(source_memory_ids)} source memories were deleted concurrently")
+        return {"action": "skipped", "reason": "sources_deleted"}
+    source_memory_ids = live_source_memory_ids
+
     # Generate embedding for the observation (convert to string for pgvector)
     t0 = time.time()
     embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [observation_text])

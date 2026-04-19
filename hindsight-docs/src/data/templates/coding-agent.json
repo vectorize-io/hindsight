@@ -1,0 +1,28 @@
+{
+  "version": "1",
+  "bank": {
+    "retain_mission": "Extract technical decisions and their rationale, architectural choices, coding patterns and conventions, project structure facts, library/tool preferences, and recurring issues. Ignore transient debugging output and boilerplate.",
+    "enable_observations": true,
+    "observations_mission": "Track stable project facts: tech stack, team conventions, architecture patterns, and how the codebase evolves over time."
+  },
+  "mental_models": [
+    {
+      "id": "project-context",
+      "name": "Project Context",
+      "source_query": "What is the project's tech stack, architecture, and key conventions? What are the main components and how do they fit together?",
+      "max_tokens": 2048,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    },
+    {
+      "id": "developer-preferences",
+      "name": "Developer Preferences",
+      "source_query": "What are the developer's preferences for tools, libraries, coding style, and workflow? How do they like code to be written and reviewed?",
+      "max_tokens": 1024,
+      "trigger": {
+        "refresh_after_consolidation": true
+      }
+    }
+  ]
+}

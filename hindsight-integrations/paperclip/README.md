@@ -1,153 +1,91 @@
 # @vectorize-io/hindsight-paperclip
 
-Persistent memory for [Paperclip AI](https://github.com/paperclipai/paperclip) agents using [Hindsight](https://hindsight.vectorize.io).
+Persistent long-term memory for Paperclip agents via [Hindsight](https://github.com/vectorize-io/hindsight).
 
-Paperclip agents start every heartbeat cold — no memory of prior sessions, decisions, or patterns. This package gives them long-term memory that persists across heartbeats and sessions.
+Install once. Every agent in your Paperclip instance gets memory that persists across runs, companies, and restarts.
 
-## How It Works
+## What It Does
 
-1. **Before each heartbeat**: `recall()` queries Hindsight for context relevant to the current task and injects it into the agent's prompt
-2. **After each heartbeat**: `retain()` stores the agent's output so future heartbeats can reference it
-
-Memory is isolated per company and agent by default (`paperclip::{companyId}::{agentId}`), matching Paperclip's multi-tenant model.
+- **Before each run** — recalls relevant memories from past runs and caches them for the agent
+- **After each run** — retains the agent's output to Hindsight automatically
+- **Agent tools** — `hindsight_recall` and `hindsight_retain` tools for agents to query and store memory mid-run
 
 ## Installation
 
 ```bash
-npm install @vectorize-io/hindsight-paperclip
+pnpm paperclipai plugin install @vectorize-io/hindsight-paperclip
 ```
+
+Then configure in **Settings → Plugins → Hindsight Memory**.
+
+## Prerequisites
+
+Either:
+
+```bash
+# Self-hosted (runs locally)
+pip install hindsight-all
+export HINDSIGHT_API_LLM_API_KEY=your-openai-key
+hindsight-api
+```
+
+Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosting required.
 
 ## Configuration
 
-Set environment variables (or pass as options to `loadConfig()`):
+| Field                | Default                 | Description                                                    |
+| -------------------- | ----------------------- | -------------------------------------------------------------- |
+| `hindsightApiUrl`    | `http://localhost:8888` | Hindsight server URL                                           |
+| `hindsightApiKeyRef` | —                       | Paperclip secret name holding Hindsight Cloud API key          |
+| `bankGranularity`    | `["company", "agent"]`  | Memory isolation: per company+agent, per company, or per agent |
+| `recallBudget`       | `mid`                   | `low` = fastest, `mid` = balanced, `high` = most thorough      |
+| `autoRetain`         | `true`                  | Automatically retain run output after every run                |
 
-| Variable | Description | Default |
-|---|---|---|
-| `HINDSIGHT_API_URL` | Hindsight server URL | Required |
-| `HINDSIGHT_API_TOKEN` | API token for Hindsight Cloud | — |
-
-## Usage
-
-### HTTP Adapter Agents (Express middleware)
-
-```typescript
-import express from 'express'
-import { createMemoryMiddleware, loadConfig } from '@vectorize-io/hindsight-paperclip'
-import type { HindsightRequest } from '@vectorize-io/hindsight-paperclip'
-
-const app = express()
-app.use(express.json())
-app.use(createMemoryMiddleware(loadConfig()))
-
-app.post('/heartbeat', async (req, res) => {
-  const { memories, runId } = (req as HindsightRequest).hindsight
-  const { context } = req.body
-
-  const prompt = memories
-    ? `Past context:\n${memories}\n\nCurrent task: ${context.taskDescription}`
-    : `Task: ${context.taskDescription}`
-
-  const output = await runYourAgent(prompt)
-  res.json({ output })  // middleware auto-retains output
-})
-```
-
-The middleware reads `agentId`, `companyId`, `runId`, and `context.taskDescription` from the Paperclip HTTP adapter request body automatically.
-
-### Process Adapter Scripts
-
-```typescript
-import { recall, retain, loadConfig } from '@vectorize-io/hindsight-paperclip'
-
-const config = loadConfig()
-const { PAPERCLIP_AGENT_ID, PAPERCLIP_COMPANY_ID, PAPERCLIP_RUN_ID } = process.env
-
-// Recall before executing
-const memories = await recall({
-  agentId: PAPERCLIP_AGENT_ID!,
-  companyId: PAPERCLIP_COMPANY_ID!,
-  query: process.env.TASK_DESCRIPTION ?? '',
-}, config)
-
-if (memories) {
-  console.log(`[Memory Context]\n${memories}`)
-}
-
-// ... agent does its work ...
-
-// Retain after
-await retain({
-  agentId: PAPERCLIP_AGENT_ID!,
-  companyId: PAPERCLIP_COMPANY_ID!,
-  content: agentOutput,
-  documentId: PAPERCLIP_RUN_ID!,
-}, config)
-```
-
-### Direct Function Usage
-
-```typescript
-import { recall, retain, loadConfig } from '@vectorize-io/hindsight-paperclip'
-
-const config = loadConfig({
-  hindsightApiUrl: 'https://api.hindsight.vectorize.io',
-  hindsightApiToken: process.env.HINDSIGHT_API_TOKEN,
-})
-
-const memories = await recall(
-  { companyId, agentId, query: `${task.title}\n${task.description}` },
-  config
-)
-
-if (memories) {
-  systemPrompt = `Past context:\n${memories}\n\n${systemPrompt}`
-}
-```
-
-## Bank ID Isolation
-
-By default, each company+agent pair gets its own memory bank:
+## Bank ID Format
 
 ```
-paperclip::{companyId}::{agentId}
+paperclip::{companyId}::{agentId}    ← default (company + agent granularity)
+paperclip::{companyId}               ← company granularity (shared across agents)
+paperclip::{agentId}                 ← agent granularity (agent memory across companies)
 ```
 
-You can change the isolation granularity:
+## Agent Tools
 
-```typescript
-// Shared memory across all agents in a company
-loadConfig({ bankGranularity: ['company'] })
-// → "paperclip::{companyId}"
+Agents can call these tools directly during a run:
 
-// Agent's global memory across all companies
-loadConfig({ bankGranularity: ['agent'] })
-// → "paperclip::{agentId}"
+**`hindsight_recall(query)`** — search memory for relevant context. Called automatically at run start; agents can also call it mid-run for targeted queries.
 
-// Custom prefix
-loadConfig({ bankIdPrefix: 'myapp' })
-// → "myapp::{companyId}::{agentId}"
+**`hindsight_retain(content)`** — store a fact or decision immediately, without waiting for run end.
+
+## How It Works
+
+```
+agent.run.started
+  └─ recall(issueTitle + description)
+       └─ store in plugin state for this run (instant lookup by tools)
+
+agent running…
+  ├─ hindsight_recall(query) → returns cached context or live recall
+  └─ hindsight_retain(content) → stores immediately
+
+agent.run.finished
+  └─ retain(output) → stored in Hindsight with runId as document_id
 ```
 
-## Configuration Reference
+Memory is keyed to `companyId` + `agentId`, never to the Paperclip session or run ID — so it survives across any number of runs.
 
-```typescript
-interface PaperclipMemoryConfig {
-  hindsightApiUrl: string          // HINDSIGHT_API_URL — required
-  hindsightApiToken?: string       // HINDSIGHT_API_TOKEN
-  bankGranularity?: ('company' | 'agent')[]  // default: ['company', 'agent']
-  bankIdPrefix?: string            // default: 'paperclip'
-  recallBudget?: 'low' | 'mid' | 'high'      // default: 'mid'
-  recallMaxTokens?: number         // default: 1024
-  retainContext?: string           // default: 'paperclip'
-  timeoutMs?: number               // default: 15000
-}
+## Development
+
+```bash
+npm install
+npm run build
+npm test
 ```
 
-## Skill File
+Local install into a running Paperclip instance:
 
-An agent-readable skill file is included at `src/skills/hindsight.md`. Inject it into your agent's system prompt or as a Paperclip skill to give the agent direct access to Hindsight's REST API via `curl`.
-
-## Requirements
-
-- Node.js 20+ (uses native `fetch`)
-- Hindsight server (self-hosted or [Hindsight Cloud](https://hindsight.vectorize.io))
+```bash
+curl -X POST http://127.0.0.1:3100/api/plugins/install \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"/absolute/path/to/hindsight-integrations/paperclip","isLocalPath":true}'
+```

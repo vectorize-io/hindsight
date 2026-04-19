@@ -1,40 +1,30 @@
 /**
- * Bank ID derivation for Paperclip agents.
+ * Bank ID derivation — maps Paperclip company/agent identity onto Hindsight bank IDs.
  *
- * Aligns Hindsight's memory bank model with Paperclip's company/agent isolation.
+ * Default format: "paperclip::{companyId}::{agentId}"
+ *
+ * bankGranularity: ['company']        → "paperclip::{companyId}"
+ * bankGranularity: ['agent']          → "paperclip::{agentId}"
+ * bankGranularity: ['company','agent'] → "paperclip::{companyId}::{agentId}"
  */
-
-import type { PaperclipMemoryConfig } from './config.js';
 
 export interface BankContext {
   companyId: string;
   agentId: string;
 }
 
-/**
- * Derive a Hindsight bank ID from Paperclip context.
- *
- * Default output: "paperclip::{companyId}::{agentId}"
- *
- * With bankGranularity: ['company'] → "paperclip::{companyId}"
- * With bankGranularity: ['agent']   → "paperclip::{agentId}"
- * With bankIdPrefix: ''              → "{companyId}::{agentId}"
- */
-export function deriveBankId(context: BankContext, config: PaperclipMemoryConfig): string {
-  const parts: string[] = [];
+export interface BankConfig {
+  bankGranularity?: Array<"company" | "agent">;
+}
 
-  if (config.bankIdPrefix) {
-    parts.push(config.bankIdPrefix);
+export function deriveBankId(context: BankContext, config: BankConfig): string {
+  const granularity = config.bankGranularity ?? ["company", "agent"];
+  const parts: string[] = ["paperclip"];
+
+  for (const field of granularity) {
+    if (field === "company") parts.push(context.companyId);
+    if (field === "agent") parts.push(context.agentId);
   }
 
-  for (const field of config.bankGranularity ?? ['company', 'agent']) {
-    if (field === 'company') parts.push(context.companyId);
-    if (field === 'agent') parts.push(context.agentId);
-  }
-
-  if (parts.length === 0) {
-    throw new Error('Bank ID cannot be empty — bankGranularity or bankIdPrefix must be set');
-  }
-
-  return parts.join('::');
+  return parts.join("::");
 }

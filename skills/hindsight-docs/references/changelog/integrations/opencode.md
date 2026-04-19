@@ -10,6 +10,18 @@ For the source code, see [`hindsight-integrations/opencode`](https://github.com/
 
 ← [Back to main changelog](../index.md)
 
+## [0.1.4](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.1.4)
+
+**Improvements**
+
+- Reduce noisy error output by logging opencode integration errors only in debug mode. ([`33442f19`](https://github.com/vectorize-io/hindsight/commit/33442f19))
+
+## [0.1.3](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.1.3)
+
+**Bug Fixes**
+
+- Fixes the OpenCode integration to correctly parse messages, avoid shared-state issues, and retain content after compaction. ([`6076354a`](https://github.com/vectorize-io/hindsight/commit/6076354a))
+
 ## [0.1.2](https://github.com/vectorize-io/hindsight/tree/integrations/opencode/v0.1.2)
 
 **Features**

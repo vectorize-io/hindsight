@@ -88,7 +88,7 @@ The natural language question or statement to search for. This is the only requi
 
 ### types
 
-Controls which categories of memory facts are searched. Accepted values are `world` (objective facts), `experience` (events and conversations), and `observation` (consolidated knowledge synthesized over time). When omitted, all three types are searched.
+Controls which categories of memory facts are searched. Accepted values are `world` (objective facts), `experience` (events and conversations), and `observation` (deduplicated, evidence-grounded beliefs consolidated from multiple memories). When omitted, all three types are searched.
 
 Each type runs the full four-strategy retrieval pipeline independently, so narrowing `types` reduces both the result set and query cost.
 
@@ -151,7 +151,7 @@ hindsight memory recall my-bank "query" --fact-type world,observation
 
 > **💡 About Observations**
 > 
-Observations are consolidated knowledge synthesized from multiple facts over time — patterns, preferences, and learnings the memory bank has built up. They are created automatically in the background after retain operations.
+Observations are deduplicated, evidence-grounded beliefs consolidated from multiple facts — preferences, recurring patterns, and durable learnings the memory bank has built up. Each observation references its supporting memories (with exact quotes) and carries a computed freshness trend, and is refined rather than overwritten when new evidence arrives. They are created and maintained automatically in the background after retain operations.
 ### budget
 
 Controls retrieval depth and breadth. Accepted values are `low`, `mid` (default), and `high`. Use `low` for fast simple lookups, `mid` for balanced everyday queries, and `high` when you need to find indirect connections or exhaustive coverage.

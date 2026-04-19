@@ -1,6 +1,6 @@
-import yaml from 'js-yaml';
-import type { SandboxPolicy } from './types.js';
-import { HINDSIGHT_POLICY_NAME, HINDSIGHT_HOST, OPENCLAW_BINARY } from './types.js';
+import yaml from "js-yaml";
+import type { SandboxPolicy } from "./types.js";
+import { HINDSIGHT_POLICY_NAME, HINDSIGHT_HOST, OPENCLAW_BINARY } from "./types.js";
 
 const HINDSIGHT_NETWORK_POLICY = {
   name: HINDSIGHT_POLICY_NAME,
@@ -8,13 +8,13 @@ const HINDSIGHT_NETWORK_POLICY = {
     {
       host: HINDSIGHT_HOST,
       port: 443,
-      protocol: 'rest',
-      tls: 'terminate',
-      enforcement: 'enforce',
+      protocol: "rest",
+      tls: "terminate",
+      enforcement: "enforce",
       rules: [
-        { allow: { method: 'GET', path: '/**' } },
-        { allow: { method: 'POST', path: '/**' } },
-        { allow: { method: 'PUT', path: '/**' } },
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "POST", path: "/**" } },
+        { allow: { method: "PUT", path: "/**" } },
       ],
     },
   ],
@@ -27,7 +27,7 @@ const HINDSIGHT_NETWORK_POLICY = {
 export function hasHindsightPolicy(policy: SandboxPolicy): boolean {
   const np = policy.network_policies?.[HINDSIGHT_POLICY_NAME];
   if (!np) return false;
-  return np.endpoints?.some(e => e.host === HINDSIGHT_HOST) ?? false;
+  return np.endpoints?.some((e) => e.host === HINDSIGHT_HOST) ?? false;
 }
 
 /**

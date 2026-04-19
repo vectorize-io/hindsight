@@ -55,6 +55,7 @@ hindsight_client_api/models/directive_response.py
 hindsight_client_api/models/disposition_traits.py
 hindsight_client_api/models/document_response.py
 hindsight_client_api/models/entity_detail_response.py
+hindsight_client_api/models/entity_graph_response.py
 hindsight_client_api/models/entity_include_options.py
 hindsight_client_api/models/entity_input.py
 hindsight_client_api/models/entity_list_item.py
@@ -69,7 +70,9 @@ hindsight_client_api/models/include_options.py
 hindsight_client_api/models/list_documents_response.py
 hindsight_client_api/models/list_memory_units_response.py
 hindsight_client_api/models/list_tags_response.py
+hindsight_client_api/models/memories_timeseries_response.py
 hindsight_client_api/models/memory_item.py
+hindsight_client_api/models/memory_timeseries_bucket.py
 hindsight_client_api/models/mental_model_list_response.py
 hindsight_client_api/models/mental_model_response.py
 hindsight_client_api/models/mental_model_trigger_input.py

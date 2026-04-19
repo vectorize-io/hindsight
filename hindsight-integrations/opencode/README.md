@@ -11,33 +11,53 @@ Hindsight memory plugin for [OpenCode](https://opencode.ai) — give your AI cod
 
 ## Quick Start
 
-### 1. Install
+### 1. Enable the plugin
 
-```bash
-npm install @vectorize-io/opencode-hindsight
-```
-
-### 2. Configure
-
-Add to your `opencode.json`:
+Add to your `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": ["@vectorize-io/opencode-hindsight"]
 }
 ```
 
-### 3. Set Environment Variables
+OpenCode auto-installs plugins listed here on startup — no `npm install` required.
+
+### 2. Point to your Hindsight server
 
 ```bash
-# Required: Hindsight API URL
+# Self-hosted
 export HINDSIGHT_API_URL="http://localhost:8888"
 
-# Optional: API key for Hindsight Cloud
-export HINDSIGHT_API_TOKEN="your-api-key"
-
-# Optional: Override the memory bank ID
+# Optional: override the memory bank ID
 export HINDSIGHT_BANK_ID="my-project"
+```
+
+### Using Hindsight Cloud
+
+Get an API key at [ui.hindsight.vectorize.io/connect](https://ui.hindsight.vectorize.io/connect), then either export env vars:
+
+```bash
+export HINDSIGHT_API_URL="https://api.hindsight.vectorize.io"
+export HINDSIGHT_API_TOKEN="your-api-key"
+```
+
+Or configure inline in `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "@vectorize-io/opencode-hindsight",
+      {
+        "hindsightApiUrl": "https://api.hindsight.vectorize.io",
+        "hindsightApiToken": "your-api-key"
+      }
+    ]
+  ]
+}
 ```
 
 ## Configuration
@@ -49,13 +69,16 @@ Pass options directly in `opencode.json`:
 ```json
 {
   "plugin": [
-    ["@vectorize-io/opencode-hindsight", {
-      "hindsightApiUrl": "http://localhost:8888",
-      "bankId": "my-project",
-      "autoRecall": true,
-      "autoRetain": true,
-      "recallBudget": "mid"
-    }]
+    [
+      "@vectorize-io/opencode-hindsight",
+      {
+        "hindsightApiUrl": "http://localhost:8888",
+        "bankId": "my-project",
+        "autoRecall": true,
+        "autoRetain": true,
+        "recallBudget": "mid"
+      }
+    ]
   ]
 }
 ```
@@ -76,20 +99,20 @@ Create `~/.hindsight/opencode.json` for persistent configuration:
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|---|---|---|
-| `HINDSIGHT_API_URL` | Hindsight API base URL | (required) |
-| `HINDSIGHT_API_TOKEN` | API key for authentication | (none) |
-| `HINDSIGHT_BANK_ID` | Static memory bank ID | `opencode` |
-| `HINDSIGHT_AGENT_NAME` | Agent name for dynamic bank IDs | `opencode` |
-| `HINDSIGHT_AUTO_RECALL` | Auto-recall on session start | `true` |
-| `HINDSIGHT_AUTO_RETAIN` | Auto-retain on session idle | `true` |
-| `HINDSIGHT_RETAIN_MODE` | `full-session` or `last-turn` | `full-session` |
-| `HINDSIGHT_RECALL_BUDGET` | Recall budget: `low`, `mid`, `high` | `mid` |
-| `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results | `1024` |
-| `HINDSIGHT_DYNAMIC_BANK_ID` | Enable dynamic bank ID derivation | `false` |
-| `HINDSIGHT_BANK_MISSION` | Bank mission/context | (none) |
-| `HINDSIGHT_DEBUG` | Enable debug logging | `false` |
+| Variable                      | Description                         | Default        |
+| ----------------------------- | ----------------------------------- | -------------- |
+| `HINDSIGHT_API_URL`           | Hindsight API base URL              | (required)     |
+| `HINDSIGHT_API_TOKEN`         | API key for authentication          | (none)         |
+| `HINDSIGHT_BANK_ID`           | Static memory bank ID               | `opencode`     |
+| `HINDSIGHT_AGENT_NAME`        | Agent name for dynamic bank IDs     | `opencode`     |
+| `HINDSIGHT_AUTO_RECALL`       | Auto-recall on session start        | `true`         |
+| `HINDSIGHT_AUTO_RETAIN`       | Auto-retain on session idle         | `true`         |
+| `HINDSIGHT_RETAIN_MODE`       | `full-session` or `last-turn`       | `full-session` |
+| `HINDSIGHT_RECALL_BUDGET`     | Recall budget: `low`, `mid`, `high` | `mid`          |
+| `HINDSIGHT_RECALL_MAX_TOKENS` | Max tokens for recall results       | `1024`         |
+| `HINDSIGHT_DYNAMIC_BANK_ID`   | Enable dynamic bank ID derivation   | `false`        |
+| `HINDSIGHT_BANK_MISSION`      | Bank mission/context                | (none)         |
+| `HINDSIGHT_DEBUG`             | Enable debug logging                | `false`        |
 
 ### Configuration Priority
 

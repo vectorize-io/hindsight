@@ -1,7 +1,7 @@
 {
   "name": "hindsight-memory",
   "description": "Automatic long-term memory for Claude Code via Hindsight. Recalls relevant memories before each prompt and retains conversation transcripts after each response.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {"name": "Hindsight Team", "url": "https://vectorize.io/hindsight"},
   "license": "MIT",
   "keywords": ["memory", "hindsight", "recall", "retain"]

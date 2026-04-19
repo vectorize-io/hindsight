@@ -1,4 +1,4 @@
-import { formatMemoriesAsSystemPrompt } from './format.js';
+import { formatMemoriesAsSystemPrompt } from "./format.js";
 import type {
   HindsightChatOptions,
   HindsightChatContext,
@@ -8,7 +8,7 @@ import type {
   RecallResult,
   EntityState,
   MemoryPromptOptions,
-} from './types.js';
+} from "./types.js";
 
 /**
  * Wraps a Chat SDK handler to automatically provide Hindsight memory context.
@@ -42,7 +42,12 @@ export function withHindsightChat<TState = unknown>(
   options: HindsightChatOptions,
   handler: HindsightChatHandler<TState>
 ): (thread: ChatThread<TState>, message: ChatMessage) => Promise<void> {
-  const { client, bankId: bankIdResolver, recall: recallOpts = {}, retain: retainOpts = {} } = options;
+  const {
+    client,
+    bankId: bankIdResolver,
+    recall: recallOpts = {},
+    retain: retainOpts = {},
+  } = options;
 
   const recallEnabled = recallOpts.enabled !== false;
   const retainEnabled = retainOpts.enabled === true;
@@ -51,7 +56,7 @@ export function withHindsightChat<TState = unknown>(
   return async (thread: ChatThread<TState>, message: ChatMessage): Promise<void> => {
     // 1. Resolve bank ID
     const resolvedBankId =
-      typeof bankIdResolver === 'function' ? bankIdResolver(message) : bankIdResolver;
+      typeof bankIdResolver === "function" ? bankIdResolver(message) : bankIdResolver;
 
     // 2. Auto-retain inbound message (fire-and-forget if async)
     if (retainEnabled && message.text && !message.author.isMe) {
@@ -62,7 +67,7 @@ export function withHindsightChat<TState = unknown>(
           async: retainAsync,
         })
         .catch((err) => {
-          console.warn('[hindsight-chat] Auto-retain failed:', err);
+          console.warn("[hindsight-chat] Auto-retain failed:", err);
         });
 
       // If not async, wait for retain to complete before proceeding
@@ -78,7 +83,7 @@ export function withHindsightChat<TState = unknown>(
     if (recallEnabled && message.text) {
       try {
         const recallResponse = await client.recall(resolvedBankId, message.text, {
-          budget: recallOpts.budget ?? 'mid',
+          budget: recallOpts.budget ?? "mid",
           maxTokens: recallOpts.maxTokens,
           types: recallOpts.types,
           includeEntities: recallOpts.includeEntities !== false,
@@ -86,7 +91,7 @@ export function withHindsightChat<TState = unknown>(
         memories = recallResponse.results ?? [];
         entities = recallResponse.entities ?? null;
       } catch (err) {
-        console.warn('[hindsight-chat] Auto-recall failed:', err);
+        console.warn("[hindsight-chat] Auto-recall failed:", err);
       }
     }
 

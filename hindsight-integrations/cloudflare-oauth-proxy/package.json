@@ -1,6 +1,6 @@
 {
   "name": "hindsight-cloudflare-oauth-proxy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "OAuth 2.1 proxy for connecting cloud MCP clients to self-hosted Hindsight via Cloudflare Workers",
   "scripts": {

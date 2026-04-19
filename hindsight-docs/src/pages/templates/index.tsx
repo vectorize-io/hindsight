@@ -1,9 +1,45 @@
 import React, {useMemo, useState, useCallback} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
-import templatesData from '@site/src/data/templates.json';
+import catalog from '@site/src/data/templates.json';
 import integrationsData from '@site/src/data/integrations.json';
 import styles from './index.module.css';
+
+const TEMPLATES_JSON_URL =
+  'https://github.com/vectorize-io/hindsight/edit/main/hindsight-docs/src/data/templates.json';
+
+// Webpack's require.context eagerly bundles every .json file under
+// src/data/templates/, so adding a template only requires creating
+// the manifest file and adding a catalog entry — no code change here.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const manifestContext = (require as any).context('@site/src/data/templates', false, /\.json$/);
+
+interface Template {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  integrations?: string[];
+  manifest: Record<string, unknown>;
+}
+
+const templatesData: Template[] = catalog.templates.map((entry) => {
+  // catalog's manifest_file is 'templates/<id>.json'; require.context keys are './<id>.json'
+  const key = './' + entry.manifest_file.replace(/^templates\//, '');
+  const manifest = manifestContext(key);
+  if (!manifest) {
+    throw new Error(`No manifest found for ${entry.manifest_file}`);
+  }
+  return {
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    category: entry.category,
+    integrations: entry.integrations,
+    manifest,
+  };
+});
 
 const CATEGORIES = ['all', 'chat', 'coding', 'assistant'] as const;
 type Category = (typeof CATEGORIES)[number];
@@ -19,15 +55,6 @@ const CATEGORY_LABELS: Record<Category, string> = {
 const INTEGRATION_MAP = Object.fromEntries(
   integrationsData.integrations.map((i) => [i.id, {icon: i.icon, name: i.name}]),
 );
-
-interface Template {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  integrations?: string[];
-  manifest: Record<string, unknown>;
-}
 
 function IntegrationIcons({ids}: {ids: string[]}) {
   return (
@@ -117,7 +144,7 @@ export default function TemplateGallery(): React.ReactElement {
   const [selectedCategory, setSelectedCategory] = useState<Category>('all');
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
 
-  const templates = templatesData.templates as Template[];
+  const templates = templatesData;
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -207,8 +234,15 @@ export default function TemplateGallery(): React.ReactElement {
           <div className={styles.submitBannerContent}>
             <h3 className={styles.submitBannerTitle}>Have a template to share?</h3>
             <p className={styles.submitBannerText}>
-              Add your template to the gallery by editing templates.json on GitHub.
+              Contribute it to the community. Open a pull request and add your entry to the bank templates.
             </p>
+            <Link
+              href={TEMPLATES_JSON_URL}
+              className={styles.submitButton}
+              target="_blank"
+              rel="noopener noreferrer">
+              Submit a template →
+            </Link>
           </div>
         </div>
       </div>

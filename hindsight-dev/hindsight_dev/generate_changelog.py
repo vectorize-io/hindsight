@@ -45,6 +45,8 @@ VALID_INTEGRATIONS = [
     "autogen",
     "paperclip",
     "opencode",
+    "cloudflare-oauth-proxy",
+    "openai-agents",
 ]
 
 
@@ -175,7 +177,12 @@ def find_previous_integration_tag(new_version: str, existing_tags: list[str], in
     return candidates[0][0]
 
 
-def get_commits(from_ref: str | None, to_ref: str, path_filter: str | None = None) -> list[Commit]:
+def get_commits(
+    from_ref: str | None,
+    to_ref: str,
+    path_filter: str | None = None,
+    exclude_paths: list[str] | None = None,
+) -> list[Commit]:
     """Get commits between two refs as structured data."""
     if from_ref:
         cmd = ["git", "log", "--format=%h|%s", "--no-merges", f"{from_ref}..{to_ref}"]
@@ -184,6 +191,8 @@ def get_commits(from_ref: str | None, to_ref: str, path_filter: str | None = Non
 
     if path_filter:
         cmd += ["--", path_filter]
+    elif exclude_paths:
+        cmd += ["--", ".", *[f":(exclude){p}" for p in exclude_paths]]
 
     result = subprocess.run(
         cmd,
@@ -204,7 +213,12 @@ def get_commits(from_ref: str | None, to_ref: str, path_filter: str | None = Non
     return commits
 
 
-def get_detailed_diff(from_ref: str | None, to_ref: str, path_filter: str | None = None) -> str:
+def get_detailed_diff(
+    from_ref: str | None,
+    to_ref: str,
+    path_filter: str | None = None,
+    exclude_paths: list[str] | None = None,
+) -> str:
     """Get file change stats between two refs."""
     if from_ref:
         cmd = ["git", "diff", "--stat", f"{from_ref}..{to_ref}"]
@@ -213,6 +227,8 @@ def get_detailed_diff(from_ref: str | None, to_ref: str, path_filter: str | None
 
     if path_filter:
         cmd += ["--", path_filter]
+    elif exclude_paths:
+        cmd += ["--", ".", *[f":(exclude){p}" for p in exclude_paths]]
 
     result = subprocess.run(
         cmd,
@@ -221,6 +237,49 @@ def get_detailed_diff(from_ref: str | None, to_ref: str, path_filter: str | None
         text=True,
     )
     return result.stdout.strip()
+
+
+def get_commit_authors(commits: list[Commit]) -> dict[str, str]:
+    """Fetch GitHub logins keyed by commit hash via the GitHub API.
+
+    Bots (e.g. dependabot, github-actions) and missing authors are omitted.
+    """
+    authors: dict[str, str] = {}
+    for commit in commits:
+        result = subprocess.run(
+            ["gh", "api", f"/repos/{GITHUB_REPO}/commits/{commit.hash}", "--jq", '.author.login // ""'],
+            cwd=REPO_PATH,
+            capture_output=True,
+            text=True,
+        )
+        login = result.stdout.strip()
+        if not login or login.endswith("[bot]"):
+            continue
+        authors[commit.hash] = login
+    return authors
+
+
+def _render_entry_meta(commit_id: str, commit_url: str, login: str | None) -> str:
+    """Render inline metadata: · @author · commit-hash (GitHub-release style)."""
+    sep = '<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span>'
+    parts: list[str] = []
+    if login:
+        avatar = f"https://github.com/{login}.png?size=40"
+        parts.append(sep)
+        parts.append(
+            f'<a href="https://github.com/{login}" target="_blank" rel="noopener noreferrer" '
+            f'style={{{{color: "var(--ifm-color-primary)", textDecoration: "none", '
+            f'display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}}}>'
+            f'<img src="{avatar}" alt="@{login}" width="18" height="18" '
+            f'style={{{{borderRadius: "50%"}}}} />@{login}</a>'
+        )
+    parts.append(sep)
+    parts.append(
+        f'<a href="{commit_url}" target="_blank" rel="noopener noreferrer" '
+        f'style={{{{fontFamily: "var(--ifm-font-family-monospace, monospace)", '
+        f'fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}}}>{commit_id}</a>'
+    )
+    return "".join(parts)
 
 
 def analyze_commits_with_llm(
@@ -272,6 +331,7 @@ def build_changelog_markdown(
     tag: str,
     entries: list[ChangelogEntry],
     integration: str | None = None,
+    authors: dict[str, str] | None = None,
 ) -> str:
     """Build markdown changelog from structured entries."""
     tag_url = (
@@ -308,7 +368,9 @@ def build_changelog_markdown(
             lines.append("")
             for entry in cat_entries:
                 commit_url = f"{GITHUB_COMMIT_URL}/{entry.commit_id}"
-                lines.append(f"- {entry.summary} ([`{entry.commit_id}`]({commit_url}))")
+                login = _lookup_author(entry.commit_id, authors) if authors else None
+                meta = _render_entry_meta(entry.commit_id, commit_url, login)
+                lines.append(f"- {entry.summary}{meta}")
             lines.append("")
 
     if not has_entries:
@@ -316,6 +378,16 @@ def build_changelog_markdown(
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _lookup_author(commit_id: str, authors: dict[str, str]) -> str | None:
+    """Look up an author by full or short commit hash."""
+    if commit_id in authors:
+        return authors[commit_id]
+    for full_hash, login in authors.items():
+        if full_hash.startswith(commit_id) or commit_id.startswith(full_hash):
+            return login
+    return None
 
 
 def read_existing_changelog(path: Path, default_header: str) -> tuple[str, str]:
@@ -375,9 +447,10 @@ def generate_changelog_entry(
     else:
         console.print("[yellow]No previous version found, will include all commits[/yellow]")
 
-    console.print("[blue]Getting commits...[/blue]")
-    commits = get_commits(previous_tag, actual_tag)
-    file_diff = get_detailed_diff(previous_tag, actual_tag)
+    console.print("[blue]Getting commits (excluding integrations)...[/blue]")
+    exclude_paths = ["hindsight-integrations"]
+    commits = get_commits(previous_tag, actual_tag, exclude_paths=exclude_paths)
+    file_diff = get_detailed_diff(previous_tag, actual_tag, exclude_paths=exclude_paths)
 
     if not commits:
         console.print("[red]Error: No commits found for this release[/red]")
@@ -401,7 +474,12 @@ def generate_changelog_entry(
     for entry in entries:
         console.print(f"  [{entry.category}] {entry.summary} ({entry.commit_id})")
 
-    new_entry = build_changelog_markdown(display_version, tag, entries)
+    console.print("[blue]Fetching GitHub authors per commit...[/blue]")
+    authors = get_commit_authors(commits)
+    unique = sorted(set(authors.values()))
+    console.print(f"[blue]Found {len(unique)} contributors: {', '.join('@' + c for c in unique)}[/blue]")
+
+    new_entry = build_changelog_markdown(display_version, tag, entries, authors=authors)
 
     default_header = """---
 hide_table_of_contents: true
@@ -484,8 +562,18 @@ def generate_integration_changelog_entry(
         for entry in entries:
             console.print(f"  [{entry.category}] {entry.summary} ({entry.commit_id})")
 
+    if commits:
+        console.print("[blue]Fetching GitHub authors per commit...[/blue]")
+        authors = get_commit_authors(commits)
+        unique = sorted(set(authors.values()))
+        console.print(f"[blue]Found {len(unique)} contributors: {', '.join('@' + c for c in unique)}[/blue]")
+    else:
+        authors = {}
+
     integration_tag = f"integrations/{integration}/v{display_version}"
-    new_entry = build_changelog_markdown(display_version, integration_tag, entries, integration=integration)
+    new_entry = build_changelog_markdown(
+        display_version, integration_tag, entries, integration=integration, authors=authors
+    )
 
     package_name = _get_package_name(integration)
     default_header = f"""---
@@ -531,6 +619,8 @@ def _get_package_name(integration: str) -> str:
         "autogen": "hindsight-autogen",
         "paperclip": "@vectorize-io/hindsight-paperclip",
         "opencode": "@vectorize-io/opencode-hindsight",
+        "cloudflare-oauth-proxy": "hindsight-cloudflare-oauth-proxy",
+        "openai-agents": "hindsight-openai-agents",
     }
     return packages[integration]
 

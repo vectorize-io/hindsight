@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Use the shared dataplane URL configuration
-    const url = `${DATAPLANE_URL}/v1/default/banks/${bankId}/files/retain`;
+    const url = dataplaneBankUrl(bankId, "/files/retain");
 
     // Forward the form data to the dataplane
     const response = await fetch(url, {

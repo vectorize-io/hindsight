@@ -25,9 +25,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 # Patterns for detecting ReAct-style reasoning traces in assistant messages
-_REACT_PATTERN = re.compile(
-    r"^(Thought|Action|Action Input|Observation)\s*:", re.MULTILINE
-)
+_REACT_PATTERN = re.compile(r"^(Thought|Action|Action Input|Observation)\s*:", re.MULTILINE)
 _ANSWER_PATTERN = re.compile(r"^Answer\s*:\s*", re.MULTILINE)
 
 
@@ -77,16 +75,10 @@ class HindsightMemory(BaseMemory):
     budget: str = Field(default="mid", description="Recall budget level")
     max_tokens: int = Field(default=4096, description="Max tokens for recall")
     tags: Optional[list[str]] = Field(default=None, description="Tags for retain")
-    recall_tags: Optional[list[str]] = Field(
-        default=None, description="Tags to filter recall"
-    )
+    recall_tags: Optional[list[str]] = Field(default=None, description="Tags to filter recall")
     recall_tags_match: str = Field(default="any", description="Tag matching mode")
-    system_prompt: str = Field(
-        default=DEFAULT_SYSTEM_PROMPT, description="Memory system message template"
-    )
-    chat_history_limit: int = Field(
-        default=100, description="Max messages in local buffer"
-    )
+    system_prompt: str = Field(default=DEFAULT_SYSTEM_PROMPT, description="Memory system message template")
+    chat_history_limit: int = Field(default=100, description="Max messages in local buffer")
 
     _client: Hindsight = PrivateAttr()
     _chat_history: list[ChatMessage] = PrivateAttr(default_factory=list)
@@ -109,9 +101,7 @@ class HindsightMemory(BaseMemory):
     @classmethod
     def from_defaults(cls, **kwargs: Any) -> "HindsightMemory":
         """Create from defaults. Prefer ``from_client()`` instead."""
-        raise NotImplementedError(
-            "Use HindsightMemory.from_client() or HindsightMemory.from_url() instead."
-        )
+        raise NotImplementedError("Use HindsightMemory.from_client() or HindsightMemory.from_url() instead.")
 
     @classmethod
     def from_client(
@@ -232,7 +222,7 @@ class HindsightMemory(BaseMemory):
         if answer_match:
             # Use the last Answer: block (final answer after reasoning)
             last_answer = answer_match[-1]
-            return content[last_answer.end():].strip()
+            return content[last_answer.end() :].strip()
 
         # ReAct traces with no Answer: — skip retention
         return ""
@@ -341,16 +331,12 @@ class HindsightMemory(BaseMemory):
             memories_text = self._recall_memories(input)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
-                messages.append(
-                    ChatMessage(role=MessageRole.SYSTEM, content=system_content)
-                )
+                messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
 
         messages.extend(self._chat_history)
         return messages
 
-    async def aget(
-        self, input: Optional[str] = None, **kwargs: Any
-    ) -> list[ChatMessage]:
+    async def aget(self, input: Optional[str] = None, **kwargs: Any) -> list[ChatMessage]:
         """Async version of get()."""
         messages: list[ChatMessage] = []
 
@@ -358,9 +344,7 @@ class HindsightMemory(BaseMemory):
             memories_text = await self._arecall_memories(input)
             if memories_text:
                 system_content = self.system_prompt.format(memories=memories_text)
-                messages.append(
-                    ChatMessage(role=MessageRole.SYSTEM, content=system_content)
-                )
+                messages.append(ChatMessage(role=MessageRole.SYSTEM, content=system_content))
 
         messages.extend(self._chat_history)
         return messages

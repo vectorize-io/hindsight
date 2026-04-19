@@ -1,7 +1,7 @@
 """Merge 3 migration heads and add unit_entities composite index
 
 Revision ID: h3i4j5k6l7m8
-Revises: a4b5c6d7e8f9, c2d3e4f5g6h7, g2h3i4j5k6l7
+Revises: a4b5c6d7e8f9, g2h3i4j5k6l7
 Create Date: 2026-04-07
 
 Merges three unmerged migration heads into one, and adds a composite index
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 revision: str = "h3i4j5k6l7m8"
-down_revision: str | Sequence[str] | None = ("a4b5c6d7e8f9", "c2d3e4f5g6h7", "g2h3i4j5k6l7")
+down_revision: str | Sequence[str] | None = ("a4b5c6d7e8f9", "g2h3i4j5k6l7")
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

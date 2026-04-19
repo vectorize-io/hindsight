@@ -238,6 +238,7 @@ ENV_RERANKER_LOCAL_BATCH_SIZE = "HINDSIGHT_API_RERANKER_LOCAL_BATCH_SIZE"
 ENV_RERANKER_TEI_URL = "HINDSIGHT_API_RERANKER_TEI_URL"
 ENV_RERANKER_TEI_BATCH_SIZE = "HINDSIGHT_API_RERANKER_TEI_BATCH_SIZE"
 ENV_RERANKER_TEI_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TEI_MAX_CONCURRENT"
+ENV_RERANKER_TEI_HTTP_TIMEOUT = "HINDSIGHT_API_RERANKER_TEI_HTTP_TIMEOUT"
 ENV_RERANKER_MAX_CANDIDATES = "HINDSIGHT_API_RERANKER_MAX_CANDIDATES"
 ENV_RERANKER_FLASHRANK_MODEL = "HINDSIGHT_API_RERANKER_FLASHRANK_MODEL"
 ENV_RERANKER_FLASHRANK_CACHE_DIR = "HINDSIGHT_API_RERANKER_FLASHRANK_CACHE_DIR"
@@ -265,6 +266,7 @@ ENV_PORT = "HINDSIGHT_API_PORT"
 ENV_BASE_PATH = "HINDSIGHT_API_BASE_PATH"
 ENV_LOG_LEVEL = "HINDSIGHT_API_LOG_LEVEL"
 ENV_LOG_FORMAT = "HINDSIGHT_API_LOG_FORMAT"
+ENV_LOG_JSON_FIELDS = "HINDSIGHT_API_LOG_JSON_FIELDS"
 ENV_WORKERS = "HINDSIGHT_API_WORKERS"
 ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
@@ -333,12 +335,14 @@ ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
 ENV_CONSOLIDATION_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE"
+ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = "HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND"
 ENV_CONSOLIDATION_LLM_BATCH_SIZE = "HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE"
 ENV_CONSOLIDATION_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS"
 ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
     "HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION"
 )
+ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
@@ -387,6 +391,20 @@ ENV_REFLECT_MAX_CONTEXT_TOKENS = "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS"
 ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
 ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
+ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
+ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
+ENV_RECALL_CHUNKS_MAX_TOKENS = "HINDSIGHT_API_RECALL_CHUNKS_MAX_TOKENS"
+
+# Recall budget mapping (budget enum -> thinking_budget integer)
+ENV_RECALL_BUDGET_FUNCTION = "HINDSIGHT_API_RECALL_BUDGET_FUNCTION"
+ENV_RECALL_BUDGET_FIXED_LOW = "HINDSIGHT_API_RECALL_BUDGET_FIXED_LOW"
+ENV_RECALL_BUDGET_FIXED_MID = "HINDSIGHT_API_RECALL_BUDGET_FIXED_MID"
+ENV_RECALL_BUDGET_FIXED_HIGH = "HINDSIGHT_API_RECALL_BUDGET_FIXED_HIGH"
+ENV_RECALL_BUDGET_ADAPTIVE_LOW = "HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_LOW"
+ENV_RECALL_BUDGET_ADAPTIVE_MID = "HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_MID"
+ENV_RECALL_BUDGET_ADAPTIVE_HIGH = "HINDSIGHT_API_RECALL_BUDGET_ADAPTIVE_HIGH"
+ENV_RECALL_BUDGET_MIN = "HINDSIGHT_API_RECALL_BUDGET_MIN"
+ENV_RECALL_BUDGET_MAX = "HINDSIGHT_API_RECALL_BUDGET_MAX"
 
 # Audit log settings
 ENV_AUDIT_LOG_ENABLED = "HINDSIGHT_API_AUDIT_LOG_ENABLED"
@@ -432,7 +450,7 @@ DEFAULT_LLAMACPP_NO_GRAMMAR = False  # True = disable JSON grammar enforcement (
 DEFAULT_LLAMACPP_EXTRA_ARGS = None  # Space-separated extra CLI args for llama.cpp server
 
 DEFAULT_LLM_MAX_CONCURRENT = 32
-DEFAULT_LLM_MAX_RETRIES = 10  # Max retry attempts for LLM API calls
+DEFAULT_LLM_MAX_RETRIES = 3  # Max retry attempts for LLM API calls
 DEFAULT_LLM_INITIAL_BACKOFF = 1.0  # Initial backoff in seconds for retry exponential backoff
 DEFAULT_LLM_MAX_BACKOFF = 60.0  # Max backoff cap in seconds for retry exponential backoff
 DEFAULT_LLM_TIMEOUT = 120.0  # seconds
@@ -466,6 +484,7 @@ DEFAULT_RERANKER_LOCAL_BUCKET_BATCHING = False  # Length-sorted bucket batching:
 DEFAULT_RERANKER_LOCAL_BATCH_SIZE = 32  # Batch size for local reranker predict() calls
 DEFAULT_RERANKER_TEI_BATCH_SIZE = 128
 DEFAULT_RERANKER_TEI_MAX_CONCURRENT = 8
+DEFAULT_RERANKER_TEI_HTTP_TIMEOUT = 30.0  # HTTP timeout for TEI reranker requests (seconds)
 DEFAULT_RERANKER_MAX_CANDIDATES = 300
 DEFAULT_RERANKER_FLASHRANK_MODEL = "ms-marco-MiniLM-L-12-v2"  # Best balance of speed and quality
 DEFAULT_RERANKER_FLASHRANK_CACHE_DIR = None  # Use default cache directory
@@ -551,7 +570,11 @@ DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
 DEFAULT_ENABLE_OBSERVATION_HISTORY = True  # Observation history tracking enabled by default
 DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enabled by default
+DEFAULT_CONSOLIDATION_MAX_ATTEMPTS = 3  # Outer retry attempts for consolidation LLM batch calls
 DEFAULT_CONSOLIDATION_BATCH_SIZE = 50  # Memories to load per batch (internal memory optimization)
+DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND = (
+    100  # Max memories per consolidation round (0 = unlimited). Limits how long one bank holds a worker slot.
+)
 DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE = 8  # Facts per LLM call (1 = no batching; >1 = batch mode)
 DEFAULT_CONSOLIDATION_MAX_TOKENS = 512  # Max tokens for recall when finding related observations
 DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS = (
@@ -587,6 +610,25 @@ DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing r
 DEFAULT_REFLECT_MAX_CONTEXT_TOKENS = 100_000  # Max accumulated context tokens before forcing final prompt
 DEFAULT_REFLECT_WALL_TIMEOUT = 300  # Wall-clock timeout in seconds for the entire reflect operation (5 minutes)
 DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in search_observations (-1 = disabled)
+DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
+DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
+DEFAULT_RECALL_CHUNKS_MAX_TOKENS = 1000  # Token budget for raw chunks returned by internal recall
+
+# Recall budget mapping
+# "fixed": thinking_budget = recall_budget_fixed_<level> (preserves legacy behavior)
+# "adaptive": thinking_budget = round(max_tokens * recall_budget_adaptive_<level>),
+#             clamped to [recall_budget_min, recall_budget_max]
+RECALL_BUDGET_FUNCTIONS = ("fixed", "adaptive")
+DEFAULT_RECALL_BUDGET_FUNCTION = "fixed"
+DEFAULT_RECALL_BUDGET_FIXED_LOW = 100
+DEFAULT_RECALL_BUDGET_FIXED_MID = 300
+DEFAULT_RECALL_BUDGET_FIXED_HIGH = 1000
+# Adaptive defaults chosen to roughly match fixed defaults at max_tokens=4096
+DEFAULT_RECALL_BUDGET_ADAPTIVE_LOW = 0.025
+DEFAULT_RECALL_BUDGET_ADAPTIVE_MID = 0.075
+DEFAULT_RECALL_BUDGET_ADAPTIVE_HIGH = 0.25
+DEFAULT_RECALL_BUDGET_MIN = 20  # Floor for the adaptive function
+DEFAULT_RECALL_BUDGET_MAX = 2000  # Ceiling for the adaptive function
 
 # Disposition defaults (None = not set, fall back to bank DB value or 3)
 DEFAULT_DISPOSITION_SKEPTICISM = None
@@ -649,6 +691,10 @@ class JsonFormatter(logging.Formatter):
         logging.CRITICAL: "CRITICAL",
     }
 
+    def __init__(self, allowed_fields: frozenset[str] | None = None):
+        super().__init__()
+        self._allowed_fields = allowed_fields
+
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
             "severity": self.SEVERITY_MAP.get(record.levelno, "DEFAULT"),
@@ -657,9 +703,19 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
 
+        # Lazy import to avoid circular dependency (engine imports from config).
+        from hindsight_api.engine.memory_engine import _current_schema
+
+        tenant = _current_schema.get()
+        if tenant:
+            log_entry["tenant"] = tenant
+
         # Add exception info if present
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
+
+        if self._allowed_fields is not None:
+            log_entry = {k: v for k, v in log_entry.items() if k in self._allowed_fields}
 
         return json.dumps(log_entry)
 
@@ -679,6 +735,18 @@ def _validate_extraction_mode(mode: str) -> str:
         )
         return DEFAULT_RETAIN_EXTRACTION_MODE
     return mode_lower
+
+
+def _validate_recall_budget_function(function: str) -> str:
+    """Validate and normalize recall budget function."""
+    function_lower = function.lower()
+    if function_lower not in RECALL_BUDGET_FUNCTIONS:
+        logger.warning(
+            f"Invalid recall budget function '{function}', must be one of {RECALL_BUDGET_FUNCTIONS}. "
+            f"Defaulting to '{DEFAULT_RECALL_BUDGET_FUNCTION}'."
+        )
+        return DEFAULT_RECALL_BUDGET_FUNCTION
+    return function_lower
 
 
 def _get_default_model_for_provider(provider: str) -> str:
@@ -820,6 +888,7 @@ class HindsightConfig:
     reranker_tei_url: str | None
     reranker_tei_batch_size: int
     reranker_tei_max_concurrent: int
+    reranker_tei_http_timeout: float
     reranker_max_candidates: int
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
@@ -849,6 +918,7 @@ class HindsightConfig:
     base_path: str
     log_level: str
     log_format: str
+    log_json_fields: list[str] | None  # None = all fields; explicit list = allowlist
     mcp_enabled: bool
     mcp_enabled_tools: list[str] | None  # None = all tools; explicit list = allowlist
     mcp_stateless: bool  # True = stateless HTTP (POST-only); False = stateful (supports GET/SSE)
@@ -907,10 +977,12 @@ class HindsightConfig:
     enable_observation_history: bool
     enable_mental_model_history: bool
     consolidation_batch_size: int
+    consolidation_max_memories_per_round: int
     consolidation_llm_batch_size: int
     consolidation_max_tokens: int
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
+    consolidation_max_attempts: int
     observations_mission: str | None
     max_observations_per_scope: int
 
@@ -924,6 +996,25 @@ class HindsightConfig:
     # Reflect agent settings
     reflect_mission: str | None
     reflect_source_facts_max_tokens: int
+
+    # Recall settings (used by internal recall, e.g. during mental model refresh)
+    recall_include_chunks: bool
+    recall_max_tokens: int
+    recall_chunks_max_tokens: int
+
+    # Recall budget mapping: how the Budget enum (LOW/MID/HIGH) maps to thinking_budget integer.
+    # function="fixed": use the recall_budget_fixed_* values directly (legacy behavior).
+    # function="adaptive": compute round(max_tokens * recall_budget_adaptive_*),
+    #                      clamped to [recall_budget_min, recall_budget_max].
+    recall_budget_function: str
+    recall_budget_fixed_low: int
+    recall_budget_fixed_mid: int
+    recall_budget_fixed_high: int
+    recall_budget_adaptive_low: float
+    recall_budget_adaptive_mid: float
+    recall_budget_adaptive_high: float
+    recall_budget_min: int
+    recall_budget_max: int
 
     # Disposition settings (hierarchical - can be overridden per bank; None = fall back to DB)
     disposition_skepticism: int | None
@@ -1031,6 +1122,7 @@ class HindsightConfig:
         # Consolidation settings
         "enable_observations",
         "consolidation_llm_batch_size",
+        "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
         "observations_mission",
@@ -1038,6 +1130,20 @@ class HindsightConfig:
         # Reflect settings
         "reflect_mission",
         "reflect_source_facts_max_tokens",
+        # Recall settings (used by internal recall, e.g. mental model refresh)
+        "recall_include_chunks",
+        "recall_max_tokens",
+        "recall_chunks_max_tokens",
+        # Recall budget mapping (Budget enum -> thinking_budget integer)
+        "recall_budget_function",
+        "recall_budget_fixed_low",
+        "recall_budget_fixed_mid",
+        "recall_budget_fixed_high",
+        "recall_budget_adaptive_low",
+        "recall_budget_adaptive_mid",
+        "recall_budget_adaptive_high",
+        "recall_budget_min",
+        "recall_budget_max",
         # Disposition settings
         "disposition_skepticism",
         "disposition_literalism",
@@ -1338,6 +1444,9 @@ class HindsightConfig:
             reranker_tei_max_concurrent=int(
                 os.getenv(ENV_RERANKER_TEI_MAX_CONCURRENT, str(DEFAULT_RERANKER_TEI_MAX_CONCURRENT))
             ),
+            reranker_tei_http_timeout=float(
+                os.getenv(ENV_RERANKER_TEI_HTTP_TIMEOUT, str(DEFAULT_RERANKER_TEI_HTTP_TIMEOUT))
+            ),
             reranker_max_candidates=int(os.getenv(ENV_RERANKER_MAX_CANDIDATES, str(DEFAULT_RERANKER_MAX_CANDIDATES))),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
@@ -1382,6 +1491,7 @@ class HindsightConfig:
             base_path=os.getenv(ENV_BASE_PATH, DEFAULT_BASE_PATH),
             log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
             log_format=os.getenv(ENV_LOG_FORMAT, DEFAULT_LOG_FORMAT).lower(),
+            log_json_fields=_parse_str_list(os.getenv(ENV_LOG_JSON_FIELDS, "")) or None,
             mcp_enabled=os.getenv(ENV_MCP_ENABLED, str(DEFAULT_MCP_ENABLED)).lower() == "true",
             mcp_enabled_tools=[t.strip() for t in os.getenv(ENV_MCP_ENABLED_TOOLS).split(",") if t.strip()]
             if os.getenv(ENV_MCP_ENABLED_TOOLS)
@@ -1474,6 +1584,12 @@ class HindsightConfig:
             consolidation_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_BATCH_SIZE))
             ),
+            consolidation_max_memories_per_round=int(
+                os.getenv(
+                    ENV_CONSOLIDATION_MAX_MEMORIES_PER_ROUND,
+                    str(DEFAULT_CONSOLIDATION_MAX_MEMORIES_PER_ROUND),
+                )
+            ),
             consolidation_llm_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_LLM_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_LLM_BATCH_SIZE))
             ),
@@ -1488,6 +1604,9 @@ class HindsightConfig:
                     ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION,
                     str(DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION),
                 )
+            ),
+            consolidation_max_attempts=int(
+                os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
             ),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             max_observations_per_scope=int(
@@ -1523,6 +1642,31 @@ class HindsightConfig:
             reflect_source_facts_max_tokens=int(
                 os.getenv(ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS, str(DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS))
             ),
+            recall_include_chunks=os.getenv(ENV_RECALL_INCLUDE_CHUNKS, str(DEFAULT_RECALL_INCLUDE_CHUNKS)).lower()
+            in ("true", "1", "yes"),
+            recall_max_tokens=int(os.getenv(ENV_RECALL_MAX_TOKENS, str(DEFAULT_RECALL_MAX_TOKENS))),
+            recall_chunks_max_tokens=int(
+                os.getenv(ENV_RECALL_CHUNKS_MAX_TOKENS, str(DEFAULT_RECALL_CHUNKS_MAX_TOKENS))
+            ),
+            recall_budget_function=_validate_recall_budget_function(
+                os.getenv(ENV_RECALL_BUDGET_FUNCTION, DEFAULT_RECALL_BUDGET_FUNCTION)
+            ),
+            recall_budget_fixed_low=int(os.getenv(ENV_RECALL_BUDGET_FIXED_LOW, str(DEFAULT_RECALL_BUDGET_FIXED_LOW))),
+            recall_budget_fixed_mid=int(os.getenv(ENV_RECALL_BUDGET_FIXED_MID, str(DEFAULT_RECALL_BUDGET_FIXED_MID))),
+            recall_budget_fixed_high=int(
+                os.getenv(ENV_RECALL_BUDGET_FIXED_HIGH, str(DEFAULT_RECALL_BUDGET_FIXED_HIGH))
+            ),
+            recall_budget_adaptive_low=float(
+                os.getenv(ENV_RECALL_BUDGET_ADAPTIVE_LOW, str(DEFAULT_RECALL_BUDGET_ADAPTIVE_LOW))
+            ),
+            recall_budget_adaptive_mid=float(
+                os.getenv(ENV_RECALL_BUDGET_ADAPTIVE_MID, str(DEFAULT_RECALL_BUDGET_ADAPTIVE_MID))
+            ),
+            recall_budget_adaptive_high=float(
+                os.getenv(ENV_RECALL_BUDGET_ADAPTIVE_HIGH, str(DEFAULT_RECALL_BUDGET_ADAPTIVE_HIGH))
+            ),
+            recall_budget_min=int(os.getenv(ENV_RECALL_BUDGET_MIN, str(DEFAULT_RECALL_BUDGET_MIN))),
+            recall_budget_max=int(os.getenv(ENV_RECALL_BUDGET_MAX, str(DEFAULT_RECALL_BUDGET_MAX))),
             # Disposition settings (None = fall back to DB value)
             disposition_skepticism=int(os.getenv(ENV_DISPOSITION_SKEPTICISM))
             if os.getenv(ENV_DISPOSITION_SKEPTICISM)
@@ -1613,7 +1757,8 @@ class HindsightConfig:
         handler.setLevel(self.get_python_log_level())
 
         if self.log_format == "json":
-            handler.setFormatter(JsonFormatter())
+            allowed = frozenset(self.log_json_fields) if self.log_json_fields else None
+            handler.setFormatter(JsonFormatter(allowed_fields=allowed))
         else:
             handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
 

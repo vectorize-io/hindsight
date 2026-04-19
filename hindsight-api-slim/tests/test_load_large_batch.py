@@ -25,6 +25,8 @@ from hindsight_api.engine.llm_wrapper import TokenUsage
 
 logger = logging.getLogger(__name__)
 
+pytestmark = pytest.mark.xdist_group("load_batch_tests")
+
 
 def generate_content(char_count: int) -> str:
     """Generate realistic content of approximately char_count characters."""
@@ -117,9 +119,18 @@ class TestLargeBatchRetain:
         except Exception:
             pass
 
+    @pytest.fixture
+    def disable_observations(self):
+        from hindsight_api.config import _get_raw_config
+        config = _get_raw_config()
+        original = config.enable_observations
+        config.enable_observations = False
+        yield
+        config.enable_observations = original
+
     @pytest.mark.asyncio
     @pytest.mark.timeout(300)  # 5 minute timeout
-    async def test_large_batch_500k_chars_20_items(self, memory_with_mock_llm, request_context):
+    async def test_large_batch_500k_chars_20_items(self, memory_with_mock_llm, request_context, disable_observations):
         """
         Test retaining a batch of 20 content items totaling ~500k chars.
 
@@ -283,7 +294,7 @@ class TestLargeBatchRetain:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(60)
-    async def test_db_connection_pool_under_load(self, memory_with_mock_llm, request_context):
+    async def test_db_connection_pool_under_load(self, memory_with_mock_llm, request_context, disable_observations):
         """
         Test that DB connection pool handles concurrent operations.
 

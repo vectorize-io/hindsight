@@ -99,54 +99,54 @@ Works with any LiteLLM-supported provider:
     >>> hindsight_litellm.completion(model="groq/llama-3.1-70b-versatile", messages=[...])
 """
 
+import logging
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, List
-import threading
-import logging
+from typing import List, Optional
 
 import litellm
 
+from .callbacks import (
+    HindsightCallback,
+    HindsightError,
+    cleanup_callback,
+    get_callback,
+)
 from .config import (
+    USER_AGENT,
+    HindsightConfig,
+    HindsightDefaults,
+    MemoryInjectionMode,
     configure,
-    set_defaults,
     get_config,
     get_defaults,
     is_configured,
     reset_config,
-    HindsightConfig,
-    HindsightDefaults,
-    MemoryInjectionMode,
-)
-from .callbacks import (
-    HindsightCallback,
-    HindsightError,
-    get_callback,
-    cleanup_callback,
+    set_defaults,
 )
 from .wrappers import (
-    recall,
-    arecall,
-    RecallResult,
-    RecallResponse,
-    RecallDebugInfo,
-    reflect,
-    areflect,
-    ReflectResult,
-    ReflectDebugInfo,
-    retain,
-    aretain,
-    RetainResult,
-    RetainDebugInfo,
-    get_pending_retain_errors,
-    wrap_openai,
-    wrap_anthropic,
-    HindsightOpenAI,
     HindsightAnthropic,
-    _get_client,
+    HindsightOpenAI,
+    RecallDebugInfo,
+    RecallResponse,
+    RecallResult,
+    ReflectDebugInfo,
+    ReflectResult,
+    RetainDebugInfo,
+    RetainResult,
     _close_client,
+    _get_client,
+    arecall,
+    areflect,
+    aretain,
+    get_pending_retain_errors,
+    recall,
+    reflect,
+    retain,
+    wrap_anthropic,
+    wrap_openai,
 )
-
 
 __version__ = "0.1.0"
 
@@ -183,9 +183,7 @@ class InjectionDebugInfo:
     bank_id: str
     memory_context: str  # The formatted context that was injected
     reflect_text: Optional[str] = None  # Raw reflect response text
-    reflect_facts: Optional[List[dict]] = (
-        None  # Facts used by reflect (when reflect_include_facts=True)
-    )
+    reflect_facts: Optional[List[dict]] = None  # Facts used by reflect (when reflect_include_facts=True)
     recall_results: Optional[List[dict]] = None  # Raw recall results
     results_count: int = 0
     injected: bool = False
@@ -325,8 +323,8 @@ def _inject_memories(
             # If reflect_include_facts is enabled, use the API directly to include facts
             if defaults.reflect_include_facts:
                 from hindsight_client_api.models import (
-                    reflect_request,
                     reflect_include_options,
+                    reflect_request,
                 )
 
                 request_obj = reflect_request.ReflectRequest(
@@ -340,9 +338,7 @@ def _inject_memories(
                 except RuntimeError:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(
-                    client._api.reflect(bank_id, request_obj)
-                )
+                result = loop.run_until_complete(client._api.reflect(bank_id, request_obj))
                 # Extract facts from based_on
                 if hasattr(result, "based_on") and result.based_on:
                     reflect_facts = [
@@ -421,9 +417,7 @@ def _inject_memories(
                 return messages
 
             # Format memories (apply limit if set, otherwise use all)
-            results_to_use = (
-                results[: defaults.max_memories] if defaults.max_memories else results
-            )
+            results_to_use = results[: defaults.max_memories] if defaults.max_memories else results
             memory_lines = []
             for i, r in enumerate(results_to_use, 1):
                 text = r.text if hasattr(r, "text") else str(r)
@@ -448,8 +442,7 @@ def _inject_memories(
             results_count = len(memory_lines)
             memory_context = (
                 "# Relevant Memories\n"
-                "The following information from memory may be relevant:\n\n"
-                + "\n".join(memory_lines)
+                "The following information from memory may be relevant:\n\n" + "\n".join(memory_lines)
             )
 
         # Inject into messages
@@ -506,9 +499,7 @@ def _inject_memories(
     except Exception as e:
         # Always set debug info on error when verbose mode is on
         if config and config.verbose:
-            logging.getLogger("hindsight_litellm").warning(
-                f"Failed to inject memories: {e}"
-            )
+            logging.getLogger("hindsight_litellm").warning(f"Failed to inject memories: {e}")
             _last_injection_debug = InjectionDebugInfo(
                 mode="reflect" if (defaults and defaults.use_reflect) else "recall",
                 query=user_query or "",
@@ -665,14 +656,10 @@ def enable() -> None:
     defaults = get_defaults()
 
     if not config:
-        raise RuntimeError(
-            "Hindsight not configured. Call configure() before enable()."
-        )
+        raise RuntimeError("Hindsight not configured. Call configure() before enable().")
 
     if not defaults or not defaults.bank_id:
-        raise RuntimeError(
-            "Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable()."
-        )
+        raise RuntimeError("Hindsight bank_id not set. Call set_defaults(bank_id=...) before enable().")
 
     # Store original functions and monkeypatch for memory injection + storage
     _original_completion = litellm.completion
@@ -784,9 +771,7 @@ def _format_conversation_for_storage(
                     tc_strs.append(f"{tc.function.name}({tc.function.arguments})")
                 elif isinstance(tc, dict) and "function" in tc:
                     func = tc["function"]
-                    tc_strs.append(
-                        f"{func.get('name', '')}({func.get('arguments', '')})"
-                    )
+                    tc_strs.append(f"{func.get('name', '')}({func.get('arguments', '')})")
             if tc_strs:
                 items.append(f"ASSISTANT_TOOL_CALLS: {'; '.join(tc_strs)}")
             if content:
@@ -814,9 +799,7 @@ def _format_conversation_for_storage(
             if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
                 for tc in choice.message.tool_calls:
                     if hasattr(tc, "function"):
-                        assistant_tool_calls.append(
-                            f"{tc.function.name}({tc.function.arguments})"
-                        )
+                        assistant_tool_calls.append(f"{tc.function.name}({tc.function.arguments})")
 
             if assistant_content:
                 items.append(f"ASSISTANT: {assistant_content}")
@@ -833,9 +816,7 @@ _pending_storage_errors: List[Exception] = []
 _storage_error_lock = threading.Lock()
 
 
-def _get_existing_document_content(
-    bank_id: str, document_id: str, verbose: bool
-) -> Optional[str]:
+def _get_existing_document_content(bank_id: str, document_id: str, verbose: bool) -> Optional[str]:
     """Fetch existing document content for accumulation via low-level API.
 
     Returns:
@@ -851,10 +832,9 @@ def _get_existing_document_content(
         import hindsight_client_api
         from hindsight_client_api.api import documents_api
 
-        api_config = hindsight_client_api.Configuration(
-            host=config.hindsight_api_url, access_token=config.api_key
-        )
+        api_config = hindsight_client_api.Configuration(host=config.hindsight_api_url, access_token=config.api_key)
         api_client = hindsight_client_api.ApiClient(api_config)
+        api_client.user_agent = USER_AGENT
         if config.api_key:
             api_client.set_default_header("Authorization", f"Bearer {config.api_key}")
         docs_api = documents_api.DocumentsApi(api_client)
@@ -904,15 +884,11 @@ def _store_conversation_sync(
         # If document_id is set, fetch existing content and append
         content_to_store = conversation_text
         if document_id:
-            existing_content = _get_existing_document_content(
-                bank_id, document_id, verbose
-            )
+            existing_content = _get_existing_document_content(bank_id, document_id, verbose)
             if existing_content:
                 content_to_store = f"{existing_content}\n\n{conversation_text}"
                 if verbose:
-                    _storage_logger.debug(
-                        f"Appending to existing document: {document_id}"
-                    )
+                    _storage_logger.debug(f"Appending to existing document: {document_id}")
 
         retain(
             content=content_to_store,
@@ -928,9 +904,7 @@ def _store_conversation_sync(
         _storage_logger.error(f"Failed to store conversation: {e}")
         # Store error to raise on next completion call
         with _storage_error_lock:
-            _pending_storage_errors.append(
-                HindsightError(f"Background storage failed: {e}")
-            )
+            _pending_storage_errors.append(HindsightError(f"Background storage failed: {e}"))
 
 
 def _check_pending_storage_errors() -> None:
@@ -978,9 +952,7 @@ def _store_conversation(
         return
 
     if not defaults or not defaults.bank_id:
-        _storage_logger.warning(
-            "No bank_id configured for storage. Call set_defaults(bank_id=...)."
-        )
+        _storage_logger.warning("No bank_id configured for storage. Call set_defaults(bank_id=...).")
         return
 
     # Format conversation
@@ -1001,10 +973,7 @@ def _store_conversation(
                 if existing_content:
                     content_to_store = f"{existing_content}\n\n{conversation_text}"
                     if config.verbose:
-                        _storage_logger.debug(
-                            f"Appending to existing document: "
-                            f"{defaults.effective_document_id}"
-                        )
+                        _storage_logger.debug(f"Appending to existing document: {defaults.effective_document_id}")
 
             retain(
                 content=content_to_store,

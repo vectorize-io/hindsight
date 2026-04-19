@@ -143,7 +143,8 @@
           "anyOf": [
             {
               "items": {
-                "type": "string"
+                "additionalProperties": true,
+                "type": "object"
               },
               "type": "array"
             },
@@ -167,6 +168,258 @@
           "default": null,
           "description": "Allow entities outside the label vocabulary",
           "title": "Entities Allow Free Form"
+        },
+        "retain_default_strategy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of the default retain strategy (key into retain_strategies map)",
+          "title": "Retain Default Strategy"
+        },
+        "retain_strategies": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Map of retain strategy name to per-strategy config dict",
+          "title": "Retain Strategies"
+        },
+        "retain_chunk_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max chunks per streaming batch (0 disables batching)",
+          "title": "Retain Chunk Batch Size"
+        },
+        "mcp_enabled_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MCP tool allowlist for this bank (None = all tools)",
+          "title": "Mcp Enabled Tools"
+        },
+        "consolidation_llm_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "LLM batch size for observation consolidation",
+          "title": "Consolidation Llm Batch Size"
+        },
+        "consolidation_source_facts_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens of source facts per consolidation batch",
+          "title": "Consolidation Source Facts Max Tokens"
+        },
+        "consolidation_source_facts_max_tokens_per_observation": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens of source facts per observation",
+          "title": "Consolidation Source Facts Max Tokens Per Observation"
+        },
+        "max_observations_per_scope": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max observations to retain per consolidation scope",
+          "title": "Max Observations Per Scope"
+        },
+        "reflect_source_facts_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens of source facts per reflect call",
+          "title": "Reflect Source Facts Max Tokens"
+        },
+        "llm_gemini_safety_settings": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-bank Gemini/VertexAI safety filter settings",
+          "title": "Llm Gemini Safety Settings"
+        },
+        "recall_budget_function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recall budget mapping function: 'fixed' or 'adaptive'",
+          "title": "Recall Budget Function"
+        },
+        "recall_budget_fixed_low": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed thinking_budget for budget=low (function='fixed')",
+          "title": "Recall Budget Fixed Low"
+        },
+        "recall_budget_fixed_mid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed thinking_budget for budget=mid (function='fixed')",
+          "title": "Recall Budget Fixed Mid"
+        },
+        "recall_budget_fixed_high": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed thinking_budget for budget=high (function='fixed')",
+          "title": "Recall Budget Fixed High"
+        },
+        "recall_budget_adaptive_low": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ratio of max_tokens for budget=low (function='adaptive')",
+          "title": "Recall Budget Adaptive Low"
+        },
+        "recall_budget_adaptive_mid": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ratio of max_tokens for budget=mid (function='adaptive')",
+          "title": "Recall Budget Adaptive Mid"
+        },
+        "recall_budget_adaptive_high": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ratio of max_tokens for budget=high (function='adaptive')",
+          "title": "Recall Budget Adaptive High"
+        },
+        "recall_budget_min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Floor for the adaptive function (after clamping)",
+          "title": "Recall Budget Min"
+        },
+        "recall_budget_max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ceiling for the adaptive function (after clamping)",
+          "title": "Recall Budget Max"
         }
       },
       "title": "BankTemplateConfig",
@@ -266,6 +519,16 @@
     "MentalModelTrigger": {
       "description": "Trigger settings for a mental model.",
       "properties": {
+        "mode": {
+          "default": "full",
+          "description": "Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.",
+          "enum": [
+            "full",
+            "delta"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
         "refresh_after_consolidation": {
           "default": false,
           "description": "If true, refresh this mental model after observations consolidation (real-time mode)",
@@ -362,6 +625,45 @@
           "default": null,
           "description": "Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.",
           "title": "Tag Groups"
+        },
+        "include_chunks": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override whether the internal recall used during refresh returns raw chunk text. None means use the bank/global config default (recall_include_chunks).",
+          "title": "Include Chunks"
+        },
+        "recall_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override the token budget for facts returned by the internal recall during refresh. None means use the bank/global config default (recall_max_tokens).",
+          "title": "Recall Max Tokens"
+        },
+        "recall_chunks_max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override the token budget for raw chunks returned by the internal recall during refresh. None means use the bank/global config default (recall_chunks_max_tokens).",
+          "title": "Recall Chunks Max Tokens"
         }
       },
       "title": "MentalModelTrigger",

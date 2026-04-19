@@ -91,11 +91,12 @@ graph LR
 
 ### Observation Consolidation
 
-After memories are retained, Hindsight automatically consolidates related facts into **observations** — synthesized knowledge representations that capture patterns and learnings:
+After memories are retained, Hindsight automatically consolidates related facts into **observations** — deduplicated, evidence-grounded beliefs that the bank has built up across many memories:
 
-- **Automatic synthesis**: New facts are analyzed and consolidated into existing or new observations
-- **Evidence tracking**: Each observation tracks which facts support it
-- **Continuous refinement**: Observations evolve as new evidence arrives
+- **Deduplication**: Overlapping facts are merged into a single durable observation instead of piling up as repeats
+- **Evidence tracking**: Each observation references the source memories (with exact quotes) that support it, plus a proof count
+- **Continuous refinement**: Observations are updated — not overwritten — when new evidence supports, contradicts, or extends them; history is preserved
+- **Freshness trend**: Each observation carries a computed trend (stable / strengthening / weakening / stale) based on when its evidence arrived
 
 ### Mission, Directives & Disposition
 

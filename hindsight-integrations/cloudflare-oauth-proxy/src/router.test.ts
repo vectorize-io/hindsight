@@ -30,7 +30,7 @@ describe("createWorker", () => {
           headers: { Origin: "https://claude.ai" },
         }),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
       expect(response.status).toBe(204);
@@ -47,7 +47,7 @@ describe("createWorker", () => {
           headers: { Origin: "https://evil.example.com" },
         }),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
       expect(response.status).toBe(403);
@@ -58,15 +58,16 @@ describe("createWorker", () => {
   describe("/.well-known/oauth-authorization-server", () => {
     it("forces code_challenge_methods_supported to ['S256']", async () => {
       const provider: ProviderLike = {
-        fetch: vi.fn(async () =>
-          new Response(
-            JSON.stringify({
-              issuer: "https://proxy.example.com",
-              code_challenge_methods_supported: ["S256", "plain"],
-              grant_types_supported: ["authorization_code"],
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          ),
+        fetch: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                issuer: "https://proxy.example.com",
+                code_challenge_methods_supported: ["S256", "plain"],
+                grant_types_supported: ["authorization_code"],
+              }),
+              { headers: { "Content-Type": "application/json" } }
+            )
         ),
       };
       const worker = createWorker(provider);
@@ -76,10 +77,10 @@ describe("createWorker", () => {
           headers: { Origin: "https://claude.ai" },
         }),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
-      const metadata = await response.json() as Record<string, unknown>;
+      const metadata = (await response.json()) as Record<string, unknown>;
       expect(metadata.code_challenge_methods_supported).toEqual(["S256"]);
       expect(metadata.grant_types_supported).toEqual(["authorization_code"]);
       expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://claude.ai");
@@ -87,16 +88,14 @@ describe("createWorker", () => {
 
     it("strips CORS headers when the request origin is not allowlisted", async () => {
       const provider: ProviderLike = {
-        fetch: vi.fn(async () =>
-          new Response(
-            JSON.stringify({ code_challenge_methods_supported: ["plain"] }),
-            {
+        fetch: vi.fn(
+          async () =>
+            new Response(JSON.stringify({ code_challenge_methods_supported: ["plain"] }), {
               headers: {
                 "Content-Type": "application/json",
                 "Access-Control-Allow-Origin": "*",
               },
-            },
-          ),
+            })
         ),
       };
       const worker = createWorker(provider);
@@ -104,7 +103,7 @@ describe("createWorker", () => {
       const response = await worker.fetch(
         new Request("https://proxy.example.com/.well-known/oauth-authorization-server"),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
       expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
@@ -122,7 +121,7 @@ describe("createWorker", () => {
           headers: { Origin: "https://claude.ai" },
         }),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
       expect(providerFetch).toHaveBeenCalledTimes(1);
@@ -136,7 +135,7 @@ describe("createWorker", () => {
           async () =>
             new Response("ok", {
               headers: { "Access-Control-Allow-Origin": "*" },
-            }),
+            })
         ),
       };
       const worker = createWorker(provider);
@@ -146,7 +145,7 @@ describe("createWorker", () => {
           headers: { Origin: "https://evil.example.com" },
         }),
         fakeEnv(),
-        fakeCtx,
+        fakeCtx
       );
 
       expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();

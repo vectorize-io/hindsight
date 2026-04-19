@@ -55,6 +55,7 @@ from hindsight_api.extensions.tenant import (
     TenantExtension,
 )
 from hindsight_api.models import RequestContext
+from hindsight_api.worker.exceptions import DeferOperation
 
 __all__ = [
     # Base
@@ -68,6 +69,7 @@ __all__ = [
     # MCP Extension
     "MCPExtension",
     # Operation Validator - Core
+    "DeferOperation",
     "OperationValidationError",
     "OperationValidatorExtension",
     "RecallContext",

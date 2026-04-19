@@ -8,11 +8,27 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
 DEFAULT_TIMEOUT = 15  # seconds
 HEALTH_CHECK_RETRIES = 3
 HEALTH_CHECK_DELAY = 2  # seconds
+
+
+def _plugin_version() -> str:
+    """Read the plugin version from plugin.json (single source of truth)."""
+    manifest = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"
+    try:
+        return json.loads(manifest.read_text()).get("version", "0.0.0")
+    except (OSError, ValueError):
+        return "0.0.0"
+
+
+# Sent on every request so self-hosted deployments behind Cloudflare (or any
+# reverse proxy with UA-based bot filtering) don't block the stdlib default
+# "Python-urllib/X.Y", which trips Cloudflare error 1010.
+USER_AGENT = f"hindsight-claude-code/{_plugin_version()}"
 
 
 def _validate_api_url(url: str) -> str:
@@ -33,7 +49,10 @@ class HindsightClient:
         self.api_token = api_token
 
     def _headers(self) -> dict:
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        }
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
         return headers

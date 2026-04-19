@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sdk, lowLevelClient, DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { sdk, lowLevelClient, dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
@@ -41,7 +41,7 @@ export async function PATCH(
 
     const body = await request.json();
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}`,
+      dataplaneBankUrl(bankId, `/documents/${encodeURIComponent(documentId)}`),
       {
         method: "PATCH",
         headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
