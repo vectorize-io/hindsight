@@ -28,6 +28,15 @@ def main():
 
     debug_log(config, f"SessionEnd hook, reason: {hook_input.get('reason', 'unknown')}")
 
+    # Force a final retain before stopping the daemon — guarantees short sessions
+    # (fewer turns than retainEveryNTurns) still land on disk.
+    if config.get("autoRetain") and hook_input.get("transcript_path"):
+        try:
+            from retain import run_retain
+            run_retain(hook_input, force=True)
+        except Exception as e:
+            print(f"[Hindsight] SessionEnd final retain error: {e}", file=sys.stderr)
+
     # Stop daemon if we started it
     def _dbg(*a):
         debug_log(config, *a)
