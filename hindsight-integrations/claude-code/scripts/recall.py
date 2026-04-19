@@ -157,6 +157,26 @@ def main():
         return
 
     results = response.get("results", [])
+
+    # Also recall from any additional banks (e.g. shared user profile bank)
+    additional_banks = config.get("recallAdditionalBanks", [])
+    for extra_bank_id in additional_banks:
+        try:
+            extra_response = client.recall(
+                bank_id=extra_bank_id,
+                query=query,
+                max_tokens=config.get("recallMaxTokens", 1024),
+                budget=config.get("recallBudget", "mid"),
+                types=config.get("recallTypes"),
+                timeout=10,
+            )
+            extra_results = extra_response.get("results", [])
+            if extra_results:
+                debug_log(config, f"Got {len(extra_results)} memories from additional bank '{extra_bank_id}'")
+                results = results + extra_results
+        except Exception as e:
+            debug_log(config, f"Recall from additional bank '{extra_bank_id}' failed: {e}")
+
     if not results:
         debug_log(config, "No memories found")
         return

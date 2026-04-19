@@ -32,6 +32,7 @@ DEFAULTS = {
     "retainContext": "claude-code",
     "retainTags": [],
     "retainMetadata": {},
+    "recallAdditionalBanks": [],
     # Connection
     "hindsightApiUrl": None,
     "hindsightApiToken": None,
