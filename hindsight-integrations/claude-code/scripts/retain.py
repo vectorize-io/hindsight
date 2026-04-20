@@ -165,11 +165,12 @@ def main():
         document_id = session_id
 
     # Resolve template variables in tags and metadata.
-    # Supported variables: {session_id}, {bank_id}, {timestamp}
+    # Supported variables: {session_id}, {bank_id}, {timestamp}, {user_id}
     template_vars = {
         "session_id": session_id,
         "bank_id": bank_id,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "user_id": os.environ.get("HINDSIGHT_USER_ID", ""),
     }
 
     def _resolve_template(value: str) -> str:
@@ -177,9 +178,22 @@ def main():
             value = value.replace(f"{{{k}}}", v)
         return value
 
-    # Tags from config with template resolution
+    # Tags from config with template resolution.
+    # Drop tags whose resolved form ends in an empty namespace part (e.g. "user:"
+    # when HINDSIGHT_USER_ID is unset). Tags without ':' are preserved as-is.
     raw_tags = config.get("retainTags", [])
-    tags = [_resolve_template(t) for t in raw_tags] if raw_tags else None
+    if raw_tags:
+        tags = []
+        for original in raw_tags:
+            resolved = _resolve_template(original)
+            if ":" in resolved and resolved.split(":", 1)[1] == "":
+                debug_log(config, f"Dropping tag '{original}' -> '{resolved}' (empty content after ':')")
+                continue
+            tags.append(resolved)
+        if not tags:
+            tags = None
+    else:
+        tags = None
 
     # Metadata: merge built-in defaults with user-configured extras
     metadata = {
