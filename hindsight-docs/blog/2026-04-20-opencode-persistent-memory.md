@@ -3,7 +3,7 @@ title: "Your OpenCode Agent Forgets Everything Between Sessions. Here's the Fix.
 authors: [DK09876]
 date: 2026-04-20
 tags: [opencode, memory, integrations, typescript]
-description: "OpenCode sessions are stateless by default. The @vectorize-io/opencode-hindsight plugin adds persistent memory via automatic hooks and three explicit tools, so your agent has context before you say anything."
+description: "OpenCode sessions are stateless by default. The @vectorize-io/opencode-hindsight plugin adds persistent memory via automatic hooks and three explicit tools."
 image: /img/blog/opencode-persistent-memory.png
 hide_table_of_contents: true
 ---
@@ -24,7 +24,7 @@ OpenCode gives you a fast, terminal-native AI coding agent. But every session st
 
 ---
 
-## The Problem
+## The Problem: No Persistent Memory Between Sessions
 
 OpenCode is a powerful terminal-based coding agent. You can install plugins, wire up providers, and get real work done. But every session is isolated. There's no mechanism for the agent to remember what happened in previous sessions.
 
