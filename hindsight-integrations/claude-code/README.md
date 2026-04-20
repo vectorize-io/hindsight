@@ -202,9 +202,34 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 | `retainOverlapTurns` | — | `2` | When chunked retention fires, this many extra turns from the previous chunk are included for continuity. Total window size = `retainEveryNTurns + retainOverlapTurns`. |
 | `retainRoles` | — | `["user", "assistant"]` | Which message roles to include in the retained transcript. |
 | `retainToolCalls` | — | `true` | Whether to include tool calls (function invocations and results) in the retained transcript. Captures structured actions like file reads, searches, and code edits. |
-| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports `{session_id}` placeholder which is replaced with the current session ID at runtime. |
-| `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. |
+| `retainTags` | — | `["{session_id}"]` | Tags attached to the retained document. Supports template placeholders: `{session_id}`, `{bank_id}`, `{timestamp}`, and `{user_id}` (resolved from `HINDSIGHT_USER_ID` env var; empty string if unset). Tags whose resolved form ends in an empty namespace part (e.g. `"user:"` when `HINDSIGHT_USER_ID` is unset) are dropped from the outgoing request. See [Template variables](#template-variables-for-retaintags-and-retainmetadata) below. |
+| `retainMetadata` | — | `{}` | Arbitrary key-value metadata attached to the retained document. Same template placeholders as `retainTags`. |
 | `retainContext` | — | `"claude-code"` | A label attached to retained memories identifying their source. Useful when multiple integrations write to the same bank. |
+
+#### Template variables for `retainTags` and `retainMetadata`
+
+| Variable | Source |
+|----------|--------|
+| `{session_id}` | Current Claude Code session ID |
+| `{bank_id}` | Resolved bank ID (per `bankGranularity`) |
+| `{timestamp}` | ISO 8601 UTC at retain time |
+| `{user_id}` | Value of `HINDSIGHT_USER_ID` env var (empty string if unset) |
+
+##### Example: per-user memory scoping
+
+```json
+{
+  "retainTags": ["user:{user_id}", "session:{session_id}"]
+}
+```
+
+Set `HINDSIGHT_USER_ID=<opaque-user-id>` in your shell profile (`.zshrc`,
+`.bashrc`, etc.). If the env var is unset, the `user:` tag is dropped from the
+outgoing retain request and the rest of the tags are sent as-is — so the same
+`settings.json` works across machines whether you've set the env var or not.
+
+Downstream, `recall` can filter by `tags=["user:alice"]` to isolate memories
+authored by a specific user from a shared bank.
 
 ---
 

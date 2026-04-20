@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `{user_id}` template variable for `retainTags` and `retainMetadata`, resolved
+  from the `HINDSIGHT_USER_ID` env var (empty string if unset). Enables
+  machine-independent per-user memory scoping without hardcoding user ids in
+  `settings.json`.
+
+### Changed
+
+- Tags that resolve to an empty namespace content (e.g. `"user:"` when
+  `HINDSIGHT_USER_ID` is unset) are now dropped from retain requests. Previously
+  such tags were sent as-is. Tags without `:` are unaffected.
+
 ## [0.1.0] - 2025-03-23
 
 ### Added
