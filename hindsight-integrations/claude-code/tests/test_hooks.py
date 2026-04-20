@@ -276,6 +276,100 @@ class TestRetainHook:
         item = captured["body"]["items"][0]
         assert item["tags"] == ["sess-tag-test", "claude-code", "custom-tag"]
 
+    def test_retain_tag_resolves_user_id_when_env_set(self, monkeypatch, tmp_path):
+        """retainTags with {user_id} resolves from HINDSIGHT_USER_ID env var."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-user-test")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_env={"HINDSIGHT_USER_ID": "alice"},
+            extra_settings={"retainTags": ["user:{user_id}", "session:{session_id}"]},
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert item["tags"] == ["user:alice", "session:sess-user-test"]
+
+    def test_retain_tag_dropped_when_user_id_env_unset(self, monkeypatch, tmp_path):
+        """user:{user_id} resolves to 'user:' and is dropped when env is unset; other tags survive."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-drop-test")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainTags": ["user:{user_id}", "session:{session_id}"]},
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert item["tags"] == ["session:sess-drop-test"]
+        assert not any(t.startswith("user:") for t in item["tags"])
+
+    def test_retain_tag_without_colon_preserved(self, monkeypatch, tmp_path):
+        """Tags without ':' are never dropped, regardless of env state."""
+        # _run_hook strips all HINDSIGHT_* env vars, so unset state is the default.
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-plain")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainTags": ["plain-tag", "another"]},
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        assert item["tags"] == ["plain-tag", "another"]
+
+    def test_retain_tag_all_dropped_yields_no_tags_field(self, monkeypatch, tmp_path):
+        """If all tags resolve to dangling, the outgoing request omits the tags field."""
+        # _run_hook strips all HINDSIGHT_* env vars, so unset state is the default.
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-none")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "retain", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainTags": ["user:{user_id}"]},
+        )
+
+        assert "body" in captured, "retain API was not called"
+        item = captured["body"]["items"][0]
+        # HindsightClient.retain only sets item["tags"] if tags is truthy (client.py:144).
+        # With all tags dropped, retain.py sets tags=None, so "tags" is absent from item.
+        assert "tags" not in item
+
     def test_retain_custom_metadata(self, monkeypatch, tmp_path):
         """retainMetadata config should be merged with built-in metadata."""
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
