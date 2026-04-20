@@ -34,7 +34,7 @@ jobs:
         env:
           UMAMI_URL: https://analytics.hindsight.vectorize.io
           UMAMI_WEBSITE_ID: ${{ secrets.UMAMI_WEBSITE_ID }}
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: hindsight-docs/build
   deploy:
