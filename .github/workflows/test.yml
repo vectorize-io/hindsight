@@ -1031,7 +1031,7 @@ jobs:
       COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
       HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       HINDSIGHT_API_DATABASE_BACKEND: oracle
-      ORACLE_TEST_DSN: oracle+oracledb://system:oracle@localhost:1521/?service_name=FREEPDB1
+      ORACLE_TEST_DSN: oracle+oracledb://hindsight_test:hindsight_test@localhost:1521/FREEPDB1
 
     services:
       oracle:
@@ -1051,6 +1051,35 @@ jobs:
     - uses: actions/checkout@v6
       with:
         ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup Oracle test user
+      # The SYSTEM tablespace uses manual segment space management which
+      # doesn't support VECTOR types. Create an ASSM tablespace and a
+      # dedicated test user so VECTOR columns work correctly.
+      run: |
+        pip install oracledb
+        python3 -c "
+        import oracledb
+        conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
+        cursor = conn.cursor()
+        cursor.execute(\"\"\"
+            CREATE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 200M AUTOEXTEND ON NEXT 50M
+            EXTENT MANAGEMENT LOCAL
+            SEGMENT SPACE MANAGEMENT AUTO
+        \"\"\")
+        cursor.execute(\"\"\"
+            CREATE USER hindsight_test IDENTIFIED BY hindsight_test
+            DEFAULT TABLESPACE hindsight_ts
+            TEMPORARY TABLESPACE temp
+            QUOTA UNLIMITED ON hindsight_ts
+        \"\"\")
+        cursor.execute('GRANT CONNECT, RESOURCE, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE PROCEDURE TO hindsight_test')
+        cursor.execute('GRANT CTXAPP TO hindsight_test')
+        conn.commit()
+        conn.close()
+        print('Oracle test user created successfully')
+        "
 
     - name: Setup GCP credentials
       run: |
