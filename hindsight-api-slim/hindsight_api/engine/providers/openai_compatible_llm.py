@@ -76,7 +76,7 @@ def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
             body = None
     if isinstance(body, (dict, list)):
         try:
-            body_str = json.dumps(body, default=str)
+            body_str = json.dumps(body, default=str, ensure_ascii=False)
         except Exception:
             body_str = str(body)
     else:
@@ -365,9 +365,7 @@ class OpenAICompatibleLLM(LLMInterface):
             else:
                 # Soft enforcement: add schema to prompt and use json_object mode
                 if schema is not None:
-                    schema_msg = (
-                        f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
-                    )
+                    schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
 
                     if call_params["messages"] and call_params["messages"][0].get("role") == "system":
                         first_msg = call_params["messages"][0]
@@ -976,7 +974,7 @@ class OpenAICompatibleLLM(LLMInterface):
         logger.info(f"Submitting batch with {len(requests)} requests to {self.provider}")
 
         # Format requests as JSONL
-        jsonl_content = "\n".join(json.dumps(req) for req in requests)
+        jsonl_content = "\n".join(json.dumps(req, ensure_ascii=False) for req in requests)
 
         # Upload file to provider (wrap in BytesIO with filename)
         file_bytes = io.BytesIO(jsonl_content.encode("utf-8"))

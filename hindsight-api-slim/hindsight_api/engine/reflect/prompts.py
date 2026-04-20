@@ -369,7 +369,7 @@ def build_agent_prompt(
             output = entry["output"]
             # Format as proper JSON for LLM readability
             try:
-                output_str = json.dumps(output, indent=2, default=str)
+                output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
             except (TypeError, ValueError):
                 output_str = str(output)
             parts.append(f"\n### Call {i}: {tool}\n```json\n{output_str}\n```")
@@ -444,7 +444,7 @@ def build_final_prompt(
             tool = entry["tool"]
             output = entry["output"]
             try:
-                output_str = json.dumps(output, indent=2, default=str)
+                output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
             except (TypeError, ValueError):
                 output_str = str(output)
             block = f"\n### From {tool}:\n```json\n{output_str}\n```"

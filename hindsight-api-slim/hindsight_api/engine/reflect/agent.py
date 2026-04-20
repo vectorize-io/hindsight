@@ -186,7 +186,7 @@ async def _generate_structured_output(
         DynamicModel = create_model("StructuredResponse", **fields)
 
         # Include the full schema in the prompt for better LLM guidance
-        schema_str = json.dumps(response_schema, indent=2)
+        schema_str = json.dumps(response_schema, indent=2, ensure_ascii=False)
 
         # Build field descriptions for the prompt
         field_descriptions = []
@@ -783,7 +783,8 @@ async def run_reflect_agent(
                         "content": json.dumps(
                             {
                                 "error": "You must search for information first. Use search_mental_models(), search_observations(), or recall() before providing your final answer."
-                            }
+                            },
+                            ensure_ascii=False,
                         ),
                     }
                 )
@@ -845,7 +846,8 @@ async def run_reflect_agent(
                         "content": json.dumps(
                             {
                                 "error": f"Tool '{_normalize_tool_name(tc.name)}' is not available. Use only the tools provided to you."
-                            }
+                            },
+                            ensure_ascii=False,
                         ),
                     }
                 )
@@ -916,7 +918,7 @@ async def run_reflect_agent(
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": tc.name,  # Required by Gemini
-                        "content": json.dumps(output, default=str),
+                        "content": json.dumps(output, default=str, ensure_ascii=False),
                     }
                 )
 
@@ -939,7 +941,7 @@ async def run_reflect_agent(
                 )
 
                 try:
-                    output_chars = len(json.dumps(output))
+                    output_chars = len(json.dumps(output, ensure_ascii=False))
                 except (TypeError, ValueError):
                     output_chars = len(str(output))
 
@@ -976,7 +978,7 @@ def _tool_call_to_dict(tc: "LLMToolCall") -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": tc.name,
-            "arguments": json.dumps(tc.arguments),
+            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
         },
     }
     if tc.thought_signature is not None:
@@ -1074,7 +1076,7 @@ async def _execute_tool_with_timing(
         # Set attributes
         span.set_attribute("hindsight.tool.name", normalized_name)
         span.set_attribute("hindsight.tool.id", tc.id)
-        span.set_attribute("hindsight.tool.arguments", json.dumps(tc.arguments))
+        span.set_attribute("hindsight.tool.arguments", json.dumps(tc.arguments, ensure_ascii=False))
 
         try:
             result = await _execute_tool(

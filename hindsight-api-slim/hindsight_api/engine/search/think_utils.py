@@ -73,7 +73,7 @@ def format_facts_for_prompt(facts: list[MemoryFact]) -> str:
 
         formatted.append(fact_obj)
 
-    return json.dumps(formatted, indent=2)
+    return json.dumps(formatted, indent=2, ensure_ascii=False)
 
 
 def format_entity_summaries_for_prompt(entities: dict) -> str:

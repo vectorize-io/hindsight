@@ -212,7 +212,7 @@ class GeminiLLM(LLMInterface):
         # Add JSON schema instruction if response_format is provided
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
-            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+            schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
             if system_instruction:
                 system_instruction += schema_msg
             else:

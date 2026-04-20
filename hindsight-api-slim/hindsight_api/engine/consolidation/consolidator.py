@@ -1212,7 +1212,7 @@ async def _consolidate_batch_with_llm(
         raise ValueError("config is required for _consolidate_batch_with_llm")
     if union_observations:
         obs_list = _build_observations_for_llm(union_observations, union_source_facts)
-        observations_text = json.dumps(obs_list, indent=2)
+        observations_text = json.dumps(obs_list, indent=2, ensure_ascii=False)
     else:
         observations_text = "[]"
 

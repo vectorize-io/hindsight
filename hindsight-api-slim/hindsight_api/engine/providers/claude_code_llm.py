@@ -171,7 +171,7 @@ class ClaudeCodeLLM(LLMInterface):
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
             schema_instruction = (
-                f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2)}\n\n"
+                f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n\n"
                 "Respond with ONLY the JSON, no markdown formatting."
             )
             user_content += schema_instruction
