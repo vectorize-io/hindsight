@@ -5546,8 +5546,8 @@ class MemoryEngine(MemoryEngineInterface):
         if self._reflect_llm_config is None:
             raise ValueError("Memory LLM API key not set. Set HINDSIGHT_API_LLM_API_KEY environment variable.")
 
-        # Block reflect when LLM provider is "none"
-        if self._llm_config.provider == "none":
+        # Block reflect when the reflect LLM provider is "none"
+        if self._reflect_llm_config.provider == "none":
             from .providers.none_llm import LLMNotAvailableError
 
             raise LLMNotAvailableError(

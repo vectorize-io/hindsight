@@ -276,6 +276,51 @@ class TestReflectUsesReflectLLMConfig:
         # Verify it's different from the retain config
         assert engine._reflect_llm_config.model != engine._retain_llm_config.model
 
+    @pytest.mark.asyncio
+    async def test_reflect_allowed_when_default_llm_none_but_reflect_configured(self, monkeypatch):
+        """A disabled default LLM should not block a separately configured reflect LLM."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from hindsight_api import MemoryEngine
+        from hindsight_api.engine.reflect.models import ReflectAgentResult
+        from hindsight_api.models import RequestContext
+
+        engine = MemoryEngine(
+            memory_llm_provider="none",
+            memory_llm_model="none",
+            reflect_llm_provider="mock",
+            reflect_llm_model="reflect-specific-model",
+            skip_llm_verification=True,
+            lazy_reranker=True,
+        )
+
+        engine._authenticate_tenant = AsyncMock()  # type: ignore[method-assign]
+        engine.get_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
+        engine.get_bank_stats = AsyncMock(return_value=SimpleNamespace(last_consolidated_at=None, pending_consolidation=0))  # type: ignore[method-assign]
+        engine.list_directives = AsyncMock(return_value=[])  # type: ignore[method-assign]
+        engine._get_pool = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
+        engine._config_resolver = SimpleNamespace(
+            resolve_full_config=AsyncMock(return_value=SimpleNamespace(llm_gemini_safety_settings=None)),
+            get_bank_config=AsyncMock(return_value={}),
+        )
+
+        async def fake_run_reflect_agent(**kwargs):
+            assert kwargs["llm_config"].provider == "mock"
+            return ReflectAgentResult(text="reflect works")
+
+        monkeypatch.setattr("hindsight_api.engine.memory_engine.run_reflect_agent", fake_run_reflect_agent)
+
+        result = await engine.reflect_async(
+            bank_id="bank-1",
+            query="test",
+            request_context=RequestContext(),
+            exclude_mental_models=True,
+            fact_types=["observation"],
+        )
+
+        assert result.text == "reflect works"
+
 
 class TestRetryAndBackoffConfiguration:
     """Test retry and backoff configuration options."""
