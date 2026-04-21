@@ -328,9 +328,9 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     # FOR SHARE → FOR UPDATE (Oracle doesn't support FOR SHARE)
     query = re.sub(r"\bFOR\s+SHARE\b", "FOR UPDATE", query, flags=re.IGNORECASE)
 
-    # Oracle reserved word: quote "trigger" column name
-    if '"trigger"' not in query:
-        query = re.sub(r"\btrigger\b", '"trigger"', query)
+    # Oracle reserved word: quote "trigger" column name.
+    # Use negative lookbehind/lookahead to skip already-quoted occurrences.
+    query = re.sub(r'(?<!")\btrigger\b(?!")', '"trigger"', query)
 
     # date_trunc('interval', col) → TRUNC(col, 'fmt')
     _DATE_TRUNC_MAP = {"day": "DD", "hour": "HH24", "month": "MM", "week": "IW", "year": "YYYY"}

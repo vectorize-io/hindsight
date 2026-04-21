@@ -1278,7 +1278,9 @@ class TestEdgeCases:
                 event_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 request_context=request_context,
             )
-            await _safe_cleanup(oracle_memory, bank_id, request_context)
+            # Delete must succeed for this test to be meaningful — use
+            # delete_bank directly (not _safe_cleanup which swallows errors).
+            await oracle_memory.delete_bank(bank_id, request_context=request_context)
 
             # Second cycle — same bank_id, completely different content
             await oracle_memory.retain_async(

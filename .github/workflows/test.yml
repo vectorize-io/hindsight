@@ -1128,7 +1128,9 @@ jobs:
 
     - name: Run Oracle tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m oracle
+      # -n0: run sequentially to avoid ORA-00060 deadlocks from concurrent
+      # test transactions against the same Oracle Free container.
+      run: uv run pytest tests -v -m oracle -n0
 
   test-python-client:
     needs: [detect-changes]
