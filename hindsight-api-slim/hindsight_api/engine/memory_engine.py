@@ -8309,16 +8309,37 @@ class MemoryEngine(MemoryEngineInterface):
 
         pool = await self._get_pool()
 
-        # Check for existing pending task if deduplication is enabled
+        # Check for existing pending task if deduplication is enabled.
         # Note: We only check 'pending', not 'processing', because a processing task
         # uses a watermark from when it started - new memories added after that point
         # would need another consolidation run to be processed.
+        # Also skip tasks with NULL task_payload — these are corrupted rows from
+        # older versions where the INSERT didn't include task_payload atomically.
+        # The worker's claim query rejects null-payload rows, so deduplicating
+        # to one creates a dead-end where no new consolidation can ever be claimed.
         if dedupe_by_bank:
             async with acquire_with_retry(pool) as conn:
+                # Also count null-payload zombies for diagnostic logging
+                null_count = await conn.fetchval(
+                    f"""
+                    SELECT COUNT(*) FROM {fq_table("async_operations")}
+                    WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
+                      AND task_payload IS NULL
+                    """,
+                    bank_id,
+                    operation_type,
+                )
+                if null_count and null_count > 0:
+                    logger.warning(
+                        f"Skipping {null_count} null-payload pending {operation_type} "
+                        f"operations for bank_id={bank_id} (corrupted from older version)"
+                    )
+
                 existing = await conn.fetchrow(
                     f"""
                     SELECT operation_id FROM {fq_table("async_operations")}
                     WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
+                      AND task_payload IS NOT NULL
                     LIMIT 1
                     """,
                     bank_id,
