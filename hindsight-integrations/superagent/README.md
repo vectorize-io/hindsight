@@ -24,6 +24,7 @@ from hindsight_superagent import SafeHindsight
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
+    guard_model="openai/gpt-4o-mini",
     redact_model="openai/gpt-4o-mini",
 )
 
@@ -56,6 +57,7 @@ from hindsight_superagent import SafeHindsight, GuardBlockedError
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
+    guard_model="openai/gpt-4o-mini",
     redact_model="openai/gpt-4o-mini",
 )
 
@@ -76,6 +78,7 @@ Disable safety checks per operation:
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
+    guard_model="openai/gpt-4o-mini",
     enable_redact_on_retain=False,
 )
 
@@ -99,6 +102,7 @@ configure(
     hindsight_api_url="http://localhost:8888",
     api_key="YOUR_HINDSIGHT_API_KEY",
     superagent_api_key="YOUR_SUPERAGENT_API_KEY",
+    guard_model="openai/gpt-4o-mini",
     redact_model="openai/gpt-4o-mini",
     redact_rewrite=True,       # Contextually rewrite PII instead of placeholders
     tags=["env:prod"],
@@ -125,7 +129,7 @@ safe = SafeHindsight(bank_id="user-123")
 | `tags` | `[]` | Tags applied when storing memories |
 | `recall_tags` | `[]` | Tags to filter recall results |
 | `recall_tags_match` | `"any"` | Tag matching mode |
-| `guard_model` | `None` | Guard model (default: `superagent/guard-1.7b`) |
+| `guard_model` | `None` | Guard model — **set this explicitly** (e.g. `"openai/gpt-4o-mini"`). See [Guard Model](#guard-model). |
 | `redact_model` | `None` | Redact model (required if redact enabled) |
 | `redact_entities` | `None` | Override default PII entity list |
 | `redact_rewrite` | `False` | Contextual rewrite vs. placeholder markers |
@@ -138,13 +142,30 @@ safe = SafeHindsight(bank_id="user-123")
 
 Same parameters as `SafeHindsight()` except `bank_id`, `hindsight_client`, and `safety_client`.
 
+## Guard Model
+
+Guard requires a model to classify inputs. Superagent publishes open-weight guard models (`superagent/guard-0.6b`, `guard-1.7b`, `guard-4b`) that can be [self-hosted](https://docs.superagent.sh/sdk/models) via Ollama or vLLM. However, Superagent's hosted endpoints for these models are currently unreliable.
+
+**We recommend setting `guard_model` explicitly** to use an LLM provider you already have:
+
+```python
+safe = SafeHindsight(
+    bank_id="user-123",
+    guard_model="openai/gpt-4o-mini",
+    redact_model="openai/gpt-4o-mini",
+)
+```
+
+If you don't set `guard_model` and the default hosted model is unavailable, guard calls will fail. To use guard without an external LLM, self-host one of the open-weight models and configure the Superagent SDK to point at your instance.
+
 ## Requirements
 
 - Python >= 3.10
 - safety-agent >= 0.1.5
 - hindsight-client >= 0.4.0
-- A running Hindsight API server
+- A running Hindsight API server or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) account
 - A Superagent API key (`SUPERAGENT_API_KEY` env var)
+- An OpenAI API key (`OPENAI_API_KEY` env var) for guard and redact models — or another [supported LLM provider](https://docs.superagent.sh/sdk)
 
 ## License
 

@@ -33,7 +33,7 @@ def resolve_hindsight_client(
     url = hindsight_api_url or (config.hindsight_api_url if config else DEFAULT_HINDSIGHT_API_URL)
     key = api_key or (config.api_key if config else None)
 
-    kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
+    kwargs: dict[str, Any] = {"base_url": url, "timeout": 120.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
     return Hindsight(**kwargs)
