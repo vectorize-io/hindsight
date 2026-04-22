@@ -18,7 +18,7 @@ import sys
 import warnings
 
 from ..config import get_config
-from ..engine.task_backend import SyncTaskBackend
+from ..engine.task_backend import WorkerTaskBackend
 from .poller import WorkerPoller
 
 # Filter deprecation warnings from third-party libraries
@@ -195,11 +195,13 @@ def main():
             logger.info(f"Loaded operation validator: {operation_validator.__class__.__name__}")
 
         # Initialize MemoryEngine
-        # Workers use SyncTaskBackend because they execute tasks directly,
-        # they don't need to store tasks (they poll from DB)
+        # Workers use WorkerTaskBackend: submit_task is a no-op because the
+        # row already exists in async_operations.  Child tasks (e.g. consolidation
+        # triggered by retain) will be picked up by the poller on the next cycle
+        # instead of being executed inline, which avoids blocking the parent task.
         memory = MemoryEngine(
             run_migrations=False,  # Workers don't run migrations
-            task_backend=SyncTaskBackend(),
+            task_backend=WorkerTaskBackend(),
             tenant_extension=tenant_extension,
             operation_validator=operation_validator,
         )

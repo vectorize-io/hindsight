@@ -2,7 +2,8 @@
 Task backend for distributed task processing.
 
 This provides an abstraction for task storage and execution:
-- BrokerTaskBackend: Uses PostgreSQL as broker (production)
+- BrokerTaskBackend: Uses PostgreSQL as broker (production API servers)
+- WorkerTaskBackend: No-op submit_task (production workers — child tasks are polled)
 - SyncTaskBackend: Executes tasks immediately (testing/embedded)
 """
 
@@ -123,6 +124,33 @@ class SyncTaskBackend(TaskBackend):
         """No-op for sync backend."""
         self._initialized = False
         logger.debug("SyncTaskBackend shutdown")
+
+
+class WorkerTaskBackend(TaskBackend):
+    """
+    Task backend for worker processes.
+
+    Workers execute tasks directly via the poller (claim → execute), so they
+    don't need submit_task to run anything.  When engine code running *inside*
+    a worker-executed task calls submit_task (e.g. retain triggers consolidation),
+    the row has already been INSERTed into async_operations with task_payload by
+    _submit_async_operation — so submit_task is a no-op.  The new task will be
+    picked up by a worker on the next poll cycle instead of being executed inline,
+    which avoids blocking the parent task.
+    """
+
+    async def initialize(self):
+        self._initialized = True
+        logger.debug("WorkerTaskBackend initialized")
+
+    async def submit_task(self, task_dict: dict[str, Any]):
+        """No-op: the row already exists in async_operations; a worker will claim it."""
+        task_type = task_dict.get("type", "unknown")
+        logger.debug(f"WorkerTaskBackend: submit_task no-op for {task_type} (will be picked up by poller)")
+
+    async def shutdown(self):
+        self._initialized = False
+        logger.debug("WorkerTaskBackend shutdown")
 
 
 class BrokerTaskBackend(TaskBackend):

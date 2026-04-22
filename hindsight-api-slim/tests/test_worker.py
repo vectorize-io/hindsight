@@ -17,7 +17,7 @@ import uuid
 import pytest
 import pytest_asyncio
 
-from hindsight_api.engine.task_backend import BrokerTaskBackend, SyncTaskBackend
+from hindsight_api.engine.task_backend import BrokerTaskBackend, SyncTaskBackend, WorkerTaskBackend
 
 
 async def _ensure_bank(pool, bank_id: str) -> None:
@@ -1315,6 +1315,197 @@ class TestSyncTaskBackend:
         # Should raise so callers can handle or surface the failure
         with pytest.raises(ValueError, match="Test error"):
             await backend.submit_task({"type": "test"})
+
+
+class TestWorkerTaskBackend:
+    """Tests for WorkerTaskBackend (used by worker processes).
+
+    WorkerTaskBackend.submit_task is a no-op: child tasks spawned during
+    execution (e.g. consolidation triggered by retain) are left as pending
+    rows in async_operations for the poller to pick up on the next cycle,
+    instead of being executed inline which would block the parent task.
+    """
+
+    @pytest.mark.asyncio
+    async def test_worker_backend_does_not_execute_inline(self):
+        """WorkerTaskBackend.submit_task must NOT call the executor."""
+        executed = []
+
+        async def mock_executor(task_dict):
+            executed.append(task_dict)
+
+        backend = WorkerTaskBackend()
+        backend.set_executor(mock_executor)
+        await backend.initialize()
+
+        await backend.submit_task({"type": "consolidation", "bank_id": "b1"})
+
+        assert len(executed) == 0, (
+            "WorkerTaskBackend must not execute tasks inline — "
+            "child tasks should be picked up by the poller"
+        )
+
+    @pytest.mark.asyncio
+    async def test_sync_backend_blocks_parent_on_child_task(self):
+        """Demonstrate the blocking problem: with SyncTaskBackend, a parent
+        task that calls submit_task for a child is blocked until the child
+        completes, because submit_task executes inline.
+        """
+        execution_order: list[str] = []
+
+        async def mock_executor(task_dict):
+            task_type = task_dict.get("type", "unknown")
+            execution_order.append(f"{task_type}:start")
+            if task_type == "parent":
+                # Parent spawns a child via submit_task
+                await backend.submit_task({"type": "child", "bank_id": "b1"})
+                # This line only runs AFTER the child finishes (blocking)
+            execution_order.append(f"{task_type}:end")
+
+        backend = SyncTaskBackend()
+        backend.set_executor(mock_executor)
+        await backend.initialize()
+
+        await backend.submit_task({"type": "parent", "bank_id": "b1"})
+
+        # With SyncTaskBackend the child runs inline, nested inside the parent
+        assert execution_order == [
+            "parent:start",
+            "child:start",
+            "child:end",
+            "parent:end",
+        ], f"SyncTaskBackend should execute child inline (blocking parent). Got: {execution_order}"
+
+    @pytest.mark.asyncio
+    async def test_worker_backend_does_not_block_parent_on_child_task(self):
+        """With WorkerTaskBackend, a parent task that calls submit_task for a
+        child task is NOT blocked — submit_task is a no-op, so the parent
+        completes immediately and the child row stays pending for the poller.
+        """
+        execution_order: list[str] = []
+
+        async def mock_executor(task_dict):
+            task_type = task_dict.get("type", "unknown")
+            execution_order.append(f"{task_type}:start")
+            if task_type == "parent":
+                # Parent spawns a child via submit_task — should be a no-op
+                await backend.submit_task({"type": "child", "bank_id": "b1"})
+            execution_order.append(f"{task_type}:end")
+
+        backend = WorkerTaskBackend()
+        backend.set_executor(mock_executor)
+        await backend.initialize()
+
+        # Simulate the poller calling the executor directly for the parent task
+        await mock_executor({"type": "parent", "bank_id": "b1"})
+
+        # The child should NOT have been executed — only the parent runs
+        assert execution_order == [
+            "parent:start",
+            "parent:end",
+        ], (
+            f"WorkerTaskBackend must not execute child tasks inline. "
+            f"Got: {execution_order}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_worker_backend_child_task_stays_pending_in_db(self, pool, clean_operations):
+        """End-to-end: when a worker-executed task spawns a child operation,
+        the child row stays as 'pending' in async_operations (not executed inline).
+        A subsequent poll cycle can then claim and execute it independently.
+        """
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.poller import ClaimedTask
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # Pre-create the parent operation (as the poller would claim it)
+        parent_op_id = uuid.uuid4()
+        parent_payload = {
+            "type": "batch_retain",
+            "operation_id": str(parent_op_id),
+            "bank_id": bank_id,
+        }
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'retain', 'processing', $3::jsonb, 'test-worker-1', now())
+            """,
+            parent_op_id,
+            bank_id,
+            json.dumps(parent_payload),
+        )
+
+        # Pre-create the child operation row (as _submit_async_operation would)
+        child_op_id = uuid.uuid4()
+        child_payload = {
+            "type": "consolidation",
+            "operation_id": str(child_op_id),
+            "bank_id": bank_id,
+        }
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            child_op_id,
+            bank_id,
+            json.dumps(child_payload),
+        )
+
+        # The executor simulates retain: marks parent completed, then calls
+        # submit_task for the child (which WorkerTaskBackend should ignore).
+        backend = WorkerTaskBackend()
+
+        async def executor(task_dict):
+            # Mark parent as completed
+            await pool.execute(
+                "UPDATE async_operations SET status = 'completed', completed_at = now() WHERE operation_id = $1",
+                parent_op_id,
+            )
+            # Trigger child task via submit_task (should be no-op for WorkerTaskBackend)
+            await backend.submit_task(child_payload)
+
+        poller = WorkerPoller(
+            pool=pool,
+            worker_id="test-worker-1",
+            executor=executor,
+        )
+
+        # Execute the parent task
+        claimed_task = ClaimedTask(
+            operation_id=str(parent_op_id),
+            task_dict=parent_payload,
+            schema=None,
+        )
+        await poller.execute_task(claimed_task)
+        completed = await poller.wait_for_active_tasks(timeout=5.0)
+        assert completed, "Parent task did not complete within timeout"
+
+        # Parent should be completed
+        parent_row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1",
+            parent_op_id,
+        )
+        assert parent_row["status"] == "completed"
+
+        # Child should still be pending (NOT executed inline)
+        child_row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            child_op_id,
+        )
+        assert child_row["status"] == "pending", (
+            f"Child task should remain 'pending' for the next poll cycle, "
+            f"but got '{child_row['status']}'. This means it was executed inline, "
+            f"blocking the parent task."
+        )
+        assert child_row["worker_id"] is None
+
+        # Now verify the poller can claim the child on the next cycle
+        claimed = await poller.claim_batch()
+        child_claimed = [c for c in claimed if c.operation_id == str(child_op_id)]
+        assert len(child_claimed) == 1, "Child task should be claimable on next poll"
 
 
 class TestDynamicTenantDiscovery:
