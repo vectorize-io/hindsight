@@ -2740,6 +2740,73 @@ class TestClaimBatchRotation:
             await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
 
     @pytest.mark.asyncio
+    async def test_scan_caches_missing_server_side_pending_work_function(self):
+        """Missing optional helper function should only be probed once.
+
+        Without this cache, every poll attempts ``schemas_with_pending_work()``
+        again, which falls back correctly but spams PostgreSQL logs with
+        UndefinedFunction errors in local/self-hosted deployments.
+        """
+        import asyncpg
+
+        from hindsight_api.worker import WorkerPoller
+
+        class DummyTenantExtension:
+            async def list_tenants(self):
+                return []
+
+        class FakeConnection:
+            def __init__(self):
+                self.fetch_calls = 0
+                self.fetchval_calls = 0
+
+            async def fetch(self, query):
+                assert query == "SELECT * FROM schemas_with_pending_work()"
+                self.fetch_calls += 1
+                raise asyncpg.exceptions.UndefinedFunctionError(
+                    'function schemas_with_pending_work() does not exist'
+                )
+
+            async def fetchval(self, query):
+                self.fetchval_calls += 1
+                assert "SELECT EXISTS(SELECT 1 FROM async_operations" in query
+                return False
+
+        class FakeAcquire:
+            def __init__(self, conn):
+                self._conn = conn
+
+            async def __aenter__(self):
+                return self._conn
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakePool:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def acquire(self):
+                return FakeAcquire(self._conn)
+
+        async def noop_executor(task_dict):
+            return None
+
+        conn = FakeConnection()
+        poller = WorkerPoller(
+            pool=FakePool(conn),
+            worker_id="test-scan-cache",
+            executor=noop_executor,
+            tenant_extension=DummyTenantExtension(),
+        )
+
+        assert await poller._scan_active_schemas([None]) == set()
+        assert await poller._scan_active_schemas([None]) == set()
+        assert conn.fetch_calls == 1
+        assert conn.fetchval_calls == 2
+        assert poller._schemas_with_pending_work_available is False
+
+    @pytest.mark.asyncio
     async def test_claim_batch_only_queries_active_schemas(self, pool, clean_operations):
         """claim_batch uses _scan_active_schemas to pre-filter, then
         only calls _claim_batch_for_schema on schemas the scan found.

@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import asyncpg
+
 from .exceptions import DeferOperation, RetryTaskAt
 from .stage import StageHolder, bind_holder
 
@@ -153,6 +155,10 @@ class WorkerPoller:
         # Rotation offset for per-tenant fair claiming. Advances past the last
         # schema we serviced so a busy tenant can't monopolize the poll order.
         self._next_schema_idx: int = 0
+        # None = not checked yet, True = available, False = permanently absent.
+        # Avoid re-running a missing optional helper function every poll, which
+        # otherwise spams PostgreSQL logs with UndefinedFunction errors.
+        self._schemas_with_pending_work_available: bool | None = None
 
     async def _get_schemas(self) -> list[str | None]:
         """Get list of schemas to poll. Returns [None] for default schema (no prefix)."""
@@ -195,11 +201,15 @@ class WorkerPoller:
         job alongside ``total_pending_tasks()``.
         """
         async with self._pool.acquire() as conn:
-            try:
-                rows = await conn.fetch("SELECT * FROM schemas_with_pending_work()")
-                return {r[0] for r in rows}
-            except Exception:
-                pass
+            if self._schemas_with_pending_work_available is not False:
+                try:
+                    rows = await conn.fetch("SELECT * FROM schemas_with_pending_work()")
+                    self._schemas_with_pending_work_available = True
+                    return {r[0] for r in rows}
+                except asyncpg.exceptions.UndefinedFunctionError:
+                    self._schemas_with_pending_work_available = False
+                except Exception:
+                    pass
 
             # Fallback: per-schema EXISTS checks from Python
             active: set[str | None] = set()
