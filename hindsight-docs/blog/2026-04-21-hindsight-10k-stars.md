@@ -224,18 +224,3 @@ If you're building an agent system and memory matters:
 - **Join the conversation** — [GitHub Discussions](https://github.com/vectorize-io/hindsight/discussions) or [Slack](https://hindsight-space.slack.com)
 
 Thanks for 10k stars. More importantly, thanks for building with us.
-
----
-
-## Metadata for Publishing
-
-**SEO Title:** 10,000 Stars: How Hindsight Became the Most Accurate Agent Memory System  
-**Meta Description:** Celebrating Hindsight's 10k GitHub stars with community insights, production trends, and roadmap updates.  
-**Canonical URL:** hindsight.vectorize.io/blog/hindsight-10k-stars  
-**Internal Links:** 
-- [Best AI Agent Memory Systems](/articles/best-ai-agent-memory-systems)
-- [Hindsight vs. Mem0](/articles/hindsight-vs-mem0)
-- [Agent Memory vs. RAG](/articles/agent-memory-vs-rag)
-
-**Social Title:** We hit 10,000 GitHub stars 🎉 Here's what the community built, what surprised us, and where we're headed next. #OpenSource #AgentAI  
-**Social Description:** From multi-user fintech to multi-agent orchestration—how teams are using Hindsight.
