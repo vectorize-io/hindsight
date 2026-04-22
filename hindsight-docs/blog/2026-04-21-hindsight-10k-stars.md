@@ -42,7 +42,7 @@ The typical workaround—RAG (Retrieval-Augmented Generation)—retrieves past d
 
 Agent memory systems solve this through structured, persistent memory that AI agents can actually learn from. Hindsight specifically tackles three critical challenges:
 
-**1. Accuracy at Scale.** The LongMemEval benchmark (91.4% accuracy) measures whether a memory system correctly answers questions about past interactions. Competing systems score 49-81%. Hindsight consistently wins because it's built around structured fact extraction, not raw conversation history.
+**1. Accuracy at Scale.** The LongMemEval benchmark (94.6% accuracy) measures whether a memory system correctly answers questions about past interactions. Competing systems score 49-81%. Hindsight consistently wins because it's built around structured fact extraction, not raw conversation history.
 
 **2. Real-World Reliability.** Real deployments hit edge cases: concurrent writes, session conflicts, provider failures. Hindsight's users stress-test these scenarios daily. The 90% bug-to-feature-request ratio in issues shows the community is stress-testing at scale and pushing the limits.
 
@@ -144,7 +144,7 @@ Several factors explain Hindsight's momentum:
 
 **Open-Source with MIT Licensing.** No vendor lock-in. No closed-source black boxes. Developers can inspect the memory extraction logic, contribute improvements, and self-host on their infrastructure. Enterprise teams, financial services, and healthcare organizations can't rely on closed-source memory systems. Hindsight delivers both open-source transparency and production capability.
 
-**Accuracy That Matters.** The 91.4% LongMemEval score isn't marketing. It's a measurable difference. When your agent memory returns wrong facts 49% of the time (Mem0), your recommendations are unreliable. When it returns wrong facts 9% of the time (Hindsight), you can build on top of it. That accuracy gap is why teams chose Hindsight.
+**Accuracy That Matters.** The 91.4% LongMemEval score isn't marketing. It's a measurable difference. When your agent memory returns wrong facts 49% of the time (Mem0), your recommendations are unreliable. When it returns wrong facts 5.4% of the time (Hindsight), you can build on top of it. That accuracy gap is why teams chose Hindsight.
 
 **Integration Ecosystem.** With 21 official and community integrations, Hindsight agent memory works with your existing agent framework. You don't rearchitect to adopt memory. You integrate it. That's why adoption accelerated: the switching cost dropped to near zero.
 
