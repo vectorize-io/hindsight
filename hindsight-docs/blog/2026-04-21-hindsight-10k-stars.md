@@ -2,7 +2,7 @@
 title: "The 10k Star Story: How Hindsight Became Production Standard"
 description: "How Hindsight went from zero to 10,000 GitHub stars in 4.5 months. Why agent memory matters, what the community is building, and why they chose open-source."
 slug: "hindsight-10k-stars"
-date: "2026-04-21"
+date: "2026-04-22"
 image: "/img/blog/hindsight-10k-stars.png"
 ---
 
