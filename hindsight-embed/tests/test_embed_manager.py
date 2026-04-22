@@ -1,6 +1,6 @@
 """Tests for EmbedManager interface."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from hindsight_embed import get_embed_manager
 from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
@@ -94,3 +94,16 @@ def test_register_profile_calls_create_when_api_keys_present():
         8100,
         {"HINDSIGHT_API_LLM_PROVIDER": "openai", "HINDSIGHT_API_LLM_API_KEY": "sk-123"},
     )
+
+
+def test_find_ui_command_uses_npx_yes_flag_for_published_control_plane(monkeypatch):
+    """First-run UI installs must auto-confirm the published control-plane package."""
+    manager = DaemonEmbedManager()
+    monkeypatch.setenv("HINDSIGHT_EMBED_CP_VERSION", "9.9.9")
+
+    with patch("pathlib.Path.exists", return_value=False):
+        assert manager._find_ui_command() == [
+            "npx",
+            "-y",
+            "@vectorize-io/hindsight-control-plane@9.9.9",
+        ]

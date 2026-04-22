@@ -499,7 +499,10 @@ class DaemonEmbedManager(EmbedManager):
         from . import __version__
 
         cp_version = os.getenv("HINDSIGHT_EMBED_CP_VERSION", __version__)
-        return ["npx", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
+        # `npx` prompts before installing missing packages on first run unless `-y` is set.
+        # The UI starts in the background with stdout/stderr redirected to a log file, so an
+        # interactive prompt would be invisible to users and the health-check loop would time out.
+        return ["npx", "-y", f"@vectorize-io/hindsight-control-plane@{cp_version}"]
 
     def get_ui_url(self, profile: str, ui_port: int | None = None, hostname: str | None = None) -> str:
         """Get the URL for the UI serving this profile."""
