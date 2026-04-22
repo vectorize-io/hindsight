@@ -15,6 +15,14 @@ on:
           - medium
           - large
         default: small
+      suite:
+        description: "Suite to run (blank = all)"
+        type: choice
+        options:
+          - ""
+          - retain
+          - recall
+        default: ""
       ref:
         description: "Git ref to test (branch, tag, or SHA). Defaults to main."
         type: string
@@ -67,8 +75,13 @@ jobs:
 
     - name: Run perf tests
       run: |
+        SUITE_ARG=""
+        if [ -n "${{ inputs.suite }}" ]; then
+          SUITE_ARG="--suite ${{ inputs.suite }}"
+        fi
         ./scripts/benchmarks/run-perf-test.sh \
           --scale ${{ inputs.scale || 'small' }} \
+          $SUITE_ARG \
           --output perf-results.json
 
     - name: Upload perf results
