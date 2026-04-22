@@ -12,13 +12,10 @@ import io
 import json
 import os
 import sys
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from conftest import FakeHTTPResponse, make_hook_input, make_memory, make_transcript_file
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -560,7 +557,7 @@ class TestRetainHook:
         if "body" in captured:
             assert captured["body"]["items"][0]["context"] == "claude-code"
 
-    def test_disabled_auto_retain_does_not_call_api(self, monkeypatch, tmp_path):
+    def test_disabled_auto_retain_does_not_call_api_retain(self, monkeypatch, tmp_path):
         (tmp_path / "plugin_root").mkdir(exist_ok=True)
         (tmp_path / "plugin_data").mkdir(exist_ok=True)
         settings = {"autoRetain": False, "autoRecall": False, "hindsightApiUrl": "http://fake:9077"}
@@ -595,3 +592,114 @@ class TestRetainHook:
             mod.main()
 
         assert "called" not in captured
+
+
+# ---------------------------------------------------------------------------
+# session_end hook
+# ---------------------------------------------------------------------------
+
+
+class TestSessionEndHook:
+    """Tests for session_end.py flush-on-exit behaviour."""
+
+    def test_flushes_remaining_turns_on_session_end(self, monkeypatch, tmp_path):
+        """SessionEnd should retain the full transcript when the last Stop hook was skipped."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-flush")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["called"] = True
+                captured["body"] = json.loads(req.data.decode())
+            return FakeHTTPResponse({})
+
+        # Fire retain on turn 1 of 3 — should be skipped
+        _run_hook(
+            "retain", hook_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainEveryNTurns": 3},
+        )
+        assert "called" not in captured, "turn 1/3 should not trigger retain"
+
+        # SessionEnd should detect turn_count=1 % 3 != 0 and flush
+        captured.clear()
+        session_end_input = {"reason": "normal", "session_id": "sess-flush", "transcript_path": transcript}
+        _run_hook(
+            "session_end", session_end_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainEveryNTurns": 3},
+        )
+        assert "called" in captured, "SessionEnd should flush remaining turns"
+        item = captured["body"]["items"][0]
+        assert "hello" in item["content"]
+        assert item["document_id"] == "sess-flush"
+
+    def test_skips_flush_when_retain_every_n_is_one(self, monkeypatch, tmp_path):
+        """When retainEveryNTurns=1, every Stop hook retains — no extra flush needed."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        session_end_input = {"reason": "normal", "session_id": "sess-no-flush", "transcript_path": transcript}
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["called"] = True
+            return FakeHTTPResponse({})
+
+        _run_hook(
+            "session_end", session_end_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainEveryNTurns": 1},
+        )
+        assert "called" not in captured, "No flush when retainEveryNTurns=1"
+
+    def test_skips_flush_when_last_stop_already_retained(self, monkeypatch, tmp_path):
+        """When turn_count is a multiple of retainEveryNTurns, the Stop hook already retained."""
+        messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "world"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        hook_input = make_hook_input(transcript_path=transcript, session_id="sess-already-retained")
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["called"] = True
+            return FakeHTTPResponse({})
+
+        # Fire retain exactly retainEveryNTurns times so turn_count % n == 0
+        for _ in range(3):
+            _run_hook(
+                "retain", hook_input, monkeypatch, tmp_path,
+                urlopen_side_effect=capture,
+                extra_settings={"retainEveryNTurns": 3},
+            )
+
+        # The 3rd call should have triggered retain; now SessionEnd should NOT add another
+        captured.clear()
+        session_end_input = {"reason": "normal", "session_id": "sess-already-retained", "transcript_path": transcript}
+        _run_hook(
+            "session_end", session_end_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"retainEveryNTurns": 3},
+        )
+        assert "called" not in captured, "No extra flush when turn_count % retainEveryNTurns == 0"
+
+    def test_skips_flush_when_auto_retain_disabled(self, monkeypatch, tmp_path):
+        """SessionEnd should not retain when autoRetain is disabled."""
+        messages = [{"role": "user", "content": "hello"}]
+        transcript = make_transcript_file(tmp_path, messages)
+        captured = {}
+
+        def capture(req, timeout=None):
+            if "/memories" in req.full_url and "/recall" not in req.full_url:
+                captured["called"] = True
+            return FakeHTTPResponse({})
+
+        session_end_input = {"reason": "normal", "session_id": "sess-disabled", "transcript_path": transcript}
+        _run_hook(
+            "session_end", session_end_input, monkeypatch, tmp_path,
+            urlopen_side_effect=capture,
+            extra_settings={"autoRetain": False, "retainEveryNTurns": 3},
+        )
+        assert "called" not in captured, "No flush when autoRetain=false"
