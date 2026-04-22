@@ -8388,24 +8388,49 @@ class MemoryEngine(MemoryEngineInterface):
         # would need another consolidation run to be processed.
         if dedupe_by_bank:
             async with acquire_with_retry(pool) as conn:
-                existing = await conn.fetchrow(
+                row = await conn.fetchrow(
                     f"""
-                    SELECT operation_id FROM {fq_table("async_operations")}
+                    SELECT operation_id, (task_payload IS NULL) AS is_zombie
+                    FROM {fq_table("async_operations")}
                     WHERE bank_id = $1 AND operation_type = $2 AND status = 'pending'
-                    LIMIT 1
                     """,
                     bank_id,
                     operation_type,
                 )
-                if existing:
-                    logger.debug(
-                        f"{operation_type} task already pending for bank_id={bank_id}, "
-                        f"skipping duplicate (existing operation_id={existing['operation_id']})"
-                    )
-                    return {
-                        "operation_id": str(existing["operation_id"]),
-                        "deduplicated": True,
-                    }
+                if row:
+                    if row["is_zombie"]:
+                        # Self-healing: clean up zombie rows so they don't block forever.
+                        # They are unprocessable (worker claim requires task_payload IS NOT NULL)
+                        # and would cause deduplication to permanently fail.
+                        logger.warning(
+                            f"{operation_type} deduplication: found zombie operation "
+                            f"operation_id={row['operation_id']} for bank_id={bank_id} "
+                            f"— cleaning up and allowing fresh operation submission"
+                        )
+                        await conn.execute(
+                            f"""
+                            UPDATE {fq_table("async_operations")}
+                            SET status = 'failed',
+                                result_metadata = COALESCE(result_metadata, '{{}}'::jsonb)
+                                    || $2::jsonb
+                            WHERE operation_id = $1
+                            """,
+                            row["operation_id"],
+                            json.dumps({
+                                "zombie_cleanup": True,
+                                "cleanup_reason": "zombie_operation_detected_at_dedup",
+                                "original_operation_id": str(row["operation_id"]),
+                            }, default=_json_default),
+                        )
+                    else:
+                        logger.debug(
+                            f"{operation_type} task already pending for bank_id={bank_id}, "
+                            f"skipping duplicate (existing operation_id={row['operation_id']})"
+                        )
+                        return {
+                            "operation_id": str(row["operation_id"]),
+                            "deduplicated": True,
+                        }
 
         operation_id = uuid.uuid4()
 
