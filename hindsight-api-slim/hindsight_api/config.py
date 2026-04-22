@@ -1797,8 +1797,17 @@ class HindsightConfig:
         # Silence noisy third-party loggers
         logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 
+    def _warn_if_embedded_db(self) -> None:
+        """Emit a warning when the embedded pg0 database is in use."""
+        if self.database_url == DEFAULT_DATABASE_URL or self.database_url.startswith("pg0://"):
+            logger.warning(
+                "⚠️  Using embedded pg0 PostgreSQL — data will be LOST on container restart. "
+                "Set HINDSIGHT_API_DATABASE_URL to an external PostgreSQL DSN for persistent storage."
+            )
+
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""
+        self._warn_if_embedded_db()
         logger.info(f"Database: {self.database_url} (schema: {self.database_schema})")
         if self.migration_database_url:
             logger.info(f"Migration database: {self.migration_database_url}")

@@ -94,7 +94,15 @@ def print_startup_info(
     if version:
         print(f"  {dim('Version:')} {color(f'v{version}', 0.1)}")
     print(f"  {dim('URL:')} {color(f'http://{host}:{port}', 0.2)}")
-    print(f"  {dim('Database:')} {color(mask_network_location(database_url), 0.4)}")
+    is_embedded = database_url == "pg0" or database_url.startswith("pg0://")
+    db_label = mask_network_location(database_url)
+    if is_embedded:
+        db_label += "  \033[33m⚠  ephemeral — data lost on restart\033[0m"
+    print(f"  {dim('Database:')} {color(db_label, 0.4)}")
+    if is_embedded:
+        print(
+            "\033[33m  ⚠  Set HINDSIGHT_API_DATABASE_URL to a PostgreSQL DSN for persistent storage.\033[0m"
+        )
     print(f"  {dim('LLM:')} {color(f'{llm_provider} / {llm_model}', 0.6)}")
     print(f"  {dim('Embeddings:')} {color(embeddings_provider, 0.8)}")
     print(f"  {dim('Reranker:')} {color(reranker_provider, 1.0)}")
