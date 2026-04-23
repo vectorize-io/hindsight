@@ -31,6 +31,7 @@ from ..config import (
     DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS,
     get_config,
 )
+from ..db_url import to_libpq_url
 from ..metrics import get_metrics_collector
 from ..tracing import create_operation_span
 from ..utils import mask_network_location
@@ -1871,7 +1872,7 @@ class MemoryEngine(MemoryEngineInterface):
                 await conn.execute(f"SET statement_timeout = '{stmt_timeout_s}s'")
 
         self._pool = await asyncpg.create_pool(
-            self.db_url,
+            to_libpq_url(self.db_url),
             min_size=self._pool_min_size,
             max_size=self._pool_max_size,
             command_timeout=self._db_command_timeout,

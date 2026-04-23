@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import Connection, create_engine, text
 
+from .db_url import to_libpq_url
 from .utils import mask_network_location
 
 logger = logging.getLogger(__name__)
@@ -220,7 +221,7 @@ def run_migrations(
     # ineffective when the app URL goes through a pooler.  Configure
     # HINDSIGHT_API_MIGRATION_DATABASE_URL to the direct PostgreSQL endpoint
     # (e.g. hindsight-pg-rw) to restore correct locking behaviour.
-    migration_url = migration_database_url or database_url
+    migration_url = to_libpq_url(migration_database_url or database_url)
 
     try:
         # Determine script location
@@ -450,7 +451,7 @@ def check_migration_status(
             return None, None
 
         # Get current revision from database
-        engine = create_engine(database_url)
+        engine = create_engine(to_libpq_url(database_url))
         with engine.connect() as connection:
             context = MigrationContext.configure(connection)
             current_rev = context.get_current_revision()
@@ -624,7 +625,7 @@ def ensure_embedding_dimension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(database_url)
+    engine = create_engine(to_libpq_url(database_url))
     with engine.connect() as conn:
         # Check if memory_units table exists (proxy for schema being initialized)
         table_exists = conn.execute(
@@ -673,7 +674,7 @@ def ensure_vector_extension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(database_url)
+    engine = create_engine(to_libpq_url(database_url))
     with engine.connect() as conn:
         # Detect which vector extension should be used
         target_ext = _detect_vector_extension(conn, vector_extension)
@@ -894,7 +895,7 @@ def ensure_text_search_extension(
     """
     schema_name = schema or "public"
 
-    engine = create_engine(database_url)
+    engine = create_engine(to_libpq_url(database_url))
     with engine.connect() as conn:
         # Tables with search_vector columns to check
         tables_to_check = [

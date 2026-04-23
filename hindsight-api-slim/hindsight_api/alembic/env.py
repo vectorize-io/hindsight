@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 # Import your models here
+from hindsight_api.db_url import to_libpq_url
 from hindsight_api.models import Base
 
 
@@ -65,11 +66,11 @@ def get_database_url() -> str:
                 "Set HINDSIGHT_API_DATABASE_URL environment variable or pass database_url to run_migrations()."
             )
 
-    # For migrations, use psycopg2 (sync driver) to avoid pgbouncer prepared statement issues
-    if database_url.startswith("postgresql+asyncpg://"):
-        database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    elif database_url.startswith("postgres+asyncpg://"):
-        database_url = database_url.replace("postgres+asyncpg://", "postgresql://", 1)
+    # For migrations, use the sync psycopg2 driver (avoids pgbouncer prepared
+    # statement issues and is required since create_engine is the sync API).
+    # Also translates ?ssl=require (SQLAlchemy asyncpg style) to ?sslmode=require
+    # (libpq style) for external-PostgreSQL deployments.
+    database_url = to_libpq_url(database_url)
 
     # Update config with processed URL for engine_from_config to use
     config.set_main_option("sqlalchemy.url", database_url)
