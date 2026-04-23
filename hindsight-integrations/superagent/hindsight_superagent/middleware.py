@@ -6,6 +6,8 @@ import logging
 from typing import Any
 
 from hindsight_client import Hindsight
+from hindsight_client_api.models.recall_response import RecallResponse
+from hindsight_client_api.models.reflect_response import ReflectResponse
 from safety_agent import SafetyClient
 
 from ._client import resolve_hindsight_client, resolve_safety_client
@@ -64,9 +66,7 @@ class SafeHindsight:
     ) -> None:
         self._bank_id = bank_id
         self._hindsight = resolve_hindsight_client(hindsight_client, hindsight_api_url, api_key)
-        self._safety = resolve_safety_client(
-            safety_client, superagent_api_key, enable_fallback, fallback_timeout
-        )
+        self._safety = resolve_safety_client(safety_client, superagent_api_key, enable_fallback, fallback_timeout)
 
         config = get_config()
         self._budget = budget or (config.budget if config else "mid")
@@ -192,7 +192,7 @@ class SafeHindsight:
         max_tokens: int | None = None,
         tags: list[str] | None = None,
         tags_match: TagsMatch | None = None,
-    ) -> Any:
+    ) -> RecallResponse:
         """Search memory after guarding the query.
 
         Args:
@@ -237,7 +237,7 @@ class SafeHindsight:
         *,
         budget: Budget | None = None,
         max_tokens: int | None = None,
-    ) -> Any:
+    ) -> ReflectResponse:
         """Synthesize an answer from memory after guarding the query.
 
         Args:
