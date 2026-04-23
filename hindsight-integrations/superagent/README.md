@@ -24,13 +24,12 @@ from hindsight_superagent import SafeHindsight
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
-    guard_model="openai/gpt-4o-mini",
-    redact_model="openai/gpt-4o-mini",
-    enable_guard_on_retain=False,  # see "Guard Model" section below
+    guard_model="openai/gpt-4.1-nano",
+    redact_model="openai/gpt-4.1-nano",
 )
 
 async def main():
-    # PII is redacted before storage
+    # Content is guarded and PII is redacted before storage
     await safe.retain("John's email is john@acme.com and he prefers dark mode")
 
     # Query is guarded before recall
@@ -46,11 +45,9 @@ asyncio.run(main())
 `SafeHindsight` wraps the Hindsight client and applies Superagent safety checks:
 
 ```
-Content → Redact (strip PII) → Hindsight Retain
+Content → Guard (block injection) → Redact (strip PII) → Hindsight Retain
 Query   → Guard (block injection) → Hindsight Recall/Reflect
 ```
-
-Guard on retain is disabled by default in the examples because general-purpose LLMs (like `gpt-4o-mini`) can over-classify content containing PII as a security violation, blocking it before Redact runs. If you self-host a purpose-built guard model (like `superagent/guard-1.7b`), you can safely enable guard on retain — those models are tuned for prompt injection only.
 
 ## Handling Blocked Inputs
 
@@ -60,8 +57,8 @@ from hindsight_superagent import SafeHindsight, GuardBlockedError
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
-    guard_model="openai/gpt-4o-mini",
-    redact_model="openai/gpt-4o-mini",
+    guard_model="openai/gpt-4.1-nano",
+    redact_model="openai/gpt-4.1-nano",
 )
 
 try:
@@ -81,7 +78,7 @@ Disable safety checks per operation:
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
-    guard_model="openai/gpt-4o-mini",
+    guard_model="openai/gpt-4.1-nano",
     enable_redact_on_retain=False,
 )
 
@@ -89,7 +86,7 @@ safe = SafeHindsight(
 safe = SafeHindsight(
     bank_id="user-123",
     hindsight_api_url="http://localhost:8888",
-    redact_model="openai/gpt-4o-mini",
+    redact_model="openai/gpt-4.1-nano",
     enable_guard_on_retain=False,
     enable_guard_on_recall=False,
     enable_guard_on_reflect=False,
@@ -105,10 +102,9 @@ configure(
     hindsight_api_url="http://localhost:8888",
     api_key="YOUR_HINDSIGHT_API_KEY",
     superagent_api_key="YOUR_SUPERAGENT_API_KEY",
-    guard_model="openai/gpt-4o-mini",
-    redact_model="openai/gpt-4o-mini",
-    enable_guard_on_retain=False,  # Recommended with general-purpose guard models
-    redact_rewrite=True,           # Contextually rewrite PII instead of placeholders
+    guard_model="openai/gpt-4.1-nano",
+    redact_model="openai/gpt-4.1-nano",
+    redact_rewrite=True,       # Contextually rewrite PII instead of placeholders
     tags=["env:prod"],
 )
 
@@ -133,7 +129,7 @@ safe = SafeHindsight(bank_id="user-123")
 | `tags` | `[]` | Tags applied when storing memories |
 | `recall_tags` | `[]` | Tags to filter recall results |
 | `recall_tags_match` | `"any"` | Tag matching mode |
-| `guard_model` | `None` | Guard model — **set this explicitly** (e.g. `"openai/gpt-4o-mini"`). See [Guard Model](#guard-model). |
+| `guard_model` | `None` | Guard model — **set this explicitly** (e.g. `"openai/gpt-4.1-nano"`). See [Guard Model](#guard-model). |
 | `redact_model` | `None` | Redact model (required if redact enabled) |
 | `redact_entities` | `None` | Override default PII entity list |
 | `redact_rewrite` | `False` | Contextual rewrite vs. placeholder markers |
@@ -155,15 +151,14 @@ Guard requires a model to classify inputs. Superagent publishes open-weight guar
 ```python
 safe = SafeHindsight(
     bank_id="user-123",
-    guard_model="openai/gpt-4o-mini",
-    redact_model="openai/gpt-4o-mini",
-    enable_guard_on_retain=False,  # Recommended — see below
+    guard_model="openai/gpt-4.1-nano",
+    redact_model="openai/gpt-4.1-nano",
 )
 ```
 
-If you don't set `guard_model` and the default hosted model is unavailable, guard calls will fail. To use guard without an external LLM, self-host one of the open-weight models and configure the Superagent SDK to point at your instance.
+`gpt-4.1-nano` is the recommended model — it's fast, cheap, and accurately distinguishes prompt injection from legitimate content (including content containing PII). Avoid `gpt-4o-mini` which over-classifies PII content as security violations.
 
-**Why disable guard on retain?** General-purpose LLMs used as guard models (like `gpt-4o-mini`) can classify content containing PII as a security violation (`data_exfiltration`, `sensitive_data_exposure`), blocking it before Redact gets a chance to strip the PII. Superagent's purpose-built guard models are tuned only for prompt injection and don't have this problem — if you self-host one, you can safely enable guard on retain. Guard on recall and reflect is unaffected since queries typically don't contain PII.
+If you don't set `guard_model` and the default hosted model is unavailable, guard calls will fail. To use guard without an external LLM, self-host one of the open-weight models and configure the Superagent SDK to point at your instance.
 
 ## Requirements
 

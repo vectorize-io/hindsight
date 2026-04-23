@@ -10,7 +10,8 @@ Basic usage::
     safe = SafeHindsight(
         bank_id="user-123",
         hindsight_api_url="http://localhost:8888",
-        redact_model="openai/gpt-4o-mini",
+        guard_model="openai/gpt-4.1-nano",
+        redact_model="openai/gpt-4.1-nano",
     )
 
     # Content is guarded and redacted before storage
