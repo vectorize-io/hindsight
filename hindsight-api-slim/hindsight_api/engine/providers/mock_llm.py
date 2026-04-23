@@ -6,6 +6,7 @@ without making actual API calls to external LLM services.
 """
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -153,6 +154,8 @@ class MockLLM(LLMInterface):
             result = self._response_callback(messages, scope)
         elif self._mock_response is not None:
             result = self._mock_response
+        elif scope == "retain_extract_facts":
+            result = self._build_retain_extract_response(messages)
         elif response_format is not None:
             # Try to create a minimal valid instance of the response format
             try:
@@ -167,6 +170,67 @@ class MockLLM(LLMInterface):
             token_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
             return result, token_usage
         return result
+
+    @staticmethod
+    def _extract_text_chunk(messages: list[dict[str, str]]) -> str:
+        """Extract the source text payload from a retain prompt."""
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                continue
+            marker = "\nText:\n"
+            if marker in content:
+                return content.split(marker, 1)[1].strip()
+            return content.strip()
+        return ""
+
+    @staticmethod
+    def _split_fact_sentences(text: str, max_facts: int = 50) -> list[str]:
+        """Split source text into stable fact-sized sentences."""
+        candidates = re.split(r"(?<=[.!?])\s+|\n+", text)
+        facts = []
+        for candidate in candidates:
+            cleaned = candidate.strip().strip("-*").strip()
+            if len(cleaned) < 3:
+                continue
+            facts.append(cleaned)
+            if len(facts) >= max_facts:
+                break
+        if facts:
+            return facts
+        fallback = text.strip()
+        return [fallback] if fallback else []
+
+    @staticmethod
+    def _extract_entities(sentence: str) -> list[str]:
+        """Extract obvious named entities for test-mode fact generation."""
+        entities = []
+        seen = set()
+        for match in re.finditer(r"\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", sentence):
+            entity = match.group(0)
+            if entity not in seen:
+                seen.add(entity)
+                entities.append(entity)
+        return entities
+
+    @classmethod
+    def _build_retain_extract_response(cls, messages: list[dict[str, str]]) -> dict[str, Any]:
+        """Generate deterministic fact extraction output from the input text."""
+        text = cls._extract_text_chunk(messages)
+        facts = []
+        for sentence in cls._split_fact_sentences(text):
+            fact: dict[str, Any] = {
+                "what": sentence,
+                "fact_type": "world",
+                "fact_kind": "conversation",
+            }
+            entities = cls._extract_entities(sentence)
+            if entities:
+                fact["entities"] = entities
+            facts.append(fact)
+        return {"facts": facts}
 
     async def call_with_tools(
         self,

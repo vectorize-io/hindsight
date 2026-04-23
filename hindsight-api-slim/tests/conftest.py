@@ -1,15 +1,17 @@
 """
 Pytest configuration and shared fixtures.
 """
-import pytest
-import pytest_asyncio
+
 import asyncio
 import os
-import filelock
 from pathlib import Path
-from dotenv import load_dotenv
-from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings, RequestContext
 
+import filelock
+import pytest
+import pytest_asyncio
+from dotenv import load_dotenv
+
+from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
@@ -213,11 +215,20 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
     Migrations are disabled here since they're run once at session scope in pg0_db_url.
     Uses SyncTaskBackend so async tasks execute immediately (no worker needed).
     """
+    llm_provider = os.getenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
+    llm_api_key = os.getenv("HINDSIGHT_API_LLM_API_KEY")
+    if llm_api_key is None and llm_provider == "mock":
+        llm_api_key = ""
+    llm_model = os.getenv(
+        "HINDSIGHT_API_LLM_MODEL",
+        "mock" if llm_provider == "mock" else "openai/gpt-oss-120b",
+    )
+
     mem = MemoryEngine(
         db_url=pg0_db_url,  # Direct postgresql:// URL, not pg0://
-        memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "groq"),
-        memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
-        memory_llm_model=os.getenv("HINDSIGHT_API_LLM_MODEL", "openai/gpt-oss-120b"),
+        memory_llm_provider=llm_provider,
+        memory_llm_api_key=llm_api_key,
+        memory_llm_model=llm_model,
         memory_llm_base_url=os.getenv("HINDSIGHT_API_LLM_BASE_URL") or None,
         embeddings=embeddings,
         cross_encoder=cross_encoder,

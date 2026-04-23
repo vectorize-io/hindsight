@@ -224,6 +224,41 @@ class TestMockLLMProvider:
         assert usage.output_tokens == 5
         assert usage.total_tokens == 15
 
+    def test_mock_provider_generates_facts_for_retain_extract_scope(self):
+        """Retain fact extraction should get deterministic sentence-level facts from mock."""
+        from hindsight_api.engine.llm_wrapper import LLMProvider
+
+        provider = LLMProvider(
+            provider="mock",
+            api_key="",
+            base_url="",
+            model="test-model",
+        )
+
+        import asyncio
+
+        async def make_call():
+            return await provider.call(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Extract facts from the following text chunk.\n\n"
+                            "Text:\nAlice works at Google. Bob leads product at Meta."
+                        ),
+                    }
+                ],
+                scope="retain_extract_facts",
+            )
+
+        result = asyncio.get_event_loop().run_until_complete(make_call())
+        assert "facts" in result
+        assert [fact["what"] for fact in result["facts"]] == [
+            "Alice works at Google.",
+            "Bob leads product at Meta.",
+        ]
+        assert result["facts"][0]["entities"] == ["Alice", "Google"]
+
 
 class TestRetainUsesRetainLLMConfig:
     """Test that retain operations use the retain LLM config."""
