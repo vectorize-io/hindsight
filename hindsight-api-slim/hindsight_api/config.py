@@ -183,6 +183,7 @@ ENV_EMBEDDINGS_OPENAI_BATCH_SIZE = "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE"
 ENV_EMBEDDINGS_GEMINI_API_KEY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_API_KEY"
 ENV_EMBEDDINGS_GEMINI_MODEL = "HINDSIGHT_API_EMBEDDINGS_GEMINI_MODEL"
 ENV_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = "HINDSIGHT_API_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY"
+ENV_EMBEDDINGS_GEMINI_FORCE_IPV4 = "HINDSIGHT_API_EMBEDDINGS_GEMINI_FORCE_IPV4"
 ENV_EMBEDDINGS_VERTEXAI_PROJECT_ID = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID"
 ENV_EMBEDDINGS_VERTEXAI_REGION = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION"
 ENV_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY"
@@ -484,6 +485,7 @@ DEFAULT_EMBEDDINGS_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDINGS_OPENAI_BATCH_SIZE = 100
 DEFAULT_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-001"
 DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY = 768
+DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4 = False
 DEFAULT_EMBEDDING_DIMENSION = 384
 
 DEFAULT_RERANKER_PROVIDER = "local"
@@ -905,6 +907,7 @@ class HindsightConfig:
     embeddings_gemini_api_key: str | None
     embeddings_gemini_model: str
     embeddings_gemini_output_dimensionality: int | None
+    embeddings_gemini_force_ipv4: bool
     embeddings_vertexai_project_id: str | None
     embeddings_vertexai_region: str | None
     embeddings_vertexai_service_account_key: str | None
@@ -1464,6 +1467,11 @@ class HindsightConfig:
                     str(DEFAULT_EMBEDDINGS_GEMINI_OUTPUT_DIMENSIONALITY),
                 )
             ),
+            embeddings_gemini_force_ipv4=os.getenv(
+                ENV_EMBEDDINGS_GEMINI_FORCE_IPV4,
+                str(DEFAULT_EMBEDDINGS_GEMINI_FORCE_IPV4),
+            ).lower()
+            in ("true", "1"),
             embeddings_vertexai_project_id=os.getenv(ENV_EMBEDDINGS_VERTEXAI_PROJECT_ID)
             or os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID),
             embeddings_vertexai_region=os.getenv(ENV_EMBEDDINGS_VERTEXAI_REGION) or os.getenv(ENV_LLM_VERTEXAI_REGION),

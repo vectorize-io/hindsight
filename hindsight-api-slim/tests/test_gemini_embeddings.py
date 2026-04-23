@@ -49,6 +49,7 @@ def _make_mock_google_module(mock_genai: MagicMock) -> MagicMock:
     mod = MagicMock()
     mod.genai = mock_genai
     mod.genai.types.EmbedContentConfig = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+    mod.genai.types.HttpOptions = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
     return mod
 
 
@@ -171,6 +172,23 @@ class TestGeminiEmbeddings:
         call_kwargs = mock_genai.Client.return_value.models.embed_content.call_args
         assert "config" not in call_kwargs.kwargs
 
+    async def test_force_ipv4_passes_http_options(self):
+        """Test that force_ipv4 configures the Gemini client with custom HTTP options."""
+        mock_genai = _make_mock_genai()
+        mock_transport = MagicMock()
+        mock_httpx_client = MagicMock()
+        emb = GeminiEmbeddings(model="gemini-embedding-001", api_key="test-key", force_ipv4=True)
+
+        with _patch_google_import(mock_genai):
+            with patch("httpx.HTTPTransport", return_value=mock_transport) as mock_http_transport:
+                with patch("httpx.Client", return_value=mock_httpx_client) as mock_http_client:
+                    await emb.initialize()
+
+        mock_http_transport.assert_called_once_with(local_address="0.0.0.0")
+        mock_http_client.assert_called_once_with(timeout=10, transport=mock_transport)
+        assert emb._httpx_client is mock_httpx_client
+        assert "http_options" in mock_genai.Client.call_args.kwargs
+
     def test_auto_detect_vertexai(self):
         """Test that _is_vertexai is auto-detected from vertexai_project_id."""
         assert GeminiEmbeddings(model="m", api_key="k")._is_vertexai is False
@@ -287,6 +305,7 @@ class TestGeminiEmbeddingsFactory:
         defaults["embeddings_gemini_api_key"] = "test-key"
         defaults["embeddings_gemini_model"] = "gemini-embedding-001"
         defaults["embeddings_gemini_output_dimensionality"] = 768
+        defaults["embeddings_gemini_force_ipv4"] = False
         defaults["embeddings_vertexai_project_id"] = None
         defaults["embeddings_vertexai_region"] = None
         defaults["embeddings_vertexai_service_account_key"] = None
@@ -302,6 +321,14 @@ class TestGeminiEmbeddingsFactory:
         assert emb.provider_name == "google"
         assert emb.api_key == "test-key"
         assert emb._is_vertexai is False
+        assert emb.force_ipv4 is False
+
+    def test_create_with_force_ipv4(self):
+        config = self._make_config(embeddings_gemini_force_ipv4=True)
+        with patch("hindsight_api.config.get_config", return_value=config):
+            emb = create_embeddings_from_env()
+        assert isinstance(emb, GeminiEmbeddings)
+        assert emb.force_ipv4 is True
 
     def test_create_with_vertexai(self):
         config = self._make_config(

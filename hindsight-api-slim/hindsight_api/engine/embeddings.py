@@ -911,6 +911,7 @@ class GeminiEmbeddings(Embeddings):
         vertexai_region: str | None = None,
         vertexai_service_account_key: str | None = None,
         output_dimensionality: int | None = None,
+        force_ipv4: bool = False,
         batch_size: int = 100,
     ):
         self.model = model
@@ -919,8 +920,10 @@ class GeminiEmbeddings(Embeddings):
         self.vertexai_region = vertexai_region or "us-central1"
         self.vertexai_service_account_key = vertexai_service_account_key
         self.output_dimensionality = output_dimensionality
+        self.force_ipv4 = force_ipv4
         self.batch_size = batch_size
         self._client = None
+        self._httpx_client = None
         self._dimension: int | None = None
         self._is_vertexai = vertexai_project_id is not None
         self._embed_config = None  # EmbedContentConfig, built during initialize()
@@ -946,7 +949,7 @@ class GeminiEmbeddings(Embeddings):
         if self._is_vertexai:
             self._init_vertexai(genai)
         else:
-            self._init_gemini(genai)
+            self._init_gemini(genai, genai_types)
 
         # Build EmbedContentConfig if output_dimensionality is set
         if self.output_dimensionality is not None:
@@ -968,12 +971,25 @@ class GeminiEmbeddings(Embeddings):
             f"Embeddings: google provider initialized (auth: {auth_mode}, model: {self.model}, dim: {self._dimension})"
         )
 
-    def _init_gemini(self, genai) -> None:
+    def _init_gemini(self, genai, genai_types) -> None:
         """Initialize Gemini API client with API key."""
         if not self.api_key:
             raise ValueError("Gemini embeddings provider requires an API key")
 
-        self._client = genai.Client(api_key=self.api_key)
+        client_kwargs = {"api_key": self.api_key}
+        if self.force_ipv4:
+            import httpx
+
+            self._httpx_client = httpx.Client(
+                timeout=10,
+                transport=httpx.HTTPTransport(local_address="0.0.0.0"),
+            )
+            client_kwargs["http_options"] = genai_types.HttpOptions(
+                timeout=10000,
+                httpxClient=self._httpx_client,
+            )
+
+        self._client = genai.Client(**client_kwargs)
         logger.info(f"Embeddings: initializing Gemini provider with model {self.model}")
 
     def _init_vertexai(self, genai) -> None:
@@ -1165,6 +1181,7 @@ def create_embeddings_from_env() -> Embeddings:
             vertexai_region=config.embeddings_vertexai_region,
             vertexai_service_account_key=config.embeddings_vertexai_service_account_key,
             output_dimensionality=config.embeddings_gemini_output_dimensionality,
+            force_ipv4=config.embeddings_gemini_force_ipv4,
         )
     else:
         raise ValueError(
