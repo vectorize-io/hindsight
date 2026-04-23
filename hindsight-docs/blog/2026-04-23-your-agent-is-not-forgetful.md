@@ -1,9 +1,10 @@
 ---
 title: "Your Agent Is Not Forgetful. It Was Never Given a Memory."
 description: "Why agents seem forgetful, and why memory is different from context windows and retrieval. How Hindsight adds long-term memory to agents."
-slug: "2026/04/23/your-agent-is-not-forgetful"
-date: 2026-04-23T12:00
-image: "[PLACEHOLDER_IMAGE]"
+authors: [benfrank241]
+date: 2026-04-23
+tags: [memory, agents, hindsight, learning]
+image: /img/blog/your-agent-is-not-forgetful.png
 ---
 
 ![Your Agent Is Not Forgetful. It Was Never Given a Memory.](/img/blog/your-agent-is-not-forgetful.png)
@@ -112,7 +113,7 @@ That requires synthesis. The system should be able to reason over accumulated me
 
 One bank for everything is not always the right answer.
 
-Some setups need one bank per project. Others need shared memory for a whole team. Others need strict per-user isolation. If memory is not scoped carefully, it either becomes noisy or crosses boundaries it should not cross.
+Some setups need one bank per project. Others need shared memory for a whole team. Others need strict per-user isolation. If memory is not scoped carefully, it either becomes noisy or crosses boundaries it should not cross. The [memory banks reference](https://hindsight.vectorize.io/developer/api/memory-banks) documents common scoping patterns for different architectures.
 
 That is the difference between a demo and a system you can rely on.
 
@@ -214,6 +215,8 @@ Instead of treating memory as a giant transcript store, Hindsight focuses on the
 - **Reflect** — agents and skills can query mental models to synthesize better responses
 - **Scope** learning across users, projects, teams, or channels so each context learns independently
 
+Hindsight integrates with your existing agent framework—LangGraph, CrewAI, Pydantic AI, Claude Code, and many others. See the [integration guides](https://hindsight.vectorize.io/sdks/integrations) to add agent memory to your stack.
+
 That can sit behind one agent, or many.
 
 A coding agent accumulates understanding of your project's architecture, conventions, and rejected patterns. Those lessons get synthesized into observations, which populate a mental model about your codebase. Each session, the agent queries that mental model before coding, getting live guidance based on everything it has learned. Over weeks, you notice the quality of code suggestions measurably improves. It is not retrieving documentation anymore; it is learning from your actual usage.
@@ -230,7 +233,7 @@ You can run it with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) 
 
 Memory is not free, and it is not always necessary.
 
-If your workflow is mostly one-off prompts with no continuity, a memory layer may be unnecessary overhead. If the data is highly sensitive, you should think carefully about where memory is stored and whether self-hosting is the right choice.
+If your workflow is mostly one-off prompts with no continuity, a memory layer may be unnecessary overhead. If the data is highly sensitive, you should think carefully about where memory is stored and whether self-hosting is the right choice. The [Hindsight quickstart](https://hindsight.vectorize.io/developer/api/quickstart) walks through self-hosted deployment options for teams with privacy requirements.
 
 There are also alternatives, each with limits:
 
