@@ -428,6 +428,41 @@ class TestPrepareRetentionTranscript:
         result_block = next(b for b in result_msg["content"] if b["type"] == "tool_result")
         assert "file1.py" in result_block["content"]
 
+    def test_json_format_handles_list_content_tool_results(self):
+        """Tool results with list content (e.g. Agent subagent responses) should be extracted."""
+        import json
+
+        msgs = [
+            {"role": "user", "content": "analyze the code"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Agent", "input": {"prompt": "check code"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_abc",
+                        "content": [
+                            {"type": "text", "text": "Found 3 issues in the codebase."},
+                            {"type": "text", "text": "1. Missing error handling in auth module"},
+                        ],
+                    },
+                ],
+            },
+        ]
+        transcript, _ = prepare_retention_transcript(
+            msgs, retain_full_window=True, include_tool_calls=True
+        )
+        data = json.loads(transcript)
+        result_msg = next(m for m in data if any(b.get("type") == "tool_result" for b in m["content"]))
+        result_block = next(b for b in result_msg["content"] if b["type"] == "tool_result")
+        assert "Found 3 issues" in result_block["content"]
+        assert "Missing error handling" in result_block["content"]
+
     def test_without_tool_calls_uses_text_format(self):
         """Default (include_tool_calls=False) should use legacy text format."""
         msgs = _msgs(("user", "hello"), ("assistant", "world"))

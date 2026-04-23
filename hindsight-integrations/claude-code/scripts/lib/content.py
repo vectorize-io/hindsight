@@ -276,8 +276,19 @@ def _extract_message_blocks(content, role: str = "") -> list:
                 blocks.append({"type": "tool_use", "name": name, "input": inp})
 
         elif block_type == "tool_result":
-            # Include tool results for context
+            # Include tool results for context.
+            # content can be a plain string or a list of content blocks
+            # (e.g. [{"type": "text", "text": "..."}] for Agent results).
             result_content = block.get("content", "")
+            if isinstance(result_content, list):
+                # Extract text from content blocks
+                parts = []
+                for item in result_content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        t = item.get("text", "").strip()
+                        if t:
+                            parts.append(t)
+                result_content = "\n".join(parts)
             if isinstance(result_content, str) and result_content.strip():
                 text = result_content.strip()
                 # Truncate very long results
