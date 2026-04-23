@@ -50,7 +50,9 @@ def resolve_safety_client(
         return safety_client
 
     config = get_config()
-    key = superagent_api_key or (config.superagent_api_key if config else None) or os.environ.get(SUPERAGENT_API_KEY_ENV)
+    key = (
+        superagent_api_key or (config.superagent_api_key if config else None) or os.environ.get(SUPERAGENT_API_KEY_ENV)
+    )
 
     if not key:
         raise HindsightError(
@@ -58,7 +60,9 @@ def resolve_safety_client(
             "or call configure(superagent_api_key=...) first. Get a key at https://www.superagent.sh"
         )
 
-    resolved_fallback = enable_fallback if enable_fallback is not None else (config.enable_fallback if config else False)
+    resolved_fallback = (
+        enable_fallback if enable_fallback is not None else (config.enable_fallback if config else False)
+    )
     resolved_timeout = fallback_timeout or (config.fallback_timeout if config else 5.0)
 
     return create_client(
