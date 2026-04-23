@@ -194,9 +194,9 @@ This is different from retrieval. Retrieval pulls up past documents. Learning ex
 Real agent learning requires:
 
 - **Selective retention** of facts, decisions, patterns, and preferences that will matter later
-- **Synthesis** of accumulated experience, not just raw history
-- **Reflection** at decision points, asking "what can we learn from what we've done?"
-- **Application** where that learning shapes behavior in new contexts
+- **Synthesis** into **observations** — deduplicated, structured knowledge extracted from accumulated experience
+- **Reflection** that turns observations into **mental models** — live knowledge that agents can reference and apply
+- **Application** where those mental models shape behavior in new contexts
 
 Without this loop, agents stay static. With it, agents improve measurably over time.
 
@@ -208,16 +208,17 @@ Without this loop, agents stay static. With it, agents improve measurably over t
 
 Instead of treating memory as a giant transcript store, Hindsight focuses on the mechanisms that make learning possible:
 
-- **Retain** important context from conversations and workflows, selectively capturing facts that matter
-- **Reflect** across accumulated experience to synthesize understanding and extract patterns
-- **Recall** relevant learning at the moment it is needed
+- **Retain** facts from conversations and workflows into memory banks
+- **Synthesize** those facts into **observations** — deduplicated, structured knowledge
+- **Create mental models** — live knowledge bases that capture patterns, rules, and insights
+- **Reflect** — agents and skills can query mental models to synthesize better responses
 - **Scope** learning across users, projects, teams, or channels so each context learns independently
 
 That can sit behind one agent, or many.
 
-A coding agent accumulates understanding of your project's architecture, conventions, and rejected patterns. Each session, it reflects on prior work and applies that learning to new problems. Over weeks, you notice the quality of code suggestions measurably improves. It is not retrieving documentation anymore; it is learning from your actual usage.
+A coding agent accumulates understanding of your project's architecture, conventions, and rejected patterns. Those lessons get synthesized into observations, which populate a mental model about your codebase. Each session, the agent queries that mental model before coding, getting live guidance based on everything it has learned. Over weeks, you notice the quality of code suggestions measurably improves. It is not retrieving documentation anymore; it is learning from your actual usage.
 
-A support assistant carries customer context forward and learns patterns from every interaction. A customer's history informs not just what it remembers, but how it learns to help them better.
+A support assistant carries customer context forward. Patterns from interactions become observations. Those observations populate a mental model of customer needs and solutions. When handling a new ticket, the agent queries this mental model and provides better recommendations based on learned patterns.
 
 A multi-agent setup uses a shared learning bank so one instance benefits from what another already discovered, compressing the learning curve across the whole team.
 
