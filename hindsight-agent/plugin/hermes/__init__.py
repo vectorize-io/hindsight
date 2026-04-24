@@ -79,20 +79,28 @@ class HindsightAgentProvider(MemoryProvider):
         self._config = None
         self._agent_id = None
 
-        # Try exact match first
+        # Try exact match on profile name first
         if agent_identity:
             self._config = _load_agent_config(agent_identity)
             if self._config:
                 self._agent_id = agent_identity
 
-        # If no exact match, find any hermes-harness agent in the config
+        # Fallback: if only one hermes agent in config, use it
+        # (covers the common single-profile case where agent_identity is "default"
+        # but setup used a custom agent ID)
         if not self._config:
             agents = _load_all_agents()
-            for aid, cfg in agents.items():
-                if cfg.get("harness") == "hermes":
-                    self._config = cfg
-                    self._agent_id = aid
-                    break
+            hermes_agents = {aid: cfg for aid, cfg in agents.items() if cfg.get("harness") == "hermes"}
+            if len(hermes_agents) == 1:
+                self._agent_id, self._config = next(iter(hermes_agents.items()))
+                logger.info("[hindsight_agent] no exact match for '%s', using sole hermes agent '%s'",
+                            agent_identity, self._agent_id)
+            elif len(hermes_agents) > 1:
+                logger.warning(
+                    "[hindsight_agent] multiple hermes agents in config (%s) but profile '%s' doesn't match any. "
+                    "Run: hindsight-agent setup %s --bank-id <bank> --harness hermes",
+                    ", ".join(hermes_agents.keys()), agent_identity, agent_identity,
+                )
 
         if self._config:
             logger.info(
