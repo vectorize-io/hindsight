@@ -408,6 +408,7 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY` | Cohere API key for embeddings | - |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL` | Cohere embedding model | `embed-english-v3.0` |
 | `HINDSIGHT_API_EMBEDDINGS_COHERE_BASE_URL` | Custom base URL for Cohere-compatible API (e.g., Azure-hosted) | - |
+| `HINDSIGHT_API_EMBEDDINGS_COHERE_OUTPUT_DIMENSIONS` | Output embedding dimensions for Cohere (e.g., `256`, `512`, `1024`). When set, overrides the model's default dimension. | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_BASE` | LiteLLM proxy base URL for embeddings | `http://localhost:4000` |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_API_KEY` | LiteLLM proxy API key for embeddings (optional, depends on proxy config) | - |
 | `HINDSIGHT_API_EMBEDDINGS_LITELLM_MODEL` | LiteLLM embedding model (use provider prefix, e.g., `cohere/embed-english-v3.0`) | `text-embedding-3-small` |
@@ -457,6 +458,8 @@ export HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL=perplexity/pplx-embed-v1-0.6b
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere
 export HINDSIGHT_API_EMBEDDINGS_COHERE_API_KEY=your-api-key
 export HINDSIGHT_API_EMBEDDINGS_COHERE_MODEL=embed-english-v3.0  # 1024 dimensions
+# Optional: override output dimensions (for Matryoshka-capable models)
+# export HINDSIGHT_API_EMBEDDINGS_COHERE_OUTPUT_DIMENSIONS=512
 
 # Azure-hosted Cohere - embeddings via custom endpoint
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=cohere

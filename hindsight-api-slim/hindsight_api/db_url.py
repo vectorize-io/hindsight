@@ -47,8 +47,7 @@ def to_libpq_url(url: str) -> str:
     new_scheme = "postgresql"
 
     new_query_pairs = [
-        ("sslmode", v) if k == "ssl" else (k, v)
-        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        ("sslmode", v) if k == "ssl" else (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
     ]
     new_query = urlencode(new_query_pairs)
 
