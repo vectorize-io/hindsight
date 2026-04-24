@@ -3713,19 +3713,28 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
+            # Use a subquery for counts to avoid GROUP BY on CLOB columns
+            # (Oracle cannot use CLOB types as comparison keys in GROUP BY).
             doc = await conn.fetchrow(
                 f"""
                 SELECT d.id, d.bank_id, d.original_text, d.content_hash,
                        d.created_at, d.updated_at, d.tags, d.retain_params,
-                       COUNT(mu.id) as unit_count,
-                       COUNT(mu.id) FILTER (WHERE mu.fact_type = 'world') as world_count,
-                       COUNT(mu.id) FILTER (WHERE mu.fact_type = 'experience') as experience_count,
-                       COUNT(mu.id) FILTER (WHERE mu.fact_type = 'observation') as observation_count
+                       COALESCE(stats.unit_count, 0) as unit_count,
+                       COALESCE(stats.world_count, 0) as world_count,
+                       COALESCE(stats.experience_count, 0) as experience_count,
+                       COALESCE(stats.observation_count, 0) as observation_count
                 FROM {fq_table("documents")} d
-                LEFT JOIN {fq_table("memory_units")} mu ON mu.document_id = d.id AND mu.bank_id = d.bank_id
+                LEFT JOIN (
+                    SELECT mu.document_id, mu.bank_id,
+                           COUNT(mu.id) as unit_count,
+                           COUNT(CASE WHEN mu.fact_type = 'world' THEN 1 END) as world_count,
+                           COUNT(CASE WHEN mu.fact_type = 'experience' THEN 1 END) as experience_count,
+                           COUNT(CASE WHEN mu.fact_type = 'observation' THEN 1 END) as observation_count
+                    FROM {fq_table("memory_units")} mu
+                    WHERE mu.document_id = $1 AND mu.bank_id = $2
+                    GROUP BY mu.document_id, mu.bank_id
+                ) stats ON stats.document_id = d.id AND stats.bank_id = d.bank_id
                 WHERE d.id = $1 AND d.bank_id = $2
-                GROUP BY d.id, d.bank_id, d.original_text, d.content_hash,
-                         d.created_at, d.updated_at, d.tags, d.retain_params
                 """,
                 document_id,
                 bank_id,

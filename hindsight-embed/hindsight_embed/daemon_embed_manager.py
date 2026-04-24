@@ -52,7 +52,7 @@ def _detach_popen_kwargs(log_handle) -> dict:
     """
     if platform.system() == "Windows":
         return {
-            "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,  # ty: ignore[unresolved-attribute]  # Windows-only attrs
             "stdin": subprocess.DEVNULL,
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
