@@ -6611,7 +6611,10 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         # Build the canonical bucket list anchored on the most recent UTC boundary.
-        now_utc = datetime.utcnow()
+        # Use tz-aware UTC throughout so serialized ISO strings include a `+00:00`
+        # offset; a naive ISO (`2026-04-18T00:00:00`) would be parsed by browsers
+        # as local time per ECMA-262, producing an off-by-timezone display.
+        now_utc = datetime.now(timezone.utc)
         if cfg.trunc == "minute":
             end = now_utc.replace(second=0, microsecond=0)
         elif cfg.trunc == "hour":
@@ -6628,11 +6631,13 @@ class MemoryEngine(MemoryEngineInterface):
             by_iso[entry.time] = entry
 
         for row in rows:
-            # asyncpg hands us a tz-aware datetime when the column is timestamptz.
-            # Normalize to the naive-UTC format we used for the dict keys.
+            # asyncpg hands us a tz-aware datetime when the column is timestamptz;
+            # ensure UTC so the ISO key matches `by_iso` (also tz-aware UTC).
             bucket_dt = row["bucket"]
-            if bucket_dt.tzinfo is not None:
-                bucket_dt = bucket_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            if bucket_dt.tzinfo is None:
+                bucket_dt = bucket_dt.replace(tzinfo=timezone.utc)
+            else:
+                bucket_dt = bucket_dt.astimezone(timezone.utc)
             entry = by_iso.get(bucket_dt.isoformat())
             if entry is None:
                 # Row fell outside the requested window (clock skew / edge case).

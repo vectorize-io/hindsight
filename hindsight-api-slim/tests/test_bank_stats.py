@@ -108,6 +108,12 @@ async def test_memories_timeseries_periods(
 
         for bucket in body["buckets"]:
             assert "time" in bucket
+            # Bucket `time` must serialize as a tz-aware ISO (ending in `+00:00` or `Z`).
+            # A naive ISO (`2026-04-18T00:00:00`) would be parsed as local time by
+            # `new Date()` per ECMA-262, shifting the chart by the browser's timezone.
+            assert bucket["time"].endswith("+00:00") or bucket["time"].endswith("Z"), (
+                f"bucket time must include UTC offset, got {bucket['time']!r}"
+            )
             assert bucket["world"] >= 0
             assert bucket["experience"] >= 0
             assert bucket["observation"] >= 0
