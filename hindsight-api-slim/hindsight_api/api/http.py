@@ -1519,6 +1519,14 @@ class MemoriesTimeseriesResponse(BaseModel):
     bank_id: str
     period: str = Field(description="One of: 1h, 12h, 1d, 7d, 30d, 90d.")
     trunc: str = Field(description="Bucket granularity: minute, hour, day.")
+    time_field: str = Field(
+        default="created_at",
+        description=(
+            "Timestamp column used to assign each row to a bucket. "
+            "`created_at` shows ingest time; `mentioned_at` / `occurred_start` "
+            "show event time (falls back to `created_at` per row when null)."
+        ),
+    )
     buckets: list[MemoryTimeseriesBucket] = Field(
         default_factory=list,
         description="Per-bucket counts, always returned fully padded for the requested period.",
@@ -3513,11 +3521,20 @@ def _register_routes(app: FastAPI):
     async def api_memories_timeseries(
         bank_id: str,
         period: str = "7d",
+        time_field: str = Query(
+            default="created_at",
+            description=(
+                "Timestamp column to bucket on. `created_at` (default) = ingest time; "
+                "`mentioned_at` / `occurred_start` = event time, useful for migrated "
+                "corpora where ingest time is a single point and doesn't reflect the "
+                "underlying knowledge timeline. Unknown values fall back to `created_at`."
+            ),
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         try:
             data = await app.state.memory.get_memories_timeseries(
-                bank_id, period=period, request_context=request_context
+                bank_id, period=period, time_field=time_field, request_context=request_context
             )
             return MemoriesTimeseriesResponse(**data)
         except OperationValidationError as e:

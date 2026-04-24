@@ -6756,6 +6756,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         period: str,
         request_context: "RequestContext",
+        time_field: str = "created_at",
     ) -> dict[str, Any]:
         """Memory ingestion bucketed by time, broken down by fact_type.
 
@@ -6765,6 +6766,14 @@ class MemoryEngine(MemoryEngineInterface):
         timezone) so the API response is deterministic regardless of where
         the database is deployed, and so the control-plane chart can match
         buckets by ISO key on the client side.
+
+        ``time_field`` selects which timestamp column drives the bucket
+        assignment. ``created_at`` (default) shows when records were ingested;
+        ``mentioned_at`` / ``occurred_start`` reflect the event time carried
+        over from the source data, which is what you want for migrated or
+        backfilled corpora. For the event-time columns we fall back to
+        ``created_at`` per-row via ``COALESCE`` so records that lack an event
+        timestamp still show up in the chart.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -6777,15 +6786,22 @@ class MemoryEngine(MemoryEngineInterface):
         if period not in _MEMORIES_TIMESERIES_PERIODS:
             period = "7d"
 
+        # Whitelist time_field — it is interpolated into SQL, must never come from untrusted input.
+        _ALLOWED_TIME_FIELDS = ("created_at", "mentioned_at", "occurred_start")
+        if time_field not in _ALLOWED_TIME_FIELDS:
+            time_field = "created_at"
+        # COALESCE onto created_at for event-time fields so null rows don't vanish.
+        bucket_expr = time_field if time_field == "created_at" else f"COALESCE({time_field}, created_at)"
+
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT date_trunc('{cfg.trunc}', created_at AT TIME ZONE 'UTC') AS bucket,
+                SELECT date_trunc('{cfg.trunc}', {bucket_expr} AT TIME ZONE 'UTC') AS bucket,
                        fact_type, COUNT(*) AS count
                 FROM {fq_table("memory_units")}
                 WHERE bank_id = $1
-                  AND created_at >= now() - interval '{cfg.interval}'
+                  AND {bucket_expr} >= now() - interval '{cfg.interval}'
                 GROUP BY bucket, fact_type
                 ORDER BY bucket
                 """,
@@ -6836,6 +6852,7 @@ class MemoryEngine(MemoryEngineInterface):
             "bank_id": bank_id,
             "period": period,
             "trunc": cfg.trunc,
+            "time_field": time_field,
             "buckets": [b.as_dict() for b in buckets],
         }
 
