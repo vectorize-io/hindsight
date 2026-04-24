@@ -51,8 +51,10 @@ def _detach_popen_kwargs(log_handle) -> dict:
     POSIX child inherits the parent's fds (legacy daemon-spawn behavior).
     """
     if platform.system() == "Windows":
+        detached_process = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        create_new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
         return {
-            "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            "creationflags": detached_process | create_new_process_group,
             "stdin": subprocess.DEVNULL,
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
@@ -266,12 +268,20 @@ class DaemonEmbedManager(EmbedManager):
         with open(paths.lock, "w") as lock_fd:
             lock_file(lock_fd)
             try:
+                # Load and merge the profile env before any already-running
+                # short-circuit. Registration rewrites the profile metadata/env,
+                # so passing only the caller-provided config would silently drop
+                # persisted HINDSIGHT_* guardrails such as daemon idle timeout or
+                # consolidation token limits.
+                profile_config = self._profile_manager.load_profile_config(profile)
+                merged_config = {**profile_config, **config}
+
                 if self.is_running(profile):
                     logger.debug(f"Daemon for profile '{profile}' came up while waiting for start lock")
                     if profile:
-                        self._register_profile(profile, paths.port, config)
+                        self._register_profile(profile, paths.port, merged_config)
                     return True
-                return self._start_daemon_locked(config, profile, paths, extra_args=extra_args)
+                return self._start_daemon_locked(merged_config, profile, paths, extra_args=extra_args)
             finally:
                 unlock_file(lock_fd)
 
@@ -301,13 +311,6 @@ class DaemonEmbedManager(EmbedManager):
             if profile:
                 self._register_profile(profile, port, config)
             return True
-
-        # Load profile's .env file and merge with provided config
-        # This fixes issue #305 where profile env vars were ignored
-        profile_config = self._profile_manager.load_profile_config(profile)
-        # Merge: profile config first, then override with explicitly provided config
-        merged_config = {**profile_config, **config}
-        config = merged_config
 
         # Build environment with LLM config
         # Support both formats: simple keys ("llm_api_key") and env var format ("HINDSIGHT_API_LLM_API_KEY")
@@ -526,14 +529,15 @@ class DaemonEmbedManager(EmbedManager):
     def _register_profile(self, profile: str, port: int, config: dict) -> None:
         """Register a named profile in metadata so it's discoverable by the CLI.
 
-        Only saves HINDSIGHT_API_* config keys (not internal daemon keys).
-        Silently ignores errors to avoid blocking daemon startup.
+        Saves all HINDSIGHT_* config keys so profile registration does not
+        erase persisted API or embedded-daemon guardrails. Silently ignores
+        errors to avoid blocking daemon startup.
         """
         try:
-            api_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_API_")}
-            if not api_config:
+            profile_config = {k: v for k, v in config.items() if k.startswith("HINDSIGHT_")}
+            if not profile_config:
                 return
-            self._profile_manager.create_profile(profile, port, api_config)
+            self._profile_manager.create_profile(profile, port, profile_config)
         except Exception as e:
             logger.debug(f"Failed to register profile '{profile}' in metadata: {e}")
 
