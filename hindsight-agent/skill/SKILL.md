@@ -7,16 +7,17 @@ description: Manage your long-term knowledge. Read existing topic pages before a
 
 Your knowledge is stored as topic pages that the system keeps updated automatically from your conversations. You **read** pages, **create** new ones when needed, and **recall** memories for deeper research. You never edit page content directly — the system handles that.
 
-**Your agent ID:** `{{AGENT_ID}}`
-
-All commands use `hindsight-agent` which resolves your agent ID to the correct storage automatically.
+All commands use `hindsight-agent <agent-id>`. To find your agent ID:
+1. Check if `{{AGENT_ID}}` is set above (setup bakes it in). If it's a placeholder or wrong, continue.
+2. Your agent ID is usually your profile/agent name (e.g., your Hermes profile name or OpenClaw agent name).
+3. If unsure, run `hindsight-agent list` to see all configured agents and pick the one that matches you.
 
 ## Mandatory startup sequence
 
 Run these silently at the start of every session:
 
 ```bash
-hindsight-agent pages list {{AGENT_ID}}
+hindsight-agent pages list <your-agent-id>
 ```
 
 Read the pages relevant to the current task. If the list is empty, that's fine — create pages as you learn things (see below).
