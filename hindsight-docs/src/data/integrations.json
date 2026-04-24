@@ -201,6 +201,16 @@
       "icon": "/img/icons/openai-agents.svg"
     },
     {
+      "id": "pipecat",
+      "name": "Pipecat",
+      "description": "Persistent memory for Pipecat voice AI pipelines via a FrameProcessor that recalls context before each turn and retains conversation content after.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "tool",
+      "link": "/sdks/integrations/pipecat",
+      "icon": "/img/icons/pipecat.png"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",
