@@ -73,6 +73,14 @@ interface BankStats {
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
 const PERIODS: Period[] = ["1h", "12h", "1d", "7d", "30d", "90d"];
 
+type TimeField = "created_at" | "mentioned_at" | "occurred_start";
+const TIME_FIELD_LABELS: Record<TimeField, { short: string; long: string }> = {
+  created_at: { short: "Ingested", long: "When records were ingested" },
+  mentioned_at: { short: "Mentioned", long: "When facts were mentioned (event time)" },
+  occurred_start: { short: "Occurred", long: "When the underlying event started" },
+};
+const TIME_FIELDS: TimeField[] = ["created_at", "mentioned_at", "occurred_start"];
+
 interface TimeseriesBucket {
   time: string;
   world: number;
@@ -781,6 +789,7 @@ export function BankStatsView() {
   const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [period, setPeriod] = useState<Period>("7d");
+  const [timeField, setTimeField] = useState<TimeField>("created_at");
   const [timeseries, setTimeseries] = useState<{ trunc: string; buckets: TimeseriesBucket[] }>({
     trunc: "day",
     buckets: [],
@@ -812,7 +821,7 @@ export function BankStatsView() {
   const loadTimeseries = async () => {
     if (!currentBank) return;
     try {
-      const data = await client.getMemoriesTimeseries(currentBank, period);
+      const data = await client.getMemoriesTimeseries(currentBank, period, timeField);
       setTimeseries({ trunc: data.trunc, buckets: data.buckets || [] });
     } catch (error) {
       console.error("Error loading memories timeseries:", error);
@@ -833,7 +842,7 @@ export function BankStatsView() {
       const interval = setInterval(loadTimeseries, 5000);
       return () => clearInterval(interval);
     }
-  }, [currentBank, period]);
+  }, [currentBank, period, timeField]);
 
   if (loading && !stats) {
     return (
@@ -956,7 +965,9 @@ export function BankStatsView() {
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2 space-y-2">
               <div className="flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-semibold">Memories ingested</CardTitle>
+                <CardTitle className="text-sm font-semibold">
+                  Memories by {TIME_FIELD_LABELS[timeField].short.toLowerCase()} time
+                </CardTitle>
                 <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
                   {PERIODS.map((p) => (
                     <button
@@ -972,6 +983,22 @@ export function BankStatsView() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5 w-fit">
+                {TIME_FIELDS.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeField(tf)}
+                    title={TIME_FIELD_LABELS[tf].long}
+                    className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
+                      timeField === tf
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {TIME_FIELD_LABELS[tf].short}
+                  </button>
+                ))}
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">

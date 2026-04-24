@@ -308,18 +308,28 @@ export class ControlPlaneClient {
     return this.fetchApi(bankStatsApi(bankId));
   }
 
-  async getMemoriesTimeseries(bankId: string, period: string) {
+  async getMemoriesTimeseries(
+    bankId: string,
+    period: string,
+    timeField: "created_at" | "mentioned_at" | "occurred_start" = "created_at",
+  ) {
     return this.fetchApi<{
       bank_id: string;
       period: string;
       trunc: string;
+      time_field: string;
       buckets: Array<{
         time: string;
         world: number;
         experience: number;
         observation: number;
       }>;
-    }>(bankStatsApi(bankId, `/memories-timeseries?period=${encodeURIComponent(period)}`));
+    }>(
+      bankStatsApi(
+        bankId,
+        `/memories-timeseries?period=${encodeURIComponent(period)}&time_field=${encodeURIComponent(timeField)}`,
+      ),
+    );
   }
 
   /**
