@@ -206,7 +206,12 @@ class OpenAICompatibleLLM(LLMInterface):
     def _supports_reasoning_model(self) -> bool:
         """Check if the current model is a reasoning model (o1, o3, GPT-5, DeepSeek)."""
         model_lower = self.model.lower()
-        return any(x in model_lower for x in ["gpt-5", "o1", "o3", "deepseek"])
+        if "deepseek" in model_lower:
+            # DeepSeek v4-flash is the non-thinking route. Treating every
+            # DeepSeek model as a reasoning model injects reasoning_effort,
+            # which conflicts with thinking-disabled flash calls.
+            return any(x in model_lower for x in ["v4-pro", "reasoner", "r1", "thinking"])
+        return any(x in model_lower for x in ["gpt-5", "o1", "o3"])
 
     def _get_max_reasoning_tokens(self) -> int | None:
         """Get max reasoning tokens for reasoning models."""
@@ -627,26 +632,54 @@ class OpenAICompatibleLLM(LLMInterface):
         """
         start_time = time.time()
 
+        request_tool_choice: str | dict[str, Any] | None = tool_choice
+
         # Normalize named tool_choice dicts to "required" + filter tools.
         # Some providers (e.g. LM Studio, Ollama) reject the OpenAI named format
         # {"type": "function", "function": {"name": "..."}}.  The semantics are
         # identical to tool_choice="required" with the tools list restricted to
-        # just the requested tool, so we apply that transformation universally.
-        if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-            forced_name = tool_choice.get("function", {}).get("name")
+        # just the requested tool, so we apply that transformation where supported.
+        if isinstance(request_tool_choice, dict) and request_tool_choice.get("type") == "function":
+            forced_name = request_tool_choice.get("function", {}).get("name")
             if forced_name:
                 filtered = [t for t in tools if t.get("function", {}).get("name") == forced_name]
                 if filtered:
                     tools = filtered
-                tool_choice = "required"
+                request_tool_choice = "required"
+
+        # DeepSeek accepts tool calls but rejects explicit required/named
+        # tool_choice values. The tools list has already been narrowed for
+        # forced calls, so omitting tool_choice preserves the practical behavior.
+        if "deepseek" in self.model.lower() and request_tool_choice != "auto":
+            request_tool_choice = None
+
+        # DeepSeek tool-call replies can carry provider-specific reasoning_content.
+        # The normalized tool result does not retain it, but replaying assistant
+        # tool_calls without the field can trigger a 400. DeepSeek accepts an
+        # empty-string fallback, matching the provider's history-replay contract.
+        if "deepseek" in self.model.lower():
+            normalized_messages: list[dict[str, Any]] = []
+            for msg in messages:
+                if (
+                    msg.get("role") == "assistant"
+                    and msg.get("tool_calls")
+                    and "reasoning_content" not in msg
+                ):
+                    normalized_msg = dict(msg)
+                    normalized_msg["reasoning_content"] = ""
+                    normalized_messages.append(normalized_msg)
+                else:
+                    normalized_messages.append(msg)
+            messages = normalized_messages
 
         # Build call parameters
         call_params: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "tools": tools,
-            "tool_choice": tool_choice,
         }
+        if request_tool_choice is not None:
+            call_params["tool_choice"] = request_tool_choice
 
         if max_completion_tokens is not None:
             call_params[self._max_tokens_param_name()] = max_completion_tokens
