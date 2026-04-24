@@ -29,6 +29,17 @@ def test_mcp_entry_always_allow_tools() -> None:
     assert "retain" in entry["alwaysAllow"]
 
 
+def test_mcp_entry_type_is_streamable_http() -> None:
+    entry = build_mcp_entry("http://localhost:8888")
+    assert entry["type"] == "streamable-http"
+
+
+def test_mcp_entry_timeout_in_valid_seconds_range() -> None:
+    entry = build_mcp_entry("http://localhost:8888")
+    # Roo Code accepts timeout values between 1 and 3600 seconds
+    assert 1 <= entry["timeout"] <= 3600
+
+
 # ---------------------------------------------------------------------------
 # get_roo_dir
 # ---------------------------------------------------------------------------

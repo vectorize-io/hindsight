@@ -23,7 +23,7 @@ SCRIPT_DIR = Path(__file__).parent
 RULES_SRC = SCRIPT_DIR / "rules" / "hindsight-memory.md"
 
 DEFAULT_API_URL = "http://localhost:8888"
-MCP_TIMEOUT_MS = 10000
+MCP_TIMEOUT_SECONDS = 30
 
 
 def get_roo_dir(project_dir: Path, global_install: bool) -> Path:
@@ -34,8 +34,9 @@ def get_roo_dir(project_dir: Path, global_install: bool) -> Path:
 
 def build_mcp_entry(api_url: str) -> dict:
     return {
+        "type": "streamable-http",
         "url": f"{api_url.rstrip('/')}/mcp",
-        "timeout": MCP_TIMEOUT_MS,
+        "timeout": MCP_TIMEOUT_SECONDS,
         "alwaysAllow": ["recall", "retain"],
     }
 

@@ -34,14 +34,14 @@ Roo Code has two primary extensibility mechanisms: **MCP servers** for tools and
 
 ```
 New task starts
-  └─ Rules file instructs Roo to call hindsight_recall
+  └─ Rules file instructs Roo to call recall
        └─ Relevant memories injected into context automatically
 
 Agent working…
-  └─ Agent calls hindsight_retain for significant decisions/discoveries
+  └─ Agent calls retain for significant decisions/discoveries
 
 Task ends
-  └─ Rules file instructs Roo to call hindsight_retain with a summary
+  └─ Rules file instructs Roo to call retain with a summary
        └─ Summary stored for future sessions
 ```
 
@@ -77,8 +77,9 @@ The MCP entry written to `.roo/mcp.json`:
 {
   "mcpServers": {
     "hindsight": {
+      "type": "streamable-http",
       "url": "http://localhost:8888/mcp",
-      "timeout": 10000,
+      "timeout": 30,
       "alwaysAllow": ["recall", "retain"]
     }
   }
@@ -103,7 +104,7 @@ The rules file instructs Roo to call these automatically at task start and end. 
 1. Start Hindsight and run the installer
 2. Open Roo Code in your project
 3. Check **Settings → MCP Servers** — `hindsight` should show as connected
-4. Start a task — you should see `hindsight_recall` invoked in the tool call log
+4. Start a task — you should see `recall` invoked in the tool call log
 
 ## Prerequisites
 

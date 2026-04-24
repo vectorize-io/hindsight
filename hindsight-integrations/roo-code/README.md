@@ -7,7 +7,7 @@ Run the installer once and every Roo Code session automatically recalls past con
 ## What It Does
 
 - **Before each task** — Roo Code recalls relevant memories from Hindsight and includes them as context
-- **During a task** — agents can store important decisions and discoveries immediately via `hindsight_retain`
+- **During a task** — agents can store important decisions and discoveries immediately via `retain`
 - **After each task** — agents summarize and retain what was accomplished for future sessions
 
 ## Prerequisites
@@ -51,18 +51,18 @@ This writes two files:
 
 ```
 New task starts
-  └─ Roo Code rules instruct agent to call hindsight_recall
+  └─ Roo Code rules instruct agent to call recall
        └─ Relevant memories injected into context
 
 Agent working…
-  └─ hindsight_retain stores decisions/discoveries immediately
+  └─ retain stores decisions/discoveries immediately
 
 Task ends
-  └─ Roo Code rules instruct agent to call hindsight_retain with summary
+  └─ Roo Code rules instruct agent to call retain with summary
        └─ Summary stored for future sessions
 ```
 
-Hindsight exposes `hindsight_recall` and `hindsight_retain` as MCP tools via its built-in `/mcp` endpoint. The rules file in `.roo/rules/` tells Roo Code when to call them.
+Hindsight exposes `recall` and `retain` as MCP tools via its built-in `/mcp` endpoint. The rules file in `.roo/rules/` tells Roo Code when to call them.
 
 ## Configuration
 
@@ -72,9 +72,10 @@ The installer writes to `.roo/mcp.json`:
 {
   "mcpServers": {
     "hindsight": {
+      "type": "streamable-http",
       "url": "http://localhost:8888/mcp",
-      "timeout": 10000,
-      "alwaysAllow": ["hindsight_recall", "hindsight_retain"]
+      "timeout": 30,
+      "alwaysAllow": ["recall", "retain"]
     }
   }
 }
@@ -91,7 +92,7 @@ python install.py --api-url https://new-url.example.com
 1. Start Hindsight (`hindsight-api` or Hindsight Cloud)
 2. Open Roo Code in your project
 3. Check **Settings → MCP Servers** — `hindsight` should show as connected
-4. Start a task — you should see `hindsight_recall` called automatically
+4. Start a task — you should see `recall` called automatically
 
 ## Development
 
