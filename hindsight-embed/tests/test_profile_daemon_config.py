@@ -114,7 +114,7 @@ def test_load_config_file_uses_correct_profile(temp_home, monkeypatch):
     default_config_dir = temp_home / ".hindsight"
     default_config_dir.mkdir(parents=True, exist_ok=True)
     (default_config_dir / "embed").write_text(
-        "HINDSIGHT_API_LLM_PROVIDER=openai\n" "HINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
+        "HINDSIGHT_API_LLM_PROVIDER=openai\nHINDSIGHT_API_LLM_MODEL=gpt-4o-mini\n"
     )
 
     # Create a named profile with a DIFFERENT provider
@@ -123,7 +123,7 @@ def test_load_config_file_uses_correct_profile(temp_home, monkeypatch):
 
     profile_name = "myapp"
     profile_env_path = profile_dir / f"{profile_name}.env"
-    profile_env_path.write_text("HINDSIGHT_API_LLM_PROVIDER=groq\n" "HINDSIGHT_API_LLM_MODEL=llama-3.1-70b\n")
+    profile_env_path.write_text("HINDSIGHT_API_LLM_PROVIDER=groq\nHINDSIGHT_API_LLM_MODEL=llama-3.1-70b\n")
 
     # Create metadata
     import json
@@ -447,7 +447,11 @@ def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):
         )
 
     kwargs = captured["kwargs"]
-    expected_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    expected_flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+        subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x00000200,
+    )
     assert kwargs.get("creationflags") == expected_flags
     assert "start_new_session" not in kwargs
     assert kwargs.get("stdin") is subprocess.DEVNULL
@@ -493,3 +497,76 @@ def test_posix_popen_uses_start_new_session(temp_home, monkeypatch):
     kwargs = captured["kwargs"]
     assert kwargs.get("start_new_session") is True
     assert "creationflags" not in kwargs
+
+
+def test_register_profile_preserves_embed_guardrails(temp_home):
+    """Profile registration must not erase HINDSIGHT_EMBED_* daemon settings."""
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    from hindsight_embed.profile_manager import ProfileManager
+
+    manager = DaemonEmbedManager()
+    manager._register_profile(
+        "guardrails",
+        9876,
+        {
+            "HINDSIGHT_API_LLM_PROVIDER": "groq",
+            "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS": "512",
+            "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT": "0",
+        },
+    )
+
+    config = ProfileManager().load_profile_config("guardrails")
+    assert config["HINDSIGHT_API_LLM_PROVIDER"] == "groq"
+    assert config["HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"] == "512"
+    assert config["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] == "0"
+
+
+def test_already_running_start_merges_profile_config_before_register(temp_home):
+    """Already-running daemon short-circuit must preserve profile env config.
+
+    The start lock path can observe that another process already started the
+    daemon. In that case registration still rewrites profile metadata/env, so it
+    must use profile_config + explicit config, not only the caller-provided
+    config.
+    """
+    import json
+    from unittest.mock import patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+    from hindsight_embed.profile_manager import ProfileManager
+
+    profile_dir = temp_home / ".hindsight" / "profiles"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_name = "already-running"
+    (profile_dir / f"{profile_name}.env").write_text(
+        "HINDSIGHT_API_LLM_PROVIDER=groq\n"
+        "HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS=512\n"
+        "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT=0\n"
+    )
+    (profile_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "profiles": {
+                    profile_name: {
+                        "port": 9876,
+                        "created_at": "2024-01-01T00:00:00+00:00",
+                        "last_used": "2024-01-01T00:00:00+00:00",
+                    }
+                },
+            }
+        )
+    )
+
+    manager = DaemonEmbedManager()
+    with patch.object(manager, "is_running", return_value=True):
+        assert manager._start_daemon(
+            config={"HINDSIGHT_API_LLM_MODEL": "openai/gpt-oss-120b"},
+            profile=profile_name,
+        )
+
+    config = ProfileManager().load_profile_config(profile_name)
+    assert config["HINDSIGHT_API_LLM_PROVIDER"] == "groq"
+    assert config["HINDSIGHT_API_LLM_MODEL"] == "openai/gpt-oss-120b"
+    assert config["HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS"] == "512"
+    assert config["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] == "0"
