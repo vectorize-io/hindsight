@@ -86,7 +86,7 @@ local-llm = [
     "huggingface-hub>=0.20.0",
 ]
 embedded-db = [
-    "pg0-embedded>=0.11.0",
+    "pg0-embedded>=0.13.0",
 ]
 all = [
     "hindsight-api-slim[local-ml,embedded-db]",
