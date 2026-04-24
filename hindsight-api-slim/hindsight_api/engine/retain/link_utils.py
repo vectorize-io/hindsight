@@ -405,8 +405,10 @@ async def build_entity_links_from_resolved(
         # Insert unit-entity links (used in fallback path where Phase 2 didn't do this)
         substep_start = time.time()
         unit_entity_pairs = []
-        for idx, (unit_id, _local_idx, _fact_date) in enumerate(entity_to_unit):
-            unit_entity_pairs.append((unit_id, resolved_entity_ids[idx]))
+        for idx, (unit_id, _local_idx, fact_date) in enumerate(entity_to_unit):
+            # Propagate the unit's fact_date so entity_cooccurrences.last_cooccurred
+            # reflects the event timeline, not the ingest moment.
+            unit_entity_pairs.append((unit_id, resolved_entity_ids[idx], fact_date))
 
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         _log(

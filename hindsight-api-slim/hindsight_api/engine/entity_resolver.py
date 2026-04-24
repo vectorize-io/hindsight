@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Final
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -46,12 +46,38 @@ class _EntityStatAgg:
     max_date: datetime | None = None
 
 
+# Sentinel distinguishing "key not in dict" from "key present with value None".
+# Needed when merging event_date across duplicate unit rows: legacy two-tuple
+# callers surface `None`, which must not clobber a real datetime from another
+# caller for the same unit.
+_SENTINEL_MISSING: Final = object()
+
+
+def _later_date(a: datetime | None, b: datetime | None) -> datetime | None:
+    """Return whichever of ``a`` / ``b`` is later (None loses to any datetime).
+
+    Used to fold duplicate co-occurrence pairs across a retain batch: legacy
+    two-tuple callers surface ``None``, which must not clobber a real
+    datetime that arrived for the same pair from an aware caller.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a > b else b
+
+
 @dataclass
 class _CooccurrencePair:
     """A (entity_id_1, entity_id_2) pair observed in a retain batch (for post-txn flush)."""
 
     entity_id_1: str
     entity_id_2: str
+    # When the two entities co-occurred in the source content. For real-time
+    # retains this is ~now; for backfilled corpora it's the historical event
+    # time, so the cooccurrence cache reflects the underlying knowledge
+    # timeline instead of collapsing to the import moment.
+    event_date: datetime | None = None
 
 
 # Load spaCy model (singleton)
@@ -143,11 +169,15 @@ class EntityResolver:
                 )
 
             if cooccurrences:
-                # Aggregate: count occurrences per (entity_id_1, entity_id_2) pair.
-                coo_agg: dict[tuple[str, str], int] = {}
+                # Aggregate per (entity_id_1, entity_id_2): count occurrences and
+                # keep the latest event_date we saw. Using GREATEST(...) in the SQL
+                # already handles merging against the existing row; here we fold
+                # the batch so executemany doesn't send the same pair twice.
+                coo_agg: dict[tuple[str, str], tuple[int, datetime | None]] = {}
                 for c in cooccurrences:
                     pair = (c.entity_id_1, c.entity_id_2)
-                    coo_agg[pair] = coo_agg.get(pair, 0) + 1
+                    prev_count, prev_date = coo_agg.get(pair, (0, None))
+                    coo_agg[pair] = (prev_count + 1, _later_date(prev_date, c.event_date))
 
                 now = datetime.now(UTC)
                 # Sort by (entity_id_1, entity_id_2) for consistent lock ordering.
@@ -161,7 +191,7 @@ class EntityResolver:
                         cooccurrence_count = {fq_table("entity_cooccurrences")}.cooccurrence_count + EXCLUDED.cooccurrence_count,
                         last_cooccurred    = GREATEST({fq_table("entity_cooccurrences")}.last_cooccurred, EXCLUDED.last_cooccurred)
                     """,
-                    sorted((e1, e2, count, now) for (e1, e2), count in coo_agg.items()),
+                    sorted((e1, e2, count, event_date or now) for (e1, e2), (count, event_date) in coo_agg.items()),
                 )
 
     @staticmethod
@@ -872,29 +902,45 @@ class EntityResolver:
             entity_id_2,
         )
 
-    async def link_units_to_entities_batch(self, unit_entity_pairs: list[tuple[str, str]], conn=None):
+    async def link_units_to_entities_batch(
+        self,
+        unit_entity_pairs: list[tuple[str, str]] | list[tuple[str, str, datetime | None]],
+        conn=None,
+    ):
         """
         Link multiple memory units to entities in batch (MUCH faster than sequential).
 
         Also updates co-occurrence cache for entities that appear in the same unit.
 
         Args:
-            unit_entity_pairs: List of (unit_id, entity_id) tuples
+            unit_entity_pairs: List of (unit_id, entity_id) or
+                (unit_id, entity_id, event_date) tuples. When `event_date` is
+                supplied, ``entity_cooccurrences.last_cooccurred`` for pairs
+                observed in that unit advances to the event time instead of
+                ``now()``, which matters for backfilled corpora where ingest
+                time is a single spike unrelated to the underlying timeline.
+                Legacy two-tuples remain accepted.
             conn: Optional connection to use (if None, acquires from pool)
         """
         if not unit_entity_pairs:
             return
 
+        # Normalize to 3-tuples internally so downstream code doesn't branch.
+        normalized: list[tuple[str, str, datetime | None]] = [
+            (t[0], t[1], t[2] if len(t) >= 3 else None)  # type: ignore[misc]
+            for t in unit_entity_pairs
+        ]
+
         if conn is None:
             async with acquire_with_retry(self.pool) as conn:
-                return await self._link_units_to_entities_batch_impl(conn, unit_entity_pairs)
+                return await self._link_units_to_entities_batch_impl(conn, normalized)
         else:
-            return await self._link_units_to_entities_batch_impl(conn, unit_entity_pairs)
+            return await self._link_units_to_entities_batch_impl(conn, normalized)
 
-    async def _link_units_to_entities_batch_impl(self, conn, unit_entity_pairs: list[tuple[str, str]]):
+    async def _link_units_to_entities_batch_impl(self, conn, unit_entity_pairs: list[tuple[str, str, datetime | None]]):
         # Sorted bulk insert to prevent deadlocks from inconsistent lock ordering
         # across concurrent transactions on the unit_entities unique index.
-        sorted_pairs = sorted(unit_entity_pairs)
+        sorted_pairs = sorted(unit_entity_pairs, key=lambda t: (t[0], t[1]))
         unit_ids = [p[0] for p in sorted_pairs]
         entity_ids = [p[1] for p in sorted_pairs]
 
@@ -905,28 +951,42 @@ class EntityResolver:
             entity_ids,
         )
 
-        # Build map of unit -> entities for co-occurrence calculation
-        # Use sets to avoid duplicate entities in the same unit
-        unit_to_entities = {}
-        for unit_id, entity_id in unit_entity_pairs:
-            if unit_id not in unit_to_entities:
-                unit_to_entities[unit_id] = set()
-            unit_to_entities[unit_id].add(entity_id)
+        # Build maps keyed by unit_id:
+        #   unit_to_entities: entity set per unit (for the co-occurrence cross-product)
+        #   unit_event_date:  event time per unit (propagated onto every pair from that unit)
+        # When a unit shows up more than once with conflicting event_dates (legacy
+        # callers passing None interleaved with aware callers), prefer the first
+        # non-None value so we don't accidentally erase an explicit timestamp.
+        unit_to_entities: dict[str, set[str]] = {}
+        unit_event_date: dict[str, datetime | None] = {}
+        for unit_id, entity_id, event_date in unit_entity_pairs:
+            unit_to_entities.setdefault(unit_id, set()).add(entity_id)
+            if event_date is not None and unit_event_date.get(unit_id) is None:
+                unit_event_date[unit_id] = event_date
+            elif unit_id not in unit_event_date:
+                unit_event_date[unit_id] = event_date
 
-        # Update co-occurrences for all pairs in each unit
-        cooccurrence_pairs = set()  # Use set to avoid duplicates
+        # Update co-occurrences for all pairs in each unit. Carry the unit's
+        # event_date onto every pair so the flush step can stamp
+        # `last_cooccurred` with the correct time.
+        cooccurrence_pairs: dict[tuple[str, str], datetime | None] = {}
         for unit_id, entity_ids in unit_to_entities.items():
-            entity_list = list(entity_ids)  # Convert set to list for iteration
-            # For each pair of entities in this unit, create co-occurrence
+            entity_list = list(entity_ids)
+            event_date = unit_event_date.get(unit_id)
             for i, entity_id_1 in enumerate(entity_list):
                 for entity_id_2 in entity_list[i + 1 :]:
-                    # Skip if same entity (shouldn't happen with set, but be safe)
                     if entity_id_1 == entity_id_2:
                         continue
-                    # Ensure consistent ordering (entity_id_1 < entity_id_2)
+                    # Canonical ordering (entity_id_1 < entity_id_2) matches the
+                    # entity_cooccurrences PK and check constraint.
                     if entity_id_1 > entity_id_2:
                         entity_id_1, entity_id_2 = entity_id_2, entity_id_1
-                    cooccurrence_pairs.add((entity_id_1, entity_id_2))
+                    key = (entity_id_1, entity_id_2)
+                    prev = cooccurrence_pairs.get(key, _SENTINEL_MISSING)
+                    if prev is _SENTINEL_MISSING:
+                        cooccurrence_pairs[key] = event_date
+                    else:
+                        cooccurrence_pairs[key] = _later_date(prev, event_date)
 
         # Accumulate co-occurrence pairs for post-transaction flush.
         # The actual INSERT/UPDATE is deferred to flush_pending_stats() to avoid
@@ -935,7 +995,8 @@ class EntityResolver:
         if cooccurrence_pairs:
             key = self._task_key()
             self._pending_cooccurrences.setdefault(key, []).extend(
-                _CooccurrencePair(entity_id_1=e1, entity_id_2=e2) for e1, e2 in cooccurrence_pairs
+                _CooccurrencePair(entity_id_1=e1, entity_id_2=e2, event_date=ed)
+                for (e1, e2), ed in cooccurrence_pairs.items()
             )
 
     async def get_units_by_entity(self, entity_id: str, limit: int = 100) -> list[str]:
