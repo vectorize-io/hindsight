@@ -219,8 +219,17 @@ function formatRelativeTime(ts: string | null): string {
   return `${days}d ago`;
 }
 
+// Bucket timestamps arrive from the memories-timeseries endpoint, which is
+// canonically UTC. An ISO string without an explicit offset (e.g. `2026-04-18T00:00:00`)
+// would be parsed by `new Date()` as *local* time per ECMA-262, shifting the
+// displayed bucket by the browser's timezone. Append `Z` when the offset is
+// missing so we always anchor to UTC before converting to the user's locale.
+function parseBucketIso(iso: string): Date {
+  return new Date(/[+\-Z]$/.test(iso) || /[+\-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+}
+
 function formatBucketLabel(iso: string, trunc: string): string {
-  const d = new Date(iso);
+  const d = parseBucketIso(iso);
   if (trunc === "day") {
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
@@ -228,7 +237,7 @@ function formatBucketLabel(iso: string, trunc: string): string {
 }
 
 function formatBucketTooltip(iso: string, trunc: string): string {
-  const d = new Date(iso);
+  const d = parseBucketIso(iso);
   if (trunc === "day") {
     return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
   }
