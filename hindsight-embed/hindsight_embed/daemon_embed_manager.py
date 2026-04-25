@@ -51,8 +51,13 @@ def _detach_popen_kwargs(log_handle) -> dict:
     POSIX child inherits the parent's fds (legacy daemon-spawn behavior).
     """
     if platform.system() == "Windows":
+        # Windows-only constants; use getattr so type checkers (e.g. ty) running
+        # on Linux don't flag the attribute access. They're guaranteed present
+        # at runtime because of the platform.system() guard above.
+        detached_process = getattr(subprocess, "DETACHED_PROCESS", 0)
+        create_new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         return {
-            "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            "creationflags": detached_process | create_new_process_group,
             "stdin": subprocess.DEVNULL,
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
