@@ -346,6 +346,18 @@ def reindex_embeddings_cmd(
         "--skip-index-rebuild",
         help="Skip REINDEX of HNSW/IVFFlat/vchordrq indexes after re-embedding.",
     ),
+    verify_recall: bool = typer.Option(
+        False,
+        "--verify-recall",
+        help="Run a self-match sanity check post-embed: each sampled row's embedding "
+        "should return that row in its own top-5 nearest neighbors.",
+    ),
+    auto_backup: str | None = typer.Option(
+        None,
+        "--auto-backup",
+        help="Path to a backup zip file to write before re-embedding. Aborts on backup failure. "
+        "Recommended for production runs.",
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
 ):
     """Re-embed memory rows whose embedding column is NULL.
@@ -376,6 +388,8 @@ def reindex_embeddings_cmd(
         batch_size=batch_size,
         dry_run=dry_run,
         skip_index_rebuild=skip_index_rebuild,
+        verify_recall=verify_recall,
+        auto_backup=auto_backup,
         yes=yes,
         database_url=config.database_url,
     )

@@ -22,7 +22,6 @@ from hindsight_api.admin.reindex import (
 )
 from hindsight_api.migrations import run_migrations
 
-
 pytestmark = pytest.mark.xdist_group(name="reindex_embeddings")
 
 
@@ -106,7 +105,7 @@ async def test_count_pending_counts_null_embeddings(reindex_test_schema):
     bank_id = f"test-{uuid.uuid4().hex[:8]}"
     try:
         await conn.execute(
-            f'INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING',
+            f"INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING",
             bank_id,
         )
         # Insert 3 memory units without embeddings
@@ -138,7 +137,7 @@ async def test_reembed_table_populates_null_embeddings(reindex_test_schema):
     bank_id = f"test-{uuid.uuid4().hex[:8]}"
     try:
         await conn.execute(
-            f'INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING',
+            f"INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING",
             bank_id,
         )
         ids = []
@@ -160,9 +159,7 @@ async def test_reembed_table_populates_null_embeddings(reindex_test_schema):
         memory_col = next(c for c in cols if c.table == "memory_units")
         memory_col.fq_table = f'"{schema_name}"."memory_units"'
 
-        processed, skipped = await _reembed_table(
-            conn, embeddings, memory_col, batch_size=8, bank_id=bank_id
-        )
+        processed, skipped = await _reembed_table(conn, embeddings, memory_col, batch_size=8, bank_id=bank_id)
         assert processed == 5
         assert skipped == 0
 
@@ -187,7 +184,7 @@ async def test_reembed_is_idempotent(reindex_test_schema):
     bank_id = f"test-{uuid.uuid4().hex[:8]}"
     try:
         await conn.execute(
-            f'INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING',
+            f"INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING",
             bank_id,
         )
         for i in range(3):
@@ -227,7 +224,7 @@ async def test_bank_filter_only_processes_specified_bank(reindex_test_schema):
     try:
         for b in (bank_a, bank_b):
             await conn.execute(
-                f'INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING',
+                f"INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING",
                 b,
             )
             for i in range(2):
@@ -273,26 +270,28 @@ async def test_skips_rows_with_empty_text(reindex_test_schema):
     bank_id = f"test-{uuid.uuid4().hex[:8]}"
     try:
         await conn.execute(
-            f'INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING',
+            f"INSERT INTO {schema_name}.banks (bank_id) VALUES ($1) ON CONFLICT DO NOTHING",
             bank_id,
         )
         # 1 row with text, 1 with empty, 1 with NULL — only the first should count
         await conn.execute(
-            f"INSERT INTO {schema_name}.memory_units (id, bank_id, text, fact_type) "
-            f"VALUES ($1, $2, $3, 'world')",
-            uuid.uuid4(), bank_id, "actual content",
+            f"INSERT INTO {schema_name}.memory_units (id, bank_id, text, fact_type) VALUES ($1, $2, $3, 'world')",
+            uuid.uuid4(),
+            bank_id,
+            "actual content",
         )
         await conn.execute(
-            f"INSERT INTO {schema_name}.memory_units (id, bank_id, text, fact_type) "
-            f"VALUES ($1, $2, $3, 'world')",
-            uuid.uuid4(), bank_id, "",
+            f"INSERT INTO {schema_name}.memory_units (id, bank_id, text, fact_type) VALUES ($1, $2, $3, 'world')",
+            uuid.uuid4(),
+            bank_id,
+            "",
         )
         # NULL text — depends on schema NOT NULL constraint; skip if it would fail
         try:
             await conn.execute(
-                f"INSERT INTO {schema_name}.memory_units (id, bank_id, fact_type) "
-                f"VALUES ($1, $2, 'world')",
-                uuid.uuid4(), bank_id,
+                f"INSERT INTO {schema_name}.memory_units (id, bank_id, fact_type) VALUES ($1, $2, 'world')",
+                uuid.uuid4(),
+                bank_id,
             )
         except Exception:
             pass  # NOT NULL constraint, fine

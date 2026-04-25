@@ -279,6 +279,67 @@ async def _rebuild_vector_indexes(conn: asyncpg.Connection, schema: str) -> int:
     return rebuilt
 
 
+async def _verify_recall(conn: asyncpg.Connection, schema: str, sample_size: int = 5) -> tuple[int, int]:
+    """Sanity-check recall by self-querying recent memories.
+
+    Picks `sample_size` rows from memory_units, uses each row's text as a query,
+    and verifies the row itself appears in the top 5 nearest-neighbor results.
+    A working embedding pipeline should always self-match.
+
+    Returns (passed, total) counts.
+    """
+    fq = f'"{schema}"."memory_units"'
+    rows = await conn.fetch(
+        f"""
+        SELECT id, bank_id, text, embedding
+        FROM {fq}
+        WHERE embedding IS NOT NULL
+          AND text IS NOT NULL
+          AND length(text) > 20
+        ORDER BY mentioned_at DESC NULLS LAST
+        LIMIT {int(sample_size)}
+        """
+    )
+    if not rows:
+        typer.echo("  (no embedded rows to verify)")
+        return 0, 0
+
+    passed = 0
+    for row in rows:
+        # Query for the 5 nearest neighbors using cosine distance
+        neighbors = await conn.fetch(
+            f"""
+            SELECT id FROM {fq}
+            WHERE bank_id = $1 AND embedding IS NOT NULL
+            ORDER BY embedding <=> $2::vector
+            LIMIT 5
+            """,
+            row["bank_id"],
+            row["embedding"],
+        )
+        neighbor_ids = [n["id"] for n in neighbors]
+        is_self_match = row["id"] in neighbor_ids
+        if is_self_match:
+            passed += 1
+        else:
+            typer.echo(
+                f"  FAIL: row {row['id']} ({row['bank_id']}) — self-text query did not "
+                f"return self in top-5 neighbors. Embedding may be corrupt."
+            )
+
+    return passed, len(rows)
+
+
+async def _run_auto_backup(database_url: str, schema: str, output_path) -> None:
+    """Run hindsight-admin backup before destructive operations."""
+    from .cli import _run_backup
+
+    typer.echo(f"  Running backup → {output_path}")
+    manifest = await _run_backup(database_url, output_path, schema)
+    total_rows = sum(t["rows"] for t in manifest["tables"].values())
+    typer.echo(f"  Backed up {total_rows} rows across {len(manifest['tables'])} tables")
+
+
 async def _reindex_embeddings(
     database_url: str,
     schema: str,
@@ -287,6 +348,8 @@ async def _reindex_embeddings(
     dry_run: bool,
     skip_index_rebuild: bool,
     yes: bool,
+    verify_recall: bool = False,
+    auto_backup: str | None = None,
 ) -> None:
     """Main async entrypoint for reindex-embeddings command."""
     # Lazy import — only load embedding engine if we're actually going to use it
@@ -299,14 +362,8 @@ async def _reindex_embeddings(
     )
 
     model_name = os.environ.get(ENV_EMBEDDINGS_LOCAL_MODEL)
-    if not model_name and not dry_run:
-        typer.echo(
-            f"ERROR: {ENV_EMBEDDINGS_LOCAL_MODEL} not set. "
-            "Configure your embedding model before running reindex-embeddings. "
-            "(Or use --dry-run to inspect schema without loading a model.)",
-            err=True,
-        )
-        raise typer.Exit(1)
+    # Defer the missing-model error until we know there's actually work to re-embed.
+    # Dry-run and standalone --verify-recall don't need a model loaded.
     trust_remote = os.environ.get(
         ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
         str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE),
@@ -319,6 +376,8 @@ async def _reindex_embeddings(
     typer.echo(f"  Embedding:     {model_name}")
     typer.echo(f"  Trust remote:  {trust_remote}")
     typer.echo(f"  Dry run:       {dry_run}")
+    typer.echo(f"  Verify recall: {verify_recall}")
+    typer.echo(f"  Auto-backup:   {auto_backup or '(none)'}")
     typer.echo()
 
     # Resolve pg0 (embedded) URLs to a real connection string
@@ -353,12 +412,43 @@ async def _reindex_embeddings(
         typer.echo()
 
         if total_pending == 0:
-            typer.echo("Nothing to do. All embeddings present.")
+            typer.echo("Nothing to re-embed. All embeddings present.")
+            if verify_recall:
+                typer.echo()
+                typer.echo("[verify] Running recall self-match check...")
+                passed, total = await _verify_recall(conn, schema, sample_size=5)
+                if total == 0:
+                    typer.echo("  No embedded rows found to verify against.")
+                elif passed == total:
+                    typer.echo(f"  PASS: {passed}/{total} sampled rows self-matched in top-5 recall")
+                else:
+                    typer.echo(
+                        f"  WARN: only {passed}/{total} sampled rows self-matched. "
+                        "Embeddings may be stale or corrupt; consider rebuilding indexes."
+                    )
             return
 
         if dry_run:
             typer.echo("(dry-run) — would re-embed and rebuild indexes; exiting now")
+            if verify_recall:
+                typer.echo("(dry-run) — verify-recall would run after re-embed; skipping")
             return
+
+        # Auto-backup before destructive work
+        if auto_backup:
+            from pathlib import Path
+
+            backup_path = Path(auto_backup)
+            if backup_path.suffix != ".zip":
+                backup_path = backup_path.with_suffix(".zip")
+            typer.echo("[2.5/5] Auto-backup before re-embedding")
+            try:
+                await _run_auto_backup(database_url, schema, backup_path)
+            except Exception as e:
+                typer.echo(f"  ERROR: Backup failed: {e!r}", err=True)
+                typer.echo("  Aborting before re-embed. Backup is required when --auto-backup is set.", err=True)
+                raise typer.Exit(1)
+            typer.echo()
 
         if not yes:
             confirm = typer.confirm(f"Re-embed {total_pending} rows with model {model_name}?")
@@ -367,6 +457,13 @@ async def _reindex_embeddings(
                 raise typer.Exit(0)
 
         # 3. Initialize embedding model
+        if not model_name:
+            typer.echo(
+                f"ERROR: {ENV_EMBEDDINGS_LOCAL_MODEL} not set. "
+                "Configure your embedding model before running reindex-embeddings.",
+                err=True,
+            )
+            raise typer.Exit(1)
         typer.echo(f"[3/5] Loading embedding model {model_name}...")
         from ..engine.embeddings import LocalSTEmbeddings
 
@@ -421,8 +518,23 @@ async def _reindex_embeddings(
             typer.echo(f"  Rebuilt {n_indexes} vector indexes")
         typer.echo()
 
+        # 6. Optional verification
+        if verify_recall:
+            typer.echo("[6/6] Verifying recall (self-match sanity check)...")
+            passed, total = await _verify_recall(conn, schema, sample_size=5)
+            if total == 0:
+                typer.echo("  No embedded rows found to verify against.")
+            elif passed == total:
+                typer.echo(f"  PASS: {passed}/{total} sampled rows self-matched in top-5 recall")
+            else:
+                typer.echo(f"  PARTIAL: {passed}/{total} sampled rows self-matched", err=True)
+                typer.echo("  Some rows did not return themselves in top-5 — recall may be degraded.", err=True)
+                typer.echo("  Investigate before treating the upgrade as successful.", err=True)
+            typer.echo()
+
         typer.echo("== Done ==")
-        typer.echo("Verify with sample recall queries before declaring success.")
+        if not verify_recall:
+            typer.echo("Tip: re-run with --verify-recall to sanity-check post-upgrade behavior.")
     finally:
         await conn.close()
 
@@ -435,6 +547,8 @@ def reindex_embeddings_command(
     skip_index_rebuild: bool,
     yes: bool,
     database_url: str,
+    verify_recall: bool = False,
+    auto_backup: str | None = None,
 ) -> None:
     """Sync wrapper for the reindex-embeddings async impl."""
     asyncio.run(
@@ -446,5 +560,7 @@ def reindex_embeddings_command(
             dry_run=dry_run,
             skip_index_rebuild=skip_index_rebuild,
             yes=yes,
+            verify_recall=verify_recall,
+            auto_backup=auto_backup,
         )
     )
