@@ -316,6 +316,73 @@ def run_db_migration(
     typer.echo(f"Database migrations completed successfully for {len(schemas)} schema(s)")
 
 
+@app.command(name="reindex-embeddings")
+def reindex_embeddings_cmd(
+    schema: str = typer.Option(
+        DEFAULT_DATABASE_SCHEMA,
+        "--schema",
+        "-s",
+        help="Database schema to reindex.",
+    ),
+    bank_id: str | None = typer.Option(
+        None,
+        "--bank",
+        "-b",
+        help="Filter to a single bank id. If omitted, reindex all banks in the schema.",
+    ),
+    batch_size: int = typer.Option(
+        16,
+        "--batch-size",
+        "-B",
+        help="Rows per encode/update batch. Tune up on faster GPUs, down on tight VRAM.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Discover columns and count pending rows; do not encode or write.",
+    ),
+    skip_index_rebuild: bool = typer.Option(
+        False,
+        "--skip-index-rebuild",
+        help="Skip REINDEX of HNSW/IVFFlat/vchordrq indexes after re-embedding.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompt."
+    ),
+):
+    """Re-embed memory rows whose embedding column is NULL.
+
+    Use after swapping the embedding model (HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL)
+    when banks already hold data. ensure_embedding_dimension refuses to migrate
+    populated tables, so the workflow is:
+
+        1. hindsight-admin backup ...
+        2. Update HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL in env
+        3. ALTER COLUMN embedding TYPE vector(<NEW_DIM>) USING NULL on each table
+        4. Restart API (loads new model)
+        5. hindsight-admin reindex-embeddings
+
+    Closes vectorize-io/hindsight#743.
+    """
+    from .reindex import reindex_embeddings_command
+
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        typer.echo("Set HINDSIGHT_API_DATABASE_URL environment variable.", err=True)
+        raise typer.Exit(1)
+
+    reindex_embeddings_command(
+        schema=schema,
+        bank_id=bank_id,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        skip_index_rebuild=skip_index_rebuild,
+        yes=yes,
+        database_url=config.database_url,
+    )
+
+
 async def _decommission_worker(db_url: str, worker_id: str, schema: str = "public") -> int:
     """Release all tasks owned by a worker, setting them back to pending status."""
     is_pg0, instance_name, _ = parse_pg0_url(db_url)
