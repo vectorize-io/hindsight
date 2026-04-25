@@ -55,6 +55,7 @@ class VectorColumnInfo:
     dimension: int
     fq_table: str  # schema-qualified table name
     text_column: str | None = None  # text column to source embeddings from
+    pg_type: str = "vector"  # 'vector' or 'halfvec' (pgvector types)
 
 
 # Heuristic: which text column to use as embedding source for each known table.
@@ -69,10 +70,12 @@ TEXT_SOURCE_COLUMN_BY_TABLE: dict[str, str] = {
 
 
 async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> list[VectorColumnInfo]:
-    """Find every column whose Postgres type is `vector(N)` from pgvector.
+    """Find every column whose Postgres type is `vector(N)` or `halfvec(N)` from pgvector.
 
     Schema-introspected so future Hindsight versions adding new embedding-bearing
-    tables Just Work without code changes.
+    tables Just Work without code changes. Also covers vchord deployments where
+    operators may pick `halfvec` to fit dimensions > 2000 inside pgvector's HNSW
+    4000-dim limit (or just to halve storage).
     """
     rows = await conn.fetch(
         """
@@ -87,7 +90,7 @@ async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> lis
         JOIN pg_type t ON a.atttypid = t.oid
         WHERE n.nspname = $1
           AND c.relkind = 'r'  -- ordinary tables only
-          AND t.typname = 'vector'
+          AND t.typname IN ('vector', 'halfvec')
           AND a.attnum > 0
           AND NOT a.attisdropped
         ORDER BY c.relname, a.attnum
@@ -97,17 +100,17 @@ async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> lis
 
     columns: list[VectorColumnInfo] = []
     for row in rows:
-        col_type = row["column_type"]  # e.g., "vector(2560)"
-        # Parse dimension out of "vector(N)"
-        if col_type.startswith("vector(") and col_type.endswith(")"):
-            try:
-                dim = int(col_type[len("vector(") : -1])
-            except ValueError:
-                logger.warning(
-                    f"Could not parse dimension from {col_type}, skipping {row['table_name']}.{row['column_name']}"
-                )
-                continue
-        else:
+        col_type = row["column_type"]  # e.g., "vector(2560)" or "halfvec(2560)"
+        # Parse dimension out of "<type>(N)"
+        dim: int | None = None
+        for prefix in ("vector(", "halfvec("):
+            if col_type.startswith(prefix) and col_type.endswith(")"):
+                try:
+                    dim = int(col_type[len(prefix) : -1])
+                except ValueError:
+                    pass
+                break
+        if dim is None:
             logger.warning(f"Unexpected vector type format {col_type}, skipping")
             continue
 
@@ -135,6 +138,9 @@ async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> lis
             )
             text_col = text_col_check
 
+        # Extract bare type name from format_type output (e.g., "halfvec(2560)" -> "halfvec")
+        pg_type = "halfvec" if col_type.startswith("halfvec(") else "vector"
+
         columns.append(
             VectorColumnInfo(
                 table=row["table_name"],
@@ -142,6 +148,7 @@ async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> lis
                 dimension=dim,
                 fq_table=f'"{row["schema_name"]}"."{row["table_name"]}"',
                 text_column=text_col,
+                pg_type=pg_type,
             )
         )
 
@@ -398,7 +405,7 @@ async def _reindex_embeddings(
             return
         for col in cols:
             text_info = f"text→{col.text_column}" if col.text_column else "(no text source)"
-            typer.echo(f"  {col.table}.{col.column}  vector({col.dimension})  {text_info}")
+            typer.echo(f"  {col.table}.{col.column}  {col.pg_type}({col.dimension})  {text_info}")
         typer.echo()
 
         # 2. Count pending rows per column
@@ -486,7 +493,7 @@ async def _reindex_embeddings(
                 typer.echo(
                     f"  Migrate the column first with: "
                     f"ALTER TABLE {col.table} ALTER COLUMN {col.column} "
-                    f"TYPE vector({embed.dimension}) USING NULL;",
+                    f"TYPE {col.pg_type}({embed.dimension}) USING NULL;",
                     err=True,
                 )
                 raise typer.Exit(1)
