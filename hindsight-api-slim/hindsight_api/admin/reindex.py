@@ -31,9 +31,6 @@ Typical workflow:
 
     # 5. Re-embed everything:
     hindsight-admin reindex-embeddings
-
-    # Optional verification:
-    hindsight-admin reindex-embeddings --verify-recall
 """
 
 from __future__ import annotations
@@ -71,9 +68,7 @@ TEXT_SOURCE_COLUMN_BY_TABLE: dict[str, str] = {
 }
 
 
-async def _discover_vector_columns(
-    conn: asyncpg.Connection, schema: str
-) -> list[VectorColumnInfo]:
+async def _discover_vector_columns(conn: asyncpg.Connection, schema: str) -> list[VectorColumnInfo]:
     """Find every column whose Postgres type is `vector(N)` from pgvector.
 
     Schema-introspected so future Hindsight versions adding new embedding-bearing
@@ -106,9 +101,11 @@ async def _discover_vector_columns(
         # Parse dimension out of "vector(N)"
         if col_type.startswith("vector(") and col_type.endswith(")"):
             try:
-                dim = int(col_type[len("vector("):-1])
+                dim = int(col_type[len("vector(") : -1])
             except ValueError:
-                logger.warning(f"Could not parse dimension from {col_type}, skipping {row['table_name']}.{row['column_name']}")
+                logger.warning(
+                    f"Could not parse dimension from {col_type}, skipping {row['table_name']}.{row['column_name']}"
+                )
                 continue
         else:
             logger.warning(f"Unexpected vector type format {col_type}, skipping")
@@ -217,7 +214,7 @@ async def _reembed_table(
     last_log = table_start
 
     for i in range(0, total, batch_size):
-        batch = rows[i:i + batch_size]
+        batch = rows[i : i + batch_size]
         ids = [r["id"] for r in batch]
         texts = [r["source_text"] for r in batch]
 
@@ -241,14 +238,12 @@ async def _reembed_table(
             elapsed = now - table_start
             rate = processed / elapsed if elapsed > 0 else 0
             eta = (total - processed) / rate if rate > 0 else 0
-            typer.echo(
-                f"    {processed}/{total}  "
-                f"({rate:.1f} rows/s, ETA {eta:.0f}s)"
-            )
+            typer.echo(f"    {processed}/{total}  ({rate:.1f} rows/s, ETA {eta:.0f}s)")
             last_log = now
 
-    typer.echo(f"  {col.table}.{col.column}: {processed} embedded, {skipped} skipped, "
-               f"in {time.time() - table_start:.1f}s")
+    typer.echo(
+        f"  {col.table}.{col.column}: {processed} embedded, {skipped} skipped, in {time.time() - table_start:.1f}s"
+    )
     return processed, skipped
 
 
@@ -295,12 +290,13 @@ async def _reindex_embeddings(
 ) -> None:
     """Main async entrypoint for reindex-embeddings command."""
     # Lazy import — only load embedding engine if we're actually going to use it
+    import os
+
     from ..config import (
         DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
         ENV_EMBEDDINGS_LOCAL_MODEL,
         ENV_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE,
     )
-    import os
 
     model_name = os.environ.get(ENV_EMBEDDINGS_LOCAL_MODEL)
     if not model_name and not dry_run:
@@ -316,7 +312,7 @@ async def _reindex_embeddings(
         str(DEFAULT_EMBEDDINGS_LOCAL_TRUST_REMOTE_CODE),
     ).lower() in ("1", "true", "yes")
 
-    typer.echo(f"== Hindsight reindex-embeddings ==")
+    typer.echo("== Hindsight reindex-embeddings ==")
     typer.echo(f"  Schema:        {schema}")
     typer.echo(f"  Bank filter:   {bank_id or '(all banks)'}")
     typer.echo(f"  Batch size:    {batch_size}")
@@ -365,9 +361,7 @@ async def _reindex_embeddings(
             return
 
         if not yes:
-            confirm = typer.confirm(
-                f"Re-embed {total_pending} rows with model {model_name}?"
-            )
+            confirm = typer.confirm(f"Re-embed {total_pending} rows with model {model_name}?")
             if not confirm:
                 typer.echo("Aborted.")
                 raise typer.Exit(0)

@@ -346,9 +346,7 @@ def reindex_embeddings_cmd(
         "--skip-index-rebuild",
         help="Skip REINDEX of HNSW/IVFFlat/vchordrq indexes after re-embedding.",
     ),
-    yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip confirmation prompt."
-    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
 ):
     """Re-embed memory rows whose embedding column is NULL.
 
