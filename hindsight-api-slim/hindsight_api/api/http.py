@@ -4666,7 +4666,7 @@ def _register_routes(app: FastAPI):
         "/v1/default/banks/{bank_id}/profile",
         response_model=BankProfileResponse,
         summary="Get memory bank profile",
-        description="Get disposition traits and mission for a memory bank. Auto-creates agent with defaults if not exists.",
+        description="Get disposition traits and mission for a memory bank. Returns 404 if the bank does not exist.",
         operation_id="get_bank_profile",
         tags=["Banks"],
         deprecated=True,
@@ -4674,7 +4674,15 @@ def _register_routes(app: FastAPI):
     async def api_get_bank_profile(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
         """Get memory bank profile (disposition + mission)."""
         try:
-            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Read endpoints must not have create-as-side-effect: a client
+            # holding onto a stale bank_id (e.g., a UI polling after the user
+            # changed context) would otherwise silently re-create the bank in
+            # an unrelated tenant. Surface a missing bank as 404.
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
+            if profile is None:
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
             # Convert DispositionTraits object to dict for Pydantic
             disposition_dict = (
                 profile["disposition"].model_dump()
@@ -5010,8 +5018,10 @@ def _register_routes(app: FastAPI):
     ):
         """Export a bank's config and mental models as a template manifest."""
         try:
-            # Authenticate and ensure bank exists
-            profile = await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Read endpoint: do not auto-create on missing bank.
+            profile = await app.state.memory.get_bank_profile(
+                bank_id, request_context=request_context, create_if_missing=False
+            )
             if profile is None:
                 raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
@@ -6110,8 +6120,14 @@ def _register_routes(app: FastAPI):
 
             pool = await app.state.memory._get_pool()
 
-            # Ensure bank exists
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Read endpoint: verify bank exists without auto-creating it.
+            if (
+                await app.state.memory.get_bank_profile(
+                    bank_id, request_context=request_context, create_if_missing=False
+                )
+                is None
+            ):
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             from hindsight_api.engine.db_utils import acquire_with_retry
 
@@ -6225,7 +6241,14 @@ def _register_routes(app: FastAPI):
             from hindsight_api.engine.memory_engine import fq_table
 
             pool = await app.state.memory._get_pool()
-            await app.state.memory.get_bank_profile(bank_id, request_context=request_context)
+            # Read endpoint: verify bank exists without auto-creating it.
+            if (
+                await app.state.memory.get_bank_profile(
+                    bank_id, request_context=request_context, create_if_missing=False
+                )
+                is None
+            ):
+                raise HTTPException(status_code=404, detail=f"Bank '{bank_id}' not found")
 
             # Determine time range (always per-day buckets)
             from datetime import timedelta as _td

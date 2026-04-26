@@ -117,6 +117,41 @@ async def get_bank_profile(pool, bank_id: str) -> BankProfile:
     return profile
 
 
+async def get_bank_profile_if_exists(pool, bank_id: str) -> BankProfile | None:
+    """
+    Get bank profile (name, disposition + mission) without auto-creating.
+
+    Returns None if the bank does not exist. This is the read-only variant
+    of get_bank_profile, intended for read endpoints where a bank that
+    doesn't exist should surface as 404 rather than be silently created.
+
+    Args:
+        pool: Database connection pool
+        bank_id: bank IDentifier
+
+    Returns:
+        BankProfile if the bank exists, otherwise None.
+    """
+    async with acquire_with_retry(pool) as conn:
+        row = await conn.fetchrow(
+            f"""
+            SELECT name, disposition, mission
+            FROM {fq_table("banks")} WHERE bank_id = $1
+            """,
+            bank_id,
+        )
+        if not row:
+            return None
+        disposition_data = row["disposition"]
+        if isinstance(disposition_data, str):
+            disposition_data = json.loads(disposition_data)
+        return BankProfile(
+            name=row["name"],
+            disposition=DispositionTraits(**disposition_data),
+            mission=row["mission"] or "",
+        )
+
+
 async def get_or_create_bank_profile(pool, bank_id: str) -> tuple[BankProfile, bool]:
     """
     Get bank profile, auto-creating with defaults if it doesn't exist.

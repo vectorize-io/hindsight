@@ -5475,17 +5475,24 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         request_context: "RequestContext",
-    ) -> dict[str, Any]:
+        create_if_missing: bool = True,
+    ) -> dict[str, Any] | None:
         """
         Get bank profile (name, disposition + mission).
-        Auto-creates agent with default values if not exists.
 
         Args:
             bank_id: bank IDentifier
             request_context: Request context for authentication.
+            create_if_missing: If True (default), the bank is auto-created
+                with defaults when it does not exist. Pass False from read-
+                only callers (HTTP GET handlers, polling, etc.) so a missing
+                bank surfaces as None rather than being silently created.
+                The caller is then responsible for translating None to a
+                404 (or similar).
 
         Returns:
-            Dict with name, disposition traits, and mission
+            Dict with name, disposition traits, and mission, or None when
+            create_if_missing=False and the bank does not exist.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -5494,7 +5501,13 @@ class MemoryEngine(MemoryEngineInterface):
             ctx = BankReadContext(bank_id=bank_id, operation="get_bank_profile", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         pool = await self._get_pool()
-        profile, created = await bank_utils.get_or_create_bank_profile(pool, bank_id)
+        if not create_if_missing:
+            existing = await bank_utils.get_bank_profile_if_exists(pool, bank_id)
+            if existing is None:
+                return None
+            profile, created = existing, False
+        else:
+            profile, created = await bank_utils.get_or_create_bank_profile(pool, bank_id)
 
         # Apply HINDSIGHT_API_DEFAULT_BANK_TEMPLATE to freshly-created banks. Done
         # before reading the resolved config below so the template's overrides

@@ -17,6 +17,42 @@ class TestAgentProfile:
     """Tests for agent profile management."""
 
     @pytest.mark.asyncio
+    async def test_get_bank_profile_no_auto_create_returns_none(
+        self, memory: MemoryEngine, request_context
+    ):
+        """When create_if_missing=False is passed, a missing bank returns None
+        rather than being silently auto-created. This is what read-only
+        endpoints (HTTP GET, polling, etc.) must use to avoid creating banks
+        as a side effect of a stale client request."""
+        bank_id = unique_agent_id("test_no_auto_create")
+
+        # First call with create_if_missing=False on a non-existent bank
+        result = await memory.get_bank_profile(
+            bank_id, request_context=request_context, create_if_missing=False
+        )
+        assert result is None, "Expected None for missing bank with create_if_missing=False"
+
+        # Verify the bank was NOT created as a side effect
+        result_again = await memory.get_bank_profile(
+            bank_id, request_context=request_context, create_if_missing=False
+        )
+        assert result_again is None, "Bank must not exist after read-only call"
+
+        # And explicit auto-create still works
+        created = await memory.get_bank_profile(
+            bank_id, request_context=request_context, create_if_missing=True
+        )
+        assert created is not None
+        assert created["disposition"]["skepticism"] == 3
+
+        # Now read-only call sees it
+        seen = await memory.get_bank_profile(
+            bank_id, request_context=request_context, create_if_missing=False
+        )
+        assert seen is not None
+        assert seen["disposition"]["skepticism"] == 3
+
+    @pytest.mark.asyncio
     async def test_get_agent_profile_creates_default(self, memory: MemoryEngine, request_context):
         """Test that getting a profile for a new agent creates default disposition."""
         bank_id = unique_agent_id("test_profile_default")
