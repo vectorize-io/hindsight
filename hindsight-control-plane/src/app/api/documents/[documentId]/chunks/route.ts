@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { documentId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
@@ -18,9 +19,12 @@ export async function GET(
     const offset = searchParams.get("offset") || "0";
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`,
+      dataplaneBankUrl(
+        bankId,
+        `/documents/${encodeURIComponent(documentId)}/chunks?limit=${limit}&offset=${offset}`
+      ),
       {
-        headers: getDataplaneHeaders(),
+        headers: getDataplaneHeaders(tenant),
       }
     );
 

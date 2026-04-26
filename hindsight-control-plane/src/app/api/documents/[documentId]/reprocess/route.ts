@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
+import { dataplaneBankUrl, getDataplaneHeaders } from "@/lib/hindsight-client";
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { documentId } = await params;
     const searchParams = request.nextUrl.searchParams;
     const bankId = searchParams.get("bank_id");
@@ -15,10 +16,10 @@ export async function POST(
     }
 
     const response = await fetch(
-      `${DATAPLANE_URL}/v1/default/banks/${bankId}/documents/${documentId}/reprocess`,
+      dataplaneBankUrl(bankId, `/documents/${encodeURIComponent(documentId)}/reprocess`),
       {
         method: "POST",
-        headers: getDataplaneHeaders({ "Content-Type": "application/json" }),
+        headers: getDataplaneHeaders(tenant, { "Content-Type": "application/json" }),
       }
     );
 

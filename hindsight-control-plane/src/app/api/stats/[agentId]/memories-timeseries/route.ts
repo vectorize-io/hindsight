@@ -6,13 +6,14 @@ export async function GET(
   { params }: { params: Promise<{ agentId: string }> }
 ) {
   try {
+    const tenant = request.nextUrl.searchParams.get("tenant");
     const { agentId } = await params;
     const period = request.nextUrl.searchParams.get("period") || "7d";
     const url = dataplaneBankUrl(
       agentId,
       `/stats/memories-timeseries?period=${encodeURIComponent(period)}`
     );
-    const upstream = await fetch(url, { headers: getDataplaneHeaders() });
+    const upstream = await fetch(url, { headers: getDataplaneHeaders(tenant) });
     const body = await upstream.json();
     return NextResponse.json(body, { status: upstream.status });
   } catch (error) {
