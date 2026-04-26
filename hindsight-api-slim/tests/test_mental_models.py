@@ -356,6 +356,56 @@ class TestDirectiveTags:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_list_directives_isolation_mode_includes_tagged_when_no_tags(
+        self, memory: MemoryEngine, request_context
+    ):
+        """Regression test for issue #1269.
+
+        When list_directives is called with tags=None and isolation_mode=True
+        (the path reflect always takes), every active directive should be
+        returned — both untagged and tagged. Previously the isolation branch
+        applied a (tags IS NULL OR tags = '{}') filter that silently dropped
+        every directive with at least one tag, which made `reflect` ignore all
+        tagged directives without warning.
+        """
+        bank_id = f"test-directive-isolation-untagged-{uuid.uuid4().hex[:8]}"
+
+        # Ensure bank exists
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        # Create one untagged and one tagged directive.
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Untagged Directive",
+            content="Untagged rule",
+            request_context=request_context,
+        )
+        await memory.create_directive(
+            bank_id=bank_id,
+            name="Tagged Directive",
+            content="Tagged rule",
+            tags=["safety"],
+            request_context=request_context,
+        )
+
+        # Untagged caller in isolation mode should still see every active directive;
+        # there is no tag scope to leak across.
+        results = await memory.list_directives(
+            bank_id=bank_id,
+            request_context=request_context,
+            isolation_mode=True,
+        )
+
+        names = {d["name"] for d in results}
+        assert "Untagged Directive" in names
+        assert "Tagged Directive" in names, (
+            "Tagged directive was silently dropped under isolation_mode with no caller tags "
+            "(see issue #1269)."
+        )
+
+        # Cleanup
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestReflect:
     """Test reflect endpoint."""
