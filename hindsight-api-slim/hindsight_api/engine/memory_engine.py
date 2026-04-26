@@ -5901,10 +5901,12 @@ class MemoryEngine(MemoryEngineInterface):
             async with pool.acquire() as conn:
                 return await tool_expand(conn, bank_id, memory_ids, depth)
 
-        # Load directives from the dedicated directives table
-        # Directives are hard rules that must be followed in all responses
-        # Use isolation_mode=True to prevent tag-scoped directives from leaking into untagged operations
-        # Use the same tags_match as the reflect request so directives respect the same scoping rules
+        # Load directives from the dedicated directives table.
+        # Directives are hard rules that must be followed in all responses.
+        # When the reflect call passes tags, list_directives OR-merges untagged directives
+        # with directives matching those tags (preventing cross-tag leakage). When tags is
+        # None, every active directive is loaded.
+        # Use the same tags_match as the reflect request so directives respect the same scoping rules.
         directives_raw = await self.list_directives(
             bank_id=bank_id,
             tags=tags,
@@ -7890,9 +7892,11 @@ class MemoryEngine(MemoryEngineInterface):
             limit: Maximum number of results
             offset: Offset for pagination
             request_context: Request context for authentication
-            isolation_mode: When True and tags=None, only return directives with no tags.
-                This prevents tag-scoped directives from leaking into untagged operations.
-                Default False (normal API behavior - returns all directives when tags=None)
+            isolation_mode: Retained for backwards compatibility. Currently a no-op:
+                an untagged caller (tags=None) has no tag scope to leak across, so all
+                active directives are returned regardless of this flag. Cross-tag leakage
+                prevention is handled by the tagged branch (tags!=None), which OR-merges
+                untagged directives with tag-matched ones. Default False.
 
         Returns:
             List of directive dicts
@@ -7918,8 +7922,11 @@ class MemoryEngine(MemoryEngineInterface):
             # Directives have special scoping rules:
             #   - Untagged directives (tags=[] or null) always apply regardless of reflect tags
             #   - Tagged directives only apply when the reflect operation includes matching tags
-            #   - If tags=None and isolation_mode=True: only untagged directives (no leakage)
-            #   - If tags=None and isolation_mode=False: all directives (normal API behavior)
+            #   - If tags=None: include all active directives. The tagged branch above already
+            #     prevents cross-tag leakage by OR-merging untagged directives with tag-matched
+            #     ones; an untagged caller has no tag scope to leak across, so isolation_mode
+            #     is a no-op here. (Previously this branch filtered to untagged-only, which
+            #     silently dropped every directive that had any tag — see issue #1269.)
             if tags:
                 tags_clause, tags_params, param_idx = build_tags_where_clause(
                     tags=tags, param_offset=param_idx, table_alias="", match=tags_match
@@ -7929,10 +7936,6 @@ class MemoryEngine(MemoryEngineInterface):
                     scoped_clause = tags_clause.replace("AND ", "", 1)
                     filters.append(f"((tags IS NULL OR tags = '{{}}') OR ({scoped_clause}))")
                     params.extend(tags_params)
-            elif isolation_mode:
-                # Isolation mode: only include directives with empty/null tags
-                # This ensures tag-scoped directives don't apply to untagged operations
-                filters.append("(tags IS NULL OR tags = '{}')")
 
             params.extend([limit, offset])
 
