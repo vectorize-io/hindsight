@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { client } from "./api";
 
 interface TenantContextType {
@@ -21,20 +22,28 @@ const TenantContext = createContext<TenantContextType | undefined>(undefined);
 const STORAGE_KEY = "hindsight-cp-tenant";
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const [tenants, setTenants] = useState<string[]>([]);
   const [isMultiTenant, setIsMultiTenant] = useState(false);
   const [currentTenant, setCurrentTenantState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const setCurrentTenant = useCallback((tenant: string) => {
-    setCurrentTenantState(tenant);
-    client.setTenant(tenant);
-    try {
-      localStorage.setItem(STORAGE_KEY, tenant);
-    } catch {
-      // localStorage may be unavailable
-    }
-  }, []);
+  const setCurrentTenant = useCallback(
+    (tenant: string) => {
+      setCurrentTenantState(tenant);
+      client.setTenant(tenant);
+      try {
+        localStorage.setItem(STORAGE_KEY, tenant);
+      } catch {
+        // localStorage may be unavailable
+      }
+      // The previous tenant's bank can't exist in the new schema, and per-bank
+      // views cache fetched data in component state. Returning to /dashboard
+      // unmounts those components so they don't render stale results.
+      router.push("/dashboard");
+    },
+    [router]
+  );
 
   useEffect(() => {
     async function loadTenants() {
