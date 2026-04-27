@@ -69,6 +69,40 @@ def _sanitize_text(text: str | None) -> str | None:
     return sanitize_llm_output(text)
 
 
+# =============================================================================
+# FIRST-PERSON DETECTION PATTERNS (Fallback for LLM classification)
+# =============================================================================
+
+CHINESE_FIRST_PERSON_PATTERN = re.compile(
+    r"(?:我|助手|助理|本人|agent)"
+    r"(?:修复了|调试了|实现了|部署了|发现了|找到了|解决了|"
+    r"更改了|更新了|修改了|创建了|构建了|配置了|安装了|"
+    r"迁移了|优化了|调查了|分析了|测试了|验证了|确认了|"
+    r"学到了|决定了|选择了|设计了|编写了|添加了|删除了|"
+    r"完成了|开始了|搭建了|整理了|清理了|设置了|写入了|"
+    r"提取了|采集了|抓取了|执行了|运行了|搞定了|处理了|"
+    r"成功|尝试|记录了|读取了|导入了|导出)",
+    re.IGNORECASE,
+)
+
+
+def _is_chinese_first_person(fact_text: str) -> bool:
+    """
+    Check if text contains Chinese first-person agent action patterns.
+
+    This is a fallback when LLM fails to correctly classify fact_type.
+    Returns True if text matches Chinese first-person patterns.
+    """
+    if not fact_text:
+        return False
+
+    # Check main fact text
+    if CHINESE_FIRST_PERSON_PATTERN.search(fact_text):
+        return True
+
+    return False
+
+
 class Entity(BaseModel):
     """An entity extracted from text."""
 
@@ -930,8 +964,28 @@ def _build_user_message(
 
     narrator_section = ""
     if agent_name:
-        narrator_section = f'\nNarrator: {agent_name} (AI agent — first-person statements like "I did X" are the agent\'s own actions; classify as "assistant")'
+        narrator_section = f"""
+Narrator: {agent_name} (AI agent)
 
+FIRST-PERSON DETECTION (IMPORTANT):
+English examples (use fact_type="assistant"):
+- "I fixed bug in authentication module"
+- "I created 5 new user accounts"
+- "I discovered a performance issue"
+
+Chinese examples (use fact_type="assistant"):
+- "我修复了认证模块的bug"
+- "我创建了5个新用户账户"
+- "我发现了数据库性能问题"
+- "助手成功写入了飞书表格"
+- "助手从Reddit提取了75个关键词"
+- "我通过 app_id + app_secret 获取 token 写入了飞书表格"
+
+Third-person/world examples (use fact_type="world"):
+- "The system crashed at 3pm"
+- "User reported a login error"
+- "API latency increased by 50%"
+"""
     return f"""Extract facts from the following text chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
@@ -1102,8 +1156,13 @@ async def _extract_facts_from_chunk(
                 elif raw_fact_type == "world":
                     fact_type = "world"
                 else:
-                    raw_fact_kind = llm_fact.get("fact_kind")
-                    fact_type = "experience" if raw_fact_kind == "assistant" else "world"
+                    # Fallback: try Chinese pattern detection, then fact_kind
+                    if _is_chinese_first_person(what):
+                        fact_type = "experience"
+                        logger.debug(f"Detected Chinese first-person in fact: {what[:50]}...")
+                    else:
+                        raw_fact_kind = llm_fact.get("fact_kind")
+                        fact_type = "experience" if raw_fact_kind == "assistant" else "world"
 
                 # Get fact_kind for temporal handling (but don't store it)
                 fact_kind = llm_fact.get("fact_kind", "conversation")
