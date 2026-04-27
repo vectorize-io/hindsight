@@ -1,5 +1,7 @@
 ---
 sidebar_position: 12
+title: "SmolAgents Persistent Memory with Hindsight | Integration"
+description: "Add long-term memory to HuggingFace SmolAgents with Hindsight retain, recall, and reflect tools — drop-in Tool subclasses your agent can call directly."
 ---
 
 # SmolAgents
