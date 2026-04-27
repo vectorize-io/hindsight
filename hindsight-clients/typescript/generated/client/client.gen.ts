@@ -78,11 +78,9 @@ export const createClient = (config: Config = {}): Client => {
   const request: Client["request"] = async (options) => {
     // @ts-expect-error
     const { opts, url } = await beforeRequest(options);
-    // Exclude hey-api internal fields that conflict with Deno's RequestInit.client
-    const { client: _client, ...optsForRequest } = opts as typeof opts & { client?: unknown };
     const requestInit: ReqInit = {
       redirect: "follow",
-      ...optsForRequest,
+      ...opts,
       body: getValidRequestBody(opts),
     };
 

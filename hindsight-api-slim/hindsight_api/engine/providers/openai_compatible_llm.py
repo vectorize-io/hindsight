@@ -660,11 +660,7 @@ class OpenAICompatibleLLM(LLMInterface):
         if "deepseek" in self.model.lower():
             normalized_messages: list[dict[str, Any]] = []
             for msg in messages:
-                if (
-                    msg.get("role") == "assistant"
-                    and msg.get("tool_calls")
-                    and "reasoning_content" not in msg
-                ):
+                if msg.get("role") == "assistant" and msg.get("tool_calls") and "reasoning_content" not in msg:
                     normalized_msg = dict(msg)
                     normalized_msg["reasoning_content"] = ""
                     normalized_messages.append(normalized_msg)
