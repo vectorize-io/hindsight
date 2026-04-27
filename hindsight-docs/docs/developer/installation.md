@@ -45,6 +45,24 @@ Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configura
 
 You need an LLM API key for fact extraction, entity resolution, and answer generation. See [Models](./models) for supported providers, model recommendations, and configuration.
 
+### Hardware
+
+Hindsight is designed to run on commodity hardware. The footprint depends mainly on whether the **full** image (which bundles local embedding and reranker models) or the **slim** image (which delegates those to external providers) is used.
+
+| Component | Minimum RAM | Recommended RAM | Notes |
+|-----------|-------------|-----------------|-------|
+| **API — Full image** | 1.5 GB | 2 GB | Loads local BGE embedder (~130 MB) and MiniLM cross-encoder (~90 MB) into memory, plus PyTorch/ONNX runtime arenas. Idle RSS settles around 0.8–1.0 GB; expect 1.2–1.5 GB under load. |
+| **API — Slim image** | 512 MB | 1 GB | No local models. Steady-state RSS is dominated by Python runtime and DB connections. Requires [external embedding and reranker providers](./configuration#embeddings) (e.g. TEI, OpenAI, Cohere). |
+| **Control Plane (UI)** | 128 MB | 256 MB | Next.js process, lightweight. |
+| **Worker** (if separated) | Same as API image variant | Same as API image variant | Workers load the same models as the API server. |
+| **PostgreSQL** | 512 MB | 1 GB+ | Scales with the number of memories and indexes. |
+
+:::tip Reducing the footprint
+The bulk of the full image's memory comes from the bundled embedding and reranker models and their PyTorch/ONNX runtimes. To shrink the deployment to a few hundred MB of RAM, switch to the **slim** image and configure [external embedding and reranker providers](./configuration#embeddings).
+:::
+
+CPU: 2 vCPUs is enough for development. For production, scale CPU with the rate of `retain` and `recall` calls — local embedding and reranking are CPU-bound. GPU is not required.
+
 ---
 
 ## Docker
@@ -67,10 +85,12 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 ### Docker Image Variants
 
-| Variant | Size (AMD64) | Size (ARM64) | When to use |
-|---------|--------------|--------------|-------------|
-| **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Works out of the box with no external services except the LLM. |
-| **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
+| Variant | Size (AMD64) | Size (ARM64) | Idle RAM | When to use |
+|---------|--------------|--------------|----------|-------------|
+| **Full** (`latest`) | ~9 GB | ~3.7 GB | ~1.2 GB | Default. Works out of the box with no external services except the LLM. Bundles local embedder and reranker models. |
+| **Slim** (`slim`) | ~500 MB | ~500 MB | ~300–500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys, and lower memory. Requires [external providers](./configuration#embeddings). |
+
+Idle RAM is for the API + Control Plane container at rest; expect ~20–30% more under load. See [Hardware](#hardware) for the breakdown.
 
 The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
 
