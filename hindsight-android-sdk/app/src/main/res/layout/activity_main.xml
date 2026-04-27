@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Hindsight Memory SDK"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Server: stopped"
+            android:textSize="14sp"
+            android:padding="8dp"
+            android:background="#F0F0F0"
+            android:layout_marginBottom="16dp" />
+
+        <!-- API Key -->
+        <EditText
+            android:id="@+id/apiKeyInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="OpenAI API Key"
+            android:inputType="textPassword"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/startButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start Server"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Retain -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Retain Memory"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/retainInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Enter content to remember..."
+            android:minLines="3"
+            android:gravity="top"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/retainButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Retain"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Recall -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Recall Memory"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/queryInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Search your memories..."
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/recallButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Recall"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Results -->
+        <TextView
+            android:id="@+id/resultsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Results will appear here"
+            android:textSize="14sp"
+            android:padding="8dp"
+            android:background="#F8F8F8"
+            android:minHeight="200dp" />
+
+    </LinearLayout>
+</ScrollView>
