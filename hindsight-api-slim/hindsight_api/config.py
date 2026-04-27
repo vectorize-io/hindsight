@@ -331,6 +331,7 @@ ENV_FILE_PARSER = "HINDSIGHT_API_FILE_PARSER"
 ENV_FILE_PARSER_ALLOWLIST = "HINDSIGHT_API_FILE_PARSER_ALLOWLIST"
 ENV_FILE_PARSER_IRIS_TOKEN = "HINDSIGHT_API_FILE_PARSER_IRIS_TOKEN"
 ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
+ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
@@ -1009,6 +1010,7 @@ class HindsightConfig:
     file_parser_allowlist: list[str] | None  # Parsers clients may request (None = all registered)
     file_parser_iris_token: str | None  # Vectorize API token for iris parser (VECTORIZE_TOKEN)
     file_parser_iris_org_id: str | None  # Vectorize org ID for iris parser (VECTORIZE_ORG_ID)
+    file_parser_llama_parse_api_key: str | None  # LlamaCloud API key for llama_parse parser
     file_conversion_max_batch_size_mb: int  # Max total batch size in MB (all files combined)
     file_conversion_max_batch_size: int  # Max files per request
     enable_file_upload_api: bool
@@ -1148,6 +1150,7 @@ class HindsightConfig:
         "file_storage_azure_account_key",
         # File parser credentials
         "file_parser_iris_token",
+        "file_parser_llama_parse_api_key",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -1630,6 +1633,7 @@ class HindsightConfig:
             else None,
             file_parser_iris_token=os.getenv(ENV_FILE_PARSER_IRIS_TOKEN) or None,
             file_parser_iris_org_id=os.getenv(ENV_FILE_PARSER_IRIS_ORG_ID) or None,
+            file_parser_llama_parse_api_key=os.getenv(ENV_FILE_PARSER_LLAMA_PARSE_API_KEY) or None,
             file_conversion_max_batch_size_mb=int(
                 os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB))
             ),

@@ -920,6 +920,25 @@ export HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID=your-org-id
 export HINDSIGHT_API_FILE_PARSER=iris,markitdown
 ```
 
+#### Parser: llama_parse
+
+Cloud-based extraction via [LlamaParse](https://docs.cloud.llamaindex.ai/llamaparse) (LlamaIndex). Strong extraction for complex layouts — tables, charts, multi-column PDFs.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY` | LlamaCloud API key (typically starts with `llx-`) | — |
+
+**Supported formats:** PDF, DOCX, PPTX, XLSX, HTML, EPUB, RTF, TXT, and many more — see the [LlamaParse docs](https://docs.cloud.llamaindex.ai/llamaparse/features/supported_document_types) for the full list.
+
+```bash
+# Use llama_parse as the only parser
+export HINDSIGHT_API_FILE_PARSER=llama_parse
+export HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY=llx-your-api-key
+
+# Or: try llama_parse first, fall back to markitdown
+export HINDSIGHT_API_FILE_PARSER=llama_parse,markitdown
+```
+
 ```bash
 # Increase batch limits for large file imports
 export HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE=20

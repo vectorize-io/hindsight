@@ -1905,7 +1905,7 @@ class MemoryEngine(MemoryEngineInterface):
         logger.debug(f"File storage initialized ({config.file_storage_type})")
 
         # Initialize parser registry
-        from .parsers import FileParserRegistry, IrisParser, MarkitdownParser
+        from .parsers import FileParserRegistry, IrisParser, LlamaParseParser, MarkitdownParser
 
         self._parser_registry = FileParserRegistry()
         try:
@@ -1920,6 +1920,12 @@ class MemoryEngine(MemoryEngineInterface):
             logger.debug("Registered iris parser")
         else:
             logger.debug("Iris parser not registered (VECTORIZE_TOKEN or VECTORIZE_ORG_ID not set)")
+        llama_parse_key = config.file_parser_llama_parse_api_key
+        if llama_parse_key:
+            self._parser_registry.register(LlamaParseParser(api_key=llama_parse_key))
+            logger.debug("Registered llama_parse parser")
+        else:
+            logger.debug("LlamaParse parser not registered (HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY not set)")
 
         # Initialize webhook manager
         from ..webhooks import WebhookManager
