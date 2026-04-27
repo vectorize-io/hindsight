@@ -241,6 +241,16 @@
       "icon": "/img/icons/agentcore.png"
     },
     {
+      "id": "smolagents",
+      "name": "SmolAgents",
+      "description": "Give HuggingFace SmolAgents persistent long-term memory with Hindsight retain, recall, and reflect tools.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/smolagents",
+      "icon": "/img/icons/smolagents.png"
+    },
+    {
       "id": "hindclaw",
       "name": "HindClaw",
       "description": "Production memory infrastructure for AI agents — server-side access control via Hindsight extensions, Terraform provider for users/groups/banks/permissions, and an OpenClaw plugin with auto-managed embed.",
