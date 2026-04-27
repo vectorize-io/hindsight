@@ -94,7 +94,7 @@ jobs:
 
     - name: Upload perf results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: perf-results-${{ github.sha }}
         path: hindsight-dev/perf-results.json
@@ -167,7 +167,7 @@ jobs:
 
     - name: Upload LoComo results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: locomo-results-${{ github.sha }}
         path: hindsight-dev/benchmarks/locomo/results/
