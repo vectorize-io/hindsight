@@ -1,0 +1,53 @@
+graph LR
+    User["👤 User<br/><i>preferences, feedback,<br/>analytics data</i>"] <-->|"conversation"| Agent
+
+    RefDoc["📑 Reference Docs<br/><i>SEO best practices,<br/>style guides, playbooks</i><br/>(ingested at setup)"]
+
+    subgraph OpenClaw["OpenClaw"]
+        Agent["🤖 Marketing SEO Agent"]
+        Skill["agent-knowledge<br/>skill"]
+        Plugin["hindsight-agent<br/>plugin"]
+    end
+
+    subgraph HindsightAgent["hindsight-agent CLI"]
+        PagesCmd["pages list/create"]
+        RecallCmd["recall"]
+    end
+
+    subgraph Hindsight["Hindsight"]
+        Bank["Memory<br/>Bank"]
+        Consol["Consolidation"]
+        Obs["Observations<br/><i>''meta descriptions &lt;160 chars''</i><br/><i>''user wants 800 words''</i><br/><i>''comparison posts 3x traffic''</i><br/><i>''never use leverage''</i>"]
+        Reflect["Reflect"]
+    end
+
+    subgraph KP["Knowledge Pages"]
+        direction TB
+        MM1["<b>SEO Best Practices</b><br/><i>What are the best practices,<br/>preferring our data over<br/>industry advice?</i>"]
+        MM2["<b>Content Performance</b><br/><i>What strategies have<br/>performed well or poorly?<br/>Include specific numbers.</i>"]
+        MM3["<b>Editorial Preferences</b><br/><i>What does the user prefer<br/>for tone, voice, length?<br/>Include corrections.</i>"]
+    end
+
+    Agent --- Skill
+    Agent -->|"agent_end"| Plugin
+
+    Plugin -->|"1. retains conversation<br/>(deterministic, async)"| Bank
+    RefDoc -->|"ingested at setup<br/>(hindsight-agent --content)"| Bank
+
+    Bank -->|"2. extracts facts<br/>(background)"| Consol
+    Consol -->|"3. structured"| Obs
+    Obs -->|"4. re-runs each<br/>synthesis query"| Reflect
+    Reflect -->|"5. updates<br/>page content"| KP
+
+    Skill -->|"reads pages<br/>(session startup)"| PagesCmd
+    PagesCmd -->|"resolves<br/>agent → bank"| KP
+    Skill -.->|"creates pages"| PagesCmd
+    Skill -->|"ad-hoc search"| RecallCmd
+    RecallCmd --> Obs
+
+    style OpenClaw fill:#d0ebff,stroke:#1971c2,stroke-width:2px
+    style HindsightAgent fill:#ffe8cc,stroke:#e8590c,stroke-width:2px
+    style Hindsight fill:#f3d9fa,stroke:#9c36b5,stroke-width:2px
+    style KP fill:#c3fae8,stroke:#1098ad,stroke-width:2px
+    style User fill:#d8f5a2,stroke:#2f9e44,stroke-width:2px
+    style RefDoc fill:#fff3bf,stroke:#e67700,stroke-width:2px
