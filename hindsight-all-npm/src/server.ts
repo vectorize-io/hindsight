@@ -1,12 +1,12 @@
-import { spawn } from 'child_process';
-import { getEmbedCommand } from './command.js';
-import { silentLogger } from './logger.js';
-import type { Logger } from './logger.js';
-import type { HindsightServerOptions } from './types.js';
+import { spawn } from "child_process";
+import { getEmbedCommand } from "./command.js";
+import { silentLogger } from "./logger.js";
+import type { Logger } from "./logger.js";
+import type { HindsightServerOptions } from "./types.js";
 
 const DEFAULT_PORT = 8888;
-const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_PROFILE = 'default';
+const DEFAULT_HOST = "127.0.0.1";
+const DEFAULT_PROFILE = "default";
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const DEFAULT_READY_POLL_INTERVAL_MS = 1_000;
 
@@ -61,7 +61,7 @@ export class HindsightServer {
     this.userEnv = opts.env ?? {};
     this.extraProfileCreateArgs = opts.extraProfileCreateArgs ?? [];
     this.extraDaemonStartArgs = opts.extraDaemonStartArgs ?? [];
-    this.platformCpuWorkaround = opts.platformCpuWorkaround ?? (process.platform === 'darwin');
+    this.platformCpuWorkaround = opts.platformCpuWorkaround ?? process.platform === "darwin";
     this.readyTimeoutMs = opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.readyPollIntervalMs = opts.readyPollIntervalMs ?? DEFAULT_READY_POLL_INTERVAL_MS;
     this.logger = opts.logger ?? silentLogger;
@@ -100,22 +100,22 @@ export class HindsightServer {
       embedVersion: this.embedVersion,
       embedPackagePath: this.embedPackagePath,
     });
-    const args = [...baseArgs, 'daemon', '--profile', this.profile, 'stop'];
+    const args = [...baseArgs, "daemon", "--profile", this.profile, "stop"];
 
-    const child = spawn(cmd, args, { stdio: 'pipe' });
-    this.pipeOutput(child, 'daemon.stop');
+    const child = spawn(cmd, args, { stdio: "pipe" });
+    this.pipeOutput(child, "daemon.stop");
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
         this.logger.warn(`[hindsight] daemon stop timed out after 5s`);
         resolve();
       }, 5_000);
-      child.on('exit', () => {
+      child.on("exit", () => {
         clearTimeout(timeout);
         this.logger.info(`[hindsight] daemon stopped`);
         resolve();
       });
-      child.on('error', (err) => {
+      child.on("error", (err) => {
         clearTimeout(timeout);
         this.logger.warn(`[hindsight] error stopping daemon: ${err.message}`);
         resolve();
@@ -147,9 +147,9 @@ export class HindsightServer {
   private buildEnv(): NodeJS.ProcessEnv {
     const merged: NodeJS.ProcessEnv = { ...process.env };
 
-    if (this.platformCpuWorkaround && process.platform === 'darwin') {
-      merged['HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU'] = '1';
-      merged['HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU'] = '1';
+    if (this.platformCpuWorkaround && process.platform === "darwin") {
+      merged["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1";
+      merged["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1";
     }
 
     for (const [key, value] of Object.entries(this.userEnv)) {
@@ -175,11 +175,11 @@ export class HindsightServer {
     });
     const createArgs = [
       ...baseArgs,
-      'profile',
-      'create',
+      "profile",
+      "create",
       this.profile,
-      '--merge',
-      '--port',
+      "--merge",
+      "--port",
       String(this.port),
     ];
 
@@ -189,12 +189,12 @@ export class HindsightServer {
     // host state into profile config.
     const envForProfile = this.collectProfileEnv(env);
     for (const [key, value] of Object.entries(envForProfile)) {
-      createArgs.push('--env', `${key}=${value}`);
+      createArgs.push("--env", `${key}=${value}`);
     }
 
     createArgs.push(...this.extraProfileCreateArgs);
 
-    await this.runCommand(cmd, createArgs, env, 'profile.create');
+    await this.runCommand(cmd, createArgs, env, "profile.create");
   }
 
   /** Collect only the env vars that should be written into the profile file. */
@@ -209,10 +209,10 @@ export class HindsightServer {
     }
 
     // 2. CPU workaround — only if auto-applied and not already overridden.
-    if (this.platformCpuWorkaround && process.platform === 'darwin') {
+    if (this.platformCpuWorkaround && process.platform === "darwin") {
       const cpuKeys = [
-        'HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU',
-        'HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU',
+        "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU",
+        "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU",
       ];
       for (const key of cpuKeys) {
         if (!(key in out) && env[key] !== undefined) {
@@ -231,14 +231,14 @@ export class HindsightServer {
     });
     const args = [
       ...baseArgs,
-      'daemon',
-      '--profile',
+      "daemon",
+      "--profile",
       this.profile,
-      'start',
+      "start",
       ...this.extraDaemonStartArgs,
     ];
 
-    await this.runCommand(cmd, args, env, 'daemon.start');
+    await this.runCommand(cmd, args, env, "daemon.start");
   }
 
   /**
@@ -249,34 +249,34 @@ export class HindsightServer {
     cmd: string,
     args: string[],
     env: NodeJS.ProcessEnv,
-    label: string,
+    label: string
   ): Promise<void> {
-    const child = spawn(cmd, args, { stdio: 'pipe', env });
-    let output = '';
-    child.stdout?.on('data', (data: Buffer) => {
+    const child = spawn(cmd, args, { stdio: "pipe", env });
+    let output = "";
+    child.stdout?.on("data", (data: Buffer) => {
       const text = data.toString();
       output += text;
-      for (const line of text.trimEnd().split('\n')) {
+      for (const line of text.trimEnd().split("\n")) {
         if (line) this.logger.info(`[hindsight:${label}] ${line}`);
       }
     });
-    child.stderr?.on('data', (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       const text = data.toString();
       output += text;
-      for (const line of text.trimEnd().split('\n')) {
+      for (const line of text.trimEnd().split("\n")) {
         if (line) this.logger.warn(`[hindsight:${label}] ${line}`);
       }
     });
 
     await new Promise<void>((resolve, reject) => {
-      child.on('exit', (code) => {
+      child.on("exit", (code) => {
         if (code === 0) {
           resolve();
         } else {
           reject(new Error(`${label} failed with code ${code}: ${output.trim()}`));
         }
       });
-      child.on('error', (err) => {
+      child.on("error", (err) => {
         reject(new Error(`${label} failed to spawn: ${err.message}`, { cause: err }));
       });
     });
@@ -284,13 +284,13 @@ export class HindsightServer {
 
   /** Stream a spawned child's stdout/stderr through the logger without blocking. */
   private pipeOutput(child: ReturnType<typeof spawn>, label: string): void {
-    child.stdout?.on('data', (data: Buffer) => {
-      for (const line of data.toString().trimEnd().split('\n')) {
+    child.stdout?.on("data", (data: Buffer) => {
+      for (const line of data.toString().trimEnd().split("\n")) {
         if (line) this.logger.info(`[hindsight:${label}] ${line}`);
       }
     });
-    child.stderr?.on('data', (data: Buffer) => {
-      for (const line of data.toString().trimEnd().split('\n')) {
+    child.stderr?.on("data", (data: Buffer) => {
+      for (const line of data.toString().trimEnd().split("\n")) {
         if (line) this.logger.warn(`[hindsight:${label}] ${line}`);
       }
     });
@@ -316,7 +316,7 @@ export class HindsightServer {
       await new Promise((resolve) => setTimeout(resolve, this.readyPollIntervalMs));
     }
     throw new Error(
-      `Hindsight daemon did not become ready within ${this.readyTimeoutMs}ms at ${this.baseUrl}`,
+      `Hindsight daemon did not become ready within ${this.readyTimeoutMs}ms at ${this.baseUrl}`
     );
   }
 }

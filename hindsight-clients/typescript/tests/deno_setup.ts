@@ -12,12 +12,12 @@ import { beforeAll, beforeEach, afterAll, afterEach, describe, it } from "jsr:@s
 import { expect } from "jsr:@std/expect";
 
 Object.assign(globalThis, {
-    describe,
-    test: it,
-    it,
-    beforeAll,
-    beforeEach,
-    afterAll,
-    afterEach,
-    expect,
+  describe,
+  test: it,
+  it,
+  beforeAll,
+  beforeEach,
+  afterAll,
+  afterEach,
+  expect,
 });

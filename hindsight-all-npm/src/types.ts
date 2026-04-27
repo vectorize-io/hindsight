@@ -1,4 +1,4 @@
-import type { Logger } from './logger.js';
+import type { Logger } from "./logger.js";
 
 /**
  * Options for {@link HindsightServer}.

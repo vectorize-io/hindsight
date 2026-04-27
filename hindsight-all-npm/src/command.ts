@@ -18,8 +18,8 @@ export interface EmbedCommandOptions {
 
 export function getEmbedCommand(opts: EmbedCommandOptions = {}): string[] {
   if (opts.embedPackagePath) {
-    return ['uv', 'run', '--directory', opts.embedPackagePath, 'hindsight-embed'];
+    return ["uv", "run", "--directory", opts.embedPackagePath, "hindsight-embed"];
   }
-  const version = opts.embedVersion && opts.embedVersion.length > 0 ? opts.embedVersion : 'latest';
-  return ['uvx', `hindsight-embed@${version}`];
+  const version = opts.embedVersion && opts.embedVersion.length > 0 ? opts.embedVersion : "latest";
+  return ["uvx", `hindsight-embed@${version}`];
 }

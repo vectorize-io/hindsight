@@ -1869,12 +1869,7 @@ export type MemoryItem = {
    *
    * How to scope observations during consolidation. 'per_tag' runs one consolidation pass per individual tag, creating separate observations for each tag. 'combined' (default) runs a single pass with all tags together. A list of tag lists runs one pass per inner list, giving full control over which combinations to use.
    */
-  observation_scopes?:
-    | "per_tag"
-    | "combined"
-    | "all_combinations"
-    | Array<Array<string>>
-    | null;
+  observation_scopes?: "per_tag" | "combined" | "all_combinations" | Array<Array<string>> | null;
   /**
    * Strategy
    *
@@ -2041,9 +2036,7 @@ export type MentalModelTriggerInput = {
    *
    * Compound boolean tag expressions to use during refresh instead of the model's own tags. When set, these tag groups are passed to reflect and the model's flat tags are NOT used for filtering. Supports nested and/or/not expressions for complex tag-based scoping.
    */
-  tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
-  > | null;
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
   /**
    * Include Chunks
    *
@@ -2195,13 +2188,7 @@ export type OperationStatusResponse = {
   /**
    * Status
    */
-  status:
-    | "pending"
-    | "processing"
-    | "completed"
-    | "failed"
-    | "cancelled"
-    | "not_found";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled" | "not_found";
   /**
    * Operation Type
    */
@@ -2338,9 +2325,7 @@ export type RecallRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
-  tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
-  > | null;
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
 };
 
 /**
@@ -2661,9 +2646,7 @@ export type ReflectRequest = {
    *
    * Compound tag filter using boolean groups. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}.
    */
-  tag_groups?: Array<
-    TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
-  > | null;
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
   /**
    * Fact Types
    *
@@ -2917,9 +2900,7 @@ export type TagGroupAndInput = {
   /**
    * And
    */
-  and: Array<
-    TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
-  >;
+  and: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
 };
 
 /**
@@ -2931,9 +2912,7 @@ export type TagGroupAndOutput = {
   /**
    * And
    */
-  and: Array<
-    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
-  >;
+  and: Array<TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput>;
 };
 
 /**
@@ -2985,9 +2964,7 @@ export type TagGroupOrInput = {
   /**
    * Or
    */
-  or: Array<
-    TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput
-  >;
+  or: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput>;
 };
 
 /**
@@ -2999,9 +2976,7 @@ export type TagGroupOrOutput = {
   /**
    * Or
    */
-  or: Array<
-    TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput
-  >;
+  or: Array<TagGroupLeaf | TagGroupAndOutput | TagGroupOrOutput | TagGroupNotOutput>;
 };
 
 /**
@@ -3593,8 +3568,7 @@ export type ListMemoriesResponses = {
   200: ListMemoryUnitsResponse;
 };
 
-export type ListMemoriesResponse =
-  ListMemoriesResponses[keyof ListMemoriesResponses];
+export type ListMemoriesResponse = ListMemoriesResponses[keyof ListMemoriesResponses];
 
 export type GetMemoryData = {
   body?: never;
@@ -3698,8 +3672,7 @@ export type RecallMemoriesErrors = {
   422: HttpValidationError;
 };
 
-export type RecallMemoriesError =
-  RecallMemoriesErrors[keyof RecallMemoriesErrors];
+export type RecallMemoriesError = RecallMemoriesErrors[keyof RecallMemoriesErrors];
 
 export type RecallMemoriesResponses = {
   /**
@@ -3708,8 +3681,7 @@ export type RecallMemoriesResponses = {
   200: RecallResponse;
 };
 
-export type RecallMemoriesResponse =
-  RecallMemoriesResponses[keyof RecallMemoriesResponses];
+export type RecallMemoriesResponse = RecallMemoriesResponses[keyof RecallMemoriesResponses];
 
 export type ReflectData = {
   body: ReflectRequest;
@@ -3812,8 +3784,7 @@ export type GetAgentStatsResponses = {
   200: BankStatsResponse;
 };
 
-export type GetAgentStatsResponse =
-  GetAgentStatsResponses[keyof GetAgentStatsResponses];
+export type GetAgentStatsResponse = GetAgentStatsResponses[keyof GetAgentStatsResponses];
 
 export type GetMemoriesTimeseriesData = {
   body?: never;
@@ -3905,8 +3876,7 @@ export type ListEntitiesResponses = {
   200: EntityListResponse;
 };
 
-export type ListEntitiesResponse =
-  ListEntitiesResponses[keyof ListEntitiesResponses];
+export type ListEntitiesResponse = ListEntitiesResponses[keyof ListEntitiesResponses];
 
 export type GetEntityGraphData = {
   body?: never;
@@ -3946,8 +3916,7 @@ export type GetEntityGraphErrors = {
   422: HttpValidationError;
 };
 
-export type GetEntityGraphError =
-  GetEntityGraphErrors[keyof GetEntityGraphErrors];
+export type GetEntityGraphError = GetEntityGraphErrors[keyof GetEntityGraphErrors];
 
 export type GetEntityGraphResponses = {
   /**
@@ -3956,8 +3925,7 @@ export type GetEntityGraphResponses = {
   200: EntityGraphResponse;
 };
 
-export type GetEntityGraphResponse =
-  GetEntityGraphResponses[keyof GetEntityGraphResponses];
+export type GetEntityGraphResponse = GetEntityGraphResponses[keyof GetEntityGraphResponses];
 
 export type GetEntityData = {
   body?: never;
@@ -4093,8 +4061,7 @@ export type ListMentalModelsErrors = {
   422: HttpValidationError;
 };
 
-export type ListMentalModelsError =
-  ListMentalModelsErrors[keyof ListMentalModelsErrors];
+export type ListMentalModelsError = ListMentalModelsErrors[keyof ListMentalModelsErrors];
 
 export type ListMentalModelsResponses = {
   /**
@@ -4103,8 +4070,7 @@ export type ListMentalModelsResponses = {
   200: MentalModelListResponse;
 };
 
-export type ListMentalModelsResponse =
-  ListMentalModelsResponses[keyof ListMentalModelsResponses];
+export type ListMentalModelsResponse = ListMentalModelsResponses[keyof ListMentalModelsResponses];
 
 export type CreateMentalModelData = {
   body: CreateMentalModelRequest;
@@ -4131,8 +4097,7 @@ export type CreateMentalModelErrors = {
   422: HttpValidationError;
 };
 
-export type CreateMentalModelError =
-  CreateMentalModelErrors[keyof CreateMentalModelErrors];
+export type CreateMentalModelError = CreateMentalModelErrors[keyof CreateMentalModelErrors];
 
 export type CreateMentalModelResponses = {
   /**
@@ -4173,8 +4138,7 @@ export type DeleteMentalModelErrors = {
   422: HttpValidationError;
 };
 
-export type DeleteMentalModelError =
-  DeleteMentalModelErrors[keyof DeleteMentalModelErrors];
+export type DeleteMentalModelError = DeleteMentalModelErrors[keyof DeleteMentalModelErrors];
 
 export type DeleteMentalModelResponses = {
   /**
@@ -4219,8 +4183,7 @@ export type GetMentalModelErrors = {
   422: HttpValidationError;
 };
 
-export type GetMentalModelError =
-  GetMentalModelErrors[keyof GetMentalModelErrors];
+export type GetMentalModelError = GetMentalModelErrors[keyof GetMentalModelErrors];
 
 export type GetMentalModelResponses = {
   /**
@@ -4229,8 +4192,7 @@ export type GetMentalModelResponses = {
   200: MentalModelResponse;
 };
 
-export type GetMentalModelResponse =
-  GetMentalModelResponses[keyof GetMentalModelResponses];
+export type GetMentalModelResponse = GetMentalModelResponses[keyof GetMentalModelResponses];
 
 export type UpdateMentalModelData = {
   body: UpdateMentalModelRequest;
@@ -4261,8 +4223,7 @@ export type UpdateMentalModelErrors = {
   422: HttpValidationError;
 };
 
-export type UpdateMentalModelError =
-  UpdateMentalModelErrors[keyof UpdateMentalModelErrors];
+export type UpdateMentalModelError = UpdateMentalModelErrors[keyof UpdateMentalModelErrors];
 
 export type UpdateMentalModelResponses = {
   /**
@@ -4342,8 +4303,7 @@ export type RefreshMentalModelErrors = {
   422: HttpValidationError;
 };
 
-export type RefreshMentalModelError =
-  RefreshMentalModelErrors[keyof RefreshMentalModelErrors];
+export type RefreshMentalModelError = RefreshMentalModelErrors[keyof RefreshMentalModelErrors];
 
 export type RefreshMentalModelResponses = {
   /**
@@ -4407,8 +4367,7 @@ export type ListDirectivesErrors = {
   422: HttpValidationError;
 };
 
-export type ListDirectivesError =
-  ListDirectivesErrors[keyof ListDirectivesErrors];
+export type ListDirectivesError = ListDirectivesErrors[keyof ListDirectivesErrors];
 
 export type ListDirectivesResponses = {
   /**
@@ -4417,8 +4376,7 @@ export type ListDirectivesResponses = {
   200: DirectiveListResponse;
 };
 
-export type ListDirectivesResponse =
-  ListDirectivesResponses[keyof ListDirectivesResponses];
+export type ListDirectivesResponse = ListDirectivesResponses[keyof ListDirectivesResponses];
 
 export type CreateDirectiveData = {
   body: CreateDirectiveRequest;
@@ -4445,8 +4403,7 @@ export type CreateDirectiveErrors = {
   422: HttpValidationError;
 };
 
-export type CreateDirectiveError =
-  CreateDirectiveErrors[keyof CreateDirectiveErrors];
+export type CreateDirectiveError = CreateDirectiveErrors[keyof CreateDirectiveErrors];
 
 export type CreateDirectiveResponses = {
   /**
@@ -4455,8 +4412,7 @@ export type CreateDirectiveResponses = {
   200: DirectiveResponse;
 };
 
-export type CreateDirectiveResponse =
-  CreateDirectiveResponses[keyof CreateDirectiveResponses];
+export type CreateDirectiveResponse = CreateDirectiveResponses[keyof CreateDirectiveResponses];
 
 export type DeleteDirectiveData = {
   body?: never;
@@ -4487,8 +4443,7 @@ export type DeleteDirectiveErrors = {
   422: HttpValidationError;
 };
 
-export type DeleteDirectiveError =
-  DeleteDirectiveErrors[keyof DeleteDirectiveErrors];
+export type DeleteDirectiveError = DeleteDirectiveErrors[keyof DeleteDirectiveErrors];
 
 export type DeleteDirectiveResponses = {
   /**
@@ -4535,8 +4490,7 @@ export type GetDirectiveResponses = {
   200: DirectiveResponse;
 };
 
-export type GetDirectiveResponse =
-  GetDirectiveResponses[keyof GetDirectiveResponses];
+export type GetDirectiveResponse = GetDirectiveResponses[keyof GetDirectiveResponses];
 
 export type UpdateDirectiveData = {
   body: UpdateDirectiveRequest;
@@ -4567,8 +4521,7 @@ export type UpdateDirectiveErrors = {
   422: HttpValidationError;
 };
 
-export type UpdateDirectiveError =
-  UpdateDirectiveErrors[keyof UpdateDirectiveErrors];
+export type UpdateDirectiveError = UpdateDirectiveErrors[keyof UpdateDirectiveErrors];
 
 export type UpdateDirectiveResponses = {
   /**
@@ -4577,8 +4530,7 @@ export type UpdateDirectiveResponses = {
   200: DirectiveResponse;
 };
 
-export type UpdateDirectiveResponse =
-  UpdateDirectiveResponses[keyof UpdateDirectiveResponses];
+export type UpdateDirectiveResponse = UpdateDirectiveResponses[keyof UpdateDirectiveResponses];
 
 export type ListDocumentsData = {
   body?: never;
@@ -4641,8 +4593,7 @@ export type ListDocumentsResponses = {
   200: ListDocumentsResponse;
 };
 
-export type ListDocumentsResponse2 =
-  ListDocumentsResponses[keyof ListDocumentsResponses];
+export type ListDocumentsResponse2 = ListDocumentsResponses[keyof ListDocumentsResponses];
 
 export type ListDocumentChunksData = {
   body?: never;
@@ -4686,8 +4637,7 @@ export type ListDocumentChunksErrors = {
   422: HttpValidationError;
 };
 
-export type ListDocumentChunksError =
-  ListDocumentChunksErrors[keyof ListDocumentChunksErrors];
+export type ListDocumentChunksError = ListDocumentChunksErrors[keyof ListDocumentChunksErrors];
 
 export type ListDocumentChunksResponses = {
   /**
@@ -4728,8 +4678,7 @@ export type ReprocessDocumentErrors = {
   422: HttpValidationError;
 };
 
-export type ReprocessDocumentError =
-  ReprocessDocumentErrors[keyof ReprocessDocumentErrors];
+export type ReprocessDocumentError = ReprocessDocumentErrors[keyof ReprocessDocumentErrors];
 
 export type ReprocessDocumentResponses = {
   /**
@@ -4770,8 +4719,7 @@ export type DeleteDocumentErrors = {
   422: HttpValidationError;
 };
 
-export type DeleteDocumentError =
-  DeleteDocumentErrors[keyof DeleteDocumentErrors];
+export type DeleteDocumentError = DeleteDocumentErrors[keyof DeleteDocumentErrors];
 
 export type DeleteDocumentResponses = {
   /**
@@ -4780,8 +4728,7 @@ export type DeleteDocumentResponses = {
   200: DeleteDocumentResponse;
 };
 
-export type DeleteDocumentResponse2 =
-  DeleteDocumentResponses[keyof DeleteDocumentResponses];
+export type DeleteDocumentResponse2 = DeleteDocumentResponses[keyof DeleteDocumentResponses];
 
 export type GetDocumentData = {
   body?: never;
@@ -4821,8 +4768,7 @@ export type GetDocumentResponses = {
   200: DocumentResponse;
 };
 
-export type GetDocumentResponse =
-  GetDocumentResponses[keyof GetDocumentResponses];
+export type GetDocumentResponse = GetDocumentResponses[keyof GetDocumentResponses];
 
 export type UpdateDocumentData = {
   body: UpdateDocumentRequest;
@@ -4853,8 +4799,7 @@ export type UpdateDocumentErrors = {
   422: HttpValidationError;
 };
 
-export type UpdateDocumentError =
-  UpdateDocumentErrors[keyof UpdateDocumentErrors];
+export type UpdateDocumentError = UpdateDocumentErrors[keyof UpdateDocumentErrors];
 
 export type UpdateDocumentResponses = {
   /**
@@ -4863,8 +4808,7 @@ export type UpdateDocumentResponses = {
   200: UpdateDocumentResponse;
 };
 
-export type UpdateDocumentResponse2 =
-  UpdateDocumentResponses[keyof UpdateDocumentResponses];
+export type UpdateDocumentResponse2 = UpdateDocumentResponses[keyof UpdateDocumentResponses];
 
 export type ListTagsData = {
   body?: never;
@@ -5013,8 +4957,7 @@ export type ListOperationsErrors = {
   422: HttpValidationError;
 };
 
-export type ListOperationsError =
-  ListOperationsErrors[keyof ListOperationsErrors];
+export type ListOperationsError = ListOperationsErrors[keyof ListOperationsErrors];
 
 export type ListOperationsResponses = {
   /**
@@ -5023,8 +4966,7 @@ export type ListOperationsResponses = {
   200: OperationsListResponse;
 };
 
-export type ListOperationsResponse =
-  ListOperationsResponses[keyof ListOperationsResponses];
+export type ListOperationsResponse = ListOperationsResponses[keyof ListOperationsResponses];
 
 export type CancelOperationData = {
   body?: never;
@@ -5055,8 +4997,7 @@ export type CancelOperationErrors = {
   422: HttpValidationError;
 };
 
-export type CancelOperationError =
-  CancelOperationErrors[keyof CancelOperationErrors];
+export type CancelOperationError = CancelOperationErrors[keyof CancelOperationErrors];
 
 export type CancelOperationResponses = {
   /**
@@ -5065,8 +5006,7 @@ export type CancelOperationResponses = {
   200: CancelOperationResponse;
 };
 
-export type CancelOperationResponse2 =
-  CancelOperationResponses[keyof CancelOperationResponses];
+export type CancelOperationResponse2 = CancelOperationResponses[keyof CancelOperationResponses];
 
 export type GetOperationStatusData = {
   body?: never;
@@ -5104,8 +5044,7 @@ export type GetOperationStatusErrors = {
   422: HttpValidationError;
 };
 
-export type GetOperationStatusError =
-  GetOperationStatusErrors[keyof GetOperationStatusErrors];
+export type GetOperationStatusError = GetOperationStatusErrors[keyof GetOperationStatusErrors];
 
 export type GetOperationStatusResponses = {
   /**
@@ -5146,8 +5085,7 @@ export type RetryOperationErrors = {
   422: HttpValidationError;
 };
 
-export type RetryOperationError =
-  RetryOperationErrors[keyof RetryOperationErrors];
+export type RetryOperationError = RetryOperationErrors[keyof RetryOperationErrors];
 
 export type RetryOperationResponses = {
   /**
@@ -5156,8 +5094,7 @@ export type RetryOperationResponses = {
   200: RetryOperationResponse;
 };
 
-export type RetryOperationResponse2 =
-  RetryOperationResponses[keyof RetryOperationResponses];
+export type RetryOperationResponse2 = RetryOperationResponses[keyof RetryOperationResponses];
 
 export type GetBankProfileData = {
   body?: never;
@@ -5184,8 +5121,7 @@ export type GetBankProfileErrors = {
   422: HttpValidationError;
 };
 
-export type GetBankProfileError =
-  GetBankProfileErrors[keyof GetBankProfileErrors];
+export type GetBankProfileError = GetBankProfileErrors[keyof GetBankProfileErrors];
 
 export type GetBankProfileResponses = {
   /**
@@ -5194,8 +5130,7 @@ export type GetBankProfileResponses = {
   200: BankProfileResponse;
 };
 
-export type GetBankProfileResponse =
-  GetBankProfileResponses[keyof GetBankProfileResponses];
+export type GetBankProfileResponse = GetBankProfileResponses[keyof GetBankProfileResponses];
 
 export type UpdateBankDispositionData = {
   body: UpdateDispositionRequest;
@@ -5260,8 +5195,7 @@ export type AddBankBackgroundErrors = {
   422: HttpValidationError;
 };
 
-export type AddBankBackgroundError =
-  AddBankBackgroundErrors[keyof AddBankBackgroundErrors];
+export type AddBankBackgroundError = AddBankBackgroundErrors[keyof AddBankBackgroundErrors];
 
 export type AddBankBackgroundResponses = {
   /**
@@ -5370,8 +5304,7 @@ export type CreateOrUpdateBankErrors = {
   422: HttpValidationError;
 };
 
-export type CreateOrUpdateBankError =
-  CreateOrUpdateBankErrors[keyof CreateOrUpdateBankErrors];
+export type CreateOrUpdateBankError = CreateOrUpdateBankErrors[keyof CreateOrUpdateBankErrors];
 
 export type CreateOrUpdateBankResponses = {
   /**
@@ -5415,8 +5348,7 @@ export type ImportBankTemplateErrors = {
   422: HttpValidationError;
 };
 
-export type ImportBankTemplateError =
-  ImportBankTemplateErrors[keyof ImportBankTemplateErrors];
+export type ImportBankTemplateError = ImportBankTemplateErrors[keyof ImportBankTemplateErrors];
 
 export type ImportBankTemplateResponses = {
   /**
@@ -5453,8 +5385,7 @@ export type ExportBankTemplateErrors = {
   422: HttpValidationError;
 };
 
-export type ExportBankTemplateError =
-  ExportBankTemplateErrors[keyof ExportBankTemplateErrors];
+export type ExportBankTemplateError = ExportBankTemplateErrors[keyof ExportBankTemplateErrors];
 
 export type ExportBankTemplateResponses = {
   /**
@@ -5505,8 +5436,7 @@ export type ClearObservationsErrors = {
   422: HttpValidationError;
 };
 
-export type ClearObservationsError =
-  ClearObservationsErrors[keyof ClearObservationsErrors];
+export type ClearObservationsError = ClearObservationsErrors[keyof ClearObservationsErrors];
 
 export type ClearObservationsResponses = {
   /**
@@ -5623,8 +5553,7 @@ export type ResetBankConfigErrors = {
   422: HttpValidationError;
 };
 
-export type ResetBankConfigError =
-  ResetBankConfigErrors[keyof ResetBankConfigErrors];
+export type ResetBankConfigError = ResetBankConfigErrors[keyof ResetBankConfigErrors];
 
 export type ResetBankConfigResponses = {
   /**
@@ -5633,8 +5562,7 @@ export type ResetBankConfigResponses = {
   200: BankConfigResponse;
 };
 
-export type ResetBankConfigResponse =
-  ResetBankConfigResponses[keyof ResetBankConfigResponses];
+export type ResetBankConfigResponse = ResetBankConfigResponses[keyof ResetBankConfigResponses];
 
 export type GetBankConfigData = {
   body?: never;
@@ -5670,8 +5598,7 @@ export type GetBankConfigResponses = {
   200: BankConfigResponse;
 };
 
-export type GetBankConfigResponse =
-  GetBankConfigResponses[keyof GetBankConfigResponses];
+export type GetBankConfigResponse = GetBankConfigResponses[keyof GetBankConfigResponses];
 
 export type UpdateBankConfigData = {
   body: BankConfigUpdate;
@@ -5698,8 +5625,7 @@ export type UpdateBankConfigErrors = {
   422: HttpValidationError;
 };
 
-export type UpdateBankConfigError =
-  UpdateBankConfigErrors[keyof UpdateBankConfigErrors];
+export type UpdateBankConfigError = UpdateBankConfigErrors[keyof UpdateBankConfigErrors];
 
 export type UpdateBankConfigResponses = {
   /**
@@ -5708,8 +5634,7 @@ export type UpdateBankConfigResponses = {
   200: BankConfigResponse;
 };
 
-export type UpdateBankConfigResponse =
-  UpdateBankConfigResponses[keyof UpdateBankConfigResponses];
+export type UpdateBankConfigResponse = UpdateBankConfigResponses[keyof UpdateBankConfigResponses];
 
 export type TriggerConsolidationData = {
   body?: never;
@@ -5783,8 +5708,7 @@ export type ListWebhooksResponses = {
   200: WebhookListResponse;
 };
 
-export type ListWebhooksResponse =
-  ListWebhooksResponses[keyof ListWebhooksResponses];
+export type ListWebhooksResponse = ListWebhooksResponses[keyof ListWebhooksResponses];
 
 export type CreateWebhookData = {
   body: CreateWebhookRequest;
@@ -5820,8 +5744,7 @@ export type CreateWebhookResponses = {
   201: WebhookResponse;
 };
 
-export type CreateWebhookResponse =
-  CreateWebhookResponses[keyof CreateWebhookResponses];
+export type CreateWebhookResponse = CreateWebhookResponses[keyof CreateWebhookResponses];
 
 export type DeleteWebhookData = {
   body?: never;
@@ -5861,8 +5784,7 @@ export type DeleteWebhookResponses = {
   200: DeleteResponse;
 };
 
-export type DeleteWebhookResponse =
-  DeleteWebhookResponses[keyof DeleteWebhookResponses];
+export type DeleteWebhookResponse = DeleteWebhookResponses[keyof DeleteWebhookResponses];
 
 export type UpdateWebhookData = {
   body: UpdateWebhookRequest;
@@ -5902,8 +5824,7 @@ export type UpdateWebhookResponses = {
   200: WebhookResponse;
 };
 
-export type UpdateWebhookResponse =
-  UpdateWebhookResponses[keyof UpdateWebhookResponses];
+export type UpdateWebhookResponse = UpdateWebhookResponses[keyof UpdateWebhookResponses];
 
 export type ListWebhookDeliveriesData = {
   body?: never;
@@ -5992,8 +5913,7 @@ export type ClearBankMemoriesErrors = {
   422: HttpValidationError;
 };
 
-export type ClearBankMemoriesError =
-  ClearBankMemoriesErrors[keyof ClearBankMemoriesErrors];
+export type ClearBankMemoriesError = ClearBankMemoriesErrors[keyof ClearBankMemoriesErrors];
 
 export type ClearBankMemoriesResponses = {
   /**
@@ -6030,8 +5950,7 @@ export type RetainMemoriesErrors = {
   422: HttpValidationError;
 };
 
-export type RetainMemoriesError =
-  RetainMemoriesErrors[keyof RetainMemoriesErrors];
+export type RetainMemoriesError = RetainMemoriesErrors[keyof RetainMemoriesErrors];
 
 export type RetainMemoriesResponses = {
   /**
@@ -6040,8 +5959,7 @@ export type RetainMemoriesResponses = {
   200: RetainResponse;
 };
 
-export type RetainMemoriesResponse =
-  RetainMemoriesResponses[keyof RetainMemoriesResponses];
+export type RetainMemoriesResponse = RetainMemoriesResponses[keyof RetainMemoriesResponses];
 
 export type FileRetainData = {
   body: BodyFileRetain;
@@ -6077,8 +5995,7 @@ export type FileRetainResponses = {
   200: FileRetainResponse;
 };
 
-export type FileRetainResponse2 =
-  FileRetainResponses[keyof FileRetainResponses];
+export type FileRetainResponse2 = FileRetainResponses[keyof FileRetainResponses];
 
 export type ListAuditLogsData = {
   body?: never;
@@ -6151,8 +6068,7 @@ export type ListAuditLogsResponses = {
   200: AuditLogListResponse;
 };
 
-export type ListAuditLogsResponse =
-  ListAuditLogsResponses[keyof ListAuditLogsResponses];
+export type ListAuditLogsResponse = ListAuditLogsResponses[keyof ListAuditLogsResponses];
 
 export type AuditLogStatsData = {
   body?: never;
@@ -6201,5 +6117,4 @@ export type AuditLogStatsResponses = {
   200: AuditLogStatsResponse;
 };
 
-export type AuditLogStatsResponse2 =
-  AuditLogStatsResponses[keyof AuditLogStatsResponses];
+export type AuditLogStatsResponse2 = AuditLogStatsResponses[keyof AuditLogStatsResponses];

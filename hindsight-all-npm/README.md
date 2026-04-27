@@ -18,17 +18,17 @@ npm install @vectorize-io/hindsight-all @vectorize-io/hindsight-client
 ## Example
 
 ```ts
-import { HindsightServer, consoleLogger } from '@vectorize-io/hindsight-all';
-import { HindsightClient } from '@vectorize-io/hindsight-client';
+import { HindsightServer, consoleLogger } from "@vectorize-io/hindsight-all";
+import { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const server = new HindsightServer({
-  profile: 'my-app',
+  profile: "my-app",
   port: 9077,
   env: {
-    HINDSIGHT_API_LLM_PROVIDER: 'anthropic',
+    HINDSIGHT_API_LLM_PROVIDER: "anthropic",
     HINDSIGHT_API_LLM_API_KEY: process.env.ANTHROPIC_API_KEY,
-    HINDSIGHT_API_LLM_MODEL: 'claude-sonnet-4-20250514',
-    HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: '0',
+    HINDSIGHT_API_LLM_MODEL: "claude-sonnet-4-20250514",
+    HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: "0",
   },
   logger: consoleLogger,
 });
@@ -37,11 +37,11 @@ await server.start();
 
 const client = new HindsightClient({ baseUrl: server.getBaseUrl() });
 
-await client.retain('user-123', 'User prefers dark mode and concise answers.', {
-  documentId: 'pref-2026-04-01',
+await client.retain("user-123", "User prefers dark mode and concise answers.", {
+  documentId: "pref-2026-04-01",
 });
 
-const recall = await client.recall('user-123', 'what are the user preferences?');
+const recall = await client.recall("user-123", "what are the user preferences?");
 console.log(recall.results);
 
 await server.stop();
@@ -62,7 +62,7 @@ If you're hacking on the Python `hindsight-embed` package in the same monorepo, 
 
 ```ts
 new HindsightServer({
-  embedPackagePath: '/path/to/hindsight-embed',
+  embedPackagePath: "/path/to/hindsight-embed",
   // ...
 });
 ```

@@ -41,6 +41,8 @@ echo "  Running lints in parallel..."
 # Node/TypeScript tasks
 run_task "eslint" "$REPO_ROOT/hindsight-control-plane" "npx eslint --fix src/**/*.{ts,tsx}"
 run_task "prettier" "$REPO_ROOT/hindsight-control-plane" "npx prettier --write src/**/*.{ts,tsx}"
+run_task "prettier-ts-client" "$REPO_ROOT/hindsight-clients/typescript" "npx --yes prettier --write --config $REPO_ROOT/.prettierrc.json --ignore-path $REPO_ROOT/.gitignore ."
+run_task "prettier-all-npm" "$REPO_ROOT/hindsight-all-npm" "npx --yes prettier --write --config $REPO_ROOT/.prettierrc.json --ignore-path $REPO_ROOT/.gitignore ."
 
 # Python hindsight-api-slim tasks
 run_task "ruff-api-check" "$REPO_ROOT/hindsight-api-slim" "uv run ruff check --fix ."

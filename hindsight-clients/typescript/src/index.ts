@@ -25,46 +25,46 @@
  * ```
  */
 
-import { createClient, createConfig } from '../generated/client';
-import type { Client } from '../generated/client';
-import * as sdk from '../generated/sdk.gen';
+import { createClient, createConfig } from "../generated/client";
+import type { Client } from "../generated/client";
+import * as sdk from "../generated/sdk.gen";
 import type {
-    RetainRequest,
-    RetainResponse,
-    RecallRequest,
-    RecallResponse,
-    RecallResult,
-    ReflectRequest,
-    ReflectResponse,
-    FileRetainResponse,
-    ListMemoryUnitsResponse,
-    BankProfileResponse,
-    BankConfigResponse,
-    CreateBankRequest,
-    Budget,
-    BankTemplateManifest,
-    BankTemplateConfig,
-    BankTemplateMentalModel,
-    BankTemplateDirective,
-    BankTemplateImportResponse,
-} from '../generated/types.gen';
+  RetainRequest,
+  RetainResponse,
+  RecallRequest,
+  RecallResponse,
+  RecallResult,
+  ReflectRequest,
+  ReflectResponse,
+  FileRetainResponse,
+  ListMemoryUnitsResponse,
+  BankProfileResponse,
+  BankConfigResponse,
+  CreateBankRequest,
+  Budget,
+  BankTemplateManifest,
+  BankTemplateConfig,
+  BankTemplateMentalModel,
+  BankTemplateDirective,
+  BankTemplateImportResponse,
+} from "../generated/types.gen";
 
-export const CLIENT_VERSION = '0.5.1';
+export const CLIENT_VERSION = "0.5.1";
 export const DEFAULT_USER_AGENT = `hindsight-client-typescript/${CLIENT_VERSION}`;
 
 export interface HindsightClientOptions {
-    baseUrl: string;
-    /**
-     * Optional API key for authentication (sent as Bearer token in Authorization header)
-     */
-    apiKey?: string;
-    /**
-     * Override the default `User-Agent` header. Integrations should set this to
-     * identify themselves (e.g. `"hindsight-ai-sdk/1.2.0"`). Browsers ignore
-     * attempts to set `User-Agent`; this only takes effect in Node.js / Bun /
-     * Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
-     */
-    userAgent?: string;
+  baseUrl: string;
+  /**
+   * Optional API key for authentication (sent as Bearer token in Authorization header)
+   */
+  apiKey?: string;
+  /**
+   * Override the default `User-Agent` header. Integrations should set this to
+   * identify themselves (e.g. `"hindsight-ai-sdk/1.2.0"`). Browsers ignore
+   * attempts to set `User-Agent`; this only takes effect in Node.js / Bun /
+   * Deno runtimes. Defaults to `hindsight-client-typescript/<version>`.
+   */
+  userAgent?: string;
 }
 
 /**
@@ -72,763 +72,794 @@ export interface HindsightClientOptions {
  * Includes the HTTP status code and error details from the API.
  */
 export class HindsightError extends Error {
-    public statusCode?: number;
-    public details?: unknown;
+  public statusCode?: number;
+  public details?: unknown;
 
-    constructor(message: string, statusCode?: number, details?: unknown) {
-        super(message);
-        this.name = 'HindsightError';
-        this.statusCode = statusCode;
-        this.details = details;
-    }
+  constructor(message: string, statusCode?: number, details?: unknown) {
+    super(message);
+    this.name = "HindsightError";
+    this.statusCode = statusCode;
+    this.details = details;
+  }
 }
 
 export interface EntityInput {
-    text: string;
-    type?: string;
+  text: string;
+  type?: string;
 }
 
 export interface MemoryItemInput {
-    content: string;
-    timestamp?: string | Date;
-    context?: string;
-    metadata?: Record<string, string>;
-    document_id?: string;
-    entities?: EntityInput[];
-    tags?: string[];
-    observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
-    strategy?: string;
-    update_mode?: "replace" | "append";
+  content: string;
+  timestamp?: string | Date;
+  context?: string;
+  metadata?: Record<string, string>;
+  document_id?: string;
+  entities?: EntityInput[];
+  tags?: string[];
+  observation_scopes?: "per_tag" | "combined" | "all_combinations" | string[][];
+  strategy?: string;
+  update_mode?: "replace" | "append";
 }
 
 export class HindsightClient {
-    private client: Client;
+  private client: Client;
 
-    constructor(options: HindsightClientOptions) {
-        const headers: Record<string, string> = {
-            'User-Agent': options.userAgent ?? DEFAULT_USER_AGENT,
-        };
-        if (options.apiKey) {
-            headers.Authorization = `Bearer ${options.apiKey}`;
-        }
-        this.client = createClient(
-            createConfig({
-                baseUrl: options.baseUrl,
-                headers,
-            })
-        );
+  constructor(options: HindsightClientOptions) {
+    const headers: Record<string, string> = {
+      "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
+    };
+    if (options.apiKey) {
+      headers.Authorization = `Bearer ${options.apiKey}`;
+    }
+    this.client = createClient(
+      createConfig({
+        baseUrl: options.baseUrl,
+        headers,
+      })
+    );
+  }
+
+  /**
+   * Validates the API response and throws an error if the request failed.
+   */
+  private validateResponse<T>(
+    response: { data?: T; error?: unknown; response?: Response },
+    operation: string
+  ): T {
+    if (!response.data) {
+      // The generated client returns { error, response, request }
+      // Status code is in response.status, not in the error object
+      const error = response.error as any;
+      const httpResponse = (response as any).response as Response | undefined;
+
+      // Extract status code from the HTTP response object
+      const statusCode = httpResponse?.status;
+      const details = error?.detail || error?.message || error;
+
+      throw new HindsightError(
+        `${operation} failed: ${JSON.stringify(details)}`,
+        statusCode,
+        details
+      );
+    }
+    return response.data;
+  }
+
+  /**
+   * Retain a single memory for a bank.
+   */
+  async retain(
+    bankId: string,
+    content: string,
+    options?: {
+      timestamp?: Date | string;
+      context?: string;
+      metadata?: Record<string, string>;
+      documentId?: string;
+      async?: boolean;
+      entities?: EntityInput[];
+      /** Optional list of tags for this memory */
+      tags?: string[];
+      /** How to handle existing documents: 'replace' (default) or 'append' */
+      updateMode?: "replace" | "append";
+    }
+  ): Promise<RetainResponse> {
+    const item: {
+      content: string;
+      timestamp?: string;
+      context?: string;
+      metadata?: Record<string, string>;
+      document_id?: string;
+      entities?: EntityInput[];
+      tags?: string[];
+      update_mode?: "replace" | "append";
+    } = { content };
+    if (options?.timestamp) {
+      item.timestamp =
+        options.timestamp instanceof Date ? options.timestamp.toISOString() : options.timestamp;
+    }
+    if (options?.context) {
+      item.context = options.context;
+    }
+    if (options?.metadata) {
+      item.metadata = options.metadata;
+    }
+    if (options?.documentId) {
+      item.document_id = options.documentId;
+    }
+    if (options?.entities) {
+      item.entities = options.entities;
+    }
+    if (options?.tags) {
+      item.tags = options.tags;
+    }
+    if (options?.updateMode) {
+      item.update_mode = options.updateMode;
     }
 
-    /**
-     * Validates the API response and throws an error if the request failed.
-     */
-    private validateResponse<T>(response: { data?: T; error?: unknown; response?: Response }, operation: string): T {
-        if (!response.data) {
-            // The generated client returns { error, response, request }
-            // Status code is in response.status, not in the error object
-            const error = response.error as any;
-            const httpResponse = (response as any).response as Response | undefined;
+    const response = await sdk.retainMemories({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: { items: [item], async: options?.async },
+    });
 
-            // Extract status code from the HTTP response object
-            const statusCode = httpResponse?.status;
-            const details = error?.detail || error?.message || error;
+    return this.validateResponse(response, "retain");
+  }
 
-            throw new HindsightError(
-                `${operation} failed: ${JSON.stringify(details)}`,
-                statusCode,
-                details
-            );
-        }
-        return response.data;
+  /**
+   * Retain multiple memories in batch.
+   */
+  async retainBatch(
+    bankId: string,
+    items: MemoryItemInput[],
+    options?: { documentId?: string; documentTags?: string[]; async?: boolean }
+  ): Promise<RetainResponse> {
+    const processedItems = items.map((item) => ({
+      content: item.content,
+      context: item.context,
+      metadata: item.metadata,
+      document_id: item.document_id,
+      entities: item.entities,
+      tags: item.tags,
+      observation_scopes: item.observation_scopes,
+      strategy: item.strategy,
+      update_mode: item.update_mode,
+      timestamp: item.timestamp instanceof Date ? item.timestamp.toISOString() : item.timestamp,
+    }));
+
+    // If documentId is provided at the batch level, add it to all items that don't have one
+    const itemsWithDocId = processedItems.map((item) => ({
+      ...item,
+      document_id: item.document_id || options?.documentId,
+    }));
+
+    const response = await sdk.retainMemories({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        items: itemsWithDocId,
+        document_tags: options?.documentTags,
+        async: options?.async,
+      },
+    });
+
+    return this.validateResponse(response, "retainBatch");
+  }
+
+  /**
+   * Upload files and retain their contents as memories.
+   *
+   * Files are automatically converted to text (PDF, DOCX, images via OCR, audio via
+   * transcription, and more) and ingested as memories. Processing is always asynchronous —
+   * use the returned operation IDs to track progress via the operations endpoint.
+   *
+   * @param bankId - The memory bank ID
+   * @param files - Array of File or Blob objects to upload
+   * @param options - Optional settings: context, documentTags, filesMetadata
+   */
+  async retainFiles(
+    bankId: string,
+    files: Array<File | Blob>,
+    options?: {
+      context?: string;
+      filesMetadata?: Array<{
+        context?: string;
+        document_id?: string;
+        tags?: string[];
+        metadata?: Record<string, string>;
+      }>;
     }
+  ): Promise<FileRetainResponse> {
+    const meta =
+      options?.filesMetadata ??
+      files.map(() => (options?.context ? { context: options.context } : {}));
 
-    /**
-     * Retain a single memory for a bank.
-     */
-    async retain(
-        bankId: string,
-        content: string,
-        options?: {
-            timestamp?: Date | string;
-            context?: string;
-            metadata?: Record<string, string>;
-            documentId?: string;
-            async?: boolean;
-            entities?: EntityInput[];
-            /** Optional list of tags for this memory */
-            tags?: string[];
-            /** How to handle existing documents: 'replace' (default) or 'append' */
-            updateMode?: "replace" | "append";
-        }
-    ): Promise<RetainResponse> {
-        const item: {
-            content: string;
-            timestamp?: string;
-            context?: string;
-            metadata?: Record<string, string>;
-            document_id?: string;
-            entities?: EntityInput[];
-            tags?: string[];
-            update_mode?: "replace" | "append";
-        } = { content };
-        if (options?.timestamp) {
-            item.timestamp =
-                options.timestamp instanceof Date
-                    ? options.timestamp.toISOString()
-                    : options.timestamp;
-        }
-        if (options?.context) {
-            item.context = options.context;
-        }
-        if (options?.metadata) {
-            item.metadata = options.metadata;
-        }
-        if (options?.documentId) {
-            item.document_id = options.documentId;
-        }
-        if (options?.entities) {
-            item.entities = options.entities;
-        }
-        if (options?.tags) {
-            item.tags = options.tags;
-        }
-        if (options?.updateMode) {
-            item.update_mode = options.updateMode;
-        }
+    const requestBody = JSON.stringify({
+      files_metadata: meta,
+    });
 
-        const response = await sdk.retainMemories({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: { items: [item], async: options?.async },
-        });
+    const response = await sdk.fileRetain({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: { files, request: requestBody },
+    });
 
-        return this.validateResponse(response, 'retain');
+    return this.validateResponse(response, "retainFiles");
+  }
+
+  /**
+   * Recall memories with a natural language query.
+   */
+  async recall(
+    bankId: string,
+    query: string,
+    options?: {
+      types?: string[];
+      maxTokens?: number;
+      budget?: Budget;
+      trace?: boolean;
+      queryTimestamp?: string;
+      includeEntities?: boolean;
+      maxEntityTokens?: number;
+      includeChunks?: boolean;
+      maxChunkTokens?: number;
+      /** Include source facts for observation-type results */
+      includeSourceFacts?: boolean;
+      /** Maximum tokens for source facts (default: 4096) */
+      maxSourceFactsTokens?: number;
+      /** Optional list of tags to filter memories by */
+      tags?: string[];
+      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
+      tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
     }
-
-    /**
-     * Retain multiple memories in batch.
-     */
-    async retainBatch(bankId: string, items: MemoryItemInput[], options?: { documentId?: string; documentTags?: string[]; async?: boolean }): Promise<RetainResponse> {
-        const processedItems = items.map((item) => ({
-            content: item.content,
-            context: item.context,
-            metadata: item.metadata,
-            document_id: item.document_id,
-            entities: item.entities,
-            tags: item.tags,
-            observation_scopes: item.observation_scopes,
-            strategy: item.strategy,
-            update_mode: item.update_mode,
-            timestamp:
-                item.timestamp instanceof Date
-                    ? item.timestamp.toISOString()
-                    : item.timestamp,
-        }));
-
-        // If documentId is provided at the batch level, add it to all items that don't have one
-        const itemsWithDocId = processedItems.map(item => ({
-            ...item,
-            document_id: item.document_id || options?.documentId
-        }));
-
-        const response = await sdk.retainMemories({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                items: itemsWithDocId,
-                document_tags: options?.documentTags,
-                async: options?.async,
-            },
-        });
-
-        return this.validateResponse(response, 'retainBatch');
-    }
-
-    /**
-     * Upload files and retain their contents as memories.
-     *
-     * Files are automatically converted to text (PDF, DOCX, images via OCR, audio via
-     * transcription, and more) and ingested as memories. Processing is always asynchronous —
-     * use the returned operation IDs to track progress via the operations endpoint.
-     *
-     * @param bankId - The memory bank ID
-     * @param files - Array of File or Blob objects to upload
-     * @param options - Optional settings: context, documentTags, filesMetadata
-     */
-    async retainFiles(
-        bankId: string,
-        files: Array<File | Blob>,
-        options?: {
-            context?: string;
-            filesMetadata?: Array<{ context?: string; document_id?: string; tags?: string[]; metadata?: Record<string, string> }>;
-        }
-    ): Promise<FileRetainResponse> {
-        const meta = options?.filesMetadata ?? files.map(() => options?.context ? { context: options.context } : {});
-
-        const requestBody = JSON.stringify({
-            files_metadata: meta,
-        });
-
-        const response = await sdk.fileRetain({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: { files, request: requestBody },
-        });
-
-        return this.validateResponse(response, 'retainFiles');
-    }
-
-    /**
-     * Recall memories with a natural language query.
-     */
-    async recall(
-        bankId: string,
-        query: string,
-        options?: {
-            types?: string[];
-            maxTokens?: number;
-            budget?: Budget;
-            trace?: boolean;
-            queryTimestamp?: string;
-            includeEntities?: boolean;
-            maxEntityTokens?: number;
-            includeChunks?: boolean;
-            maxChunkTokens?: number;
-            /** Include source facts for observation-type results */
-            includeSourceFacts?: boolean;
-            /** Maximum tokens for source facts (default: 4096) */
-            maxSourceFactsTokens?: number;
-            /** Optional list of tags to filter memories by */
-            tags?: string[];
-            /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
-            tagsMatch?: 'any' | 'all' | 'any_strict' | 'all_strict';
-        }
-    ): Promise<RecallResponse> {
-        const response = await sdk.recallMemories({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                query,
-                types: options?.types,
-                max_tokens: options?.maxTokens,
-                budget: options?.budget || 'mid',
-                trace: options?.trace,
-                query_timestamp: options?.queryTimestamp,
-                include: {
-                    entities: options?.includeEntities === false ? null : options?.includeEntities ? { max_tokens: options?.maxEntityTokens ?? 500 } : undefined,
-                    chunks: options?.includeChunks ? { max_tokens: options?.maxChunkTokens ?? 8192 } : undefined,
-                    source_facts: options?.includeSourceFacts ? { max_tokens: options?.maxSourceFactsTokens ?? 4096 } : undefined,
-                },
-                tags: options?.tags,
-                tags_match: options?.tagsMatch,
-            },
-        });
-
-        return this.validateResponse(response, 'recall');
-    }
-
-    /**
-     * Reflect and generate a contextual answer using the bank's identity and memories.
-     */
-    async reflect(
-        bankId: string,
-        query: string,
-        options?: {
-            context?: string;
-            budget?: Budget;
-            /** Optional list of tags to filter memories by */
-            tags?: string[];
-            /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
-            tagsMatch?: 'any' | 'all' | 'any_strict' | 'all_strict';
-        }
-    ): Promise<ReflectResponse> {
-        const response = await sdk.reflect({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                query,
-                context: options?.context,
-                budget: options?.budget || 'low',
-                tags: options?.tags,
-                tags_match: options?.tagsMatch,
-            },
-        });
-
-        return this.validateResponse(response, 'reflect');
-    }
-
-    /**
-     * List memories with pagination.
-     */
-    async listMemories(
-        bankId: string,
-        options?: {
-            limit?: number;
-            offset?: number;
-            type?: string;
-            q?: string;
-            consolidationState?: 'failed' | 'pending' | 'done';
-        }
-    ): Promise<ListMemoryUnitsResponse> {
-        const response = await sdk.listMemories({
-            client: this.client,
-            path: { bank_id: bankId },
-            query: {
-                limit: options?.limit,
-                offset: options?.offset,
-                type: options?.type,
-                q: options?.q,
-                consolidation_state: options?.consolidationState,
-            },
-        });
-
-        return this.validateResponse(response, 'listMemories');
-    }
-
-    /**
-     * Create or update a bank with disposition, missions, and operational configuration.
-     */
-    async createBank(
-        bankId: string,
-        options: {
-            /** @deprecated Display label only. */
-            name?: string;
-            /** @deprecated Use reflectMission instead. */
-            mission?: string;
-            /** Mission/context for Reflect operations. */
-            reflectMission?: string;
-            /** @deprecated Alias for mission. */
-            background?: string;
-            /** @deprecated Use dispositionSkepticism, dispositionLiteralism, dispositionEmpathy instead. */
-            disposition?: { skepticism: number; literalism: number; empathy: number };
-            /** @deprecated Use updateBankConfig({ dispositionSkepticism }) instead. */
-            dispositionSkepticism?: number;
-            /** @deprecated Use updateBankConfig({ dispositionLiteralism }) instead. */
-            dispositionLiteralism?: number;
-            /** @deprecated Use updateBankConfig({ dispositionEmpathy }) instead. */
-            dispositionEmpathy?: number;
-            /** Steers what gets extracted during retain(). Injected alongside built-in rules. */
-            retainMission?: string;
-            /** Fact extraction mode: 'concise' (default), 'verbose', or 'custom'. */
-            retainExtractionMode?: string;
-            /** Custom extraction prompt (only active when retainExtractionMode is 'custom'). */
-            retainCustomInstructions?: string;
-            /** Maximum token size for each content chunk during retain. */
-            retainChunkSize?: number;
-            /** Toggle automatic observation consolidation after retain(). */
-            enableObservations?: boolean;
-            /** Controls what gets synthesised into observations. Replaces built-in rules. */
-            observationsMission?: string;
-        } = {}
-    ): Promise<BankProfileResponse> {
-        const response = await sdk.createOrUpdateBank({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                name: options.name,
-                mission: options.mission,
-                reflect_mission: options.reflectMission,
-                background: options.background,
-                disposition: options.disposition,
-                disposition_skepticism: options.dispositionSkepticism,
-                disposition_literalism: options.dispositionLiteralism,
-                disposition_empathy: options.dispositionEmpathy,
-                retain_mission: options.retainMission,
-                retain_extraction_mode: options.retainExtractionMode,
-                retain_custom_instructions: options.retainCustomInstructions,
-                retain_chunk_size: options.retainChunkSize,
-                enable_observations: options.enableObservations,
-                observations_mission: options.observationsMission,
-            },
-        });
-
-        return this.validateResponse(response, 'createBank');
-    }
-
-    /**
-     * Set or update the reflect mission for a memory bank.
-     * @deprecated Use createBank({ reflectMission: '...' }) instead.
-     */
-    async setMission(bankId: string, mission: string): Promise<BankProfileResponse> {
-        return this.createBank(bankId, { reflectMission: mission });
-    }
-
-    /**
-     * Get a bank's profile.
-     */
-    async getBankProfile(bankId: string): Promise<BankProfileResponse> {
-        const response = await sdk.getBankProfile({
-            client: this.client,
-            path: { bank_id: bankId },
-        });
-
-        return this.validateResponse(response, 'getBankProfile');
-    }
-
-
-    /**
-     * Get the resolved configuration for a bank, including any bank-level overrides.
-     *
-     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
-     */
-    async getBankConfig(bankId: string): Promise<BankConfigResponse> {
-        const response = await sdk.getBankConfig({
-            client: this.client,
-            path: { bank_id: bankId },
-        });
-
-        return this.validateResponse(response, 'getBankConfig');
-    }
-
-    /**
-     * Update configuration overrides for a bank.
-     *
-     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
-     *
-     * @param bankId - The memory bank ID
-     * @param options - Fields to override
-     */
-    async updateBankConfig(
-        bankId: string,
-        options: {
-            reflectMission?: string;
-            retainMission?: string;
-            retainExtractionMode?: string;
-            retainCustomInstructions?: string;
-            retainChunkSize?: number;
-            enableObservations?: boolean;
-            observationsMission?: string;
-            /** How skeptical vs trusting (1=trusting, 5=skeptical). */
-            dispositionSkepticism?: number;
-            /** How literally to interpret information (1=flexible, 5=literal). */
-            dispositionLiteralism?: number;
-            /** How much to consider emotional context (1=detached, 5=empathetic). */
-            dispositionEmpathy?: number;
+  ): Promise<RecallResponse> {
+    const response = await sdk.recallMemories({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        query,
+        types: options?.types,
+        max_tokens: options?.maxTokens,
+        budget: options?.budget || "mid",
+        trace: options?.trace,
+        query_timestamp: options?.queryTimestamp,
+        include: {
+          entities:
+            options?.includeEntities === false
+              ? null
+              : options?.includeEntities
+                ? { max_tokens: options?.maxEntityTokens ?? 500 }
+                : undefined,
+          chunks: options?.includeChunks
+            ? { max_tokens: options?.maxChunkTokens ?? 8192 }
+            : undefined,
+          source_facts: options?.includeSourceFacts
+            ? { max_tokens: options?.maxSourceFactsTokens ?? 4096 }
+            : undefined,
         },
-    ): Promise<BankConfigResponse> {
-        const updates: Record<string, unknown> = {};
-        if (options.reflectMission !== undefined) updates.reflect_mission = options.reflectMission;
-        if (options.retainMission !== undefined) updates.retain_mission = options.retainMission;
-        if (options.retainExtractionMode !== undefined) updates.retain_extraction_mode = options.retainExtractionMode;
-        if (options.retainCustomInstructions !== undefined)
-            updates.retain_custom_instructions = options.retainCustomInstructions;
-        if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
-        if (options.enableObservations !== undefined) updates.enable_observations = options.enableObservations;
-        if (options.observationsMission !== undefined) updates.observations_mission = options.observationsMission;
-        if (options.dispositionSkepticism !== undefined) updates.disposition_skepticism = options.dispositionSkepticism;
-        if (options.dispositionLiteralism !== undefined) updates.disposition_literalism = options.dispositionLiteralism;
-        if (options.dispositionEmpathy !== undefined) updates.disposition_empathy = options.dispositionEmpathy;
+        tags: options?.tags,
+        tags_match: options?.tagsMatch,
+      },
+    });
 
-        const response = await sdk.updateBankConfig({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: { updates },
-        });
+    return this.validateResponse(response, "recall");
+  }
 
-        return this.validateResponse(response, 'updateBankConfig');
+  /**
+   * Reflect and generate a contextual answer using the bank's identity and memories.
+   */
+  async reflect(
+    bankId: string,
+    query: string,
+    options?: {
+      context?: string;
+      budget?: Budget;
+      /** Optional list of tags to filter memories by */
+      tags?: string[];
+      /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
+      tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
+    }
+  ): Promise<ReflectResponse> {
+    const response = await sdk.reflect({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        query,
+        context: options?.context,
+        budget: options?.budget || "low",
+        tags: options?.tags,
+        tags_match: options?.tagsMatch,
+      },
+    });
+
+    return this.validateResponse(response, "reflect");
+  }
+
+  /**
+   * List memories with pagination.
+   */
+  async listMemories(
+    bankId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      type?: string;
+      q?: string;
+      consolidationState?: "failed" | "pending" | "done";
+    }
+  ): Promise<ListMemoryUnitsResponse> {
+    const response = await sdk.listMemories({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: {
+        limit: options?.limit,
+        offset: options?.offset,
+        type: options?.type,
+        q: options?.q,
+        consolidation_state: options?.consolidationState,
+      },
+    });
+
+    return this.validateResponse(response, "listMemories");
+  }
+
+  /**
+   * Create or update a bank with disposition, missions, and operational configuration.
+   */
+  async createBank(
+    bankId: string,
+    options: {
+      /** @deprecated Display label only. */
+      name?: string;
+      /** @deprecated Use reflectMission instead. */
+      mission?: string;
+      /** Mission/context for Reflect operations. */
+      reflectMission?: string;
+      /** @deprecated Alias for mission. */
+      background?: string;
+      /** @deprecated Use dispositionSkepticism, dispositionLiteralism, dispositionEmpathy instead. */
+      disposition?: { skepticism: number; literalism: number; empathy: number };
+      /** @deprecated Use updateBankConfig({ dispositionSkepticism }) instead. */
+      dispositionSkepticism?: number;
+      /** @deprecated Use updateBankConfig({ dispositionLiteralism }) instead. */
+      dispositionLiteralism?: number;
+      /** @deprecated Use updateBankConfig({ dispositionEmpathy }) instead. */
+      dispositionEmpathy?: number;
+      /** Steers what gets extracted during retain(). Injected alongside built-in rules. */
+      retainMission?: string;
+      /** Fact extraction mode: 'concise' (default), 'verbose', or 'custom'. */
+      retainExtractionMode?: string;
+      /** Custom extraction prompt (only active when retainExtractionMode is 'custom'). */
+      retainCustomInstructions?: string;
+      /** Maximum token size for each content chunk during retain. */
+      retainChunkSize?: number;
+      /** Toggle automatic observation consolidation after retain(). */
+      enableObservations?: boolean;
+      /** Controls what gets synthesised into observations. Replaces built-in rules. */
+      observationsMission?: string;
+    } = {}
+  ): Promise<BankProfileResponse> {
+    const response = await sdk.createOrUpdateBank({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        name: options.name,
+        mission: options.mission,
+        reflect_mission: options.reflectMission,
+        background: options.background,
+        disposition: options.disposition,
+        disposition_skepticism: options.dispositionSkepticism,
+        disposition_literalism: options.dispositionLiteralism,
+        disposition_empathy: options.dispositionEmpathy,
+        retain_mission: options.retainMission,
+        retain_extraction_mode: options.retainExtractionMode,
+        retain_custom_instructions: options.retainCustomInstructions,
+        retain_chunk_size: options.retainChunkSize,
+        enable_observations: options.enableObservations,
+        observations_mission: options.observationsMission,
+      },
+    });
+
+    return this.validateResponse(response, "createBank");
+  }
+
+  /**
+   * Set or update the reflect mission for a memory bank.
+   * @deprecated Use createBank({ reflectMission: '...' }) instead.
+   */
+  async setMission(bankId: string, mission: string): Promise<BankProfileResponse> {
+    return this.createBank(bankId, { reflectMission: mission });
+  }
+
+  /**
+   * Get a bank's profile.
+   */
+  async getBankProfile(bankId: string): Promise<BankProfileResponse> {
+    const response = await sdk.getBankProfile({
+      client: this.client,
+      path: { bank_id: bankId },
+    });
+
+    return this.validateResponse(response, "getBankProfile");
+  }
+
+  /**
+   * Get the resolved configuration for a bank, including any bank-level overrides.
+   *
+   * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
+   */
+  async getBankConfig(bankId: string): Promise<BankConfigResponse> {
+    const response = await sdk.getBankConfig({
+      client: this.client,
+      path: { bank_id: bankId },
+    });
+
+    return this.validateResponse(response, "getBankConfig");
+  }
+
+  /**
+   * Update configuration overrides for a bank.
+   *
+   * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
+   *
+   * @param bankId - The memory bank ID
+   * @param options - Fields to override
+   */
+  async updateBankConfig(
+    bankId: string,
+    options: {
+      reflectMission?: string;
+      retainMission?: string;
+      retainExtractionMode?: string;
+      retainCustomInstructions?: string;
+      retainChunkSize?: number;
+      enableObservations?: boolean;
+      observationsMission?: string;
+      /** How skeptical vs trusting (1=trusting, 5=skeptical). */
+      dispositionSkepticism?: number;
+      /** How literally to interpret information (1=flexible, 5=literal). */
+      dispositionLiteralism?: number;
+      /** How much to consider emotional context (1=detached, 5=empathetic). */
+      dispositionEmpathy?: number;
+    }
+  ): Promise<BankConfigResponse> {
+    const updates: Record<string, unknown> = {};
+    if (options.reflectMission !== undefined) updates.reflect_mission = options.reflectMission;
+    if (options.retainMission !== undefined) updates.retain_mission = options.retainMission;
+    if (options.retainExtractionMode !== undefined)
+      updates.retain_extraction_mode = options.retainExtractionMode;
+    if (options.retainCustomInstructions !== undefined)
+      updates.retain_custom_instructions = options.retainCustomInstructions;
+    if (options.retainChunkSize !== undefined) updates.retain_chunk_size = options.retainChunkSize;
+    if (options.enableObservations !== undefined)
+      updates.enable_observations = options.enableObservations;
+    if (options.observationsMission !== undefined)
+      updates.observations_mission = options.observationsMission;
+    if (options.dispositionSkepticism !== undefined)
+      updates.disposition_skepticism = options.dispositionSkepticism;
+    if (options.dispositionLiteralism !== undefined)
+      updates.disposition_literalism = options.dispositionLiteralism;
+    if (options.dispositionEmpathy !== undefined)
+      updates.disposition_empathy = options.dispositionEmpathy;
+
+    const response = await sdk.updateBankConfig({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: { updates },
+    });
+
+    return this.validateResponse(response, "updateBankConfig");
+  }
+
+  /**
+   * Reset all bank-level configuration overrides, reverting to server defaults.
+   *
+   * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
+   */
+  async resetBankConfig(bankId: string): Promise<BankConfigResponse> {
+    const response = await sdk.resetBankConfig({
+      client: this.client,
+      path: { bank_id: bankId },
+    });
+
+    return this.validateResponse(response, "resetBankConfig");
+  }
+
+  /**
+   * Delete a bank.
+   */
+  async deleteBank(bankId: string): Promise<void> {
+    const response = await sdk.deleteBank({
+      client: this.client,
+      path: { bank_id: bankId },
+    });
+    if (response.error) {
+      throw new Error(`deleteBank failed: ${JSON.stringify(response.error)}`);
+    }
+  }
+
+  // Directive methods
+
+  /**
+   * Create a directive (hard rule for reflect).
+   */
+  async createDirective(
+    bankId: string,
+    name: string,
+    content: string,
+    options?: {
+      priority?: number;
+      isActive?: boolean;
+      tags?: string[];
+    }
+  ): Promise<any> {
+    const response = await sdk.createDirective({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        name,
+        content,
+        priority: options?.priority ?? 0,
+        is_active: options?.isActive ?? true,
+        tags: options?.tags,
+      },
+    });
+
+    return this.validateResponse(response, "createDirective");
+  }
+
+  /**
+   * List all directives in a bank.
+   */
+  async listDirectives(bankId: string, options?: { tags?: string[] }): Promise<any> {
+    const response = await sdk.listDirectives({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: { tags: options?.tags },
+    });
+
+    return this.validateResponse(response, "listDirectives");
+  }
+
+  /**
+   * Get a specific directive.
+   */
+  async getDirective(bankId: string, directiveId: string): Promise<any> {
+    const response = await sdk.getDirective({
+      client: this.client,
+      path: { bank_id: bankId, directive_id: directiveId },
+    });
+
+    return this.validateResponse(response, "getDirective");
+  }
+
+  /**
+   * Update a directive.
+   */
+  async updateDirective(
+    bankId: string,
+    directiveId: string,
+    options: {
+      name?: string;
+      content?: string;
+      priority?: number;
+      isActive?: boolean;
+      tags?: string[];
+    }
+  ): Promise<any> {
+    const response = await sdk.updateDirective({
+      client: this.client,
+      path: { bank_id: bankId, directive_id: directiveId },
+      body: {
+        name: options.name,
+        content: options.content,
+        priority: options.priority,
+        is_active: options.isActive,
+        tags: options.tags,
+      },
+    });
+
+    return this.validateResponse(response, "updateDirective");
+  }
+
+  /**
+   * Delete a directive.
+   */
+  async deleteDirective(bankId: string, directiveId: string): Promise<void> {
+    const response = await sdk.deleteDirective({
+      client: this.client,
+      path: { bank_id: bankId, directive_id: directiveId },
+    });
+    if (response.error) {
+      throw new Error(`deleteDirective failed: ${JSON.stringify(response.error)}`);
+    }
+  }
+
+  // Mental Model methods
+
+  /**
+   * Create a mental model (runs reflect in background).
+   */
+  async createMentalModel(
+    bankId: string,
+    name: string,
+    sourceQuery: string,
+    options?: {
+      id?: string;
+      tags?: string[];
+      maxTokens?: number;
+      trigger?: { refreshAfterConsolidation?: boolean };
+    }
+  ): Promise<any> {
+    const response = await sdk.createMentalModel({
+      client: this.client,
+      path: { bank_id: bankId },
+      body: {
+        id: options?.id,
+        name,
+        source_query: sourceQuery,
+        tags: options?.tags,
+        max_tokens: options?.maxTokens,
+        trigger: options?.trigger
+          ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
+          : undefined,
+      },
+    });
+
+    return this.validateResponse(response, "createMentalModel");
+  }
+
+  /**
+   * List all mental models in a bank.
+   */
+  async listMentalModels(bankId: string, options?: { tags?: string[] }): Promise<any> {
+    const response = await sdk.listMentalModels({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: { tags: options?.tags },
+    });
+
+    return this.validateResponse(response, "listMentalModels");
+  }
+
+  /**
+   * Get a specific mental model.
+   */
+  async getMentalModel(bankId: string, mentalModelId: string): Promise<any> {
+    const response = await sdk.getMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+    });
+
+    return this.validateResponse(response, "getMentalModel");
+  }
+
+  /**
+   * Refresh a mental model to update with current knowledge.
+   */
+  async refreshMentalModel(bankId: string, mentalModelId: string): Promise<any> {
+    const response = await sdk.refreshMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+    });
+
+    return this.validateResponse(response, "refreshMentalModel");
+  }
+
+  /**
+   * Update a mental model's metadata.
+   */
+  async updateMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options: {
+      name?: string;
+      sourceQuery?: string;
+      tags?: string[];
+      maxTokens?: number;
+      trigger?: { refreshAfterConsolidation?: boolean };
+    }
+  ): Promise<any> {
+    const response = await sdk.updateMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+      body: {
+        name: options.name,
+        source_query: options.sourceQuery,
+        tags: options.tags,
+        max_tokens: options.maxTokens,
+        trigger: options.trigger
+          ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
+          : undefined,
+      },
+    });
+
+    return this.validateResponse(response, "updateMentalModel");
+  }
+
+  /**
+   * Delete a mental model.
+   */
+  async deleteMentalModel(bankId: string, mentalModelId: string): Promise<void> {
+    const response = await sdk.deleteMentalModel({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+    });
+    if (response.error) {
+      throw new Error(`deleteMentalModel failed: ${JSON.stringify(response.error)}`);
+    }
+  }
+
+  /**
+   * Get the change history of a mental model.
+   */
+  async getMentalModelHistory(bankId: string, mentalModelId: string): Promise<any> {
+    const response = await sdk.getMentalModelHistory({
+      client: this.client,
+      path: { bank_id: bankId, mental_model_id: mentalModelId },
+    });
+
+    return this.validateResponse(response, "getMentalModelHistory");
+  }
+
+  /**
+   * Get a document by ID. Returns null if not found.
+   */
+  async getDocument(bankId: string, documentId: string): Promise<any | null> {
+    const response = await sdk.getDocument({
+      client: this.client,
+      path: { bank_id: bankId, document_id: documentId },
+    });
+
+    if ((response as any).response?.status === 404) {
+      return null;
     }
 
-    /**
-     * Reset all bank-level configuration overrides, reverting to server defaults.
-     *
-     * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
-     */
-    async resetBankConfig(bankId: string): Promise<BankConfigResponse> {
-        const response = await sdk.resetBankConfig({
-            client: this.client,
-            path: { bank_id: bankId },
-        });
+    return this.validateResponse(response, "getDocument");
+  }
 
-        return this.validateResponse(response, 'resetBankConfig');
+  /**
+   * List documents in a bank.
+   */
+  async listDocuments(bankId: string, options?: { limit?: number; offset?: number }): Promise<any> {
+    const response = await sdk.listDocuments({
+      client: this.client,
+      path: { bank_id: bankId },
+      query: { limit: options?.limit, offset: options?.offset },
+    });
+
+    return this.validateResponse(response, "listDocuments");
+  }
+
+  /**
+   * Delete a document.
+   */
+  async deleteDocument(bankId: string, documentId: string): Promise<void> {
+    const response = await sdk.deleteDocument({
+      client: this.client,
+      path: { bank_id: bankId, document_id: documentId },
+    });
+    if (response.error) {
+      throw new Error(`deleteDocument failed: ${JSON.stringify(response.error)}`);
     }
+  }
 
-    /**
-     * Delete a bank.
-     */
-    async deleteBank(bankId: string): Promise<void> {
-        const response = await sdk.deleteBank({
-            client: this.client,
-            path: { bank_id: bankId },
-        });
-        if (response.error) {
-            throw new Error(`deleteBank failed: ${JSON.stringify(response.error)}`);
-        }
-    }
+  /**
+   * Update a document's mutable fields.
+   */
+  async updateDocument(
+    bankId: string,
+    documentId: string,
+    options: { tags?: string[] }
+  ): Promise<any> {
+    const response = await sdk.updateDocument({
+      client: this.client,
+      path: { bank_id: bankId, document_id: documentId },
+      body: { tags: options.tags },
+    });
 
-    // Directive methods
-
-    /**
-     * Create a directive (hard rule for reflect).
-     */
-    async createDirective(
-        bankId: string,
-        name: string,
-        content: string,
-        options?: {
-            priority?: number;
-            isActive?: boolean;
-            tags?: string[];
-        }
-    ): Promise<any> {
-        const response = await sdk.createDirective({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                name,
-                content,
-                priority: options?.priority ?? 0,
-                is_active: options?.isActive ?? true,
-                tags: options?.tags,
-            },
-        });
-
-        return this.validateResponse(response, 'createDirective');
-    }
-
-    /**
-     * List all directives in a bank.
-     */
-    async listDirectives(bankId: string, options?: { tags?: string[] }): Promise<any> {
-        const response = await sdk.listDirectives({
-            client: this.client,
-            path: { bank_id: bankId },
-            query: { tags: options?.tags },
-        });
-
-        return this.validateResponse(response, 'listDirectives');
-    }
-
-    /**
-     * Get a specific directive.
-     */
-    async getDirective(bankId: string, directiveId: string): Promise<any> {
-        const response = await sdk.getDirective({
-            client: this.client,
-            path: { bank_id: bankId, directive_id: directiveId },
-        });
-
-        return this.validateResponse(response, 'getDirective');
-    }
-
-    /**
-     * Update a directive.
-     */
-    async updateDirective(
-        bankId: string,
-        directiveId: string,
-        options: {
-            name?: string;
-            content?: string;
-            priority?: number;
-            isActive?: boolean;
-            tags?: string[];
-        }
-    ): Promise<any> {
-        const response = await sdk.updateDirective({
-            client: this.client,
-            path: { bank_id: bankId, directive_id: directiveId },
-            body: {
-                name: options.name,
-                content: options.content,
-                priority: options.priority,
-                is_active: options.isActive,
-                tags: options.tags,
-            },
-        });
-
-        return this.validateResponse(response, 'updateDirective');
-    }
-
-    /**
-     * Delete a directive.
-     */
-    async deleteDirective(bankId: string, directiveId: string): Promise<void> {
-        const response = await sdk.deleteDirective({
-            client: this.client,
-            path: { bank_id: bankId, directive_id: directiveId },
-        });
-        if (response.error) {
-            throw new Error(`deleteDirective failed: ${JSON.stringify(response.error)}`);
-        }
-    }
-
-    // Mental Model methods
-
-    /**
-     * Create a mental model (runs reflect in background).
-     */
-    async createMentalModel(
-        bankId: string,
-        name: string,
-        sourceQuery: string,
-        options?: {
-            id?: string;
-            tags?: string[];
-            maxTokens?: number;
-            trigger?: { refreshAfterConsolidation?: boolean };
-        }
-    ): Promise<any> {
-        const response = await sdk.createMentalModel({
-            client: this.client,
-            path: { bank_id: bankId },
-            body: {
-                id: options?.id,
-                name,
-                source_query: sourceQuery,
-                tags: options?.tags,
-                max_tokens: options?.maxTokens,
-                trigger: options?.trigger ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation } : undefined,
-            },
-        });
-
-        return this.validateResponse(response, 'createMentalModel');
-    }
-
-    /**
-     * List all mental models in a bank.
-     */
-    async listMentalModels(bankId: string, options?: { tags?: string[] }): Promise<any> {
-        const response = await sdk.listMentalModels({
-            client: this.client,
-            path: { bank_id: bankId },
-            query: { tags: options?.tags },
-        });
-
-        return this.validateResponse(response, 'listMentalModels');
-    }
-
-    /**
-     * Get a specific mental model.
-     */
-    async getMentalModel(bankId: string, mentalModelId: string): Promise<any> {
-        const response = await sdk.getMentalModel({
-            client: this.client,
-            path: { bank_id: bankId, mental_model_id: mentalModelId },
-        });
-
-        return this.validateResponse(response, 'getMentalModel');
-    }
-
-    /**
-     * Refresh a mental model to update with current knowledge.
-     */
-    async refreshMentalModel(bankId: string, mentalModelId: string): Promise<any> {
-        const response = await sdk.refreshMentalModel({
-            client: this.client,
-            path: { bank_id: bankId, mental_model_id: mentalModelId },
-        });
-
-        return this.validateResponse(response, 'refreshMentalModel');
-    }
-
-    /**
-     * Update a mental model's metadata.
-     */
-    async updateMentalModel(
-        bankId: string,
-        mentalModelId: string,
-        options: {
-            name?: string;
-            sourceQuery?: string;
-            tags?: string[];
-            maxTokens?: number;
-            trigger?: { refreshAfterConsolidation?: boolean };
-        }
-    ): Promise<any> {
-        const response = await sdk.updateMentalModel({
-            client: this.client,
-            path: { bank_id: bankId, mental_model_id: mentalModelId },
-            body: {
-                name: options.name,
-                source_query: options.sourceQuery,
-                tags: options.tags,
-                max_tokens: options.maxTokens,
-                trigger: options.trigger ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation } : undefined,
-            },
-        });
-
-        return this.validateResponse(response, 'updateMentalModel');
-    }
-
-    /**
-     * Delete a mental model.
-     */
-    async deleteMentalModel(bankId: string, mentalModelId: string): Promise<void> {
-        const response = await sdk.deleteMentalModel({
-            client: this.client,
-            path: { bank_id: bankId, mental_model_id: mentalModelId },
-        });
-        if (response.error) {
-            throw new Error(`deleteMentalModel failed: ${JSON.stringify(response.error)}`);
-        }
-    }
-
-    /**
-     * Get the change history of a mental model.
-     */
-    async getMentalModelHistory(bankId: string, mentalModelId: string): Promise<any> {
-        const response = await sdk.getMentalModelHistory({
-            client: this.client,
-            path: { bank_id: bankId, mental_model_id: mentalModelId },
-        });
-
-        return this.validateResponse(response, 'getMentalModelHistory');
-    }
-
-    /**
-     * Get a document by ID. Returns null if not found.
-     */
-    async getDocument(bankId: string, documentId: string): Promise<any | null> {
-        const response = await sdk.getDocument({
-            client: this.client,
-            path: { bank_id: bankId, document_id: documentId },
-        });
-
-        if ((response as any).response?.status === 404) {
-            return null;
-        }
-
-        return this.validateResponse(response, 'getDocument');
-    }
-
-    /**
-     * List documents in a bank.
-     */
-    async listDocuments(bankId: string, options?: { limit?: number; offset?: number }): Promise<any> {
-        const response = await sdk.listDocuments({
-            client: this.client,
-            path: { bank_id: bankId },
-            query: { limit: options?.limit, offset: options?.offset },
-        });
-
-        return this.validateResponse(response, 'listDocuments');
-    }
-
-    /**
-     * Delete a document.
-     */
-    async deleteDocument(bankId: string, documentId: string): Promise<void> {
-        const response = await sdk.deleteDocument({
-            client: this.client,
-            path: { bank_id: bankId, document_id: documentId },
-        });
-        if (response.error) {
-            throw new Error(`deleteDocument failed: ${JSON.stringify(response.error)}`);
-        }
-    }
-
-    /**
-     * Update a document's mutable fields.
-     */
-    async updateDocument(bankId: string, documentId: string, options: { tags?: string[] }): Promise<any> {
-        const response = await sdk.updateDocument({
-            client: this.client,
-            path: { bank_id: bankId, document_id: documentId },
-            body: { tags: options.tags },
-        });
-
-        return this.validateResponse(response, 'updateDocument');
-    }
+    return this.validateResponse(response, "updateDocument");
+  }
 }
 
 /**
@@ -842,63 +873,63 @@ export class HindsightClient {
  * Mirrors the format used internally by Hindsight's reflect operation.
  */
 export function recallResponseToPromptString(response: RecallResponse): string {
-    const chunksMap = response.chunks ?? {};
-    const sections: string[] = [];
+  const chunksMap = response.chunks ?? {};
+  const sections: string[] = [];
 
-    // Facts
-    const formattedFacts = (response.results ?? []).map((result) => {
-        const obj: Record<string, string> = { text: result.text };
-        if (result.context) obj.context = result.context;
-        if (result.occurred_start) obj.occurred_start = result.occurred_start;
-        if (result.occurred_end) obj.occurred_end = result.occurred_end;
-        if (result.mentioned_at) obj.mentioned_at = result.mentioned_at;
-        if (result.chunk_id && chunksMap[result.chunk_id]) {
-            obj.source_chunk = chunksMap[result.chunk_id].text;
-        }
-        return obj;
-    });
-    sections.push('FACTS:\n' + JSON.stringify(formattedFacts, null, 2));
-
-    // Entities
-    const entities = response.entities;
-    if (entities) {
-        const entityParts: string[] = [];
-        for (const [name, state] of Object.entries(entities)) {
-            if (state.observations?.length) {
-                entityParts.push(`## ${name}\n${state.observations[0].text}`);
-            }
-        }
-        if (entityParts.length) {
-            sections.push('ENTITIES:\n' + entityParts.join('\n\n'));
-        }
+  // Facts
+  const formattedFacts = (response.results ?? []).map((result) => {
+    const obj: Record<string, string> = { text: result.text };
+    if (result.context) obj.context = result.context;
+    if (result.occurred_start) obj.occurred_start = result.occurred_start;
+    if (result.occurred_end) obj.occurred_end = result.occurred_end;
+    if (result.mentioned_at) obj.mentioned_at = result.mentioned_at;
+    if (result.chunk_id && chunksMap[result.chunk_id]) {
+      obj.source_chunk = chunksMap[result.chunk_id].text;
     }
+    return obj;
+  });
+  sections.push("FACTS:\n" + JSON.stringify(formattedFacts, null, 2));
 
-    return sections.join('\n\n');
+  // Entities
+  const entities = response.entities;
+  if (entities) {
+    const entityParts: string[] = [];
+    for (const [name, state] of Object.entries(entities)) {
+      if (state.observations?.length) {
+        entityParts.push(`## ${name}\n${state.observations[0].text}`);
+      }
+    }
+    if (entityParts.length) {
+      sections.push("ENTITIES:\n" + entityParts.join("\n\n"));
+    }
+  }
+
+  return sections.join("\n\n");
 }
 
 // Re-export types for convenience
 export type {
-    RetainRequest,
-    RetainResponse,
-    RecallRequest,
-    RecallResponse,
-    RecallResult,
-    ReflectRequest,
-    ReflectResponse,
-    FileRetainResponse,
-    ListMemoryUnitsResponse,
-    BankProfileResponse,
-    BankConfigResponse,
-    CreateBankRequest,
-    Budget,
-    BankTemplateManifest,
-    BankTemplateConfig,
-    BankTemplateMentalModel,
-    BankTemplateDirective,
-    BankTemplateImportResponse,
+  RetainRequest,
+  RetainResponse,
+  RecallRequest,
+  RecallResponse,
+  RecallResult,
+  ReflectRequest,
+  ReflectResponse,
+  FileRetainResponse,
+  ListMemoryUnitsResponse,
+  BankProfileResponse,
+  BankConfigResponse,
+  CreateBankRequest,
+  Budget,
+  BankTemplateManifest,
+  BankTemplateConfig,
+  BankTemplateMentalModel,
+  BankTemplateDirective,
+  BankTemplateImportResponse,
 };
 
 // Also export low-level SDK functions for advanced usage
-export * as sdk from '../generated/sdk.gen';
-export { createClient, createConfig } from '../generated/client';
-export type { Client } from '../generated/client';
+export * as sdk from "../generated/sdk.gen";
+export { createClient, createConfig } from "../generated/client";
+export type { Client } from "../generated/client";
