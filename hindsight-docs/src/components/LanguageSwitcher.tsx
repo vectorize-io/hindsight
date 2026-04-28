@@ -1,6 +1,6 @@
 import React from 'react';
 import {useLocation} from '@docusaurus/router';
-import {useDocusaurusContext} from '@docusaurus/core/client';
+import {useDocusaurusContext} from '@docusaurus/core';
 import Link from '@docusaurus/Link';
 import styles from './LanguageSwitcher.module.css';
 
