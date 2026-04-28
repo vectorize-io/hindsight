@@ -99,7 +99,6 @@ class CausalRelation:
 
     relation_type: str  # "caused_by"
     target_fact_index: int  # Index of the target fact in the batch
-    strength: float = 1.0  # Strength of the causal relationship
 
 
 @dataclass

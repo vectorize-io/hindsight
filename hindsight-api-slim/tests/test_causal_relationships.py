@@ -54,7 +54,6 @@ After searching for weeks, I finally found a cheaper apartment in Brooklyn.
                             "from_fact_index": i,
                             "to_fact_index": rel.target_fact_index,
                             "relation_type": rel.relation_type,
-                            "strength": rel.strength,
                             "from_fact_text": fact.fact[:50],
                         }
                     )
@@ -180,29 +179,3 @@ The new role enabled me to lead a team of engineers.
                         f"Must reference previous facts only (valid range: 0 to {i - 1})"
                     )
 
-    @pytest.mark.asyncio
-    async def test_causal_relation_strength_values(self):
-        """
-        Test that causal relation strength values are within valid range [0.0, 1.0].
-        """
-        text = """
-The stock market crash directly caused the company to lay off employees.
-The layoffs indirectly led to reduced consumer spending in the area.
-Reduced spending somewhat affected local businesses.
-"""
-
-        context = "Economic impact story"
-        llm_config = LLMConfig.from_env()
-
-        facts, _, _ = await extract_facts_from_text(
-            text=text, event_date=datetime(2024, 4, 1), context=context, llm_config=llm_config, agent_name="TestUser",
-            config=_get_raw_config(),
-        )
-
-        for i, fact in enumerate(facts):
-            if fact.causal_relations:
-                for rel in fact.causal_relations:
-                    assert 0.0 <= rel.strength <= 1.0, (
-                        f"Causal relation strength {rel.strength} is outside valid range [0.0, 1.0]. "
-                        f"Fact {i}: {fact.fact[:50]}..."
-                    )

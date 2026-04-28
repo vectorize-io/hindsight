@@ -110,12 +110,6 @@ class CausalRelation(BaseModel):
     relation_type: Literal["caused_by"] = Field(
         description="How this fact relates to the target: 'caused_by' = this fact was caused by the target"
     )
-    strength: float = Field(
-        description="Strength of relationship (0.0 to 1.0)",
-        ge=0.0,
-        le=1.0,
-        default=1.0,
-    )
 
 
 class FactCausalRelation(BaseModel):
@@ -133,12 +127,6 @@ class FactCausalRelation(BaseModel):
     )
     relation_type: Literal["caused_by"] = Field(
         description="How this fact relates to the target fact: 'caused_by' = this fact was caused by the target fact"
-    )
-    strength: float = Field(
-        description="Strength of relationship (0.0 to 1.0). 1.0 = strong, 0.5 = moderate",
-        ge=0.0,
-        le=1.0,
-        default=1.0,
     )
 
 
@@ -1216,7 +1204,6 @@ async def _extract_facts_from_chunk(
                             # New schema uses target_index
                             target_idx = rel.get("target_index")
                             relation_type = rel.get("relation_type")
-                            strength = rel.get("strength", 1.0)
 
                             if target_idx is None or relation_type is None:
                                 continue
@@ -1233,7 +1220,6 @@ async def _extract_facts_from_chunk(
                                     CausalRelation(
                                         target_fact_index=target_idx,
                                         relation_type=relation_type,
-                                        strength=strength,
                                     )
                                 )
                             except Exception as e:
@@ -1909,7 +1895,6 @@ async def extract_facts_from_contents_batch_api(
                             continue
                         target_idx = rel.get("target_index")
                         relation_type = rel.get("relation_type")
-                        strength = rel.get("strength", 1.0)
 
                         if target_idx is None or relation_type is None:
                             continue
@@ -1918,9 +1903,7 @@ async def extract_facts_from_contents_batch_api(
 
                         try:
                             validated_relations.append(
-                                CausalRelation(
-                                    target_fact_index=target_idx, relation_type=relation_type, strength=strength
-                                )
+                                CausalRelation(target_fact_index=target_idx, relation_type=relation_type)
                             )
                         except Exception:
                             pass
@@ -2250,7 +2233,6 @@ def _convert_causal_relations(relations_from_llm, fact_start_idx: int) -> list[C
         causal_relation = CausalRelationType(
             relation_type=rel.relation_type,
             target_fact_index=fact_start_idx + rel.target_fact_index,
-            strength=rel.strength,
         )
         causal_relations.append(causal_relation)
     return causal_relations

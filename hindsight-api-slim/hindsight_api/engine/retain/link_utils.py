@@ -990,7 +990,6 @@ async def create_causal_links_batch(
             Each element is a list of dicts with:
             - target_fact_index: Index into unit_ids for the target fact
             - relation_type: "caused_by"
-            - strength: Float in [0.0, 1.0] representing relationship strength
 
     Returns:
         Number of causal links created
@@ -1017,7 +1016,6 @@ async def create_causal_links_batch(
             for relation in causal_relations:
                 target_idx = relation["target_fact_index"]
                 relation_type = relation["relation_type"]
-                strength = relation.get("strength", 1.0)
 
                 # Validate relation_type - only "caused_by" is supported (DB constraint)
                 valid_types = {"caused_by"}
@@ -1040,10 +1038,7 @@ async def create_causal_links_batch(
                 if from_unit_id == to_unit_id:
                     continue
 
-                # Add the causal link
-                # link_type is the relation_type (e.g., "causes", "caused_by")
-                # weight is the strength of the relationship
-                links.append((from_unit_id, to_unit_id, relation_type, strength, None))
+                links.append((from_unit_id, to_unit_id, relation_type, 1.0, None))
 
         if links:
             insert_start = time_mod.time()

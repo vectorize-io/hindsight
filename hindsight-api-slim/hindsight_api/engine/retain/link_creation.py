@@ -97,7 +97,6 @@ async def create_causal_links_batch(conn, bank_id: str, unit_ids: list[str], fac
                 {
                     "relation_type": rel.relation_type,
                     "target_fact_index": rel.target_fact_index,
-                    "strength": rel.strength,
                 }
                 for rel in fact.causal_relations
             ]

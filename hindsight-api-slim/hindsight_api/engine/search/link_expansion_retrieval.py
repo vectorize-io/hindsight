@@ -112,16 +112,6 @@ class LinkExpansionRetriever(GraphRetriever):
     The Python merge step applies per-signal score transformations.
     """
 
-    def __init__(
-        self,
-        causal_weight_threshold: float = 0.3,
-    ):
-        """
-        Args:
-            causal_weight_threshold: Minimum weight for causal links to follow.
-        """
-        self.causal_weight_threshold = causal_weight_threshold
-
     @property
     def name(self) -> str:
         return "link_expansion"
@@ -387,7 +377,6 @@ class LinkExpansionRetriever(GraphRetriever):
                 JOIN {mu} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND ml.weight >= $4
                   AND mu.fact_type = $2
                 ORDER BY mu.id, ml.weight DESC
                 LIMIT $3
@@ -403,7 +392,7 @@ class LinkExpansionRetriever(GraphRetriever):
             SELECT * FROM causal_expanded
             """
 
-        params = [seed_ids, fact_type, budget, self.causal_weight_threshold]
+        params = [seed_ids, fact_type, budget]
 
         try:
             all_rows = await asyncio.wait_for(
@@ -559,7 +548,7 @@ class LinkExpansionRetriever(GraphRetriever):
                 FROM {ml} ml JOIN {mu} mu ON ml.to_unit_id = mu.id
                 WHERE ml.from_unit_id = ANY($1::uuid[])
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
-                  AND ml.weight >= $3 AND mu.fact_type = 'observation'
+                  AND mu.fact_type = 'observation'
                 ORDER BY mu.id, ml.weight DESC LIMIT $2
             )
             SELECT * FROM semantic_expanded
@@ -568,7 +557,6 @@ class LinkExpansionRetriever(GraphRetriever):
             """,
             seed_ids,
             budget,
-            self.causal_weight_threshold,
         )
 
         semantic_rows = [r for r in sem_causal_rows if r["source"] == "semantic"]
