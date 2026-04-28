@@ -174,7 +174,6 @@ To switch between backends:
 | `HINDSIGHT_API_LLM_GROQ_SERVICE_TIER` | Groq service tier: `on_demand`, `flex`, `auto` | `auto` |
 | `HINDSIGHT_API_LLM_OPENAI_SERVICE_TIER` | OpenAI service tier: `flex` for 50% cost savings (OpenAI Flex Processing) | None (default) |
 | `HINDSIGHT_API_LLM_EXTRA_BODY` | JSON dict merged into `extra_body` for all OpenAI-compatible API calls. Useful for custom model servers (e.g., vLLM `chat_template_kwargs`). | `null` |
-| `HINDSIGHT_API_LLM_SIMPLIFY_JSON_SCHEMA` | Flatten `$ref`/`$defs`/`anyOf` in JSON schemas before sending to LLMs. Required for Ollama structured output; improves compliance for all providers. Set to `false` to send raw Pydantic schemas. | `true` |
 | `HINDSIGHT_API_LLM_GEMINI_SAFETY_SETTINGS` | JSON-encoded list of `{category, threshold}` dicts for Gemini/VertexAI content safety filtering | `null` |
 
 **Provider Examples**
