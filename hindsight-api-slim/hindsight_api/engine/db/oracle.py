@@ -778,8 +778,7 @@ class OracleConnection(DatabaseConnection):
             # timezone-aware (UTC) to avoid naive/aware mismatches
             # downstream (e.g. entity_resolver temporal scoring).
             if isinstance(val, str) and (
-                clean_col.endswith("_at")
-                or clean_col in ("started_at", "ended_at", "last_seen", "event_date")
+                clean_col.endswith("_at") or clean_col in ("started_at", "ended_at", "last_seen", "event_date")
             ):
                 try:
                     val = datetime.datetime.fromisoformat(val)

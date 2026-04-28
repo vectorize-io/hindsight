@@ -167,6 +167,12 @@ class TestOracleHTTP:
             resp = await api_client.get(f"/v1/default/banks/{bank_id}/documents/http-doc-001")
             assert resp.status_code == 200
 
+            # List document chunks (exercises the backend.acquire path)
+            resp = await api_client.get(f"/v1/default/banks/{bank_id}/documents/http-doc-001/chunks")
+            assert resp.status_code == 200, f"List chunks failed: {resp.text}"
+            chunks_data = resp.json()
+            assert "items" in chunks_data
+
             # Delete document
             resp = await api_client.delete(f"/v1/default/banks/{bank_id}/documents/http-doc-001")
             assert resp.status_code == 200

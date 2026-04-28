@@ -240,7 +240,21 @@ async def retrieve_semantic_bm25_combined(
     params.extend(groups_params)
     params.extend(created_range_params)
 
-    rows = await conn.fetch(query, *params)
+    try:
+        rows = await conn.fetch(query, *params)
+    except Exception as e:
+        # Oracle Text CONTAINS can fail with DRG-10599 ("column is not indexed")
+        # if the CTXSYS text index hasn't synced yet or is unavailable.  Fall
+        # back to semantic-only so the search still returns results.
+        # Keep the full param list (BM25 slots are harmless placeholders) since
+        # the semantic arms may reference tags at $5 when _include_bm25 is True.
+        err_str = str(e)
+        if _include_bm25 and ("DRG-10599" in err_str or "ORA-30600" in err_str or "ORA-29902" in err_str):
+            logger.warning("Oracle Text CONTAINS failed (%s), falling back to semantic-only search", err_str[:120])
+            semantic_only_query = "\nUNION ALL\n".join(arms[: len(fact_types)])
+            rows = await conn.fetch(semantic_only_query, *params)
+        else:
+            raise
 
     # Group results; trim semantic to limit (over-fetched for HNSW approximation).
     sem_counts: dict[str, int] = {ft: 0 for ft in fact_types}

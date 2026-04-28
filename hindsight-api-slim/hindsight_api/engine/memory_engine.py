@@ -5390,8 +5390,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             ctx = BankReadContext(bank_id=bank_id, operation="list_document_chunks", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
             # Verify document exists
             doc = await conn.fetchrow(
                 f"SELECT id FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
@@ -6310,8 +6310,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             ctx = BankReadContext(bank_id=bank_id, operation="get_entity_graph", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
             edge_rows = await conn.fetch(
                 f"""
                 SELECT ec.entity_id_1,
@@ -6645,8 +6645,8 @@ class MemoryEngine(MemoryEngineInterface):
         if period not in _MEMORIES_TIMESERIES_PERIODS:
             period = "7d"
 
-        pool = await self._get_pool()
-        async with acquire_with_retry(pool) as conn:
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT date_trunc('{cfg.trunc}', created_at AT TIME ZONE 'UTC') AS bucket,
@@ -7309,8 +7309,8 @@ class MemoryEngine(MemoryEngineInterface):
             use_delta = False
             stored_structured_content: dict[str, Any] | None = None
             if refresh_mode == "delta" and current_content:
-                pool = await self._get_pool()
-                async with acquire_with_retry(pool) as conn:
+                backend = await self._get_backend()
+                async with acquire_with_retry(backend) as conn:
                     tracking_row = await conn.fetchrow(
                         f"SELECT last_refreshed_source_query, structured_content "
                         f"FROM {fq_table('mental_models')} "
