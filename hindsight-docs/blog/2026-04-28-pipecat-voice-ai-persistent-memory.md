@@ -7,13 +7,13 @@ description: "Add persistent long-term memory to Pipecat voice AI pipelines. Rec
 image: /img/blog/pipecat-voice-ai-persistent-memory.png
 ---
 
+![Pipecat Voice AI Persistent Memory](/img/blog/pipecat-voice-ai-persistent-memory.png)
+
 If you build voice AI pipelines with [Pipecat](https://github.com/pipecat-ai/pipecat), you know it handles real-time speech processing, LLM integration, and streaming synthesis beautifully. But there's one critical thing it doesn't do: remember anything between calls. Every voice conversation starts fresh. Your voice agent has no idea what the user said in yesterday's call, what their preferences are, or what it already researched.
 
 Adding **Pipecat persistent memory** doesn't require building a custom RAG system or managing separate vector databases. With the `hindsight-pipecat` integration, you can wire long-term memory into any voice pipeline with a single `FrameProcessor` that recalls context before responding and retains conversation content after each turn.
 
 <!-- truncate -->
-
-![Pipecat Voice AI Persistent Memory](/img/blog/pipecat-voice-ai-persistent-memory.png)
 
 ## TL;DR
 
