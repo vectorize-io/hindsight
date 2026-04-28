@@ -2368,13 +2368,13 @@ ${memoriesFormatted}
         });
         api.registerTool(factory, {
           names: [
-            "hindsight_wiki_list",
-            "hindsight_wiki_get",
-            "hindsight_wiki_create",
-            "hindsight_wiki_update",
-            "hindsight_wiki_delete",
-            "hindsight_wiki_recall",
-            "hindsight_wiki_ingest",
+            "agent_knowledge_list_pages",
+            "agent_knowledge_get_page",
+            "agent_knowledge_create_page",
+            "agent_knowledge_update_page",
+            "agent_knowledge_delete_page",
+            "agent_knowledge_recall",
+            "agent_knowledge_ingest",
           ],
           optional: true,
         });

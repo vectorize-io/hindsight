@@ -1,41 +1,40 @@
 /**
- * Wiki tools for OpenClaw agents.
+ * Agent knowledge tools for OpenClaw.
  *
  * Registered as a ToolFactory — called per session with agent context.
- * Resolves bank ID using the same deriveBankId logic as retain/recall,
- * then creates tools scoped to that bank.
+ * Resolves bank ID using deriveBankId, creates tools scoped to that bank.
+ *
+ * Tools use Hindsight mental models as the storage layer.
+ * Pages are created with opinionated defaults for self-learning agents.
  */
 
 import type { PluginConfig, PluginToolContext } from "./types.js";
 import { deriveBankId, detectExternalApi } from "./index.js";
 
-// Opinionated defaults for wiki pages
-const WIKI_TRIGGER = {
+const PAGE_DEFAULTS = {
   mode: "delta",
   refresh_after_consolidation: true,
   exclude_mental_models: true,
   fact_types: ["observation"],
 };
 
-interface WikiToolDeps {
+interface ToolDeps {
   pluginConfig: PluginConfig;
   getApiUrl: () => string;
   getApiToken: () => string | undefined;
 }
 
-function makeRequest(
+function req(
   apiUrl: string,
   path: string,
   method: string,
   body?: unknown,
-  apiToken?: string,
+  token?: string,
 ): Promise<unknown> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (apiToken) headers["Authorization"] = `Bearer ${apiToken}`;
-
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   const opts: RequestInit = { method, headers };
   if (body) opts.body = JSON.stringify(body);
-
   return fetch(`${apiUrl}${path}`, opts).then(async (resp) => {
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
@@ -45,77 +44,72 @@ function makeRequest(
   });
 }
 
-export function createWikiToolFactory(deps: WikiToolDeps) {
+function ok(data: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: {} };
+}
+
+export function createWikiToolFactory(deps: ToolDeps) {
   return (ctx: PluginToolContext) => {
-    // Resolve bank from agent context (same logic as retain/recall hooks)
     const bankId = deriveBankId(ctx as any, deps.pluginConfig);
     const apiUrl = deps.getApiUrl();
-    const apiToken = deps.getApiToken();
+    const token = deps.getApiToken();
+    const bp = `/v1/default/banks/${bankId}`;
 
-    const bankPath = `/v1/default/banks/${bankId}`;
-
-    const tools: any[] = [
+    return [
       {
-        name: "hindsight_wiki_list",
-        label: "List wiki pages",
-        description: "List all knowledge pages. Returns page names, IDs, source queries, and content.",
+        name: "agent_knowledge_list_pages",
+        label: "List knowledge pages",
+        description: "List all your knowledge pages. Each page has an ID, name, source query, and synthesized content that auto-updates from your conversations.",
         parameters: { type: "object", properties: {} },
         async execute() {
-          const result = await makeRequest(apiUrl, `${bankPath}/mental-models`, "GET", undefined, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/mental-models`, "GET", undefined, token));
         },
       },
       {
-        name: "hindsight_wiki_get",
-        label: "Get wiki page",
-        description: "Get a specific knowledge page by ID.",
+        name: "agent_knowledge_get_page",
+        label: "Read a knowledge page",
+        description: "Read a specific knowledge page by its ID. Returns the full synthesized content.",
         parameters: {
           type: "object",
-          properties: {
-            page_id: { type: "string", description: "Page identifier" },
-          },
+          properties: { page_id: { type: "string", description: "Page ID (e.g. 'user-preferences')" } },
           required: ["page_id"],
         },
         async execute(_id: string, params: { page_id: string }) {
-          const result = await makeRequest(apiUrl, `${bankPath}/mental-models/${params.page_id}`, "GET", undefined, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/mental-models/${params.page_id}`, "GET", undefined, token));
         },
       },
       {
-        name: "hindsight_wiki_create",
-        label: "Create wiki page",
+        name: "agent_knowledge_create_page",
+        label: "Create a knowledge page",
         description:
-          "Create a new knowledge page. The source_query is the question the system re-asks after every consolidation to rebuild the page from observations.",
+          "Create a new knowledge page. The source_query is a question the system re-asks after each consolidation to rebuild the page from conversation observations. " +
+          "Pages auto-update as you have more conversations. Use for: user preferences, procedures, performance data, best practices.",
         parameters: {
           type: "object",
           properties: {
-            page_id: { type: "string", description: "Page ID (lowercase with hyphens, e.g. 'user-preferences')" },
+            page_id: { type: "string", description: "Unique page ID, lowercase with hyphens (e.g. 'editorial-preferences')" },
             name: { type: "string", description: "Human-readable page name" },
-            source_query: { type: "string", description: "Synthesis query — the question that rebuilds this page" },
+            source_query: { type: "string", description: "The question that rebuilds this page (e.g. 'What are the user\\'s editorial preferences?')" },
           },
           required: ["page_id", "name", "source_query"],
         },
         async execute(_id: string, params: { page_id: string; name: string; source_query: string }) {
-          const result = await makeRequest(apiUrl, `${bankPath}/mental-models`, "POST", {
-            id: params.page_id,
-            name: params.name,
-            source_query: params.source_query,
-            max_tokens: 4096,
-            trigger: WIKI_TRIGGER,
-          }, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/mental-models`, "POST", {
+            id: params.page_id, name: params.name, source_query: params.source_query,
+            max_tokens: 4096, trigger: PAGE_DEFAULTS,
+          }, token));
         },
       },
       {
-        name: "hindsight_wiki_update",
-        label: "Update wiki page",
-        description: "Update a knowledge page's name or source query.",
+        name: "agent_knowledge_update_page",
+        label: "Update a knowledge page",
+        description: "Update a page's name or source query. The content will re-synthesize on next consolidation.",
         parameters: {
           type: "object",
           properties: {
-            page_id: { type: "string", description: "Page identifier" },
-            name: { type: "string", description: "New page name" },
-            source_query: { type: "string", description: "New synthesis query" },
+            page_id: { type: "string", description: "Page ID to update" },
+            name: { type: "string", description: "New name (optional)" },
+            source_query: { type: "string", description: "New source query (optional)" },
           },
           required: ["page_id"],
         },
@@ -123,70 +117,62 @@ export function createWikiToolFactory(deps: WikiToolDeps) {
           const body: Record<string, string> = {};
           if (params.name) body.name = params.name;
           if (params.source_query) body.source_query = params.source_query;
-          const result = await makeRequest(apiUrl, `${bankPath}/mental-models/${params.page_id}`, "PATCH", body, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/mental-models/${params.page_id}`, "PATCH", body, token));
         },
       },
       {
-        name: "hindsight_wiki_delete",
-        label: "Delete wiki page",
-        description: "Delete a knowledge page.",
+        name: "agent_knowledge_delete_page",
+        label: "Delete a knowledge page",
+        description: "Permanently delete a knowledge page.",
         parameters: {
           type: "object",
-          properties: {
-            page_id: { type: "string", description: "Page identifier" },
-          },
+          properties: { page_id: { type: "string", description: "Page ID to delete" } },
           required: ["page_id"],
         },
         async execute(_id: string, params: { page_id: string }) {
-          await makeRequest(apiUrl, `${bankPath}/mental-models/${params.page_id}`, "DELETE", undefined, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify({ success: true }) }], details: {} };
+          await req(apiUrl, `${bp}/mental-models/${params.page_id}`, "DELETE", undefined, token);
+          return ok({ success: true });
         },
       },
       {
-        name: "hindsight_wiki_recall",
+        name: "agent_knowledge_recall",
         label: "Search memories",
-        description: "Search agent memories for specific facts, numbers, or details.",
+        description: "Search across all retained conversations and documents for specific facts, numbers, or details not covered by your knowledge pages.",
         parameters: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Natural language search query" },
-            max_results: { type: "number", description: "Maximum results (default: 10)" },
+            query: { type: "string", description: "What to search for" },
+            max_results: { type: "number", description: "Max results (default 10)" },
           },
           required: ["query"],
         },
         async execute(_id: string, params: { query: string; max_results?: number }) {
-          const result = await makeRequest(apiUrl, `${bankPath}/memories/recall`, "POST", {
-            query: params.query,
-            max_results: params.max_results ?? 10,
-          }, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/memories/recall`, "POST", {
+            query: params.query, max_results: params.max_results ?? 10,
+          }, token));
         },
       },
       {
-        name: "hindsight_wiki_ingest",
-        label: "Ingest document",
+        name: "agent_knowledge_ingest",
+        label: "Ingest a document",
         description:
-          "Upload a document into agent memory. Pass raw content — never summarize before ingesting. The system handles extraction.",
+          "Upload a document into your memory bank. Pass the full raw content — never summarize before ingesting. " +
+          "The system handles chunking and fact extraction. The title becomes the document ID (re-ingesting replaces it).",
         parameters: {
           type: "object",
           properties: {
-            title: { type: "string", description: "Document title (used as document ID for upsert)" },
-            content: { type: "string", description: "Raw document content" },
+            title: { type: "string", description: "Document title (becomes the document ID)" },
+            content: { type: "string", description: "Full raw document content" },
           },
           required: ["title", "content"],
         },
         async execute(_id: string, params: { title: string; content: string }) {
           const docId = params.title.toLowerCase().replace(/ /g, "-");
-          const result = await makeRequest(apiUrl, `${bankPath}/memories`, "POST", {
-            items: [{ content: params.content, document_id: docId }],
-            async: true,
-          }, apiToken);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: {} };
+          return ok(await req(apiUrl, `${bp}/memories`, "POST", {
+            items: [{ content: params.content, document_id: docId }], async: true,
+          }, token));
         },
       },
     ];
-
-    return tools;
   };
 }
