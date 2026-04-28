@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![Run Hindsight CLI on Linux ARM64 Without Workarounds](/img/guides/guide-run-hindsight-cli-on-linux-arm64.png)
 
-If you want to **run Hindsight CLI on Linux ARM64**, the setup is finally straightforward. The latest release flow now ships a first class `hindsight-linux-arm64` asset, which means Raspberry Pi boxes, Graviton instances, and small ARM servers no longer need a local rebuild or an unofficial copy step just to get the CLI running. If you want the surrounding docs while you work, keep [the CLI reference](https://hindsight.vectorize.io/docs/sdks/cli), [the installation guide](https://hindsight.vectorize.io/docs/developer/installation), [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart), and [the docs home](https://hindsight.vectorize.io/docs) nearby.
+If you want to **run Hindsight CLI on Linux ARM64**, the setup is finally straightforward. The latest release flow now ships a first class `hindsight-linux-arm64` asset, which means Raspberry Pi boxes, Graviton instances, and small ARM servers no longer need a local rebuild or an unofficial copy step just to get the CLI running. If you want the surrounding docs while you work, keep [the CLI reference](https://hindsight.vectorize.io/sdks/cli), [the installation guide](https://hindsight.vectorize.io/sdks/developer/installation), [the quickstart guide](https://hindsight.vectorize.io/sdks/developer/quickstart), and [the docs home](https://hindsight.vectorize.io) nearby.
 
 <!-- truncate -->
 
@@ -22,7 +22,7 @@ If you want to **run Hindsight CLI on Linux ARM64**, the setup is finally straig
 
 ## Why this update matters
 
-Linux ARM64 support matters because a lot of self hosted Hindsight deployments land on exactly that hardware class. A Raspberry Pi in a closet, a cheap ARM VPS, or an AWS Graviton instance is often enough for a lightweight memory service, especially if you are following the newer [installation guidance](https://hindsight.vectorize.io/docs/developer/installation) and sizing around the slim image or external providers.
+Linux ARM64 support matters because a lot of self hosted Hindsight deployments land on exactly that hardware class. A Raspberry Pi in a closet, a cheap ARM VPS, or an AWS Graviton instance is often enough for a lightweight memory service, especially if you are following the newer [installation guidance](https://hindsight.vectorize.io/sdks/developer/installation) and sizing around the slim image or external providers.
 
 Before this release asset was wired into the release job, the CLI itself was easy to miss even when the rest of the platform ran fine. The new asset closes that gap. It is a small release workflow change, but it makes ARM64 a real supported path instead of a near miss.
 
@@ -52,7 +52,7 @@ hindsight configure   --api-url https://api.hindsight.vectorize.io   --api-key Y
 hindsight configure --api-url http://localhost:8888
 ```
 
-If you switch between environments, use named profiles from [the CLI reference](https://hindsight.vectorize.io/docs/sdks/cli) instead of rewriting one shared config file over and over:
+If you switch between environments, use named profiles from [the CLI reference](https://hindsight.vectorize.io/sdks/cli) instead of rewriting one shared config file over and over:
 
 ```bash
 hindsight profile create prod   --api-url https://api.hindsight.vectorize.io   --api-key YOUR_API_KEY
@@ -72,7 +72,7 @@ hindsight memory retain test-bank "Alice prefers async updates"
 hindsight memory recall test-bank "How should I update Alice?"
 ```
 
-If that works, the ARM64 story is done. You are using the same memory commands documented in [the retain API guide](https://hindsight.vectorize.io/docs/api/retain), [the recall API guide](https://hindsight.vectorize.io/docs/api/recall), and [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart), just from a Linux ARM64 host.
+If that works, the ARM64 story is done. You are using the same memory commands documented in [the retain API guide](https://hindsight.vectorize.io/sdks/api/retain), [the recall API guide](https://hindsight.vectorize.io/sdks/api/recall), and [the quickstart guide](https://hindsight.vectorize.io/sdks/developer/quickstart), just from a Linux ARM64 host.
 
 ## Troubleshooting common Linux ARM64 misses
 
@@ -102,7 +102,7 @@ No. It is a sensible production target for small and medium workloads, especiall
 ## Next Steps
 
 - [Hindsight Cloud](https://hindsight.vectorize.io)
-- [the CLI reference](https://hindsight.vectorize.io/docs/sdks/cli)
-- [the installation guide](https://hindsight.vectorize.io/docs/developer/installation)
-- [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart)
-- [the docs home](https://hindsight.vectorize.io/docs)
+- [the CLI reference](https://hindsight.vectorize.io/sdks/cli)
+- [the installation guide](https://hindsight.vectorize.io/sdks/developer/installation)
+- [the quickstart guide](https://hindsight.vectorize.io/sdks/developer/quickstart)
+- [the docs home](https://hindsight.vectorize.io)

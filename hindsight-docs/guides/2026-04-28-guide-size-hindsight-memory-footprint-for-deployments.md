@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![Size Hindsight Memory Footprint for Real Deployments](/img/guides/guide-size-hindsight-memory-footprint-for-deployments.png)
 
-If you are trying to **size Hindsight's memory footprint for deployments**, the docs are much better now because the installation guide finally spells out realistic RAM ranges by component. That is useful because the right box size depends less on hype and more on one simple question: are you running the full image with local models, or the slim image with external providers? Keep [the installation guide](https://hindsight.vectorize.io/docs/developer/installation), [the configuration guide](https://hindsight.vectorize.io/docs/developer/configuration), [the services guide](https://hindsight.vectorize.io/docs/developer/services), and [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart) open while you plan.
+If you are trying to **size Hindsight's memory footprint for deployments**, the docs are much better now because the installation guide finally spells out realistic RAM ranges by component. That is useful because the right box size depends less on hype and more on one simple question: are you running the full image with local models, or the slim image with external providers? Keep [the installation guide](https://hindsight.vectorize.io/sdks/developer/installation), [the configuration guide](https://hindsight.vectorize.io/sdks/developer/configuration), [the services guide](https://hindsight.vectorize.io/sdks/developer/services), and [the quickstart guide](https://hindsight.vectorize.io/sdks/developer/quickstart) open while you plan.
 
 <!-- truncate -->
 
@@ -39,7 +39,7 @@ These are not theoretical floor values. They are planning numbers that reflect t
 The biggest fork in the road is whether you want local embedding and reranking bundled into the API process.
 
 - Choose **full** when you want a simpler all in one deployment and can afford the extra RAM.
-- Choose **slim** when you want smaller hosts and are comfortable wiring external providers from [the configuration guide](https://hindsight.vectorize.io/docs/developer/configuration).
+- Choose **slim** when you want smaller hosts and are comfortable wiring external providers from [the configuration guide](https://hindsight.vectorize.io/sdks/developer/configuration).
 
 That one decision usually matters more than arguing about small VM families. The full image buys convenience. The slim image buys a much smaller footprint.
 
@@ -66,8 +66,8 @@ If a node is running hot, work through the stack in order:
 1. Confirm whether you are on the full or slim image.
 2. Check whether workers are sharing the same host and doubling the expected model footprint.
 3. Verify PostgreSQL is not starved on the same box.
-4. Review external provider settings in [the configuration guide](https://hindsight.vectorize.io/docs/developer/configuration).
-5. Compare the deployment shape with [the services guide](https://hindsight.vectorize.io/docs/developer/services) if you are splitting API and worker roles.
+4. Review external provider settings in [the configuration guide](https://hindsight.vectorize.io/sdks/developer/configuration).
+5. Compare the deployment shape with [the services guide](https://hindsight.vectorize.io/sdks/developer/services) if you are splitting API and worker roles.
 
 The new docs do not remove tuning work, but they do make the first estimate much less hand wavy.
 
@@ -88,7 +88,7 @@ No. The control plane is relatively light. Local embedding and reranking are wha
 ## Next Steps
 
 - [Hindsight Cloud](https://hindsight.vectorize.io)
-- [the installation guide](https://hindsight.vectorize.io/docs/developer/installation)
-- [the configuration guide](https://hindsight.vectorize.io/docs/developer/configuration)
-- [the services guide](https://hindsight.vectorize.io/docs/developer/services)
-- [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart)
+- [the installation guide](https://hindsight.vectorize.io/sdks/developer/installation)
+- [the configuration guide](https://hindsight.vectorize.io/sdks/developer/configuration)
+- [the services guide](https://hindsight.vectorize.io/sdks/developer/services)
+- [the quickstart guide](https://hindsight.vectorize.io/sdks/developer/quickstart)

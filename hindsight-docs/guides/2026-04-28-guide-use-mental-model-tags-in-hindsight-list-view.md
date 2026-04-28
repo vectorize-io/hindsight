@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![Use Mental Model Tags in Hindsight's New List View](/img/guides/guide-use-mental-model-tags-in-hindsight-list-view.png)
 
-If you want to **use mental model tags in Hindsight's new List view**, the important change is that the control plane now treats mental models more like real working documents. The page defaults to a split pane list, and tag suggestions now come from the actual mental model tag source instead of leaving you to remember tags by hand. Keep [the mental models API docs](https://hindsight.vectorize.io/docs/developer/api/mental-models), [the reflect docs](https://hindsight.vectorize.io/docs/developer/api/reflect), [the observations docs](https://hindsight.vectorize.io/docs/developer/observations), and [the docs home](https://hindsight.vectorize.io/docs) nearby while you tune the workflow.
+If you want to **use mental model tags in Hindsight's new List view**, the important change is that the control plane now treats mental models more like real working documents. The page defaults to a split pane list, and tag suggestions now come from the actual mental model tag source instead of leaving you to remember tags by hand. Keep [the mental models API docs](https://hindsight.vectorize.io/sdks/developer/api/mental-models), [the reflect docs](https://hindsight.vectorize.io/sdks/developer/api/reflect), [the observations docs](https://hindsight.vectorize.io/sdks/developer/observations), and [the docs home](https://hindsight.vectorize.io) nearby while you tune the workflow.
 
 <!-- truncate -->
 
@@ -40,7 +40,7 @@ That is exactly the distinction you want when a bank has many ordinary memory ta
 
 ## Remember what mental model tags actually do
 
-This is the part that trips people up. A mental model tag is not just a label for browsing. As the [mental models API docs](https://hindsight.vectorize.io/docs/developer/api/mental-models) explain, tags narrow which memories the model can read during refresh, and they also affect which mental models are visible during [reflect](https://hindsight.vectorize.io/docs/developer/api/reflect).
+This is the part that trips people up. A mental model tag is not just a label for browsing. As the [mental models API docs](https://hindsight.vectorize.io/sdks/developer/api/mental-models) explain, tags narrow which memories the model can read during refresh, and they also affect which mental models are visible during [reflect](https://hindsight.vectorize.io/sdks/developer/api/reflect).
 
 So if you tag a mental model with `user:alice`, refresh will only read memories that also carry that required tag. That is good when you want a scoped model, but it also means over tagging can make the model look empty or stale if the underlying memories were never backfilled.
 
@@ -61,7 +61,7 @@ A few patterns show up often:
 - **The tag chip you want never appears.** Usually no mental model carries that tag yet, even if ordinary memories do.
 - **Reflect seems to miss the model.** Usually the reflect call is using tags that do not overlap with the model's own tags.
 
-When in doubt, step back through [the mental models API docs](https://hindsight.vectorize.io/docs/developer/api/mental-models) and [the observations guide](https://hindsight.vectorize.io/docs/developer/observations). Most mental model confusion is really tag scope confusion.
+When in doubt, step back through [the mental models API docs](https://hindsight.vectorize.io/sdks/developer/api/mental-models) and [the observations guide](https://hindsight.vectorize.io/sdks/developer/observations). Most mental model confusion is really tag scope confusion.
 
 ## FAQ
 
@@ -80,7 +80,7 @@ Yes. Reflect visibility is filtered by tags too, so a mismatch between request t
 ## Next Steps
 
 - [Hindsight Cloud](https://hindsight.vectorize.io)
-- [the mental models API docs](https://hindsight.vectorize.io/docs/developer/api/mental-models)
-- [the reflect docs](https://hindsight.vectorize.io/docs/developer/api/reflect)
-- [the observations guide](https://hindsight.vectorize.io/docs/developer/observations)
-- [the docs home](https://hindsight.vectorize.io/docs)
+- [the mental models API docs](https://hindsight.vectorize.io/sdks/developer/api/mental-models)
+- [the reflect docs](https://hindsight.vectorize.io/sdks/developer/api/reflect)
+- [the observations guide](https://hindsight.vectorize.io/sdks/developer/observations)
+- [the docs home](https://hindsight.vectorize.io)

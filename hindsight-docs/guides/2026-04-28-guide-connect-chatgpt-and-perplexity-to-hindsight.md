@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![Connect ChatGPT and Perplexity to Hindsight Memory](/img/guides/guide-connect-chatgpt-and-perplexity-to-hindsight.png)
 
-If you want to **connect ChatGPT and Perplexity to Hindsight**, the path is now clearly documented for both tools. The new first party integration guides show the same core pattern in two surfaces: add a remote MCP connector, complete OAuth in the browser, then give the model explicit instructions to retain and recall useful context. Keep [the ChatGPT integration guide](https://hindsight.vectorize.io/docs/integrations/chatgpt), [the Perplexity integration guide](https://hindsight.vectorize.io/docs/integrations/perplexity), [the MCP server docs](https://hindsight.vectorize.io/docs/developer/mcp-server), and [the docs home](https://hindsight.vectorize.io/docs) open while you set it up.
+If you want to **connect ChatGPT and Perplexity to Hindsight**, the path is now clearly documented for both tools. The new first party integration guides show the same core pattern in two surfaces: add a remote MCP connector, complete OAuth in the browser, then give the model explicit instructions to retain and recall useful context. Keep [the ChatGPT integration guide](https://hindsight.vectorize.io/sdks/integrations/chatgpt), [the Perplexity integration guide](https://hindsight.vectorize.io/sdks/integrations/perplexity), [the MCP server docs](https://hindsight.vectorize.io/sdks/developer/mcp-server), and [the docs home](https://hindsight.vectorize.io) open while you set it up.
 
 <!-- truncate -->
 
@@ -22,7 +22,7 @@ If you want to **connect ChatGPT and Perplexity to Hindsight**, the path is now 
 
 ## What changed in the docs
 
-The big improvement is not a new transport. It is clarity. Hindsight now has dedicated setup pages for [ChatGPT](https://hindsight.vectorize.io/docs/integrations/chatgpt) and [Perplexity](https://hindsight.vectorize.io/docs/integrations/perplexity), with the actual MCP URL, the OAuth flow, and example custom instructions in one place.
+The big improvement is not a new transport. It is clarity. Hindsight now has dedicated setup pages for [ChatGPT](https://hindsight.vectorize.io/sdks/integrations/chatgpt) and [Perplexity](https://hindsight.vectorize.io/sdks/integrations/perplexity), with the actual MCP URL, the OAuth flow, and example custom instructions in one place.
 
 That matters because these integrations are only half finished if the connector exists but the model never calls it. The new docs make that explicit: wire up the connector first, then teach the tool when to retain and when to recall.
 
@@ -53,7 +53,7 @@ There are two sane starting points:
 1. **Separate banks** for ChatGPT and Perplexity, which is simpler and reduces accidental mixing.
 2. **A shared bank** when the two tools are working on the same project and should build on the same research, decisions, and constraints.
 
-If you are unsure, start separate. Then move to a shared setup once you have a concrete reason. The shared pattern is described more directly in [the MCP server docs](https://hindsight.vectorize.io/docs/developer/mcp-server) and in the follow on workflow from [the Perplexity guide](https://hindsight.vectorize.io/docs/integrations/perplexity).
+If you are unsure, start separate. Then move to a shared setup once you have a concrete reason. The shared pattern is described more directly in [the MCP server docs](https://hindsight.vectorize.io/sdks/developer/mcp-server) and in the follow on workflow from [the Perplexity guide](https://hindsight.vectorize.io/sdks/integrations/perplexity).
 
 ## Troubleshooting the first connection
 
@@ -83,7 +83,7 @@ Start with the one you use more often. ChatGPT is usually the better first setup
 ## Next Steps
 
 - [Hindsight Cloud](https://hindsight.vectorize.io)
-- [the ChatGPT integration guide](https://hindsight.vectorize.io/docs/integrations/chatgpt)
-- [the Perplexity integration guide](https://hindsight.vectorize.io/docs/integrations/perplexity)
-- [the MCP server docs](https://hindsight.vectorize.io/docs/developer/mcp-server)
-- [the docs home](https://hindsight.vectorize.io/docs)
+- [the ChatGPT integration guide](https://hindsight.vectorize.io/sdks/integrations/chatgpt)
+- [the Perplexity integration guide](https://hindsight.vectorize.io/sdks/integrations/perplexity)
+- [the MCP server docs](https://hindsight.vectorize.io/sdks/developer/mcp-server)
+- [the docs home](https://hindsight.vectorize.io)
