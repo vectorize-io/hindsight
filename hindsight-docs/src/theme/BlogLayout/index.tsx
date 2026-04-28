@@ -8,9 +8,7 @@ export default function BlogLayout({sidebar: _sidebar, toc: _toc, children, ...l
     <Layout {...layoutProps}>
       <div className="container margin-vert--lg">
         <div className="row">
-          <main className="col col--8 col--offset-2">
-            {children}
-          </main>
+          <main className="col col--8 col--offset-2">{children}</main>
         </div>
       </div>
     </Layout>
