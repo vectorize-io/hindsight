@@ -14,6 +14,32 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join, resolve, extname, basename } from "path";
 import { homedir } from "os";
+import { createInterface } from "readline";
+
+const HINDSIGHT_CLOUD_URL = "https://api.hindsight.vectorize.io";
+
+// ── Interactive prompts ─────────────────────────────────
+
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); });
+  });
+}
+
+async function promptCloudSetup(): Promise<{ apiUrl: string; apiToken: string } | null> {
+  console.error("\nHindsight API not reachable locally.");
+  console.error("You can use Hindsight Cloud instead.\n");
+  console.error("  Sign up at: https://ui.hindsight.vectorize.io/signup\n");
+
+  const useCloud = await prompt("Use Hindsight Cloud? (y/n) ");
+  if (useCloud.toLowerCase() !== "y") return null;
+
+  const token = await prompt("API token: ");
+  if (!token) { console.error("No token provided."); return null; }
+
+  return { apiUrl: HINDSIGHT_CLOUD_URL, apiToken: token };
+}
 
 // ── Skill ───────────────────────────────────────────────
 
@@ -30,12 +56,12 @@ You have knowledge pages that persist across sessions and auto-update from your 
 
 ## At session start
 
-Call \`agent_knowledge_list_pages\` to load your knowledge. Apply what you read.
+Call \`agent_knowledge_list_pages\` to see what pages exist, then \`agent_knowledge_get_page\` for each one you need.
 
 ## Tools
 
-- \`agent_knowledge_list_pages()\` — all pages with content
-- \`agent_knowledge_get_page(page_id)\` — one page in detail
+- \`agent_knowledge_list_pages()\` — list page IDs and names (no content)
+- \`agent_knowledge_get_page(page_id)\` — read the full content of a page
 - \`agent_knowledge_create_page(page_id, name, source_query)\` — create a page
 - \`agent_knowledge_update_page(page_id, name?, source_query?)\` — update a page
 - \`agent_knowledge_delete_page(page_id)\` — delete a page
@@ -168,7 +194,6 @@ Options:
     process.exit(0);
   }
 
-  // Skip "install" if passed as first arg
   let dirArg = args[0] === "install" ? args[1] : args[0];
   const restArgs = args[0] === "install" ? args.slice(2) : args.slice(1);
 
@@ -203,21 +228,41 @@ Options:
   const agentId = agentName || basename(dir);
   const info = resolveHarness(harness, agentId, apiUrlOverride, apiTokenOverride);
 
-  console.log(`Setting up '${agentId}' on ${harness}`);
+  // Health check — if local fails, offer cloud
+  let healthy = false;
+  try {
+    await api(info.apiUrl, "/health", "GET", undefined, info.apiToken);
+    healthy = true;
+  } catch {
+    // Local not reachable — try cloud interactively if no explicit --api-url
+    if (!apiUrlOverride && process.stdin.isTTY) {
+      const cloud = await promptCloudSetup();
+      if (cloud) {
+        info.apiUrl = cloud.apiUrl;
+        info.apiToken = cloud.apiToken;
+        try {
+          await api(info.apiUrl, "/health", "GET", undefined, info.apiToken);
+          healthy = true;
+        } catch {
+          console.error(`Error: Cannot reach Hindsight Cloud. Check your token.`);
+          process.exit(1);
+        }
+      }
+    }
+  }
+
+  if (!healthy) {
+    console.error(`Error: Cannot reach Hindsight at ${info.apiUrl}`);
+    console.error("Start the server, or use --api-url / --api-token for cloud.");
+    process.exit(1);
+  }
+
+  console.log(`Installing '${agentId}' on ${harness}`);
   console.log(`  Directory: ${dir}`);
   console.log(`  Bank:      ${info.bankId}`);
   console.log(`  API:       ${info.apiUrl}`);
   console.log(`  Workspace: ${info.workspaceDir}`);
   console.log();
-
-  // Health check
-  try {
-    await api(info.apiUrl, "/health", "GET", undefined, info.apiToken);
-  } catch {
-    console.error(`Error: Cannot reach Hindsight at ${info.apiUrl}`);
-    console.error("Make sure the Hindsight server or embedded daemon is running.");
-    process.exit(1);
-  }
 
   // Import bank template
   const templatePath = join(dir, "bank-template.json");
@@ -247,11 +292,10 @@ Options:
     }
   }
 
-  // Create harness agent (openclaw only for now)
+  // Create harness agent (openclaw)
   if (harness === "openclaw") {
     try {
       const { execSync } = await import("child_process");
-      // Check if agent exists
       const listOut = execSync("openclaw agents list --json 2>/dev/null", { encoding: "utf-8" });
       const agents = JSON.parse(listOut).agents || [];
       if (!agents.some((a: any) => a.name === agentId)) {
@@ -262,7 +306,7 @@ Options:
         console.log(`Agent '${agentId}' already exists.`);
       }
     } catch {
-      console.log(`Note: create agent manually: openclaw agents add ${agentId}`);
+      console.log(`Note: create agent manually: openclaw agents add ${agentId} --workspace ${info.workspaceDir} --non-interactive`);
     }
   }
 

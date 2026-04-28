@@ -48,7 +48,7 @@ function ok(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: {} };
 }
 
-export function createWikiToolFactory(deps: ToolDeps) {
+export function createKnowledgeToolFactory(deps: ToolDeps) {
   return (ctx: PluginToolContext) => {
     const bankId = deriveBankId(ctx as any, deps.pluginConfig);
     const apiUrl = deps.getApiUrl();

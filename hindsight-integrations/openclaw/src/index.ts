@@ -16,7 +16,7 @@ import * as log from "./logger.js";
 import { configureLogger, setApiLogger, stopLogger } from "./logger.js";
 import { mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { createWikiToolFactory } from "./wiki-tools.js";
+import { createKnowledgeToolFactory } from "./knowledge-tools.js";
 
 function loadPackageVersion(): string {
   try {
@@ -2355,10 +2355,10 @@ ${memoriesFormatted}
     debug("[Hindsight] Hooks registered");
     log.info("agent hooks registered");
 
-    // Register wiki tools (if registerTool is available on this OpenClaw version)
+    // Register knowledge tools (if registerTool is available on this OpenClaw version)
     if (typeof api.registerTool === "function") {
       try {
-        const factory = createWikiToolFactory({
+        const factory = createKnowledgeToolFactory({
           pluginConfig,
           getApiUrl: () => {
             const ext = detectExternalApi(pluginConfig);
@@ -2378,9 +2378,9 @@ ${memoriesFormatted}
           ],
           optional: false,
         });
-        log.info("wiki tools registered");
+        log.info("knowledge tools registered");
       } catch (err) {
-        log.warn(`wiki tools registration failed: ${err}`);
+        log.warn(`knowledge tools registration failed: ${err}`);
       }
     }
   } catch (error) {
