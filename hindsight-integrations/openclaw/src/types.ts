@@ -1,4 +1,7 @@
-// Moltbot plugin API types (minimal subset needed for this plugin)
+// Moltbot plugin API types (minimal subset needed for this plugin).
+// These duplicate OpenClaw SDK types intentionally — the SDK does not publish
+// stable type-only imports yet, so we inline the shapes we rely on.
+// TODO: replace with SDK imports once OpenClaw ships a types package.
 
 export interface PluginPromptHookResult {
   prependContext?: string;
@@ -6,9 +9,25 @@ export interface PluginPromptHookResult {
   appendSystemContext?: string;
 }
 
+export interface MemoryPluginPublicArtifact {
+  kind: string;
+  workspaceDir: string;
+  relativePath: string;
+  absolutePath: string;
+  agentIds: string[];
+  contentType: 'markdown' | 'json' | 'text';
+}
+
+export interface MemoryPluginCapability {
+  publicArtifacts?: {
+    listArtifacts(params: { cfg: MoltbotConfig }): Promise<MemoryPluginPublicArtifact[]>;
+  };
+}
+
 export interface MoltbotPluginAPI {
   config: MoltbotConfig;
   registerService(config: ServiceConfig): void;
+  registerMemoryCapability?(capability: MemoryPluginCapability): void;
   // OpenClaw hook handler signature: (event, ctx?) where ctx contains channel/sender info
   on(
     event: string,
@@ -25,7 +44,13 @@ export interface MoltbotPluginAPI {
 
 export interface MoltbotConfig {
   agents?: {
+    list?: Array<{
+      id?: string;
+      workspace?: string;
+      default?: boolean;
+    }>;
     defaults?: {
+      workspace?: string;
       models?: {
         [modelName: string]: {
           alias?: string;
