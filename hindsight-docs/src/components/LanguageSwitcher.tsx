@@ -5,13 +5,13 @@ import styles from './LanguageSwitcher.module.css';
 
 // List of guide slugs that have Chinese translations (2026-04-28 batch)
 const TRANSLATED_GUIDES = new Set([
-  'connect-chatgpt-and-perplexity-to-hindsight',
-  'fix-openclaw-retention-and-recall-on-default-main-sessions',
-  'reduce-hindsight-consolidation-memory-fan-out',
-  'run-hindsight-cli-on-linux-arm64',
-  'share-hindsight-memory-across-chatgpt-and-perplexity',
-  'size-hindsight-memory-footprint-for-deployments',
-  'use-mental-model-tags-in-hindsight-list-view',
+  'guide-connect-chatgpt-and-perplexity-to-hindsight',
+  'guide-fix-openclaw-retention-and-recall-on-default-main-sessions',
+  'guide-reduce-hindsight-consolidation-memory-fan-out',
+  'guide-run-hindsight-cli-on-linux-arm64',
+  'guide-share-hindsight-memory-across-chatgpt-and-perplexity',
+  'guide-size-hindsight-memory-footprint-for-deployments',
+  'guide-use-mental-model-tags-in-hindsight-list-view',
 ]);
 
 export default function LanguageSwitcher(): React.ReactNode {
