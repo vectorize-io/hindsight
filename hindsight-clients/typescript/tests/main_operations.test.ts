@@ -4,7 +4,7 @@
  * These tests require a running Hindsight API server.
  */
 
-import { HindsightClient } from "../src";
+import { HindsightClient, sdk } from "../src";
 
 // Test configuration
 const HINDSIGHT_API_URL = process.env.HINDSIGHT_API_URL || "http://localhost:8888";
@@ -467,5 +467,46 @@ describe("TestMission", () => {
     expect(response).not.toBeNull();
     expect(response.bank_id).toBe(bankId);
     expect(response.mission).toBe("Be a helpful PM tracking sprint progress and team capacity");
+  });
+});
+
+describe("TestAbortSignal", () => {
+  test("retain passes abort signal to SDK", async () => {
+    const bankId = randomBankId();
+    const controller = new AbortController();
+    const spy = jest.spyOn(sdk, "retainMemories").mockResolvedValue({
+      data: { success: true, items_count: 1 },
+    } as any);
+
+    await client.retain(bankId, "test", { signal: controller.signal });
+
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    spy.mockRestore();
+  });
+
+  test("recall passes abort signal to SDK", async () => {
+    const bankId = randomBankId();
+    const controller = new AbortController();
+    const spy = jest.spyOn(sdk, "recallMemories").mockResolvedValue({
+      data: { results: [] },
+    } as any);
+
+    await client.recall(bankId, "test", { signal: controller.signal });
+
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    spy.mockRestore();
+  });
+
+  test("getBankProfile passes abort signal to SDK", async () => {
+    const bankId = randomBankId();
+    const controller = new AbortController();
+    const spy = jest.spyOn(sdk, "getBankProfile").mockResolvedValue({
+      data: { bank_id: bankId, name: "Test" },
+    } as any);
+
+    await client.getBankProfile(bankId, { signal: controller.signal });
+
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    spy.mockRestore();
   });
 });

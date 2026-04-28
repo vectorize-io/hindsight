@@ -162,6 +162,7 @@ export class HindsightClient {
       tags?: string[];
       /** How to handle existing documents: 'replace' (default) or 'append' */
       updateMode?: "replace" | "append";
+      signal?: AbortSignal;
     }
   ): Promise<RetainResponse> {
     const item: {
@@ -201,6 +202,7 @@ export class HindsightClient {
       client: this.client,
       path: { bank_id: bankId },
       body: { items: [item], async: options?.async },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "retain");
@@ -212,7 +214,12 @@ export class HindsightClient {
   async retainBatch(
     bankId: string,
     items: MemoryItemInput[],
-    options?: { documentId?: string; documentTags?: string[]; async?: boolean }
+    options?: {
+      documentId?: string;
+      documentTags?: string[];
+      async?: boolean;
+      signal?: AbortSignal;
+    }
   ): Promise<RetainResponse> {
     const processedItems = items.map((item) => ({
       content: item.content,
@@ -241,6 +248,7 @@ export class HindsightClient {
         document_tags: options?.documentTags,
         async: options?.async,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "retainBatch");
@@ -268,6 +276,7 @@ export class HindsightClient {
         tags?: string[];
         metadata?: Record<string, string>;
       }>;
+      signal?: AbortSignal;
     }
   ): Promise<FileRetainResponse> {
     const meta =
@@ -282,6 +291,7 @@ export class HindsightClient {
       client: this.client,
       path: { bank_id: bankId },
       body: { files, request: requestBody },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "retainFiles");
@@ -311,6 +321,7 @@ export class HindsightClient {
       tags?: string[];
       /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
       tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
+      signal?: AbortSignal;
     }
   ): Promise<RecallResponse> {
     const response = await sdk.recallMemories({
@@ -340,6 +351,7 @@ export class HindsightClient {
         tags: options?.tags,
         tags_match: options?.tagsMatch,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "recall");
@@ -358,6 +370,7 @@ export class HindsightClient {
       tags?: string[];
       /** How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged). Default: 'any' */
       tagsMatch?: "any" | "all" | "any_strict" | "all_strict";
+      signal?: AbortSignal;
     }
   ): Promise<ReflectResponse> {
     const response = await sdk.reflect({
@@ -370,6 +383,7 @@ export class HindsightClient {
         tags: options?.tags,
         tags_match: options?.tagsMatch,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "reflect");
@@ -386,6 +400,7 @@ export class HindsightClient {
       type?: string;
       q?: string;
       consolidationState?: "failed" | "pending" | "done";
+      signal?: AbortSignal;
     }
   ): Promise<ListMemoryUnitsResponse> {
     const response = await sdk.listMemories({
@@ -398,6 +413,7 @@ export class HindsightClient {
         q: options?.q,
         consolidation_state: options?.consolidationState,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "listMemories");
@@ -437,6 +453,7 @@ export class HindsightClient {
       enableObservations?: boolean;
       /** Controls what gets synthesised into observations. Replaces built-in rules. */
       observationsMission?: string;
+      signal?: AbortSignal;
     } = {}
   ): Promise<BankProfileResponse> {
     const response = await sdk.createOrUpdateBank({
@@ -458,6 +475,7 @@ export class HindsightClient {
         enable_observations: options.enableObservations,
         observations_mission: options.observationsMission,
       },
+      signal: options.signal,
     });
 
     return this.validateResponse(response, "createBank");
@@ -467,17 +485,25 @@ export class HindsightClient {
    * Set or update the reflect mission for a memory bank.
    * @deprecated Use createBank({ reflectMission: '...' }) instead.
    */
-  async setMission(bankId: string, mission: string): Promise<BankProfileResponse> {
-    return this.createBank(bankId, { reflectMission: mission });
+  async setMission(
+    bankId: string,
+    mission: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BankProfileResponse> {
+    return this.createBank(bankId, { reflectMission: mission, signal: options?.signal });
   }
 
   /**
    * Get a bank's profile.
    */
-  async getBankProfile(bankId: string): Promise<BankProfileResponse> {
+  async getBankProfile(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BankProfileResponse> {
     const response = await sdk.getBankProfile({
       client: this.client,
       path: { bank_id: bankId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "getBankProfile");
@@ -488,10 +514,14 @@ export class HindsightClient {
    *
    * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
    */
-  async getBankConfig(bankId: string): Promise<BankConfigResponse> {
+  async getBankConfig(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BankConfigResponse> {
     const response = await sdk.getBankConfig({
       client: this.client,
       path: { bank_id: bankId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "getBankConfig");
@@ -521,6 +551,7 @@ export class HindsightClient {
       dispositionLiteralism?: number;
       /** How much to consider emotional context (1=detached, 5=empathetic). */
       dispositionEmpathy?: number;
+      signal?: AbortSignal;
     }
   ): Promise<BankConfigResponse> {
     const updates: Record<string, unknown> = {};
@@ -546,6 +577,7 @@ export class HindsightClient {
       client: this.client,
       path: { bank_id: bankId },
       body: { updates },
+      signal: options.signal,
     });
 
     return this.validateResponse(response, "updateBankConfig");
@@ -556,10 +588,14 @@ export class HindsightClient {
    *
    * Can be disabled on the server by setting `HINDSIGHT_API_ENABLE_BANK_CONFIG_API=false`.
    */
-  async resetBankConfig(bankId: string): Promise<BankConfigResponse> {
+  async resetBankConfig(
+    bankId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<BankConfigResponse> {
     const response = await sdk.resetBankConfig({
       client: this.client,
       path: { bank_id: bankId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "resetBankConfig");
@@ -568,10 +604,11 @@ export class HindsightClient {
   /**
    * Delete a bank.
    */
-  async deleteBank(bankId: string): Promise<void> {
+  async deleteBank(bankId: string, options?: { signal?: AbortSignal }): Promise<void> {
     const response = await sdk.deleteBank({
       client: this.client,
       path: { bank_id: bankId },
+      signal: options?.signal,
     });
     if (response.error) {
       throw new Error(`deleteBank failed: ${JSON.stringify(response.error)}`);
@@ -591,6 +628,7 @@ export class HindsightClient {
       priority?: number;
       isActive?: boolean;
       tags?: string[];
+      signal?: AbortSignal;
     }
   ): Promise<any> {
     const response = await sdk.createDirective({
@@ -603,6 +641,7 @@ export class HindsightClient {
         is_active: options?.isActive ?? true,
         tags: options?.tags,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "createDirective");
@@ -611,11 +650,15 @@ export class HindsightClient {
   /**
    * List all directives in a bank.
    */
-  async listDirectives(bankId: string, options?: { tags?: string[] }): Promise<any> {
+  async listDirectives(
+    bankId: string,
+    options?: { tags?: string[]; signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.listDirectives({
       client: this.client,
       path: { bank_id: bankId },
       query: { tags: options?.tags },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "listDirectives");
@@ -624,10 +667,15 @@ export class HindsightClient {
   /**
    * Get a specific directive.
    */
-  async getDirective(bankId: string, directiveId: string): Promise<any> {
+  async getDirective(
+    bankId: string,
+    directiveId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.getDirective({
       client: this.client,
       path: { bank_id: bankId, directive_id: directiveId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "getDirective");
@@ -645,6 +693,7 @@ export class HindsightClient {
       priority?: number;
       isActive?: boolean;
       tags?: string[];
+      signal?: AbortSignal;
     }
   ): Promise<any> {
     const response = await sdk.updateDirective({
@@ -657,6 +706,7 @@ export class HindsightClient {
         is_active: options.isActive,
         tags: options.tags,
       },
+      signal: options.signal,
     });
 
     return this.validateResponse(response, "updateDirective");
@@ -665,10 +715,15 @@ export class HindsightClient {
   /**
    * Delete a directive.
    */
-  async deleteDirective(bankId: string, directiveId: string): Promise<void> {
+  async deleteDirective(
+    bankId: string,
+    directiveId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void> {
     const response = await sdk.deleteDirective({
       client: this.client,
       path: { bank_id: bankId, directive_id: directiveId },
+      signal: options?.signal,
     });
     if (response.error) {
       throw new Error(`deleteDirective failed: ${JSON.stringify(response.error)}`);
@@ -689,6 +744,7 @@ export class HindsightClient {
       tags?: string[];
       maxTokens?: number;
       trigger?: { refreshAfterConsolidation?: boolean };
+      signal?: AbortSignal;
     }
   ): Promise<any> {
     const response = await sdk.createMentalModel({
@@ -704,6 +760,7 @@ export class HindsightClient {
           ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
           : undefined,
       },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "createMentalModel");
@@ -712,11 +769,15 @@ export class HindsightClient {
   /**
    * List all mental models in a bank.
    */
-  async listMentalModels(bankId: string, options?: { tags?: string[] }): Promise<any> {
+  async listMentalModels(
+    bankId: string,
+    options?: { tags?: string[]; signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.listMentalModels({
       client: this.client,
       path: { bank_id: bankId },
       query: { tags: options?.tags },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "listMentalModels");
@@ -725,10 +786,15 @@ export class HindsightClient {
   /**
    * Get a specific mental model.
    */
-  async getMentalModel(bankId: string, mentalModelId: string): Promise<any> {
+  async getMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.getMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "getMentalModel");
@@ -737,10 +803,15 @@ export class HindsightClient {
   /**
    * Refresh a mental model to update with current knowledge.
    */
-  async refreshMentalModel(bankId: string, mentalModelId: string): Promise<any> {
+  async refreshMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.refreshMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "refreshMentalModel");
@@ -758,6 +829,7 @@ export class HindsightClient {
       tags?: string[];
       maxTokens?: number;
       trigger?: { refreshAfterConsolidation?: boolean };
+      signal?: AbortSignal;
     }
   ): Promise<any> {
     const response = await sdk.updateMentalModel({
@@ -772,6 +844,7 @@ export class HindsightClient {
           ? { refresh_after_consolidation: options.trigger.refreshAfterConsolidation }
           : undefined,
       },
+      signal: options.signal,
     });
 
     return this.validateResponse(response, "updateMentalModel");
@@ -780,10 +853,15 @@ export class HindsightClient {
   /**
    * Delete a mental model.
    */
-  async deleteMentalModel(bankId: string, mentalModelId: string): Promise<void> {
+  async deleteMentalModel(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void> {
     const response = await sdk.deleteMentalModel({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
     });
     if (response.error) {
       throw new Error(`deleteMentalModel failed: ${JSON.stringify(response.error)}`);
@@ -793,10 +871,15 @@ export class HindsightClient {
   /**
    * Get the change history of a mental model.
    */
-  async getMentalModelHistory(bankId: string, mentalModelId: string): Promise<any> {
+  async getMentalModelHistory(
+    bankId: string,
+    mentalModelId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.getMentalModelHistory({
       client: this.client,
       path: { bank_id: bankId, mental_model_id: mentalModelId },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "getMentalModelHistory");
@@ -805,10 +888,15 @@ export class HindsightClient {
   /**
    * Get a document by ID. Returns null if not found.
    */
-  async getDocument(bankId: string, documentId: string): Promise<any | null> {
+  async getDocument(
+    bankId: string,
+    documentId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<any | null> {
     const response = await sdk.getDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
+      signal: options?.signal,
     });
 
     if ((response as any).response?.status === 404) {
@@ -821,11 +909,15 @@ export class HindsightClient {
   /**
    * List documents in a bank.
    */
-  async listDocuments(bankId: string, options?: { limit?: number; offset?: number }): Promise<any> {
+  async listDocuments(
+    bankId: string,
+    options?: { limit?: number; offset?: number; signal?: AbortSignal }
+  ): Promise<any> {
     const response = await sdk.listDocuments({
       client: this.client,
       path: { bank_id: bankId },
       query: { limit: options?.limit, offset: options?.offset },
+      signal: options?.signal,
     });
 
     return this.validateResponse(response, "listDocuments");
@@ -834,10 +926,15 @@ export class HindsightClient {
   /**
    * Delete a document.
    */
-  async deleteDocument(bankId: string, documentId: string): Promise<void> {
+  async deleteDocument(
+    bankId: string,
+    documentId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void> {
     const response = await sdk.deleteDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
+      signal: options?.signal,
     });
     if (response.error) {
       throw new Error(`deleteDocument failed: ${JSON.stringify(response.error)}`);
@@ -850,12 +947,13 @@ export class HindsightClient {
   async updateDocument(
     bankId: string,
     documentId: string,
-    options: { tags?: string[] }
+    options: { tags?: string[]; signal?: AbortSignal }
   ): Promise<any> {
     const response = await sdk.updateDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
       body: { tags: options.tags },
+      signal: options.signal,
     });
 
     return this.validateResponse(response, "updateDocument");
