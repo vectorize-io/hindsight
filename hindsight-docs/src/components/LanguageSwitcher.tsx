@@ -1,6 +1,5 @@
 import React from 'react';
 import {useLocation} from '@docusaurus/router';
-import {useDocusaurusContext} from '@docusaurus/core';
 import Link from '@docusaurus/Link';
 import styles from './LanguageSwitcher.module.css';
 
@@ -17,8 +16,11 @@ const TRANSLATED_GUIDES = new Set([
 
 export default function LanguageSwitcher(): React.ReactNode {
   const {pathname} = useLocation();
-  const {i18n} = useDocusaurusContext();
-  const currentLocale = i18n.currentLocale;
+
+  // Detect current locale from pathname
+  // /zh/guides/... = Chinese, /guides/... = English
+  const isChineseUrl = pathname.startsWith('/zh/');
+  const currentLocale = isChineseUrl ? 'zh-CN' : 'en';
 
   // Check if we're on a guides page
   const isGuidesPage = pathname.includes('/guides/');
