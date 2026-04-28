@@ -85,6 +85,26 @@ def upgrade() -> None:
         )
     """)
 
+    # Step 4b: If the table already existed (from reflections rename chain),
+    # it won't have the v4 columns. Add them idempotently so the migration
+    # works regardless of whether CREATE TABLE above was a no-op.
+    for col_ddl in [
+        "subtype VARCHAR(32) NOT NULL DEFAULT 'directive'",
+        "description TEXT NOT NULL DEFAULT ''",
+        "entity_id UUID",
+        "observations JSONB DEFAULT '{\"observations\": []}'::jsonb",
+        "links VARCHAR[]",
+        "last_updated TIMESTAMP WITH TIME ZONE",
+    ]:
+        op.execute(f"ALTER TABLE {schema}mental_models ADD COLUMN IF NOT EXISTS {col_ddl}")
+
+    # Ensure the subtype CHECK constraint exists (may not if table was renamed)
+    op.execute(f"ALTER TABLE {schema}mental_models DROP CONSTRAINT IF EXISTS ck_mental_models_subtype")
+    op.execute(f"""
+        ALTER TABLE {schema}mental_models
+        ADD CONSTRAINT ck_mental_models_subtype CHECK (subtype IN ('structural', 'emergent', 'pinned', 'learned'))
+    """)
+
     # Step 5: Create indexes for efficient queries (if not exist)
     op.execute(f"CREATE INDEX IF NOT EXISTS idx_mental_models_bank_id ON {schema}mental_models(bank_id)")
     op.execute(f"CREATE INDEX IF NOT EXISTS idx_mental_models_subtype ON {schema}mental_models(bank_id, subtype)")

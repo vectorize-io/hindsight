@@ -39,7 +39,7 @@ async def _insert_memory(conn, bank_id: str, text: str, fact_type: str = "experi
 
 
 async def _insert_observation(conn, bank_id: str, text: str, source_memory_ids: list[uuid.UUID]) -> uuid.UUID:
-    """Insert an observation unit directly."""
+    """Insert an observation unit directly (including observation_sources junction table)."""
     obs_id = uuid.uuid4()
     await conn.execute(
         """
@@ -53,6 +53,13 @@ async def _insert_observation(conn, bank_id: str, text: str, source_memory_ids: 
         source_memory_ids,
         len(source_memory_ids),
     )
+    # Also populate the observation_sources junction table
+    for sid in source_memory_ids:
+        await conn.execute(
+            "INSERT INTO observation_sources (observation_id, source_id) VALUES ($1, $2)",
+            obs_id,
+            sid,
+        )
     return obs_id
 
 

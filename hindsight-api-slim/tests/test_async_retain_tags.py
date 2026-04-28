@@ -29,6 +29,12 @@ async def test_submit_async_retain_includes_document_tags_in_task_payload():
     mock_pool.release = AsyncMock()
 
     engine._get_pool = AsyncMock(return_value=mock_pool)
+    # _backend used by bank_utils (patched below) and _get_backend for acquire_with_retry
+    engine._backend = mock_pool
+    engine._get_backend = AsyncMock(return_value=mock_pool)
+    # Ensure mock_pool is not treated as a DatabaseBackend/BudgetedPool wrapper
+    # (AsyncMock returns truthy for any attr; explicitly set _wraps_backend to False)
+    mock_pool._wraps_backend = False
 
     request_context = RequestContext(tenant_id="tenant-a", api_key_id="key-a")
     contents = [{"content": "Async retain payload test."}]

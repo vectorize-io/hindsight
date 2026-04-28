@@ -10,7 +10,7 @@ import os
 import sys
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -117,6 +117,7 @@ def normalize_config_dict(config: dict[str, Any]) -> dict[str, Any]:
 
 
 # Environment variable names
+ENV_DATABASE_BACKEND = "HINDSIGHT_API_DATABASE_BACKEND"
 ENV_DATABASE_URL = "HINDSIGHT_API_DATABASE_URL"
 ENV_MIGRATION_DATABASE_URL = "HINDSIGHT_API_MIGRATION_DATABASE_URL"
 ENV_DATABASE_SCHEMA = "HINDSIGHT_API_DATABASE_SCHEMA"
@@ -435,6 +436,7 @@ ENV_DISPOSITION_LITERALISM = "HINDSIGHT_API_DISPOSITION_LITERALISM"
 ENV_DISPOSITION_EMPATHY = "HINDSIGHT_API_DISPOSITION_EMPATHY"
 
 # Default values
+DEFAULT_DATABASE_BACKEND = "postgresql"
 DEFAULT_DATABASE_URL = "pg0"
 DEFAULT_DATABASE_SCHEMA = "public"
 DEFAULT_LLM_PROVIDER = "openai"
@@ -821,6 +823,7 @@ class HindsightConfig:
     """Configuration container for Hindsight API."""
 
     # Database
+    database_backend: Literal["postgresql", "oracle"]
     database_url: str
     migration_database_url: str | None
     database_schema: str
@@ -1302,6 +1305,30 @@ class HindsightConfig:
                 f"provider: {self.retain_llm_provider or self.llm_provider})"
             )
 
+        # Warn if local ML dependencies are missing when configured.
+        # Don't hard-fail here — the actual ImportError fires at model init time
+        # with a clear message. This early warning catches it before startup proceeds.
+        if self.embeddings_provider == "local" or self.reranker_provider == "local":
+            try:
+                import importlib
+
+                importlib.import_module("sentence_transformers")
+            except ImportError:
+                missing = []
+                if self.embeddings_provider == "local":
+                    missing.append("embeddings")
+                if self.reranker_provider == "local":
+                    missing.append("reranker")
+                logger.warning(
+                    "Local ML provider configured for %s, but 'sentence-transformers' "
+                    "is not installed. The API will fail at startup. Either:\n"
+                    "  1. Install local ML deps: pip install hindsight-api[local-ml]\n"
+                    "  2. Use a remote provider instead:\n"
+                    "     HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai (or gemini, tei)\n"
+                    "     HINDSIGHT_API_RERANKER_PROVIDER=none (or tei)",
+                    " and ".join(missing),
+                )
+
         # Validate that sum of per-operation slot reservations does not exceed max_slots
         total_reserved = sum(self.worker_slot_reservations.values())
         if total_reserved > self.worker_max_slots:
@@ -1321,6 +1348,7 @@ class HindsightConfig:
 
         config = cls(
             # Database
+            database_backend=os.getenv(ENV_DATABASE_BACKEND, DEFAULT_DATABASE_BACKEND).lower(),
             database_url=os.getenv(ENV_DATABASE_URL, DEFAULT_DATABASE_URL),
             migration_database_url=os.getenv(ENV_MIGRATION_DATABASE_URL) or None,
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),

@@ -35,23 +35,23 @@ pytestmark = pytest.mark.xdist_group("worker_tests")
 
 
 @pytest_asyncio.fixture
-async def pool(pg0_db_url):
-    """Create a dedicated connection pool for worker tests."""
-    import asyncpg
-
+async def backend(pg0_db_url):
+    """Create a DatabaseBackend for worker tests."""
+    from hindsight_api.engine.db import create_database_backend
     from hindsight_api.pg0 import resolve_database_url
 
-    # Resolve pg0:// URL to postgresql:// URL if needed
     resolved_url = await resolve_database_url(pg0_db_url)
 
-    pool = await asyncpg.create_pool(
-        resolved_url,
-        min_size=2,
-        max_size=10,
-        command_timeout=30,
-    )
-    yield pool
-    await pool.close()
+    b = create_database_backend("postgresql")
+    await b.initialize(resolved_url, min_size=2, max_size=10, command_timeout=30)
+    yield b
+    await b.shutdown()
+
+
+@pytest_asyncio.fixture
+async def pool(backend):
+    """Expose the raw asyncpg pool from the backend for direct DB access in tests."""
+    yield backend.get_pool()
 
 
 @pytest_asyncio.fixture
@@ -222,7 +222,7 @@ class TestWorkerPoller:
     """Tests for WorkerPoller task claiming and execution."""
 
     @pytest.mark.asyncio
-    async def test_claim_batch_claims_pending_tasks(self, pool, clean_operations):
+    async def test_claim_batch_claims_pending_tasks(self, pool, backend, clean_operations):
         """Test that claim_batch claims pending tasks with task_payload."""
         from hindsight_api.worker import WorkerPoller
 
@@ -249,7 +249,7 @@ class TestWorkerPoller:
             executed_tasks.append(task_dict)
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=mock_executor,
         )
@@ -274,7 +274,7 @@ class TestWorkerPoller:
             assert row["worker_id"] == "test-worker-1"
 
     @pytest.mark.asyncio
-    async def test_claim_batch_respects_max_slots(self, pool, clean_operations):
+    async def test_claim_batch_respects_max_slots(self, pool, backend, clean_operations):
         """Test that claim_batch respects the max_slots limit."""
         from hindsight_api.worker import WorkerPoller
 
@@ -295,7 +295,7 @@ class TestWorkerPoller:
             )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
             max_slots=3,  # Limit to 3 concurrent tasks
@@ -306,7 +306,7 @@ class TestWorkerPoller:
         assert len(claimed) == 3
 
     @pytest.mark.asyncio
-    async def test_execute_task_executor_marks_completed(self, pool, clean_operations):
+    async def test_execute_task_executor_marks_completed(self, pool, backend, clean_operations):
         """Test that executor's status marking is preserved by the poller.
 
         The executor (MemoryEngine.execute_task) handles marking operations as completed/failed.
@@ -345,7 +345,7 @@ class TestWorkerPoller:
             )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=mock_executor,
         )
@@ -369,7 +369,7 @@ class TestWorkerPoller:
         assert row["completed_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_executor_exception_triggers_retry(self, pool, clean_operations):
+    async def test_executor_exception_triggers_retry(self, pool, backend, clean_operations):
         """Test that exceptions from the executor trigger _retry_or_fail (not a crash).
 
         When the executor re-raises an exception (as MemoryEngine.execute_task does for
@@ -404,7 +404,7 @@ class TestWorkerPoller:
             raise RetryTaskAt(retry_at=datetime.now(timezone.utc), message="TimeoutError during recall")
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=failing_executor,
         )
@@ -431,7 +431,7 @@ class TestWorkerPoller:
         assert row["retry_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_executor_exception_marks_failed_immediately(self, pool, clean_operations):
+    async def test_executor_exception_marks_failed_immediately(self, pool, backend, clean_operations):
         """Test that a plain exception (not RetryTaskAt) permanently marks a task as 'failed'.
 
         With the task-owned retry model, plain exceptions are non-retryable — the poller
@@ -458,7 +458,7 @@ class TestWorkerPoller:
             raise ValueError("Non-retryable error")
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=failing_executor,
         )
@@ -479,7 +479,7 @@ class TestWorkerPoller:
         assert row["retry_count"] == 0  # not incremented; plain exception = immediate fail
 
     @pytest.mark.asyncio
-    async def test_executor_failed_status_not_overridden(self, pool, clean_operations):
+    async def test_executor_failed_status_not_overridden(self, pool, backend, clean_operations):
         """REGRESSION TEST: Verify poller does NOT overwrite executor's 'failed' status to 'completed'.
 
         This test covers the non-retryable failure path (e.g., file_convert_retain):
@@ -525,7 +525,7 @@ class TestWorkerPoller:
             # Returns normally - this is the key: executor does NOT re-raise
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=executor_that_marks_failed,
         )
@@ -549,7 +549,7 @@ class TestWorkerPoller:
         assert "Simulated conversion error" in row["error_message"]
 
     @pytest.mark.asyncio
-    async def test_executor_defer_requeues_without_bumping_retry_count(self, pool, clean_operations):
+    async def test_executor_defer_requeues_without_bumping_retry_count(self, pool, backend, clean_operations):
         """DeferOperation requeues the task without counting as a retry.
 
         Unlike RetryTaskAt (failure-driven), DeferOperation is intentional
@@ -582,7 +582,7 @@ class TestWorkerPoller:
             raise DeferOperation(exec_date=defer_until, reason="upstream quota window not yet open")
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=deferring_executor,
         )
@@ -609,7 +609,7 @@ class TestWorkerPoller:
         assert abs((row["next_retry_at"] - defer_until).total_seconds()) < 1
 
     @pytest.mark.asyncio
-    async def test_deferred_task_not_picked_up_until_exec_date(self, pool, clean_operations):
+    async def test_deferred_task_not_picked_up_until_exec_date(self, pool, backend, clean_operations):
         """A deferred task is invisible to claim_batch until next_retry_at <= NOW()."""
         from datetime import datetime, timedelta, timezone
 
@@ -632,7 +632,7 @@ class TestWorkerPoller:
         )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
         )
@@ -657,7 +657,7 @@ class TestWorkerPoller:
         assert DeferFromExtensions is DeferFromWorker
 
     @pytest.mark.asyncio
-    async def test_extension_validate_retain_defer_propagates_to_poller(self, pool, clean_operations):
+    async def test_extension_validate_retain_defer_propagates_to_poller(self, pool, backend, clean_operations):
         """An OperationValidatorExtension that raises DeferOperation in validate_retain
         causes the worker to requeue the task at the requested exec_date.
 
@@ -717,7 +717,7 @@ class TestWorkerPoller:
             await validator.validate_retain(ctx)
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=executor_calling_validator,
         )
@@ -831,7 +831,7 @@ class TestWorkerPoller:
         assert not isinstance(exc_info.value, RetryTaskAt)
 
     @pytest.mark.asyncio
-    async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, clean_operations):
+    async def test_claim_batch_skips_consolidation_when_same_bank_processing(self, pool, backend, clean_operations):
         """Test that pending consolidation is skipped if same bank has one processing."""
         from hindsight_api.worker import WorkerPoller
 
@@ -877,7 +877,7 @@ class TestWorkerPoller:
         )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
         )
@@ -904,7 +904,7 @@ class TestWorkerPoller:
         assert row["worker_id"] is None
 
     @pytest.mark.asyncio
-    async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(self, pool, clean_operations):
+    async def test_claim_batch_allows_non_consolidation_when_consolidation_processing(self, pool, backend, clean_operations):
         """Test that non-consolidation tasks are still claimed even if consolidation is processing."""
         from hindsight_api.worker import WorkerPoller
 
@@ -935,7 +935,7 @@ class TestWorkerPoller:
         )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
         )
@@ -951,7 +951,7 @@ class TestWorkerRecovery:
     """Tests for worker task recovery on startup."""
 
     @pytest.mark.asyncio
-    async def test_recover_own_tasks_resets_processing_to_pending(self, pool, clean_operations):
+    async def test_recover_own_tasks_resets_processing_to_pending(self, pool, backend, clean_operations):
         """Test that recover_own_tasks resets processing tasks back to pending."""
         from hindsight_api.worker import WorkerPoller
 
@@ -978,7 +978,7 @@ class TestWorkerRecovery:
 
         # Create poller with same worker_id and call recover
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id=worker_id,
             executor=lambda x: None,
         )
@@ -997,7 +997,7 @@ class TestWorkerRecovery:
             assert row["claimed_at"] is None
 
     @pytest.mark.asyncio
-    async def test_recover_own_tasks_does_not_affect_other_workers(self, pool, clean_operations):
+    async def test_recover_own_tasks_does_not_affect_other_workers(self, pool, backend, clean_operations):
         """Test that recover_own_tasks only affects tasks from the same worker_id."""
         from hindsight_api.worker import WorkerPoller
 
@@ -1034,7 +1034,7 @@ class TestWorkerRecovery:
 
         # Worker-1 recovers its tasks
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="worker-1",
             executor=lambda x: None,
         )
@@ -1059,12 +1059,12 @@ class TestWorkerRecovery:
             assert row["status"] == "processing"
 
     @pytest.mark.asyncio
-    async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, clean_operations):
+    async def test_recover_own_tasks_returns_zero_when_no_stale_tasks(self, pool, backend, clean_operations):
         """Test that recover_own_tasks returns 0 when there are no stale tasks."""
         from hindsight_api.worker import WorkerPoller
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="fresh-worker",
             executor=lambda x: None,
         )
@@ -1077,7 +1077,7 @@ class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_workers_claim_different_tasks(self, pool, clean_operations):
+    async def test_concurrent_workers_claim_different_tasks(self, pool, backend, clean_operations):
         """Test that multiple workers claim different tasks (no duplicates)."""
         from hindsight_api.worker import WorkerPoller
 
@@ -1106,7 +1106,7 @@ class TestConcurrentWorkers:
 
         async def claim_for_worker(worker_id: str):
             poller = WorkerPoller(
-                pool=pool,
+                backend=backend,
                 worker_id=worker_id,
                 executor=lambda x: None,
             )
@@ -1143,7 +1143,7 @@ class TestConcurrentWorkers:
         assert all(w is not None for w in worker_assignments.values()), "All tasks should have a worker assigned"
 
     @pytest.mark.asyncio
-    async def test_workers_do_not_claim_already_processing_tasks(self, pool, clean_operations):
+    async def test_workers_do_not_claim_already_processing_tasks(self, pool, backend, clean_operations):
         """Test that workers skip tasks already being processed by another worker."""
         from hindsight_api.worker import WorkerPoller
 
@@ -1181,7 +1181,7 @@ class TestConcurrentWorkers:
 
         # New worker should only claim the 3 pending tasks
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="new-worker",
             executor=lambda x: None,
         )
@@ -1432,7 +1432,7 @@ class TestWorkerTaskBackend:
         ], f"WorkerTaskBackend must not execute child tasks inline. Got: {execution_order}"
 
     @pytest.mark.asyncio
-    async def test_worker_backend_child_task_stays_pending_in_db(self, pool, clean_operations):
+    async def test_worker_backend_child_task_stays_pending_in_db(self, pool, backend, clean_operations):
         """End-to-end: when a worker-executed task spawns a child operation,
         the child row stays as 'pending' in async_operations (not executed inline).
         A subsequent poll cycle can then claim and execute it independently.
@@ -1479,7 +1479,7 @@ class TestWorkerTaskBackend:
 
         # The executor simulates retain: marks parent completed, then calls
         # submit_task for the child (which WorkerTaskBackend should ignore).
-        backend = WorkerTaskBackend()
+        task_backend = WorkerTaskBackend()
 
         async def executor(task_dict):
             # Mark parent as completed
@@ -1488,10 +1488,10 @@ class TestWorkerTaskBackend:
                 parent_op_id,
             )
             # Trigger child task via submit_task (should be no-op for WorkerTaskBackend)
-            await backend.submit_task(child_payload)
+            await task_backend.submit_task(child_payload)
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=executor,
         )
@@ -1535,7 +1535,7 @@ class TestDynamicTenantDiscovery:
     """Tests for dynamic tenant discovery via TenantExtension."""
 
     @pytest.mark.asyncio
-    async def test_poller_discovers_tenants_dynamically(self, pool, clean_operations):
+    async def test_poller_discovers_tenants_dynamically(self, pool, backend, clean_operations):
         """Test that poller calls list_tenants() on each poll cycle."""
         from hindsight_api.extensions.tenant import Tenant, TenantExtension
         from hindsight_api.worker import WorkerPoller
@@ -1572,7 +1572,7 @@ class TestDynamicTenantDiscovery:
             )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
             tenant_extension=mock_extension,
@@ -1603,7 +1603,7 @@ class TestDynamicTenantDiscovery:
         assert len(claimed2) == 2
 
     @pytest.mark.asyncio
-    async def test_poller_picks_up_new_tenants_without_restart(self, pool, clean_operations):
+    async def test_poller_picks_up_new_tenants_without_restart(self, pool, backend, clean_operations):
         """Test that new tenants are discovered on subsequent poll cycles."""
         from hindsight_api.extensions.tenant import Tenant, TenantExtension
         from hindsight_api.worker import WorkerPoller
@@ -1639,7 +1639,7 @@ class TestDynamicTenantDiscovery:
         )
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
             tenant_extension=dynamic_extension,
@@ -1679,7 +1679,7 @@ class TestDynamicTenantDiscovery:
         assert dynamic_extension.list_tenants_calls == 3  # Called again even with no tasks
 
     @pytest.mark.asyncio
-    async def test_poller_without_tenant_extension_uses_public(self, pool, clean_operations):
+    async def test_poller_without_tenant_extension_uses_public(self, pool, backend, clean_operations):
         """Test that poller uses public schema when no tenant extension is configured."""
         from hindsight_api.worker import WorkerPoller
 
@@ -1701,7 +1701,7 @@ class TestDynamicTenantDiscovery:
 
         # No tenant_extension provided
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-worker-1",
             executor=lambda x: None,
         )
@@ -1716,7 +1716,7 @@ class TestDynamicTenantDiscovery:
             assert task.schema is None
 
     @pytest.mark.asyncio
-    async def test_poller_with_custom_schema(self, pool):
+    async def test_poller_with_custom_schema(self, pool, backend):
         """Test that poller uses custom schema when schema parameter is provided."""
         from hindsight_api.worker import WorkerPoller
 
@@ -1753,7 +1753,7 @@ class TestDynamicTenantDiscovery:
 
             # Create poller with custom schema
             poller = WorkerPoller(
-                pool=pool,
+                backend=backend,
                 worker_id="test-worker-custom-schema",
                 executor=lambda x: None,
                 schema=test_schema,
@@ -1791,7 +1791,7 @@ class TestDynamicTenantDiscovery:
             await pool.execute(f'DROP SCHEMA IF EXISTS "{test_schema}" CASCADE')
 
 
-async def test_worker_fire_and_forget_nonblocking(pool, clean_operations):
+async def test_worker_fire_and_forget_nonblocking(pool, backend, clean_operations):
     """
     Test that worker continues polling while tasks run (fire-and-forget pattern).
 
@@ -1824,7 +1824,7 @@ async def test_worker_fire_and_forget_nonblocking(pool, clean_operations):
         await finish.wait()
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker",
         executor=blocking_executor,
         poll_interval_ms=50,  # Fast polling
@@ -1916,7 +1916,7 @@ async def test_worker_fire_and_forget_nonblocking(pool, clean_operations):
             pass
 
 
-async def test_worker_slot_limits_enforced(pool, clean_operations):
+async def test_worker_slot_limits_enforced(pool, backend, clean_operations):
     """Test that worker respects max_slots and won't exceed the limit."""
     from hindsight_api.worker.poller import WorkerPoller
 
@@ -1941,7 +1941,7 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
         await event.wait()
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker",
         executor=controlled_executor,
         poll_interval_ms=50,
@@ -2010,7 +2010,7 @@ async def test_worker_slot_limits_enforced(pool, clean_operations):
             pass
 
 
-async def test_consolidation_slots_reserved_when_retain_saturates(pool, clean_operations):
+async def test_consolidation_slots_reserved_when_retain_saturates(pool, backend, clean_operations):
     """Regression: consolidation must not be starved when retain saturates the queue.
 
     With ``max_slots=5`` and ``slot_reservations={"consolidation": 2}``, retain tasks
@@ -2037,7 +2037,7 @@ async def test_consolidation_slots_reserved_when_retain_saturates(pool, clean_op
         await event.wait()
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker-consolidation-reservation",
         executor=blocking_executor,
         poll_interval_ms=50,
@@ -2117,7 +2117,7 @@ async def test_consolidation_slots_reserved_when_retain_saturates(pool, clean_op
 
 
 @pytest.mark.asyncio
-async def test_per_operation_slot_reservations(pool, clean_operations):
+async def test_per_operation_slot_reservations(pool, backend, clean_operations):
     """Test that per-operation slot reservations guarantee capacity for each type.
 
     With ``max_slots=8`` and ``slot_reservations={"consolidation": 2, "retain": 3}``,
@@ -2146,7 +2146,7 @@ async def test_per_operation_slot_reservations(pool, clean_operations):
         await event.wait()
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker-per-op-slots",
         executor=blocking_executor,
         poll_interval_ms=50,
@@ -2224,7 +2224,7 @@ async def test_per_operation_slot_reservations(pool, clean_operations):
 
 
 @pytest.mark.asyncio
-async def test_shared_pool_usable_by_reserved_types(pool, clean_operations):
+async def test_shared_pool_usable_by_reserved_types(pool, backend, clean_operations):
     """Test that operation types with reservations can also use shared pool slots.
 
     With ``max_slots=5`` and ``slot_reservations={"retain": 2}``, shared pool = 3.
@@ -2248,7 +2248,7 @@ async def test_shared_pool_usable_by_reserved_types(pool, clean_operations):
         await event.wait()
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker-shared-overflow",
         executor=blocking_executor,
         poll_interval_ms=50,
@@ -2303,7 +2303,7 @@ async def test_shared_pool_usable_by_reserved_types(pool, clean_operations):
 
 
 @pytest.mark.asyncio
-async def test_pending_breakdown_explains_unclaimable_rows(pool, clean_operations, caplog):
+async def test_pending_breakdown_explains_unclaimable_rows(pool, backend, clean_operations, caplog):
     """Pending rows that the claim query filters out must be visible in logs.
 
     Background: production incident where a 'pending' retain sat in the queue for
@@ -2318,7 +2318,7 @@ async def test_pending_breakdown_explains_unclaimable_rows(pool, clean_operation
     from hindsight_api.worker.poller import WorkerPoller
 
     poller = WorkerPoller(
-        pool=pool,
+        backend=backend,
         worker_id="test-worker-pending-breakdown",
         executor=lambda _t: asyncio.sleep(0),
         poll_interval_ms=50,
@@ -2426,7 +2426,7 @@ class TestMarkFailedParentPropagation:
         )
 
     @pytest.mark.asyncio
-    async def test_mark_failed_finalises_parent_when_last_sibling_fails(self, pool, clean_operations):
+    async def test_mark_failed_finalises_parent_when_last_sibling_fails(self, pool, backend, clean_operations):
         """When the last pending child fails, parent batch_retain is marked failed."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2460,7 +2460,7 @@ class TestMarkFailedParentPropagation:
             result_metadata={"parent_operation_id": str(parent_id)},
         )
 
-        poller = WorkerPoller(pool=pool, worker_id="test-worker-1", executor=lambda x: None)
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
         await poller._mark_failed(str(child2_id), "DB constraint violation", schema=None)
 
         # child2 must be failed
@@ -2477,7 +2477,7 @@ class TestMarkFailedParentPropagation:
         )
 
     @pytest.mark.asyncio
-    async def test_mark_failed_finalises_parent_when_last_sibling_is_sole_child(self, pool, clean_operations):
+    async def test_mark_failed_finalises_parent_when_last_sibling_is_sole_child(self, pool, backend, clean_operations):
         """When the only child fails, parent batch_retain becomes failed."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2497,14 +2497,14 @@ class TestMarkFailedParentPropagation:
             result_metadata={"parent_operation_id": str(parent_id)},
         )
 
-        poller = WorkerPoller(pool=pool, worker_id="test-worker-1", executor=lambda x: None)
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
         await poller._mark_failed(str(child_id), "unexpected error", schema=None)
 
         parent_row = await pool.fetchrow("SELECT status FROM async_operations WHERE operation_id = $1", parent_id)
         assert parent_row["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_mark_failed_does_not_finalise_parent_when_siblings_still_pending(self, pool, clean_operations):
+    async def test_mark_failed_does_not_finalise_parent_when_siblings_still_pending(self, pool, backend, clean_operations):
         """Parent is NOT updated while other siblings are still processing/pending."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2536,7 +2536,7 @@ class TestMarkFailedParentPropagation:
             result_metadata={"parent_operation_id": str(parent_id)},
         )
 
-        poller = WorkerPoller(pool=pool, worker_id="test-worker-1", executor=lambda x: None)
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
         await poller._mark_failed(str(child1_id), "early failure", schema=None)
 
         # child1 is failed
@@ -2550,7 +2550,7 @@ class TestMarkFailedParentPropagation:
         )
 
     @pytest.mark.asyncio
-    async def test_mark_failed_no_parent_is_safe(self, pool, clean_operations):
+    async def test_mark_failed_no_parent_is_safe(self, pool, backend, clean_operations):
         """Operations without a parent (no result_metadata parent_operation_id) fail cleanly."""
         from hindsight_api.worker import WorkerPoller
 
@@ -2560,7 +2560,7 @@ class TestMarkFailedParentPropagation:
         op_id = uuid.uuid4()
         await self._insert_op(pool, op_id=op_id, bank_id=bank_id, operation_type="retain", status="processing")
 
-        poller = WorkerPoller(pool=pool, worker_id="test-worker-1", executor=lambda x: None)
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=lambda x: None)
         # Must not raise
         await poller._mark_failed(str(op_id), "standalone failure", schema=None)
 
@@ -2568,7 +2568,7 @@ class TestMarkFailedParentPropagation:
         assert row["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_unhandled_exception_via_execute_task_propagates_to_parent(self, pool, clean_operations):
+    async def test_unhandled_exception_via_execute_task_propagates_to_parent(self, pool, backend, clean_operations):
         """End-to-end: executor raises a plain exception, poller calls _mark_failed,
         which then resolves the parent batch_retain to failed."""
         from hindsight_api.worker import WorkerPoller
@@ -2593,7 +2593,7 @@ class TestMarkFailedParentPropagation:
         async def crashing_executor(task_dict):
             raise RuntimeError("Simulated DB constraint violation — transaction rolled back")
 
-        poller = WorkerPoller(pool=pool, worker_id="test-worker-1", executor=crashing_executor)
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-1", executor=crashing_executor)
 
         task_dict = {"type": "retain", "operation_id": str(child_id), "bank_id": bank_id}
         claimed_task = ClaimedTask(operation_id=str(child_id), task_dict=task_dict, schema=None)
@@ -2619,7 +2619,7 @@ class TestClaimBatchRotation:
     and exercise rotation logic without needing multiple real tenant schemas.
     """
 
-    def _make_poller_with_fake_work(self, pool, pending_per_schema, max_slots=1):
+    def _make_poller_with_fake_work(self, pool, backend, pending_per_schema, max_slots=1):
         """Build a poller whose schemas and per-schema claims are scripted.
 
         ``pending_per_schema`` maps schema name -> current pending count.
@@ -2643,7 +2643,7 @@ class TestClaimBatchRotation:
                 return [Tenant(schema=s) for s in schemas]
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-rotation",
             executor=lambda x: None,
             tenant_extension=StaticTenantExtension(),
@@ -2684,7 +2684,7 @@ class TestClaimBatchRotation:
         return poller, serviced
 
     @pytest.mark.asyncio
-    async def test_rotation_advances_past_serviced_schema(self, pool):
+    async def test_rotation_advances_past_serviced_schema(self, pool, backend):
         """After claiming from schema at offset N, next poll starts at N+1.
 
         This is the 'crucial detail' that separates working rotation from
@@ -2693,7 +2693,7 @@ class TestClaimBatchRotation:
         """
         # Only schema "b" has work; "a" and "c" are idle.
         pending = {"a": 0, "b": 5, "c": 0}
-        poller, serviced = self._make_poller_with_fake_work(pool, pending, max_slots=1)
+        poller, serviced = self._make_poller_with_fake_work(pool, backend, pending, max_slots=1)
 
         await poller.claim_batch()
         # Found work at index 1 ("b"), so next offset should be 2 ("c").
@@ -2701,10 +2701,10 @@ class TestClaimBatchRotation:
         assert serviced == ["b"]
 
     @pytest.mark.asyncio
-    async def test_rotation_advances_by_one_when_no_work(self, pool):
+    async def test_rotation_advances_by_one_when_no_work(self, pool, backend):
         """Empty sweep advances offset by 1 so we don't keep re-hitting the same head."""
         pending = {"a": 0, "b": 0, "c": 0}
-        poller, serviced = self._make_poller_with_fake_work(pool, pending, max_slots=1)
+        poller, serviced = self._make_poller_with_fake_work(pool, backend, pending, max_slots=1)
 
         poller._next_schema_idx = 0
         await poller.claim_batch()
@@ -2716,13 +2716,13 @@ class TestClaimBatchRotation:
         assert serviced == []
 
     @pytest.mark.asyncio
-    async def test_small_tenant_not_starved_by_busy_tenant(self, pool):
+    async def test_small_tenant_not_starved_by_busy_tenant(self, pool, backend):
         """Small tenant with 1 pending task gets serviced within bounded polls
         even when another tenant has a huge backlog. Prevents the regression
         observed in prod where one tenant's 1000+ retains monopolized workers.
         """
         pending = {"friday-main": 1000, "tenant-b": 1}
-        poller, serviced = self._make_poller_with_fake_work(pool, pending, max_slots=1)
+        poller, serviced = self._make_poller_with_fake_work(pool, backend, pending, max_slots=1)
 
         # MAX_SLOTS=1 means one claim per poll. Over ~2 polls the rotation
         # must reach tenant-b, regardless of which started first.
@@ -2734,12 +2734,12 @@ class TestClaimBatchRotation:
         assert "tenant-b" in serviced, f"tenant-b was starved; serviced={serviced[:20]}"
 
     @pytest.mark.asyncio
-    async def test_max_slots_greater_than_one_spreads_across_tenants(self, pool):
+    async def test_max_slots_greater_than_one_spreads_across_tenants(self, pool, backend):
         """With MAX_SLOTS>1 the first pass caps at 1 claim per schema so
         a single poll services multiple tenants rather than draining one.
         """
         pending = {"a": 10, "b": 10, "c": 10, "d": 10, "e": 10}
-        poller, serviced = self._make_poller_with_fake_work(pool, pending, max_slots=3)
+        poller, serviced = self._make_poller_with_fake_work(pool, backend, pending, max_slots=3)
 
         await poller.claim_batch()
         # First pass gives 1 claim each to 3 different schemas — not 3 from the same one.
@@ -2747,19 +2747,19 @@ class TestClaimBatchRotation:
         assert len(set(serviced)) == 3, f"Expected 3 different tenants, got {serviced}"
 
     @pytest.mark.asyncio
-    async def test_max_slots_greater_than_one_backfills_when_only_one_tenant_has_work(self, pool):
+    async def test_max_slots_greater_than_one_backfills_when_only_one_tenant_has_work(self, pool, backend):
         """Second pass fills remaining slots when only one tenant has work,
         so fairness doesn't sacrifice throughput in the single-tenant case.
         """
         pending = {"a": 0, "b": 10, "c": 0}
-        poller, serviced = self._make_poller_with_fake_work(pool, pending, max_slots=3)
+        poller, serviced = self._make_poller_with_fake_work(pool, backend, pending, max_slots=3)
 
         await poller.claim_batch()
         # Pass 1: 1 from "b" (only one with work). Pass 2: 2 more from "b".
         assert serviced == ["b", "b", "b"]
 
     @pytest.mark.asyncio
-    async def test_scan_finds_schemas_with_pending_work(self, pool, clean_operations):
+    async def test_scan_finds_schemas_with_pending_work(self, pool, backend, clean_operations):
         """_scan_active_schemas identifies schemas with pending rows
         and ignores empty schemas. Uses real DB, no mocks.
         """
@@ -2769,7 +2769,7 @@ class TestClaimBatchRotation:
         await _ensure_bank(pool, bank_id)
 
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-scan",
             executor=lambda x: None,
         )
@@ -2795,7 +2795,7 @@ class TestClaimBatchRotation:
             await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
 
     @pytest.mark.asyncio
-    async def test_claim_batch_only_queries_active_schemas(self, pool, clean_operations):
+    async def test_claim_batch_only_queries_active_schemas(self, pool, backend, clean_operations):
         """claim_batch uses _scan_active_schemas to pre-filter, then
         only calls _claim_batch_for_schema on schemas the scan found.
         Verifies the scan→claim pipeline end-to-end with real DB rows.
@@ -2816,7 +2816,7 @@ class TestClaimBatchRotation:
 
         schemas_claimed: list[str | None] = []
         poller = WorkerPoller(
-            pool=pool,
+            backend=backend,
             worker_id="test-pipeline",
             executor=lambda x: None,
         )

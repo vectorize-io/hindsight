@@ -2,21 +2,13 @@
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:
-    import asyncpg
-
+from ..db_utils import acquire_with_retry
+from ..schema import fq_table_explicit as fq_table
 from .base import FileStorage
 
 logger = logging.getLogger(__name__)
-
-
-def fq_table(table: str, schema: str | None = None) -> str:
-    """Get fully-qualified table name with optional schema prefix."""
-    if schema:
-        return f'"{schema}".{table}'
-    return table
 
 
 class PostgreSQLFileStorage(FileStorage):
@@ -42,7 +34,7 @@ class PostgreSQLFileStorage(FileStorage):
 
     def __init__(
         self,
-        pool_getter: Callable[[], "asyncpg.Pool"],
+        pool_getter: Callable[[], Any],
         schema: str | None = None,
         schema_getter: Callable[[], str] | None = None,
     ):
@@ -74,7 +66,7 @@ class PostgreSQLFileStorage(FileStorage):
         """Store file in PostgreSQL."""
         pool = self._pool_getter()
 
-        async with pool.acquire() as conn:
+        async with acquire_with_retry(pool) as conn:
             await conn.execute(
                 f"""
                 INSERT INTO {fq_table("file_storage", self._schema)}
@@ -94,7 +86,7 @@ class PostgreSQLFileStorage(FileStorage):
         """Retrieve file from PostgreSQL."""
         pool = self._pool_getter()
 
-        async with pool.acquire() as conn:
+        async with acquire_with_retry(pool) as conn:
             row = await conn.fetchrow(
                 f"""
                 SELECT data FROM {fq_table("file_storage", self._schema)}
@@ -112,7 +104,7 @@ class PostgreSQLFileStorage(FileStorage):
         """Delete file from PostgreSQL."""
         pool = self._pool_getter()
 
-        async with pool.acquire() as conn:
+        async with acquire_with_retry(pool) as conn:
             result = await conn.execute(
                 f"""
                 DELETE FROM {fq_table("file_storage", self._schema)}
@@ -129,7 +121,7 @@ class PostgreSQLFileStorage(FileStorage):
         """Check if file exists in PostgreSQL."""
         pool = self._pool_getter()
 
-        async with pool.acquire() as conn:
+        async with acquire_with_retry(pool) as conn:
             row = await conn.fetchrow(
                 f"""
                 SELECT 1 FROM {fq_table("file_storage", self._schema)}

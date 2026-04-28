@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -33,6 +33,10 @@ def _upgrade(db_url: str, revision: str) -> None:
     command.upgrade(_alembic_cfg(db_url), revision)
 
 
+def _downgrade(db_url: str, revision: str) -> None:
+    command.downgrade(_alembic_cfg(db_url), revision)
+
+
 # ---------------------------------------------------------------------------
 # Fixture: fresh database at the revision just before the backsweep
 # ---------------------------------------------------------------------------
@@ -40,9 +44,14 @@ def _upgrade(db_url: str, revision: str) -> None:
 @pytest.fixture(scope="module")
 def pre_backsweep_db_url():
     """
-    Spin up a dedicated pg0 instance and run all migrations up to (but not
-    including) the backsweep revision so each test can seed orphan data and
-    then apply the backsweep itself.
+    Spin up a dedicated pg0 instance and ensure schema is at the revision
+    just before the backsweep so each test can seed orphan data and then
+    apply the backsweep itself.
+
+    Because pg0 data directories persist across test runs, the DB may
+    already be at head. We upgrade to head first (to ensure all tables
+    exist), then stamp the revision back to pre-backsweep so Alembic
+    treats the backsweep as not-yet-applied.
     """
     from hindsight_api.pg0 import EmbeddedPostgres
 
@@ -53,8 +62,10 @@ def pre_backsweep_db_url():
     finally:
         loop.close()
 
-    # Migrate up to the revision just before the backsweep.
-    _upgrade(url, "f6g7h8i9j0k1")
+    # Ensure all tables exist (upgrade to head), then stamp back to
+    # pre-backsweep so the backsweep migration will actually run.
+    _upgrade(url, "heads")
+    command.stamp(_alembic_cfg(url), "f6g7h8i9j0k1")
     return url
 
 

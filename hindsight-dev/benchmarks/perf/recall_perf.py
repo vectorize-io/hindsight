@@ -724,7 +724,7 @@ async def cmd_generate(bank_id: str, scale: str, workers: int = 16, with_observa
     # Start in-process worker to drain the queue
     pool = await engine._get_pool()
     poller = WorkerPoller(
-        pool=pool,
+        backend=engine._backend,
         worker_id="recall-perf-worker",
         executor=engine.execute_task,
         poll_interval_ms=200,

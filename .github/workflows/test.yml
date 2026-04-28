@@ -1051,6 +1051,128 @@ jobs:
       working-directory: ./hindsight-api-slim
       run: uv run pytest tests -v
 
+  test-api-oracle:
+    needs: [detect-changes]
+    # Gated behind the "oracle-tests" PR label so it doesn't run by default.
+    # Add the label to any PR that needs Oracle validation.
+    if: >-
+      needs.detect-changes.outputs.has_secrets == 'true' &&
+      contains(github.event.pull_request.labels.*.name, 'oracle-tests') &&
+      ((github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      HINDSIGHT_API_DATABASE_BACKEND: oracle
+      ORACLE_TEST_DSN: oracle+oracledb://hindsight_test:hindsight_test@localhost:1521/FREEPDB1
+
+    services:
+      oracle:
+        image: container-registry.oracle.com/database/free:latest
+        env:
+          ORACLE_PWD: oracle
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd "echo 'SELECT 1 FROM DUAL;' | sqlplus -s system/oracle@localhost:1521/FREEPDB1 || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 120s
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup Oracle test user
+      # The SYSTEM tablespace uses manual segment space management which
+      # doesn't support VECTOR types. Create an ASSM tablespace and a
+      # dedicated test user so VECTOR columns work correctly.
+      run: |
+        pip install oracledb
+        python3 -c "
+        import oracledb
+        conn = oracledb.connect(user='system', password='oracle', dsn='localhost:1521/FREEPDB1')
+        cursor = conn.cursor()
+        cursor.execute(\"\"\"
+            CREATE TABLESPACE hindsight_ts
+            DATAFILE 'hindsight_ts.dbf' SIZE 200M AUTOEXTEND ON NEXT 50M
+            EXTENT MANAGEMENT LOCAL
+            SEGMENT SPACE MANAGEMENT AUTO
+        \"\"\")
+        cursor.execute(\"\"\"
+            CREATE USER hindsight_test IDENTIFIED BY hindsight_test
+            DEFAULT TABLESPACE hindsight_ts
+            TEMPORARY TABLESPACE temp
+            QUOTA UNLIMITED ON hindsight_ts
+        \"\"\")
+        cursor.execute('GRANT CONNECT, RESOURCE, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE PROCEDURE TO hindsight_test')
+        cursor.execute('GRANT CTXAPP TO hindsight_test')
+        conn.commit()
+        conn.close()
+        print('Oracle test user created successfully')
+        "
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build API
+      working-directory: ./hindsight-api-slim
+      run: uv build
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run python -c "
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+        print('Downloading embedding model...')
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        print('Downloading cross-encoder model...')
+        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        print('Models downloaded successfully')
+        "
+
+    - name: Run Oracle tests
+      working-directory: ./hindsight-api-slim
+      # -n0: run sequentially to avoid ORA-00060 deadlocks from concurrent
+      # test transactions against the same Oracle Free container.
+      run: uv run pytest tests -v -m oracle -n0
+
   test-python-client:
     needs: [detect-changes]
     if: >-
@@ -2956,6 +3078,7 @@ jobs:
       - lint-helm-chart
       - build-docker-images
       - test-api
+      - test-api-oracle
       - test-python-client
       - test-typescript-client
       - test-typescript-client-deno

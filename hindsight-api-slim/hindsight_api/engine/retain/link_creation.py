@@ -12,7 +12,7 @@ from .types import ProcessedFact
 logger = logging.getLogger(__name__)
 
 
-async def create_temporal_links_batch(conn, bank_id: str, unit_ids: list[str]) -> int:
+async def create_temporal_links_batch(conn, bank_id: str, unit_ids: list[str], ops=None) -> int:
     """
     Create temporal links between facts.
 
@@ -29,7 +29,7 @@ async def create_temporal_links_batch(conn, bank_id: str, unit_ids: list[str]) -
     if not unit_ids:
         return 0
 
-    return await link_utils.create_temporal_links_batch_per_fact(conn, bank_id, unit_ids, log_buffer=[])
+    return await link_utils.create_temporal_links_batch_per_fact(conn, bank_id, unit_ids, log_buffer=[], ops=ops)
 
 
 async def create_semantic_links_batch(
@@ -38,6 +38,7 @@ async def create_semantic_links_batch(
     unit_ids: list[str],
     embeddings: list[list[float]],
     pre_computed_ann_links: list[tuple] | None = None,
+    ops=None,
 ) -> int:
     """
     Create semantic links between facts.
@@ -63,11 +64,13 @@ async def create_semantic_links_batch(
         raise ValueError(f"Mismatch between unit_ids ({len(unit_ids)}) and embeddings ({len(embeddings)})")
 
     return await link_utils.create_semantic_links_batch(
-        conn, bank_id, unit_ids, embeddings, log_buffer=[], pre_computed_ann_links=pre_computed_ann_links
+        conn, bank_id, unit_ids, embeddings, log_buffer=[], pre_computed_ann_links=pre_computed_ann_links, ops=ops
     )
 
 
-async def create_causal_links_batch(conn, bank_id: str, unit_ids: list[str], facts: list[ProcessedFact]) -> int:
+async def create_causal_links_batch(
+    conn, bank_id: str, unit_ids: list[str], facts: list[ProcessedFact], ops=None
+) -> int:
     """
     Create causal links between facts.
 
@@ -104,6 +107,6 @@ async def create_causal_links_batch(conn, bank_id: str, unit_ids: list[str], fac
         else:
             causal_relations_per_fact.append([])
 
-    link_count = await link_utils.create_causal_links_batch(conn, bank_id, unit_ids, causal_relations_per_fact)
+    link_count = await link_utils.create_causal_links_batch(conn, bank_id, unit_ids, causal_relations_per_fact, ops=ops)
 
     return link_count

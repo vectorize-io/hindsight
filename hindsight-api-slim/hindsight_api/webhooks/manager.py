@@ -6,13 +6,13 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-import asyncpg
-
+from ..engine.schema import fq_table_explicit as _fq_table
 from .models import WebhookConfig, WebhookEvent, WebhookHttpConfig
 
 if TYPE_CHECKING:
+    from hindsight_api.engine.db.base import DatabaseBackend
     from hindsight_api.extensions.tenant import TenantExtension
 
 logger = logging.getLogger(__name__)
@@ -21,13 +21,6 @@ logger = logging.getLogger(__name__)
 # Fast early retries catch transient failures; later retries handle longer outages.
 RETRY_DELAYS = [5, 300, 1800, 7200, 18000]
 MAX_ATTEMPTS = len(RETRY_DELAYS) + 1  # first attempt + len(RETRY_DELAYS) retries
-
-
-def _fq_table(table: str, schema: str | None = None) -> str:
-    """Get fully-qualified table name with optional schema prefix."""
-    if schema:
-        return f'"{schema}".{table}'
-    return table
 
 
 def _parse_http_config(value: str | dict | None) -> WebhookHttpConfig:
@@ -50,11 +43,11 @@ class WebhookManager:
 
     def __init__(
         self,
-        pool: asyncpg.Pool,
+        backend: "DatabaseBackend",
         global_webhooks: list[WebhookConfig],
         tenant_extension: "TenantExtension | None" = None,
     ):
-        self._pool = pool
+        self._backend = backend
         self._global_webhooks = global_webhooks
         self._tenant_extension = tenant_extension
 
@@ -80,77 +73,68 @@ class WebhookManager:
         payload_str = event.model_dump_json()
 
         try:
-            # Load per-bank webhooks from DB (bank-specific + global NULL rows)
-            rows = await self._pool.fetch(
-                f"""
-                SELECT id, bank_id, url, secret, event_types, enabled, http_config::text
-                FROM {webhook_table}
-                WHERE (bank_id = $1 OR bank_id IS NULL) AND enabled = true
-                """,
-                event.bank_id,
-            )
-
-            db_webhooks = [
-                WebhookConfig(
-                    id=str(row["id"]),
-                    bank_id=row["bank_id"],
-                    url=row["url"],
-                    secret=row["secret"],
-                    event_types=list(row["event_types"]) if row["event_types"] else [],
-                    enabled=row["enabled"],
-                    http_config=_parse_http_config(row["http_config"]),
-                )
-                for row in rows
-            ]
-
-            # Merge with global webhooks from env config
-            all_webhooks = self._global_webhooks + db_webhooks
-            matched = 0
-
-            for webhook in all_webhooks:
-                if not webhook.enabled:
-                    continue
-                if event.event.value not in webhook.event_types:
-                    continue
-
-                operation_id = uuid.uuid4()
-                webhook_id = webhook.id if webhook.id else None
-
-                task_payload = json.dumps(
-                    {
-                        "type": "webhook_delivery",
-                        "operation_id": str(operation_id),
-                        "bank_id": event.bank_id,
-                        "url": webhook.url,
-                        "secret": webhook.secret,
-                        "event_type": event.event.value,
-                        "payload": payload_str,
-                        "webhook_id": webhook_id,
-                        "http_config": webhook.http_config.model_dump(),
-                    }
-                )
-
-                await self._pool.execute(
-                    f"""
-                    INSERT INTO {ops_table}
-                      (operation_id, bank_id, operation_type, status, task_payload, result_metadata, created_at, updated_at)
-                    VALUES ($1, $2, 'webhook_delivery', 'pending', $3::jsonb, '{{}}'::jsonb, $4, $4)
-                    """,
-                    operation_id,
+            async with self._backend.acquire() as conn:
+                rows = await self._backend.ops.get_webhooks_for_dispatch(
+                    conn,
+                    webhook_table,
                     event.bank_id,
-                    task_payload,
-                    now,
                 )
-                matched += 1
+
+                db_webhooks = [
+                    WebhookConfig(
+                        id=str(row["id"]),
+                        bank_id=row["bank_id"],
+                        url=row["url"],
+                        secret=row["secret"],
+                        event_types=list(row["event_types"]) if row["event_types"] else [],
+                        enabled=row["enabled"],
+                        http_config=_parse_http_config(row["http_config"]),
+                    )
+                    for row in rows
+                ]
+
+                all_webhooks = self._global_webhooks + db_webhooks
+                matched = 0
+
+                for webhook in all_webhooks:
+                    if not webhook.enabled:
+                        continue
+                    if event.event.value not in webhook.event_types:
+                        continue
+
+                    operation_id = uuid.uuid4()
+                    webhook_id = webhook.id if webhook.id else None
+
+                    task_payload = json.dumps(
+                        {
+                            "type": "webhook_delivery",
+                            "operation_id": str(operation_id),
+                            "bank_id": event.bank_id,
+                            "url": webhook.url,
+                            "secret": webhook.secret,
+                            "event_type": event.event.value,
+                            "payload": payload_str,
+                            "webhook_id": webhook_id,
+                            "http_config": webhook.http_config.model_dump(),
+                        }
+                    )
+
+                    await self._backend.ops.insert_webhook_delivery_task(
+                        conn,
+                        ops_table,
+                        operation_id,
+                        event.bank_id,
+                        task_payload,
+                        now,
+                    )
+                    matched += 1
 
             logger.debug(f"Fired webhook event {event.event} for bank {event.bank_id}: {matched} delivery(ies) queued")
 
         except Exception as e:
             logger.error(f"Failed to queue webhook deliveries for event {event.event}: {e}")
 
-    async def fire_event_with_conn(
-        self, event: WebhookEvent, conn: asyncpg.Connection, schema: str | None = None
-    ) -> None:
+    async def fire_event_with_conn(self, event: WebhookEvent, conn: Any, schema: str | None = None) -> None:
         """
         Queue webhook deliveries within an existing database connection/transaction.
 
@@ -160,7 +144,7 @@ class WebhookManager:
 
         Args:
             event: The event to deliver.
-            conn: Existing asyncpg connection (may be inside an active transaction).
+            conn: Existing database connection (may be inside an active transaction).
             schema: Database schema (for multi-tenant). None = default schema.
         """
         webhook_table = _fq_table("webhooks", schema)
@@ -169,12 +153,9 @@ class WebhookManager:
         payload_str = event.model_dump_json()
 
         try:
-            rows = await conn.fetch(
-                f"""
-                SELECT id, bank_id, url, secret, event_types, enabled, http_config::text
-                FROM {webhook_table}
-                WHERE (bank_id = $1 OR bank_id IS NULL) AND enabled = true
-                """,
+            rows = await self._backend.ops.get_webhooks_for_dispatch(
+                conn,
+                webhook_table,
                 event.bank_id,
             )
 
@@ -217,12 +198,9 @@ class WebhookManager:
                     }
                 )
 
-                await conn.execute(
-                    f"""
-                    INSERT INTO {ops_table}
-                      (operation_id, bank_id, operation_type, status, task_payload, result_metadata, created_at, updated_at)
-                    VALUES ($1, $2, 'webhook_delivery', 'pending', $3::jsonb, '{{}}'::jsonb, $4, $4)
-                    """,
+                await self._backend.ops.insert_webhook_delivery_task(
+                    conn,
+                    ops_table,
                     operation_id,
                     event.bank_id,
                     task_payload,

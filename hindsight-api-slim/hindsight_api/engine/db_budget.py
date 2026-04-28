@@ -11,10 +11,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, AsyncIterator
-
-if TYPE_CHECKING:
-    import asyncpg
+from typing import Any, AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +119,14 @@ class BudgetedOperation:
         return self._manager._get_budget(self.operation_id)
 
     @asynccontextmanager
-    async def acquire(self, pool: "asyncpg.Pool") -> AsyncIterator["asyncpg.Connection"]:
+    async def acquire(self, pool: Any) -> AsyncIterator[Any]:
         """
         Acquire a connection within the operation's budget.
 
         Blocks if the operation has reached its connection limit.
 
         Args:
-            pool: asyncpg connection pool
+            pool: asyncpg connection pool or DatabaseBackend
 
         Yields:
             Database connection
@@ -137,14 +134,22 @@ class BudgetedOperation:
         budget = self.budget
         async with budget.semaphore:
             budget.active_count += 1
-            conn = await pool.acquire()
             try:
-                yield conn
+                from .db.base import DatabaseBackend
+
+                if isinstance(pool, DatabaseBackend):
+                    async with pool.acquire() as conn:
+                        yield conn
+                else:
+                    conn = await pool.acquire()
+                    try:
+                        yield conn
+                    finally:
+                        await pool.release(conn)
             finally:
                 budget.active_count -= 1
-                await pool.release(conn)
 
-    def wrap_pool(self, pool: "asyncpg.Pool") -> "BudgetedPool":
+    def wrap_pool(self, pool: Any) -> "BudgetedPool":
         """
         Wrap a pool with this operation's budget.
 
@@ -161,17 +166,18 @@ class BudgetedOperation:
 
     async def acquire_many(
         self,
-        pool: "asyncpg.Pool",
+        pool: Any,
         count: int,
-    ) -> AsyncIterator[list["asyncpg.Connection"]]:
+    ) -> AsyncIterator[list[Any]]:
         """
         Acquire multiple connections within the budget.
 
         Note: This acquires connections sequentially to respect the budget.
         For parallel acquisition, use multiple acquire() calls with asyncio.gather().
+        This method is intended for use with raw asyncpg pools only, not DatabaseBackend.
 
         Args:
-            pool: asyncpg connection pool
+            pool: asyncpg connection pool (raw pool only)
             count: Number of connections to acquire
 
         Yields:
@@ -249,29 +255,42 @@ class BudgetedPool:
             await some_function(budgeted_pool, ...)
     """
 
-    def __init__(self, pool: "asyncpg.Pool", operation: BudgetedOperation):
+    _wraps_backend = True
+
+    def __init__(self, pool: Any, operation: BudgetedOperation):
         self._pool = pool
         self._operation = operation
 
-    async def acquire(self) -> "asyncpg.Connection":
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[Any]:
         """
-        Acquire a connection within the budget.
+        Acquire a connection within the budget as an async context manager.
 
-        Note: Caller must release the connection when done.
-        Prefer using as context manager via acquire_with_retry or op.acquire().
+        The connection is automatically released when the context exits.
         """
         budget = self._operation.budget
         await budget.semaphore.acquire()
         budget.active_count += 1
         try:
-            return await self._pool.acquire()
+            from .db.base import DatabaseBackend
+
+            if isinstance(self._pool, DatabaseBackend):
+                async with self._pool.acquire() as conn:
+                    yield conn
+            else:
+                conn = await self._pool.acquire()
+                try:
+                    yield conn
+                finally:
+                    await self._pool.release(conn)
         except Exception:
+            raise
+        finally:
             budget.active_count -= 1
             budget.semaphore.release()
-            raise
 
-    async def release(self, conn: "asyncpg.Connection") -> None:
-        """Release a connection back to the pool."""
+    async def release(self, conn: Any) -> None:
+        """Release a connection back to the pool (legacy path only)."""
         budget = self._operation.budget
         try:
             await self._pool.release(conn)

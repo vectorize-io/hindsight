@@ -80,11 +80,13 @@ def upgrade() -> None:
     # 4. Drop the mental_model_versions table (no longer used)
     op.execute(f"DROP TABLE IF EXISTS {schema}mental_model_versions CASCADE")
 
-    # 5. Drop old constraints and add new one that only allows 'directive'
+    # 5. Drop old constraints and add new one that allows current subtypes.
+    # 'pinned' is still used by the code for user-created mental models;
+    # 'directive' is used for system directives.
     op.execute(f"ALTER TABLE {schema}mental_models DROP CONSTRAINT IF EXISTS ck_mental_models_subtype")
     op.execute(f"""
         ALTER TABLE {schema}mental_models
-        ADD CONSTRAINT ck_mental_models_subtype CHECK (subtype = 'directive')
+        ADD CONSTRAINT ck_mental_models_subtype CHECK (subtype IN ('directive', 'pinned'))
     """)
 
 

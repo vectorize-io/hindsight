@@ -133,7 +133,7 @@ async def test_config_hierarchy_resolution(memory, request_context):
         mock_tenant = MockTenantExtension(tenant_config)
 
         # Create config resolver with mock tenant extension
-        resolver = ConfigResolver(pool=memory._pool, tenant_extension=mock_tenant)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=mock_tenant)
 
         # Test 1: Global config only (no overrides)
         context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
@@ -178,7 +178,7 @@ async def test_config_validation_rejects_static_fields(memory, request_context):
         # Ensure bank exists in database
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Test 1: Configurable fields should work
         await resolver.update_bank_config(bank_id, {"retain_chunk_size": 4000, "retain_extraction_mode": "verbose"})
@@ -222,7 +222,7 @@ async def test_config_validation_rejects_malformed_entity_labels(memory, request
     try:
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # String list instead of LabelGroup dicts must raise ValueError, not silently accept.
         # Previously this produced HTTP 200, then 500 on the next retain call (issue #946).
@@ -259,7 +259,7 @@ async def test_config_freshness_across_updates(memory, request_context):
         # Ensure bank exists in database
         await memory.get_bank_profile(bank1, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Test 1: Initial config reflects global defaults
         config1 = await resolver.get_bank_config(bank1, None)
@@ -300,7 +300,7 @@ async def test_config_reset_to_defaults(memory, request_context):
         # Ensure bank exists in database
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Add bank-specific overrides
         await resolver.update_bank_config(
@@ -343,7 +343,7 @@ async def test_config_supports_both_key_formats(memory, request_context):
         # Ensure bank exists in database
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Test 1: Python field format
         await resolver.update_bank_config(bank_id, {"retain_chunk_size": 7000})
@@ -383,7 +383,7 @@ async def test_config_only_configurable_fields_stored(memory, request_context):
         # Ensure bank exists in database
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Add valid configurable field
         await resolver.update_bank_config(bank_id, {"retain_chunk_size": 3500})
@@ -412,7 +412,7 @@ async def test_config_get_bank_config_no_static_or_credential_fields_leak(memory
         # Ensure bank exists in database
         await memory.get_bank_profile(bank_id, request_context=request_context)
 
-        resolver = ConfigResolver(pool=memory._pool)
+        resolver = ConfigResolver(backend=memory._backend)
 
         # Get bank config
         config = await resolver.get_bank_config(bank_id, None)
@@ -499,7 +499,7 @@ async def test_config_permissions_system(memory, request_context):
 
         # Test 1: None = allow all configurable fields
         extension = PermissionTenantExtension(allowed_fields=None)
-        resolver = ConfigResolver(pool=memory._pool, tenant_extension=extension)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
 
         await resolver.update_bank_config(
             bank_id, {"retain_chunk_size": 4000, "retain_extraction_mode": "verbose"}, request_context
@@ -513,7 +513,7 @@ async def test_config_permissions_system(memory, request_context):
 
         # Test 2: Specific set = only those fields allowed
         extension = PermissionTenantExtension(allowed_fields={"retain_chunk_size"})
-        resolver = ConfigResolver(pool=memory._pool, tenant_extension=extension)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
 
         # Should allow retain_chunk_size
         await resolver.update_bank_config(bank_id, {"retain_chunk_size": 5000}, request_context)
@@ -535,14 +535,14 @@ async def test_config_permissions_system(memory, request_context):
 
         # Test 3: Empty set = no modifications allowed (read-only)
         extension = PermissionTenantExtension(allowed_fields=set())
-        resolver = ConfigResolver(pool=memory._pool, tenant_extension=extension)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
 
         with pytest.raises(ValueError, match="Not allowed to modify fields"):
             await resolver.update_bank_config(bank_id, {"retain_chunk_size": 7000}, request_context)
 
         # Test 4: get_bank_config should filter response based on permissions
         extension = PermissionTenantExtension(allowed_fields={"retain_chunk_size", "enable_observations"})
-        resolver = ConfigResolver(pool=memory._pool, tenant_extension=extension)
+        resolver = ConfigResolver(backend=memory._backend, tenant_extension=extension)
 
         config = await resolver.get_bank_config(bank_id, request_context)
 

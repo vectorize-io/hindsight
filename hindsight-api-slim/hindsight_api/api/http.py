@@ -2620,15 +2620,16 @@ def create_app(
                 metrics_collector.set_db_pool(memory._pool)
                 logging.info("DB pool metrics configured")
 
-        # Start worker poller if enabled (standalone mode)
-        if config.worker_enabled and memory._pool is not None:
+        # Start worker poller if the backend supports it.
+        # All current backends (PostgreSQL, Oracle) support async worker/poller.
+        if config.worker_enabled and memory._backend.supports_worker_poller:
             from ..config import DEFAULT_DATABASE_SCHEMA
 
             worker_id = config.worker_id or socket.gethostname()
             # Convert default schema to None for SQL compatibility (no schema prefix)
             schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
             poller = WorkerPoller(
-                pool=memory._pool,
+                backend=memory._backend,
                 worker_id=worker_id,
                 executor=memory.execute_task,
                 poll_interval_ms=config.worker_poll_interval_ms,
@@ -2639,6 +2640,11 @@ def create_app(
             )
             poller_task = asyncio.create_task(poller.run())
             logging.info(f"Worker poller started (worker_id={worker_id})")
+        elif config.worker_enabled and not memory._backend.supports_worker_poller:
+            logging.warning(
+                "Worker poller disabled — backend does not support async operations. "
+                "Tasks (mental model refresh, consolidation) will run synchronously."
+            )
 
         # Call tenant extension startup hook (e.g. JWKS fetch for Supabase)
         tenant_extension = memory.tenant_extension
@@ -5402,45 +5408,53 @@ def _register_routes(app: FastAPI):
     ):
         """Register a webhook for a bank."""
         try:
-            pool = await app.state.memory._get_pool()
+            backend = await app.state.memory._get_backend()
+            from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
             from hindsight_api.engine.retain import bank_utils
 
             # Ensure the bank row exists before inserting into webhooks (FK constraint).
-            _, created = await bank_utils.get_or_create_bank_profile(pool, bank_id)
+            _, created = await bank_utils.get_or_create_bank_profile(backend, bank_id)
             if created:
                 await app.state.memory._apply_default_bank_template(bank_id, request_context)
 
             webhook_id = uuid.uuid4()
-            now = datetime.now(timezone.utc).isoformat()
-            row = await pool.fetchrow(
-                f"""
-                INSERT INTO {fq_table("webhooks")}
-                (id, bank_id, url, secret, event_types, enabled, http_config, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())
-                RETURNING id, bank_id, url, secret, event_types, enabled,
-                          http_config::text, created_at::text, updated_at::text
-                """,
-                webhook_id,
-                bank_id,
-                request.url,
-                request.secret,
-                request.event_types,
-                request.enabled,
-                request.http_config.model_dump_json(),
-            )
+            async with acquire_with_retry(backend) as conn:
+                row = await backend.ops.create_webhook(
+                    conn,
+                    fq_table("webhooks"),
+                    webhook_id,
+                    bank_id,
+                    request.url,
+                    request.secret,
+                    request.event_types,
+                    request.enabled,
+                    request.http_config.model_dump_json(),
+                )
+
+            event_types_val = row["event_types"] if row else []
+            if isinstance(event_types_val, str):
+                event_types_val = json.loads(event_types_val)
+            http_config_val = row["http_config"] if row else None
+            if isinstance(http_config_val, dict):
+                http_config_val = json.dumps(http_config_val)
+
             return WebhookResponse(
                 id=str(row["id"]),
                 bank_id=row["bank_id"],
                 url=row["url"],
                 secret=None,  # Never return secret in responses
-                event_types=list(row["event_types"]) if row["event_types"] else [],
-                enabled=row["enabled"],
-                http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
-                if row["http_config"]
+                event_types=list(event_types_val) if event_types_val else [],
+                enabled=bool(row["enabled"]),
+                http_config=WebhookHttpConfig.model_validate_json(http_config_val)
+                if http_config_val
                 else WebhookHttpConfig(),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
+                created_at=row["created_at"].isoformat()
+                if hasattr(row["created_at"], "isoformat")
+                else str(row["created_at"]),
+                updated_at=row["updated_at"].isoformat()
+                if hasattr(row["updated_at"], "isoformat")
+                else str(row["updated_at"]),
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -5465,37 +5479,43 @@ def _register_routes(app: FastAPI):
     ):
         """List webhooks for a bank."""
         try:
-            pool = await app.state.memory._get_pool()
+            backend = await app.state.memory._get_backend()
+            from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
 
-            rows = await pool.fetch(
-                f"""
-                SELECT id, bank_id, url, secret, event_types, enabled,
-                       http_config::text, created_at::text, updated_at::text
-                FROM {fq_table("webhooks")}
-                WHERE bank_id = $1
-                ORDER BY created_at
-                """,
-                bank_id,
-            )
-            return WebhookListResponse(
-                items=[
-                    WebhookResponse(
-                        id=str(row["id"]),
-                        bank_id=row["bank_id"],
-                        url=row["url"],
-                        secret=None,  # Never return secret in responses
-                        event_types=list(row["event_types"]) if row["event_types"] else [],
-                        enabled=row["enabled"],
-                        http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
-                        if row["http_config"]
-                        else WebhookHttpConfig(),
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                    )
-                    for row in rows
-                ]
-            )
+            async with acquire_with_retry(backend) as conn:
+                rows = await backend.ops.list_webhooks_for_bank(
+                    conn,
+                    fq_table("webhooks"),
+                    bank_id,
+                )
+
+            def _parse_webhook_row(row):
+                event_types_val = row["event_types"]
+                if isinstance(event_types_val, str):
+                    event_types_val = json.loads(event_types_val)
+                http_config_val = row["http_config"]
+                if isinstance(http_config_val, dict):
+                    http_config_val = json.dumps(http_config_val)
+                return WebhookResponse(
+                    id=str(row["id"]),
+                    bank_id=row["bank_id"],
+                    url=row["url"],
+                    secret=None,
+                    event_types=list(event_types_val) if event_types_val else [],
+                    enabled=bool(row["enabled"]),
+                    http_config=WebhookHttpConfig.model_validate_json(http_config_val)
+                    if http_config_val
+                    else WebhookHttpConfig(),
+                    created_at=row["created_at"].isoformat()
+                    if hasattr(row["created_at"], "isoformat")
+                    else str(row["created_at"]),
+                    updated_at=row["updated_at"].isoformat()
+                    if hasattr(row["updated_at"], "isoformat")
+                    else str(row["updated_at"]),
+                )
+
+            return WebhookListResponse(items=[_parse_webhook_row(row) for row in rows])
         except (AuthenticationError, HTTPException):
             raise
         except Exception as e:
@@ -5521,16 +5541,18 @@ def _register_routes(app: FastAPI):
     ):
         """Delete a webhook."""
         try:
-            pool = await app.state.memory._get_pool()
+            backend = await app.state.memory._get_backend()
+            from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
 
-            result = await pool.execute(
-                f"DELETE FROM {fq_table('webhooks')} WHERE id = $1 AND bank_id = $2",
-                uuid.UUID(webhook_id),
-                bank_id,
-            )
-            deleted = int(result.split()[-1]) if result else 0
-            if deleted == 0:
+            async with acquire_with_retry(backend) as conn:
+                deleted = await backend.ops.delete_webhook(
+                    conn,
+                    fq_table("webhooks"),
+                    uuid.UUID(webhook_id),
+                    bank_id,
+                )
+            if not deleted:
                 raise HTTPException(status_code=404, detail="Webhook not found")
             return DeleteResponse(success=True)
         except (AuthenticationError, HTTPException):
@@ -5559,7 +5581,8 @@ def _register_routes(app: FastAPI):
     ):
         """Update a webhook's fields (PATCH semantics — only sent fields are updated)."""
         try:
-            pool = await app.state.memory._get_pool()
+            backend = await app.state.memory._get_backend()
+            from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
 
             set_clauses: list[str] = []
@@ -5585,31 +5608,41 @@ def _register_routes(app: FastAPI):
             if not set_clauses:
                 raise HTTPException(status_code=422, detail="No fields provided to update")
 
-            set_clauses.append("updated_at = NOW()")
-            row = await pool.fetchrow(
-                f"""
-                UPDATE {fq_table("webhooks")}
-                SET {", ".join(set_clauses)}
-                WHERE id = $1 AND bank_id = $2
-                RETURNING id, bank_id, url, secret, event_types, enabled,
-                          http_config::text, created_at::text, updated_at::text
-                """,
-                *params,
-            )
+            async with acquire_with_retry(backend) as conn:
+                row = await backend.ops.update_webhook(
+                    conn,
+                    fq_table("webhooks"),
+                    uuid.UUID(webhook_id),
+                    bank_id,
+                    set_clauses,
+                    params,
+                )
             if not row:
                 raise HTTPException(status_code=404, detail="Webhook not found")
+
+            event_types_val = row["event_types"]
+            if isinstance(event_types_val, str):
+                event_types_val = json.loads(event_types_val)
+            http_config_val = row["http_config"]
+            if isinstance(http_config_val, dict):
+                http_config_val = json.dumps(http_config_val)
+
             return WebhookResponse(
                 id=str(row["id"]),
                 bank_id=row["bank_id"],
                 url=row["url"],
                 secret=None,
-                event_types=list(row["event_types"]) if row["event_types"] else [],
-                enabled=row["enabled"],
-                http_config=WebhookHttpConfig.model_validate_json(row["http_config"])
-                if row["http_config"]
+                event_types=list(event_types_val) if event_types_val else [],
+                enabled=bool(row["enabled"]),
+                http_config=WebhookHttpConfig.model_validate_json(http_config_val)
+                if http_config_val
                 else WebhookHttpConfig(),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
+                created_at=row["created_at"].isoformat()
+                if hasattr(row["created_at"], "isoformat")
+                else str(row["created_at"]),
+                updated_at=row["updated_at"].isoformat()
+                if hasattr(row["updated_at"], "isoformat")
+                else str(row["updated_at"]),
             )
         except (AuthenticationError, HTTPException):
             raise
@@ -5637,53 +5670,27 @@ def _register_routes(app: FastAPI):
     ):
         """List deliveries for a specific webhook, newest first. Use next_cursor for pagination."""
         try:
-            pool = await app.state.memory._get_pool()
+            backend = await app.state.memory._get_backend()
+            from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
 
-            # Verify webhook belongs to this bank
-            webhook_row = await pool.fetchrow(
-                f"SELECT id FROM {fq_table('webhooks')} WHERE id = $1 AND bank_id = $2",
-                uuid.UUID(webhook_id),
-                bank_id,
-            )
-            if not webhook_row:
-                raise HTTPException(status_code=404, detail="Webhook not found")
-
-            # Fetch limit+1 to detect if there's a next page
-            fetch_limit = limit + 1
-            if cursor:
-                rows = await pool.fetch(
-                    f"""
-                    SELECT operation_id, status, retry_count, next_retry_at::text,
-                           error_message, task_payload, result_metadata::text, created_at::text, updated_at::text
-                    FROM {fq_table("async_operations")}
-                    WHERE operation_type = 'webhook_delivery'
-                      AND bank_id = $1
-                      AND task_payload->>'webhook_id' = $2
-                      AND created_at < $3::timestamptz
-                    ORDER BY created_at DESC
-                    LIMIT $4
-                    """,
+            async with acquire_with_retry(backend) as conn:
+                # Verify webhook belongs to this bank
+                webhook_row = await conn.fetchrow(
+                    f"SELECT id FROM {fq_table('webhooks')} WHERE id = $1 AND bank_id = $2",
+                    uuid.UUID(webhook_id),
                     bank_id,
-                    webhook_id,
-                    cursor,
-                    fetch_limit,
                 )
-            else:
-                rows = await pool.fetch(
-                    f"""
-                    SELECT operation_id, status, retry_count, next_retry_at::text,
-                           error_message, task_payload, result_metadata::text, created_at::text, updated_at::text
-                    FROM {fq_table("async_operations")}
-                    WHERE operation_type = 'webhook_delivery'
-                      AND bank_id = $1
-                      AND task_payload->>'webhook_id' = $2
-                    ORDER BY created_at DESC
-                    LIMIT $3
-                    """,
-                    bank_id,
+                if not webhook_row:
+                    raise HTTPException(status_code=404, detail="Webhook not found")
+
+                rows = await backend.ops.list_webhook_deliveries(
+                    conn,
+                    fq_table("async_operations"),
                     webhook_id,
-                    fetch_limit,
+                    bank_id,
+                    limit,
+                    cursor,
                 )
 
             has_more = len(rows) > limit
@@ -6133,7 +6140,7 @@ def _register_routes(app: FastAPI):
         try:
             from hindsight_api.engine.memory_engine import fq_table
 
-            pool = await app.state.memory._get_pool()
+            pool = await app.state.memory._get_backend()
 
             # Read endpoint: verify bank exists without auto-creating it.
             if (
@@ -6201,8 +6208,27 @@ def _register_routes(app: FastAPI):
                 items = []
                 for row in rows:
                     duration_ms = None
-                    if row["started_at"] and row["ended_at"]:
-                        duration_ms = int((row["ended_at"] - row["started_at"]).total_seconds() * 1000)
+                    started = row["started_at"]
+                    ended = row["ended_at"]
+                    if started and ended and hasattr(started, "total_seconds"):
+                        duration_ms = int((ended - started).total_seconds() * 1000)
+                    elif started and ended:
+                        try:
+                            duration_ms = int((ended - started).total_seconds() * 1000)
+                        except (TypeError, AttributeError):
+                            pass
+
+                    def _safe_iso(val):
+                        if val is None:
+                            return None
+                        return val.isoformat() if hasattr(val, "isoformat") else str(val)
+
+                    def _safe_json(val):
+                        if val is None:
+                            return None
+                        if isinstance(val, dict):
+                            return val
+                        return json.loads(val) if isinstance(val, str) else val
 
                     items.append(
                         {
@@ -6210,12 +6236,12 @@ def _register_routes(app: FastAPI):
                             "action": row["action"],
                             "transport": row["transport"],
                             "bank_id": row["bank_id"],
-                            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-                            "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
+                            "started_at": _safe_iso(started),
+                            "ended_at": _safe_iso(ended),
                             "duration_ms": duration_ms,
-                            "request": json.loads(row["request"]) if row["request"] else None,
-                            "response": json.loads(row["response"]) if row["response"] else None,
-                            "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                            "request": _safe_json(row["request"]),
+                            "response": _safe_json(row["response"]),
+                            "metadata": _safe_json(row["metadata"]) or {},
                         }
                     )
 
@@ -6255,7 +6281,7 @@ def _register_routes(app: FastAPI):
             from hindsight_api.engine.db_utils import acquire_with_retry
             from hindsight_api.engine.memory_engine import fq_table
 
-            pool = await app.state.memory._get_pool()
+            pool = await app.state.memory._get_backend()
             # Read endpoint: verify bank exists without auto-creating it.
             if (
                 await app.state.memory.get_bank_profile(

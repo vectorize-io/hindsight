@@ -204,7 +204,7 @@ async def _populate_bank(engine: Any, bank_id: str, size: int) -> None:
 
     pool = await engine._get_pool()
     poller = WorkerPoller(
-        pool=pool,
+        backend=engine._backend,
         worker_id="perf-test-worker",
         executor=engine.execute_task,
         poll_interval_ms=200,

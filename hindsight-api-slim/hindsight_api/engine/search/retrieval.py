@@ -18,6 +18,7 @@ from typing import Any, Optional
 from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
+from ..sql import create_sql_dialect
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
@@ -147,6 +148,14 @@ async def retrieve_semantic_bm25_combined(
     )
     table = fq_table("memory_units")
 
+    config = get_config()
+
+    # Use the SQL dialect to build backend-specific query arms, avoiding
+    # inline if/else branches for each database.
+    # Use getattr for backward compat: raw asyncpg connections (used in some
+    # tests) lack backend_type; default to "postgresql".
+    dialect = create_sql_dialect(getattr(conn, "backend_type", "postgresql"))
+
     # --- Parameter layout ---
     # $1 = query_emb_str  (semantic arms)
     # $2 = bank_id
@@ -155,10 +164,11 @@ async def retrieve_semantic_bm25_combined(
     #   $4 = bm25_text
     #   $5 = tags           (if present)
     #   $6+ = tag_groups params (one per leaf)
-    # When no tokens ($3 is skipped — not included in params to avoid type inference gap):
+    # When no tokens:
     #   $3 = tags           (if present)
     #   $4+ = tag_groups params (one per leaf)
-    tags_param_idx = 5 if tokens else 3
+    _include_bm25 = bool(tokens)
+    tags_param_idx = 5 if _include_bm25 else 3
     tags_clause = build_tags_where_clause_simple(tags, tags_param_idx, match=tags_match)
 
     # tag_groups params start immediately after the tags param slot
@@ -181,72 +191,48 @@ async def retrieve_semantic_bm25_combined(
         _next_idx += 1
 
     # --- Semantic UNION ALL arms (one per fact_type) ---
-    # Each arm has its own ORDER BY embedding <=> $1 LIMIT {hnsw_fetch}, which
-    # lets the planner use the partial HNSW index for that fact_type.
-    sem_arms = []
-    for ft in fact_types:
-        sem_arms.append(
-            f"(SELECT {cols},"
-            f"        1 - (embedding <=> $1::vector) AS similarity,"
-            f"        NULL::float AS bm25_score,"
-            f"        'semantic' AS source"
-            f" FROM {table}"
-            f" WHERE bank_id = $2"
-            f"   AND fact_type = '{ft}'"
-            f"   AND embedding IS NOT NULL"
-            f"   AND (1 - (embedding <=> $1::vector)) >= 0.3"
-            f"   {tags_clause}"
-            f"   {groups_clause}"
-            f"   {created_range_clause}"
-            f" ORDER BY embedding <=> $1::vector"
-            f" LIMIT {hnsw_fetch})"
+    # Each arm has its own ORDER BY ... LIMIT, enabling the partial HNSW indexes
+    # per fact_type instead of forcing a full sequential scan.
+    arms = [
+        dialect.build_semantic_arm(
+            table=table,
+            cols=cols,
+            fact_type=ft,
+            embedding_param="$1",
+            bank_id_param="$2",
+            fetch_limit=hnsw_fetch,
+            tags_clause=tags_clause,
+            groups_clause=groups_clause,
+            extra_where=created_range_clause,
         )
-
-    arms = sem_arms
+        for ft in fact_types
+    ]
 
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
-    if tokens:
-        config = get_config()
-        if config.text_search_extension == "vchord":
-            bm25_score_expr = (
-                "search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))"
-            )
-            bm25_order_by = f"{bm25_score_expr} DESC"
-            bm25_where_filter = ""
-            bm25_text_param: str = query_text
-        elif config.text_search_extension == "pg_textsearch":
-            bm25_score_expr = "-(text <@> to_bm25query($4, 'idx_memory_units_text_search'))"
-            bm25_order_by = "text <@> to_bm25query($4, 'idx_memory_units_text_search') ASC"
-            bm25_where_filter = ""
-            bm25_text_param = query_text
-        else:  # native
-            query_tsquery = " | ".join(tokens)
-            bm25_score_expr = "ts_rank_cd(search_vector, to_tsquery('english', $4))"
-            bm25_order_by = f"{bm25_score_expr} DESC"
-            bm25_where_filter = "AND search_vector @@ to_tsquery('english', $4)"
-            bm25_text_param = query_tsquery
-
-        for ft in fact_types:
+    if _include_bm25:
+        text_ext = config.text_search_extension
+        bm25_text_param: str = dialect.prepare_bm25_text(tokens, query_text, text_search_extension=text_ext)
+        for i, ft in enumerate(fact_types):
             arms.append(
-                f"(SELECT {cols},"
-                f"        NULL::float AS similarity,"
-                f"        {bm25_score_expr} AS bm25_score,"
-                f"        'bm25' AS source"
-                f" FROM {table}"
-                f" WHERE bank_id = $2"
-                f"   AND fact_type = '{ft}'"
-                f"   {bm25_where_filter}"
-                f"   {tags_clause}"
-                f"   {groups_clause}"
-                f"   {created_range_clause}"
-                f" ORDER BY {bm25_order_by}"
-                f" LIMIT $3)"
+                dialect.build_bm25_arm(
+                    table=table,
+                    cols=cols,
+                    fact_type=ft,
+                    bank_id_param="$2",
+                    limit_param="$3",
+                    text_param="$4",
+                    tags_clause=tags_clause,
+                    groups_clause=groups_clause,
+                    arm_index=i,
+                    text_search_extension=text_ext,
+                    extra_where=created_range_clause,
+                )
             )
 
     query = "\nUNION ALL\n".join(arms)
 
     params: list = [query_emb_str, bank_id]
-    if tokens:
+    if _include_bm25:
         params.append(limit)  # $3: BM25 LIMIT (only referenced when tokens are present)
         params.append(bm25_text_param)  # $4
     if tags:
@@ -254,7 +240,21 @@ async def retrieve_semantic_bm25_combined(
     params.extend(groups_params)
     params.extend(created_range_params)
 
-    rows = await conn.fetch(query, *params)
+    try:
+        rows = await conn.fetch(query, *params)
+    except Exception as e:
+        # Oracle Text CONTAINS can fail with DRG-10599 ("column is not indexed")
+        # if the CTXSYS text index hasn't synced yet or is unavailable.  Fall
+        # back to semantic-only so the search still returns results.
+        # Keep the full param list (BM25 slots are harmless placeholders) since
+        # the semantic arms may reference tags at $5 when _include_bm25 is True.
+        err_str = str(e)
+        if _include_bm25 and ("DRG-10599" in err_str or "ORA-30600" in err_str or "ORA-29902" in err_str):
+            logger.warning("Oracle Text CONTAINS failed (%s), falling back to semantic-only search", err_str[:120])
+            semantic_only_query = "\nUNION ALL\n".join(arms[: len(fact_types)])
+            rows = await conn.fetch(semantic_only_query, *params)
+        else:
+            raise
 
     # Group results; trim semantic to limit (over-fetched for HNSW approximation).
     sem_counts: dict[str, int] = {ft: 0 for ft in fact_types}

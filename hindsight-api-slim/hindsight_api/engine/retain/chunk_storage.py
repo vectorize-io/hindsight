@@ -69,7 +69,9 @@ async def delete_chunks_by_ids(conn, chunk_ids: list[str]) -> None:
     )
 
 
-async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[ChunkMetadata]) -> dict[int, str]:
+async def store_chunks_batch(
+    conn, bank_id: str, document_id: str, chunks: list[ChunkMetadata], ops=None
+) -> dict[int, str]:
     """
     Store document chunks in the database.
 
@@ -78,6 +80,7 @@ async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[
         bank_id: Bank identifier
         document_id: Document identifier
         chunks: List of ChunkMetadata objects
+        ops: DataAccessOps instance (from backend.ops)
 
     Returns:
         Dictionary mapping global chunk index to chunk_id
@@ -101,20 +104,11 @@ async def store_chunks_batch(conn, bank_id: str, document_id: str, chunks: list[
         chunk_id_map[chunk.chunk_index] = chunk_id
 
     # Batch upsert all chunks. ON CONFLICT makes this idempotent: re-submitting
-    # a retain under the same document_id (the pattern in vectorize-io/hindsight#977)
-    # may produce chunk_ids that already exist when upstream cascade-delete or
-    # delta-retain paths don't run (or race with a concurrent task). Overwriting
-    # is the correct behavior per the document_id grouping semantics — the caller
-    # intends this chunk to hold the latest content at that (document_id, index).
-    await conn.execute(
-        f"""
-        INSERT INTO {fq_table("chunks")} (chunk_id, document_id, bank_id, chunk_text, chunk_index, content_hash)
-        SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::integer[], $6::text[])
-        ON CONFLICT (chunk_id) DO UPDATE SET
-            chunk_text = EXCLUDED.chunk_text,
-            chunk_index = EXCLUDED.chunk_index,
-            content_hash = EXCLUDED.content_hash
-        """,
+    # a retain under the same document_id may produce chunk_ids that already exist.
+    # Overwriting is the correct behavior per document_id grouping semantics.
+    await ops.bulk_upsert_chunks(
+        conn,
+        fq_table("chunks"),
         chunk_ids,
         [document_id] * len(chunk_texts),
         [bank_id] * len(chunk_texts),

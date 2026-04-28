@@ -54,9 +54,10 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
     bank_id = f"test_chunk_upsert_{_ts()}"
     document_id = "doc-upsert-regression"
 
-    pool = await memory._get_pool()
+    backend = await memory._get_backend()
+    ops = backend.ops
     try:
-        async with pool.acquire() as conn:
+        async with backend.acquire() as conn:
             await _seed_bank_and_document(conn, bank_id, document_id)
 
             # First insert — fresh chunks at indices 0, 1, 2.
@@ -65,7 +66,7 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
                 ChunkMetadata(chunk_text="beta", fact_count=1, content_index=0, chunk_index=1),
                 ChunkMetadata(chunk_text="gamma", fact_count=1, content_index=0, chunk_index=2),
             ]
-            v1_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v1)
+            v1_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v1, ops=ops)
             assert set(v1_map.keys()) == {0, 1, 2}
 
             # Second insert — overlapping chunk_index (1 and 2) with new text,
@@ -78,7 +79,7 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
                 ChunkMetadata(chunk_text="gamma-updated", fact_count=1, content_index=0, chunk_index=2),
                 ChunkMetadata(chunk_text="delta", fact_count=1, content_index=0, chunk_index=3),
             ]
-            v2_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v2)
+            v2_map = await chunk_storage.store_chunks_batch(conn, bank_id, document_id, v2, ops=ops)
             assert set(v2_map.keys()) == {1, 2, 3}
 
             # Verify the stored state matches the upserted content.
@@ -106,7 +107,7 @@ async def test_store_chunks_batch_is_idempotent_for_same_chunk_id(memory):
             assert by_index[1]["content_hash"] == chunk_storage.compute_chunk_hash("beta-updated")
             assert by_index[2]["content_hash"] == chunk_storage.compute_chunk_hash("gamma-updated")
     finally:
-        async with pool.acquire() as conn:
+        async with backend.acquire() as conn:
             await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
@@ -122,9 +123,10 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
     bank_id = f"test_chunk_upsert_identical_{_ts()}"
     document_id = "doc-upsert-identical"
 
-    pool = await memory._get_pool()
+    backend = await memory._get_backend()
+    ops = backend.ops
     try:
-        async with pool.acquire() as conn:
+        async with backend.acquire() as conn:
             await _seed_bank_and_document(conn, bank_id, document_id)
 
             chunks = [
@@ -132,9 +134,9 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
                 for i in range(5)
             ]
 
-            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks)
+            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks, ops=ops)
             # Second call with identical chunks — must not raise.
-            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks)
+            await chunk_storage.store_chunks_batch(conn, bank_id, document_id, chunks, ops=ops)
 
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM chunks WHERE document_id = $1 AND bank_id = $2",
@@ -143,7 +145,7 @@ async def test_store_chunks_batch_second_call_with_identical_payload(memory):
             )
             assert count == 5, "Second identical insert should not duplicate rows"
     finally:
-        async with pool.acquire() as conn:
+        async with backend.acquire() as conn:
             await conn.execute("DELETE FROM chunks WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM documents WHERE bank_id = $1", bank_id)
             await conn.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)

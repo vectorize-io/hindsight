@@ -126,8 +126,11 @@ async def test_multiple_documents_ordering(memory, request_context):
 
     await memory.get_bank_profile(bank_id, request_context=request_context)  # Auto-creates with defaults
 
-    # Two separate conversations with same base time
-    base_time = datetime(2024, 11, 14, 10, 0, 0, tzinfo=timezone.utc)
+    # Two separate conversations with different base times so the
+    # temporal offsets produce distinguishable timestamps even when the
+    # LLM only extracts 1 fact per conversation.
+    time1 = datetime(2024, 11, 14, 10, 0, 0, tzinfo=timezone.utc)
+    time2 = datetime(2024, 11, 14, 11, 0, 0, tzinfo=timezone.utc)
 
     conv1 = """
 Alice: I prefer React for this project.
@@ -145,17 +148,17 @@ Alice: I reconsidered the team's experience level.
     await memory.retain_batch_async(
         bank_id=bank_id,
         contents=[
-            {"content": conv1, "context": "project discussion 1", "event_date": base_time},
-            {"content": conv2, "context": "project discussion 2", "event_date": base_time}
+            {"content": conv1, "context": "project discussion 1", "event_date": time1},
+            {"content": conv2, "context": "project discussion 2", "event_date": time2}
         ],
         request_context=request_context,
     )
 
-    # Search for Alice's preferences
+    # Search for Alice's preferences. Don't filter by fact_type — LLM
+    # classification is non-deterministic and may assign all facts the same type.
     results = await memory.recall_async(
         bank_id=bank_id,
         query="Alice preference React Vue",
-        fact_type=['experience', 'world'],
         budget=Budget.LOW,
         max_tokens=8192,
         request_context=request_context,
@@ -167,15 +170,18 @@ Alice: I reconsidered the team's experience level.
     for i, fact in enumerate(agent_facts):
         print(f"{i+1}. [{fact.mentioned_at}] {fact.text[:80]}")
 
-    # Each conversation's facts should have different timestamps
-    if len(agent_facts) >= 2:
-        timestamps = [datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')) for f in agent_facts]
+    # Each conversation's facts should have different timestamps.
+    # Filter out observations — they inherit their source fact's timestamp,
+    # which can collapse the unique set. Also skip facts without timestamps.
+    source_facts = [f for f in agent_facts if f.mentioned_at is not None and getattr(f, "fact_type", "") != "observation"]
+    if len(source_facts) >= 2:
+        timestamps = [datetime.fromisoformat(f.mentioned_at.replace('Z', '+00:00')) for f in source_facts]
         unique_timestamps = set(timestamps)
 
         assert len(unique_timestamps) >= 2, \
             f"Expected multiple unique timestamps across conversations, got: {len(unique_timestamps)}"
 
-        print(f"\n✅ Facts from {len(agent_facts)} statements have {len(unique_timestamps)} unique timestamps")
+        print(f"\n✅ Facts from {len(source_facts)} statements have {len(unique_timestamps)} unique timestamps")
 
     # Cleanup
     await memory.delete_bank(bank_id, request_context=request_context)

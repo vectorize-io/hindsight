@@ -6,13 +6,13 @@ to disambiguate entities across memory units.
 """
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-
-import asyncpg
+from typing import Any
 
 from .db_utils import acquire_with_retry
 from .memory_engine import fq_table
@@ -63,7 +63,7 @@ class EntityResolver:
     Resolves entities to canonical IDs with disambiguation.
     """
 
-    def __init__(self, pool: asyncpg.Pool, entity_lookup: str = "full"):
+    def __init__(self, pool: Any, entity_lookup: str = "full"):
         """
         Initialize entity resolver.
 
@@ -76,6 +76,8 @@ class EntityResolver:
         self.pool = pool
         self.entity_lookup = entity_lookup
         self._pg_trgm_checked = False
+        # Backend-specific operations — accessed via pool.ops (Django pattern).
+        self._ops = pool.ops if pool is not None else None
         # Keyed by asyncio task id so concurrent retain batches never mix their
         # pending updates.  flush_pending_stats() pops only the calling task's items.
         self._pending_stats: dict[int, list[_EntityStat]] = {}
@@ -216,6 +218,11 @@ class EntityResolver:
         taxonomy_lookup: set[str] | None = None,
     ) -> list[str]:
         if self.entity_lookup == "trigram":
+            # Route to backend-specific fuzzy strategy.
+            # Non-PG backends (Oracle) use UTL_MATCH instead of pg_trgm.
+            backend_strategy = self._ops.get_entity_resolution_strategy()
+            if backend_strategy == "oracle_fuzzy":
+                return await self._resolve_entities_batch_oracle_fuzzy(conn, bank_id, entities_data, unit_event_date)
             # Auto-detect pg_trgm availability on first call and fall back to
             # "full" strategy if the extension is not installed.  See #626.
             if not self._pg_trgm_checked:
@@ -384,6 +391,92 @@ class EntityResolver:
             conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
         )
 
+    async def _resolve_entities_batch_oracle_fuzzy(
+        self, conn: Any, bank_id: str, entities_data: list[dict], unit_event_date: datetime | None
+    ) -> list[str]:
+        """
+        Oracle strategy: fetch similar candidates using UTL_MATCH.JARO_WINKLER_SIMILARITY.
+
+        Replaces pg_trgm for Oracle backends. Uses JSON_TABLE to expand the
+        entity text list into rows (Oracle equivalent of PG's unnest), then
+        joins with a Jaro-Winkler threshold of 70/100 (≈ pg_trgm 0.15).
+        Falls back to the "full" strategy if UTL_MATCH is unavailable.
+        """
+        entity_texts = list(set(e["text"] for e in entities_data))
+        entities_table = fq_table("entities")
+
+        try:
+            # Batch all entity texts into a single query using JSON_TABLE to
+            # expand the list into rows. UTL_MATCH.JARO_WINKLER_SIMILARITY
+            # returns 0-100; threshold 70 ≈ pg_trgm similarity 0.15.
+            entity_texts_json = json.dumps(entity_texts)
+            rows = await conn.fetch(
+                f"""
+                SELECT e.id, e.canonical_name, e.metadata, e.last_seen, e.mention_count,
+                       q.query_text
+                FROM JSON_TABLE($2, '$[*]' COLUMNS (query_text VARCHAR2(4000) PATH '$')) q
+                JOIN {entities_table} e ON (
+                    e.bank_id = $1
+                    AND UTL_MATCH.JARO_WINKLER_SIMILARITY(LOWER(e.canonical_name), LOWER(q.query_text)) > 70
+                )
+                """,
+                bank_id,
+                entity_texts_json,
+            )
+        except Exception:
+            # UTL_MATCH may not be available (ORA-06550, ORA-00904, etc.)
+            # Fall back to the "full" strategy which works on any backend.
+            logger.warning(
+                "UTL_MATCH.JARO_WINKLER_SIMILARITY not available on Oracle — "
+                "falling back to 'full' entity lookup strategy."
+            )
+            self.entity_lookup = "full"
+            return await self._resolve_entities_batch_full(conn, bank_id, entities_data, unit_event_date)
+
+        # Group candidates by query_text (same structure as trigram strategy)
+        all_candidates: dict[str, list] = {t: [] for t in entity_texts}
+        candidate_ids: set = set()
+        for row in rows:
+            query_text = row["query_text"]
+            all_candidates[query_text].append(
+                (row["id"], row["canonical_name"], row["metadata"], row["last_seen"], row["mention_count"])
+            )
+            candidate_ids.add(row["id"])
+
+        # Fetch co-occurrences only for the candidate entities (not all bank entities)
+        cooccurrence_map: dict[str, set[str]] = {}
+        if candidate_ids:
+            candidate_id_list = list(candidate_ids)
+            cooc_rows = await conn.fetch(
+                f"""
+                SELECT ec.entity_id_1, ec.entity_id_2
+                FROM {fq_table("entity_cooccurrences")} ec
+                WHERE ec.entity_id_1 = ANY($1::uuid[])
+                   OR ec.entity_id_2 = ANY($1::uuid[])
+                """,
+                candidate_id_list,
+            )
+            # Build name lookup for co-occurrence mapping
+            id_to_name = {
+                row["id"]: row["canonical_name"].lower()
+                for cands in all_candidates.values()
+                for row in [{"id": c[0], "canonical_name": c[1]} for c in cands]
+            }
+            for row in cooc_rows:
+                eid1, eid2 = row["entity_id_1"], row["entity_id_2"]
+                if eid1 not in cooccurrence_map:
+                    cooccurrence_map[eid1] = set()
+                if eid2 not in cooccurrence_map:
+                    cooccurrence_map[eid2] = set()
+                if eid2 in id_to_name:
+                    cooccurrence_map[eid1].add(id_to_name[eid2])
+                if eid1 in id_to_name:
+                    cooccurrence_map[eid2].add(id_to_name[eid1])
+
+        return await self._resolve_from_candidates(
+            conn, bank_id, entities_data, unit_event_date, all_candidates, cooccurrence_map
+        )
+
     async def _resolve_from_candidates(
         self,
         conn,
@@ -491,24 +584,19 @@ class EntityResolver:
             # INSERT ... ON CONFLICT DO NOTHING — no row lock on already-existing entities.
             # mention_count starts at 0 here; flush_pending_stats() is the sole source of
             # truth for mention counting (one stat per original mention in the batch).
-            inserted_rows = await conn.fetch(
-                f"""
-                INSERT INTO {fq_table("entities")} (bank_id, canonical_name, first_seen, last_seen, mention_count)
-                SELECT $1, name, COALESCE(event_date, now()), COALESCE(event_date, now()), 0
-                FROM unnest($2::text[], $3::timestamptz[]) AS t(name, event_date)
-                ON CONFLICT (bank_id, LOWER(canonical_name))
-                DO NOTHING
-                RETURNING id, LOWER(canonical_name) AS name_lower
-                """,
+            entities_table = fq_table("entities")
+
+            id_by_name = await self._ops.bulk_insert_entities(
+                conn,
+                entities_table,
                 bank_id,
                 entity_names,
                 entity_dates,
             )
-            id_by_name: dict[str, str] = {row["name_lower"]: row["id"] for row in inserted_rows}
 
             # Fallback SELECT for names that conflicted (another worker won the race).
             #
-            # IMPORTANT: we must let PostgreSQL do the lowercasing on BOTH sides of the
+            # IMPORTANT: we must let the database do the lowercasing on BOTH sides of the
             # comparison.  Python's str.lower() and PostgreSQL's LOWER() differ for some
             # Unicode characters — most notably Turkish İ (U+0130):
             #   Python:     'İstanbul'.lower()  == 'i\u0307stanbul'  (i + combining dot, 2 chars)
@@ -516,24 +604,11 @@ class EntityResolver:
             # Passing a Python-lowercased name to "LOWER(canonical_name) = ANY($2::text[])"
             # would fail to match the stored entity, leaving entity_id as None and causing
             # a NOT NULL constraint violation on unit_entities.entity_id.
-            #
-            # Fix: pass the original (mixed-case) input names and use
-            # "LOWER(canonical_name) = ANY(SELECT LOWER(n) FROM unnest($2) AS n)" so
-            # PostgreSQL lowercases both sides identically.  The query also returns the
-            # original input_name so we can index id_by_name by Python's lower() of that
-            # name, which is what the assignment loop below uses as its lookup key.
             missing_original = [g.name for name_lower, g in sorted_groups if name_lower not in id_by_name]
             if missing_original:
-                existing_rows = await conn.fetch(
-                    f"""
-                    SELECT e.id, LOWER(e.canonical_name) AS name_lower, inputs.input_name
-                    FROM {fq_table("entities")} e
-                    JOIN (
-                        SELECT LOWER(n) AS input_name_lower, n AS input_name
-                        FROM unnest($2::text[]) AS n
-                    ) AS inputs ON LOWER(e.canonical_name) = inputs.input_name_lower
-                    WHERE e.bank_id = $1
-                    """,
+                existing_rows = await self._ops.fetch_missing_entity_ids(
+                    conn,
+                    entities_table,
                     bank_id,
                     missing_original,
                 )
@@ -541,8 +616,9 @@ class EntityResolver:
                     id_by_name[row["name_lower"]] = row["id"]
                     # Also index by Python's lower() of the original input name so the
                     # assignment loop (which uses Python-lowercased keys) finds it even
-                    # when Python and PostgreSQL produce different lowercase strings.
-                    id_by_name[row["input_name"].lower()] = row["id"]
+                    # when Python and the database produce different lowercase strings.
+                    if "input_name" in row:
+                        id_by_name[row["input_name"].lower()] = row["id"]
 
             # Assign entity IDs back and queue one stat per original mention so that
             # flush_pending_stats() increments mention_count by the true mention count,
@@ -655,7 +731,11 @@ class EntityResolver:
 
                 # 3. Temporal proximity (0-0.2)
                 if last_seen:
-                    days_diff = abs((unit_event_date - last_seen).total_seconds() / 86400)
+                    # Normalize both to UTC-aware to avoid naive/aware mismatch
+                    # (Oracle returns naive datetimes from fromisoformat)
+                    _evt = unit_event_date if unit_event_date.tzinfo else unit_event_date.replace(tzinfo=UTC)
+                    _seen = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+                    days_diff = abs((_evt - _seen).total_seconds() / 86400)
                     if days_diff < 7:  # Within a week
                         temporal_score = max(0, 1.0 - (days_diff / 7))
                         score += temporal_score * 0.2
@@ -815,12 +895,10 @@ class EntityResolver:
         sorted_pairs = sorted(unit_entity_pairs)
         unit_ids = [p[0] for p in sorted_pairs]
         entity_ids = [p[1] for p in sorted_pairs]
-        await conn.execute(
-            f"""
-            INSERT INTO {fq_table("unit_entities")} (unit_id, entity_id)
-            SELECT u, e FROM unnest($1::uuid[], $2::uuid[]) AS t(u, e)
-            ON CONFLICT DO NOTHING
-            """,
+
+        await self._ops.bulk_insert_unit_entities(
+            conn,
+            fq_table("unit_entities"),
             unit_ids,
             entity_ids,
         )

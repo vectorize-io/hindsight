@@ -215,13 +215,19 @@ def main():
         else:
             print(f"No tenant extension configured, using schema: {config.database_schema}")
 
+        # Check if the backend supports the async worker/poller.
+        if not memory._backend.supports_worker_poller:
+            print("ERROR: Standalone worker is not supported on this database backend.")
+            print("Operations run synchronously within the API process.")
+            sys.exit(1)
+
         # Create a single poller that handles all schemas dynamically
         # Convert default schema to None for SQL compatibility (no schema prefix)
         from hindsight_api.config import DEFAULT_DATABASE_SCHEMA
 
         schema = None if config.database_schema == DEFAULT_DATABASE_SCHEMA else config.database_schema
         poller = WorkerPoller(
-            pool=memory._pool,
+            backend=memory._backend,
             worker_id=args.worker_id,
             executor=memory.execute_task,
             poll_interval_ms=args.poll_interval,

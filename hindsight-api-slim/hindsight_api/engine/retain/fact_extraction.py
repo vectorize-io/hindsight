@@ -1588,13 +1588,15 @@ async def extract_facts_from_contents_batch_api(
     # Check if we're resuming an existing batch (crash recovery)
     batch_id = None
     if operation_id and pool:
+        from ..db_utils import acquire_with_retry
         from ..task_backend import fq_table
 
         table = fq_table("async_operations", schema)
-        row = await pool.fetchrow(
-            f"SELECT result_metadata FROM {table} WHERE operation_id = $1",
-            operation_id,
-        )
+        async with acquire_with_retry(pool) as conn:
+            row = await conn.fetchrow(
+                f"SELECT result_metadata FROM {table} WHERE operation_id = $1",
+                operation_id,
+            )
 
         if row and row["result_metadata"]:
             metadata = row["result_metadata"]
@@ -1661,18 +1663,20 @@ async def extract_facts_from_contents_batch_api(
             }
 
             # Update operation result_metadata
+            from ..db_utils import acquire_with_retry
             from ..task_backend import fq_table
 
             table = fq_table("async_operations", schema)
-            await pool.execute(
-                f"""
-                UPDATE {table}
-                SET result_metadata = result_metadata || $1::jsonb, updated_at = now()
-                WHERE operation_id = $2
-                """,
-                json.dumps(batch_state),
-                operation_id,
-            )
+            async with acquire_with_retry(pool) as conn:
+                await conn.execute(
+                    f"""
+                    UPDATE {table}
+                    SET result_metadata = result_metadata || $1::jsonb, updated_at = now()
+                    WHERE operation_id = $2
+                    """,
+                    json.dumps(batch_state),
+                    operation_id,
+                )
             logger.info(f"Stored batch state for operation {operation_id} (crash recovery enabled)")
     else:
         logger.info(f"Resuming polling for existing batch: {batch_id}")

@@ -111,6 +111,7 @@ async def build_entity_links(
     unit_to_entity_ids: dict[str, list[str]],
     log_buffer: list[str] = None,
     skip_unit_entities_insert: bool = False,
+    ops=None,
 ) -> list[EntityLink]:
     """
     Build entity links for UI graph visualization.
@@ -130,6 +131,7 @@ async def build_entity_links(
         unit_to_entity_ids: From resolve_entities()
         log_buffer: Optional buffer for detailed logging
         skip_unit_entities_insert: Skip unit_entities INSERT (already done in Phase 2)
+        ops: DataAccessOps instance (from backend.ops)
 
     Returns:
         List of EntityLink objects for batch insertion
@@ -144,10 +146,11 @@ async def build_entity_links(
         unit_to_entity_ids,
         log_buffer,
         skip_unit_entities_insert=skip_unit_entities_insert,
+        ops=ops,
     )
 
 
-async def insert_entity_links_batch(conn, entity_links: list[EntityLink], bank_id: str) -> None:
+async def insert_entity_links_batch(conn, entity_links: list[EntityLink], bank_id: str, ops=None) -> None:
     """
     Insert entity links in batch.
 
@@ -155,8 +158,9 @@ async def insert_entity_links_batch(conn, entity_links: list[EntityLink], bank_i
         conn: Database connection
         entity_links: List of EntityLink objects
         bank_id: Bank identifier (stored directly on memory_links for fast filtering)
+        ops: DataAccessOps instance (from backend.ops)
     """
     if not entity_links:
         return
 
-    await link_utils.insert_entity_links_batch(conn, entity_links, bank_id)
+    await link_utils.insert_entity_links_batch(conn, entity_links, bank_id, ops=ops)

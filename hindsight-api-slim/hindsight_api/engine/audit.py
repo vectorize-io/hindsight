@@ -16,8 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import asyncpg
-
 from ..engine.db_utils import acquire_with_retry
 
 logger = logging.getLogger(__name__)
@@ -69,7 +67,7 @@ class AuditLogger:
 
     def __init__(
         self,
-        pool_getter: Callable[[], asyncpg.Pool | None],
+        pool_getter: Callable[[], Any],
         schema_getter: Callable[[], str],
         enabled: bool,
         allowed_actions: list[str],

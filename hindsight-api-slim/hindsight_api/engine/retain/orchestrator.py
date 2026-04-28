@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ...worker.stage import set_stage
+from ..db.base import DatabaseBackend
 from ..db_utils import acquire_with_retry
 from ..memory_engine import count_tokens, fq_table
 from . import bank_utils
@@ -140,7 +141,7 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
 
 
 async def _pre_resolve_phase1(
-    pool,
+    pool: Any,
     entity_resolver,
     bank_id: str,
     contents: list[RetainContent],
@@ -254,6 +255,7 @@ async def _insert_facts_and_links(
     semantic_ann_links: list[tuple],
     skip_semantic_links: bool = False,
     outbox_callback=None,
+    ops=None,
 ) -> tuple[list[list[str]], Phase3Context]:
     """
     Phase 2 of the retain pipeline: insert facts and retrieval-critical links.
@@ -266,7 +268,7 @@ async def _insert_facts_and_links(
     Entity link building is deferred to Phase 3 (post-transaction, best-effort).
     """
     set_stage("retain.phase2.insert_facts")
-    unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts)
+    unit_ids = await fact_storage.insert_facts_batch(conn, bank_id, processed_facts, ops=ops)
     step_start = time.time()
     log_buffer.append(f"  Insert facts: {len(unit_ids)} units in {time.time() - step_start:.3f}s")
 
@@ -299,7 +301,7 @@ async def _insert_facts_and_links(
 
         # Create temporal links
         step_start = time.time()
-        temporal_link_count = await link_creation.create_temporal_links_batch(conn, bank_id, unit_ids)
+        temporal_link_count = await link_creation.create_temporal_links_batch(conn, bank_id, unit_ids, ops=ops)
         log_buffer.append(f"  Temporal links: {temporal_link_count} links in {time.time() - step_start:.3f}s")
 
         # Create semantic links (within-batch + pre-computed ANN from Phase 1)
@@ -315,6 +317,7 @@ async def _insert_facts_and_links(
                 unit_ids,
                 embeddings_for_links,
                 pre_computed_ann_links=semantic_ann_links,
+                ops=ops,
             )
             log_buffer.append(f"  Semantic links: {semantic_link_count} links in {time.time() - step_start:.3f}s")
 
@@ -324,7 +327,9 @@ async def _insert_facts_and_links(
 
         # Create causal links
         step_start = time.time()
-        causal_link_count = await link_creation.create_causal_links_batch(conn, bank_id, unit_ids, processed_facts)
+        causal_link_count = await link_creation.create_causal_links_batch(
+            conn, bank_id, unit_ids, processed_facts, ops=ops
+        )
         log_buffer.append(f"  Causal links: {causal_link_count} links in {time.time() - step_start:.3f}s")
 
     # Map results back to original content items. Use processed_facts (not
@@ -340,7 +345,7 @@ async def _insert_facts_and_links(
 
 
 async def _build_and_insert_entity_links_phase3(
-    pool,
+    pool: Any,
     entity_resolver,
     bank_id: str,
     phase3_ctx: Phase3Context,
@@ -374,9 +379,10 @@ async def _build_and_insert_entity_links_phase3(
             p3_unit_to_entity_ids,
             log_buffer,
             skip_unit_entities_insert=True,  # Already inserted in Phase 2
+            ops=pool.ops,
         )
         if entity_links:
-            await entity_processing.insert_entity_links_batch(conn, entity_links, bank_id)
+            await entity_processing.insert_entity_links_batch(conn, entity_links, bank_id, ops=pool.ops)
         log_buffer.append(f"  Entity links (viz): {len(entity_links)} links in {time.time() - step_start:.3f}s")
 
 
@@ -389,7 +395,7 @@ async def _extract_and_embed(
     format_date_fn,
     fact_type_override: str | None,
     log_buffer: list[str],
-    pool=None,
+    pool: Any = None,
     operation_id: str | None = None,
     schema: str | None = None,
 ) -> tuple[list, list[ProcessedFact], list[ChunkMetadata], TokenUsage]:
@@ -427,7 +433,7 @@ async def _extract_and_embed(
 
 
 async def retain_batch(
-    pool,
+    pool: Any,
     embeddings_model,
     llm_config,
     entity_resolver,
@@ -717,7 +723,7 @@ _ANN_PARALLELISM = 4  # Max concurrent ANN chunks to avoid pool saturation
 
 
 async def _run_final_semantic_ann(
-    pool,
+    pool: Any,
     bank_id: str,
     unit_ids: list[str],
     log_buffer: list[str],
@@ -801,7 +807,7 @@ async def _run_final_semantic_ann(
                     log_buffer=log_buffer,
                 )
                 if ann_links:
-                    await _bulk_insert_links(conn, ann_links, bank_id=bank_id)
+                    await _bulk_insert_links(conn, ann_links, bank_id=bank_id, ops=pool.ops)
                 chunk_link_counts[chunk_idx] = len(ann_links)
             logger.info(
                 f"[streaming] Final ANN chunk {chunk_idx + 1}/{num_chunks}: "
@@ -819,7 +825,7 @@ async def _run_final_semantic_ann(
 
 
 async def _streaming_retain_batch(
-    pool,
+    pool: Any,
     embeddings_model,
     llm_config,
     entity_resolver,
@@ -1221,7 +1227,7 @@ async def _streaming_retain_batch(
                     chunk_id_map = {}
                     if batch_chunk_meta:
                         chunk_id_map = await chunk_storage.store_chunks_batch(
-                            conn, bank_id, effective_doc_id, batch_chunk_meta
+                            conn, bank_id, effective_doc_id, batch_chunk_meta, ops=pool.ops
                         )
                         log_buffer.append(
                             f"  Store chunks: {len(batch_chunk_meta)} chunks in {time.time() - step_start:.3f}s"
@@ -1252,6 +1258,7 @@ async def _streaming_retain_batch(
                         semantic_ann_links=[],
                         skip_semantic_links=True,
                         outbox_callback=outbox_callback if is_last else None,
+                        ops=pool.ops,
                     )
 
                 logger.info(f"[streaming] Phase 2 (write txn): {time.time() - p2_start:.3f}s")
@@ -1438,7 +1445,7 @@ async def _streaming_retain_batch(
 
 
 async def _try_delta_retain(
-    pool,
+    pool: Any,
     embeddings_model,
     llm_config,
     entity_resolver,
@@ -1666,7 +1673,7 @@ async def _try_delta_retain(
                         for cm in new_chunk_metadata
                     ]
                     chunk_id_map = await chunk_storage.store_chunks_batch(
-                        conn, bank_id, effective_doc_id, remapped_chunks
+                        conn, bank_id, effective_doc_id, remapped_chunks, ops=pool.ops
                     )
                     for chunk_idx, chunk_id in chunk_id_map.items():
                         chunk_id_map_by_doc[(effective_doc_id, chunk_idx)] = chunk_id
@@ -1700,6 +1707,7 @@ async def _try_delta_retain(
                     unit_to_entity_ids=phase1.entities.unit_to_entity_ids,
                     semantic_ann_links=phase1.semantic_ann_links,
                     outbox_callback=outbox_callback,
+                    ops=pool.ops,
                 )
 
             # PHASE 3 — Best-Effort Display Data (post-transaction)
@@ -1733,7 +1741,7 @@ async def _try_delta_retain(
 
 
 async def _delta_metadata_only(
-    pool,
+    pool: Any,
     bank_id,
     contents_dicts,
     contents,

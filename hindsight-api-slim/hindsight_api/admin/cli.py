@@ -1,5 +1,7 @@
-"""
-Hindsight Admin CLI - backup and restore operations.
+"""PostgreSQL-only admin utilities (backup, restore, migration, worker management).
+
+Not supported on Oracle backends. Uses asyncpg.connect() directly, binary COPY,
+TRUNCATE CASCADE, and REFRESH MATERIALIZED VIEW — all inherently PG-specific.
 """
 
 import asyncio
@@ -15,14 +17,9 @@ import asyncpg
 import typer
 
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig
+from ..engine.schema import fq_table_explicit as _fq_table
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
-
-
-def _fq_table(table: str, schema: str) -> str:
-    """Get fully-qualified table name with schema prefix."""
-    return f"{schema}.{table}"
-
 
 # Setup logging
 logging.basicConfig(

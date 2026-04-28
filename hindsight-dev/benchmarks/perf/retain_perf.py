@@ -154,11 +154,9 @@ async def retain_via_memory_engine_async(
             llm_config.set_response_callback(_mock_fact_response)
             console.print("    [cyan]Mock LLM configured with entity-rich fact responses[/cyan]")
 
-    pool = await memory._get_pool()
-
     # Start a WorkerPoller so tasks get picked up
     poller = WorkerPoller(
-        pool=pool,
+        backend=memory._backend,
         worker_id="bench-worker",
         executor=memory.execute_task,
         poll_interval_ms=100,

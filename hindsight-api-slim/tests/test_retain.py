@@ -681,13 +681,14 @@ async def test_retain_omit_timestamp_defaults_to_now(memory, request_context):
         unit_ids = unit_ids_list[0]
         assert len(unit_ids) > 0, "Should have extracted and stored facts"
 
-        # Recall and verify mentioned_at is a real datetime close to now
+        # Recall and verify mentioned_at is a real datetime close to now.
+        # Don't filter by fact_type — LLM classification is non-deterministic
+        # and may classify "Alice is a software engineer" as either world or experience.
         result = await memory.recall_async(
             bank_id=bank_id,
             query="Who is Alice?",
             budget=Budget.LOW,
             max_tokens=500,
-            fact_type=["world"],
             request_context=request_context,
         )
 

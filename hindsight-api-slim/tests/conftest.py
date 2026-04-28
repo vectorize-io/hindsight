@@ -1,15 +1,16 @@
 """
 Pytest configuration and shared fixtures.
 """
-import pytest
-import pytest_asyncio
 import asyncio
 import os
-import filelock
 from pathlib import Path
-from dotenv import load_dotenv
-from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings, RequestContext
 
+import filelock
+import pytest
+import pytest_asyncio
+from dotenv import load_dotenv
+
+from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
 from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
@@ -111,7 +112,219 @@ def pg0_db_url(db_url, tmp_path_factory, worker_id):
     from hindsight_api.migrations import run_migrations
     run_migrations(url)
 
+    # Clean up stale test data from previous sessions. Per-bank vector indexes
+    # accumulate across runs (each test bank creates 3 HNSW indexes) and
+    # eventually exhaust pg0's shared memory / max_locks_per_transaction.
+    # Only one xdist worker needs to do this.
+    cleanup_lock = root_tmp_dir / f"pg0_cleanup_{pg0_instance_name}.lock"
+    cleanup_done = root_tmp_dir / f"pg0_cleanup_{pg0_instance_name}.done"
+    with filelock.FileLock(str(cleanup_lock)):
+        if not cleanup_done.exists():
+            _cleanup_stale_test_data(url)
+            cleanup_done.write_text("done")
+
     return url
+
+
+def _cleanup_stale_test_data(db_url: str) -> None:
+    """Drop all per-bank vector indexes and test data from previous sessions.
+
+    pg0 persists between test runs, so per-bank HNSW indexes accumulate
+    (3 per bank × thousands of test banks = tens of thousands of indexes).
+    This eventually causes 'out of shared memory' errors because PostgreSQL
+    tracks all indexes in shared lock tables.
+    """
+    import asyncpg
+
+    async def _do_cleanup():
+        conn = await asyncpg.connect(db_url)
+        try:
+            idx_rows = await conn.fetch(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname = 'public' AND indexname LIKE 'idx_mu_emb_%'"
+            )
+            if idx_rows:
+                for row in idx_rows:
+                    await conn.execute(f'DROP INDEX IF EXISTS public."{row["indexname"]}"')
+
+            # Truncate test data in dependency order
+            for table in [
+                "entity_cooccurrences", "unit_entities", "memory_links",
+                "entities", "memory_units", "chunks", "documents",
+                "mental_models", "directives", "async_operations",
+                "audit_log", "webhooks", "file_storage", "banks",
+            ]:
+                try:
+                    await conn.execute(f"TRUNCATE {table} CASCADE")
+                except Exception:
+                    pass  # Table may not exist yet
+        finally:
+            await conn.close()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_do_cleanup())
+    finally:
+        loop.close()
+
+
+@pytest.fixture(scope="session")
+def _oracle_admin_dsn():
+    """
+    Parse ORACLE_TEST_DSN into admin connection parameters.
+
+    Accepts either URL format (oracle://user:pass@host:port/service) or
+    bare DSN (host:port/service) with separate ORACLE_TEST_USER/PASSWORD env vars.
+    Skips the entire test session if ORACLE_TEST_DSN is not set.
+    """
+    from urllib.parse import urlparse
+
+    dsn = os.getenv("ORACLE_TEST_DSN")
+    if not dsn:
+        pytest.skip("ORACLE_TEST_DSN not set — skipping Oracle tests")
+
+    parsed = urlparse(dsn)
+    if parsed.scheme in ("oracle", "oracle+oracledb"):
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 1521
+        service = parsed.path.lstrip("/") if parsed.path else "FREEPDB1"
+        return {
+            "user": parsed.username or "SYSTEM",
+            "password": parsed.password or "oracle",
+            "dsn": f"{host}:{port}/{service}",
+        }
+    else:
+        return {
+            "user": os.getenv("ORACLE_TEST_USER", "SYSTEM"),
+            "password": os.getenv("ORACLE_TEST_PASSWORD", "oracle"),
+            "dsn": dsn,
+        }
+
+
+@pytest.fixture(scope="session")
+def oracle_db_url(_oracle_admin_dsn):
+    """
+    Bootstrap a dedicated Oracle test user with an ASSM tablespace and return
+    a connection URL for that user.
+
+    Oracle 23ai requires VECTOR columns to be in an Automatic Segment Space
+    Management (ASSM) tablespace. The default SYSTEM tablespace is not ASSM,
+    so connecting as SYSTEM directly would cause ORA-43853 during migrations.
+
+    This fixture creates a ``HINDSIGHT_TEST`` user (idempotent) with the USERS
+    tablespace (which is ASSM on Oracle Free/XE) and returns a URL that the
+    ``oracle_memory`` fixture and ``run_oracle_migrations()`` can use directly.
+    """
+    try:
+        import oracledb
+    except ImportError:
+        pytest.skip("oracledb not installed — skipping Oracle tests")
+
+    oracledb.defaults.fetch_lobs = False
+
+    admin_user = _oracle_admin_dsn["user"]
+    admin_pass = _oracle_admin_dsn["password"]
+    bare_dsn = _oracle_admin_dsn["dsn"]
+
+    test_user = "HINDSIGHT_TEST"
+    test_pass = "hindsight_test"
+
+    conn = oracledb.connect(user=admin_user, password=admin_pass, dsn=bare_dsn)
+    cursor = conn.cursor()
+    try:
+        # Create test user (idempotent — skip if already exists)
+        try:
+            cursor.execute(
+                f'CREATE USER {test_user} IDENTIFIED BY "{test_pass}" '
+                f"DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS"
+            )
+        except oracledb.DatabaseError as e:
+            if hasattr(e.args[0], "code") and e.args[0].code == 1920:
+                # ORA-01920: user name conflicts with another user or role name
+                pass
+            else:
+                raise
+
+        # Grant required privileges (idempotent)
+        for grant in [
+            f"GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE TO {test_user}",
+            f"GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW TO {test_user}",
+            f"GRANT CTXAPP TO {test_user}",
+        ]:
+            try:
+                cursor.execute(grant)
+            except oracledb.DatabaseError:
+                pass
+
+        # Grant UTL_MATCH for fuzzy entity matching (may not be available)
+        try:
+            cursor.execute(f"GRANT EXECUTE ON UTL_MATCH TO {test_user}")
+        except oracledb.DatabaseError:
+            pass
+
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+    # Return URL-format DSN for the test user
+    url = f"oracle://{test_user}:{test_pass}@{bare_dsn}"
+
+    # Run idempotent migrations once at session scope (mirrors PG's pg0_db_url).
+    # This avoids re-running DDL checks on every function-scoped test.
+    from hindsight_api.migrations_oracle import run_oracle_migrations
+
+    run_oracle_migrations(url)
+
+    return url
+
+
+@pytest_asyncio.fixture(scope="function")
+async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer):
+    """
+    Provide a MemoryEngine backed by Oracle 23ai for each test.
+
+    Mirrors the PG `memory` fixture but uses the Oracle backend.
+    Migrations are run once at session scope in the `oracle_db_url` fixture.
+    """
+    from hindsight_api.config import clear_config_cache
+
+    # Temporarily set the database backend env var so the global config
+    # (used by fq_table / _is_oracle) returns "oracle".
+    old_backend = os.environ.get("HINDSIGHT_API_DATABASE_BACKEND")
+    os.environ["HINDSIGHT_API_DATABASE_BACKEND"] = "oracle"
+    clear_config_cache()
+
+    try:
+        mem = MemoryEngine(
+            db_url=oracle_db_url,
+            # Note: config.py loads ../.env with override=True, so these defaults
+            # only apply if no .env file is found. The .env file is authoritative.
+            memory_llm_provider=os.getenv("HINDSIGHT_API_LLM_PROVIDER", "openai"),
+            memory_llm_api_key=os.getenv("HINDSIGHT_API_LLM_API_KEY"),
+            memory_llm_model=os.getenv("HINDSIGHT_API_LLM_MODEL", "gpt-4o-mini"),
+            memory_llm_base_url=os.getenv("HINDSIGHT_API_LLM_BASE_URL") or None,
+            embeddings=embeddings,
+            cross_encoder=cross_encoder,
+            query_analyzer=query_analyzer,
+            pool_min_size=1,
+            pool_max_size=5,
+            run_migrations=False,  # Already ran above
+            task_backend=SyncTaskBackend(),
+        )
+        await mem.initialize()
+        yield mem
+        try:
+            await mem.close()
+        except Exception:
+            pass
+    finally:
+        # Restore original env var and clear config cache
+        if old_backend is None:
+            os.environ.pop("HINDSIGHT_API_DATABASE_BACKEND", None)
+        else:
+            os.environ["HINDSIGHT_API_DATABASE_BACKEND"] = old_backend
+        clear_config_cache()
 
 
 @pytest.fixture(scope="function")

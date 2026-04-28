@@ -46,7 +46,7 @@ def _vector_index_clause() -> str:
         return "USING hnsw (embedding vector_cosine_ops)"
 
 
-async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str) -> None:
+async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, ops=None) -> None:
     """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
 
     Respects the HINDSIGHT_API_VECTOR_EXTENSION config to use the appropriate
@@ -55,29 +55,35 @@ async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str) -> No
     Called immediately after the bank row is first inserted. Safe on empty banks
     (index build is instant). Idempotent via CREATE INDEX IF NOT EXISTS.
     bank_id is escaped for SQL literal safety (apostrophes doubled).
+
+    On Oracle 23ai, this is a no-op — Oracle uses a single global vector index
+    created during migrations. Partial indexes (WHERE clause) are not supported
+    for Oracle vector indexes.
     """
-    table = fq_table("memory_units")
-    escaped = bank_id.replace("'", "''")
-    using_clause = _vector_index_clause()
-    for ft in _BANK_INDEX_FACT_TYPES:
-        idx = _bank_index_name(ft, internal_id)
-        await conn.execute(
-            f"CREATE INDEX IF NOT EXISTS {idx} "
-            f"ON {table} {using_clause} "
-            f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
-        )
+    await ops.create_bank_vector_indexes(
+        conn,
+        fq_table("memory_units"),
+        bank_id,
+        internal_id,
+        _vector_index_clause(),
+        _BANK_INDEX_FACT_TYPES,
+    )
 
 
-async def drop_bank_vector_indexes(conn, internal_id: str) -> None:
+async def drop_bank_vector_indexes(conn, internal_id: str, ops=None) -> None:
     """Drop per-(bank, fact_type) partial vector indexes for a bank being deleted.
 
     Called before the bank row is deleted so internal_id is still known.
     Idempotent via DROP INDEX IF EXISTS.
+
+    On Oracle, this is a no-op (uses single global vector index).
     """
-    schema = get_current_schema()
-    for ft in _BANK_INDEX_FACT_TYPES:
-        idx = _bank_index_name(ft, internal_id)
-        await conn.execute(f"DROP INDEX IF EXISTS {schema}.{idx}")
+    await ops.drop_bank_vector_indexes(
+        conn,
+        get_current_schema(),
+        internal_id,
+        _BANK_INDEX_FACT_TYPES,
+    )
 
 
 DEFAULT_DISPOSITION = {
@@ -210,7 +216,7 @@ async def get_or_create_bank_profile(pool, bank_id: str) -> tuple[BankProfile, b
         created = inserted is not None
         if created:
             # Fresh insert — create per-bank vector indexes (instant on empty bank)
-            await create_bank_vector_indexes(conn, bank_id, str(internal_id))
+            await create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=pool.ops)
 
         return (
             BankProfile(name=bank_id, disposition=DispositionTraits(**DEFAULT_DISPOSITION), mission=""),

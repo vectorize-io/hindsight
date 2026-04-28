@@ -74,7 +74,7 @@ class TestHmacSigning:
     def _make_manager(self) -> WebhookManager:
         """Create a WebhookManager with a dummy pool (not used for signing)."""
         pool = MagicMock()
-        return WebhookManager(pool=pool, global_webhooks=[])
+        return WebhookManager(backend=pool, global_webhooks=[])
 
     def test_hmac_signing_format(self):
         """_sign_payload should return a string starting with 'sha256='."""
@@ -132,7 +132,7 @@ class TestRetryConstants:
 @pytest_asyncio.fixture
 async def webhook_manager(memory: MemoryEngine) -> WebhookManager:
     """Return a WebhookManager backed by the test pool with no global webhooks."""
-    return WebhookManager(pool=memory._pool, global_webhooks=[])
+    return WebhookManager(backend=memory._backend, global_webhooks=[])
 
 
 async def _ensure_bank(pool, bank_id: str) -> None:
@@ -214,7 +214,7 @@ class TestFireEvent:
             event_types=["consolidation.completed"],
             enabled=True,
         )
-        manager = WebhookManager(pool=memory._pool, global_webhooks=[global_webhook])
+        manager = WebhookManager(backend=memory._backend, global_webhooks=[global_webhook])
 
         event = _make_event(bank_id)
         await manager.fire_event(event)
@@ -285,6 +285,115 @@ class TestFireEvent:
             assert count == 0
         finally:
             async with memory._pool.acquire() as conn:
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+
+
+class TestFireEventWithConn:
+    """Integration tests for WebhookManager.fire_event_with_conn()."""
+
+    @pytest.mark.asyncio
+    async def test_fire_event_with_conn_queues_delivery(
+        self, memory: MemoryEngine, webhook_manager: WebhookManager
+    ):
+        """fire_event_with_conn() inserts a delivery task using the provided connection."""
+        bank_id = f"wh-conn-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+
+        await _ensure_bank(memory._pool, bank_id)
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                """,
+                webhook_id,
+                bank_id,
+                "https://example.com/conn-hook",
+                ["consolidation.completed"],
+            )
+
+        try:
+            event = _make_event(bank_id)
+            # Use fire_event_with_conn inside a transaction
+            async with memory._backend.acquire() as conn:
+                async with conn.transaction():
+                    await webhook_manager.fire_event_with_conn(event, conn)
+
+            async with memory._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT status, task_payload
+                    FROM async_operations
+                    WHERE operation_type = 'webhook_delivery'
+                      AND bank_id = $1
+                      AND task_payload->>'webhook_id' = $2
+                    """,
+                    bank_id,
+                    str(webhook_id),
+                )
+
+            assert len(rows) == 1
+            assert rows[0]["status"] == "pending"
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
+                await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
+
+    @pytest.mark.asyncio
+    async def test_fire_event_with_conn_rolls_back_on_transaction_abort(
+        self, memory: MemoryEngine, webhook_manager: WebhookManager
+    ):
+        """When the enclosing transaction rolls back, the delivery row is also rolled back.
+
+        This is the key property of fire_event_with_conn vs fire_event: using the
+        caller's connection means the delivery insert is atomic with the caller's work.
+        """
+        bank_id = f"wh-rollback-{uuid.uuid4().hex[:8]}"
+        webhook_id = uuid.uuid4()
+
+        await _ensure_bank(memory._pool, bank_id)
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
+                VALUES ($1, $2, $3, NULL, $4, true, NOW(), NOW())
+                """,
+                webhook_id,
+                bank_id,
+                "https://example.com/rollback-hook",
+                ["consolidation.completed"],
+            )
+
+        try:
+            event = _make_event(bank_id)
+
+            # Fire inside a transaction that we explicitly roll back.
+            # Use the raw asyncpg pool to get manual transaction control.
+            async with memory._pool.acquire() as raw_conn:
+                tx = raw_conn.transaction()
+                await tx.start()
+                await webhook_manager.fire_event_with_conn(event, raw_conn)
+                await tx.rollback()
+
+            # The delivery row should NOT exist because the transaction was rolled back
+            async with memory._pool.acquire() as conn:
+                count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM async_operations
+                    WHERE operation_type = 'webhook_delivery' AND bank_id = $1
+                    """,
+                    bank_id,
+                )
+            assert count == 0, f"Expected 0 delivery rows after rollback, got {count}"
+        finally:
+            async with memory._pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM async_operations WHERE operation_type = 'webhook_delivery' AND bank_id = $1",
+                    bank_id,
+                )
                 await conn.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
 
 

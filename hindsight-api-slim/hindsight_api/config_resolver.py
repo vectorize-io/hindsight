@@ -11,9 +11,7 @@ multiple API servers.
 import json
 import logging
 from dataclasses import asdict, replace
-from typing import Any
-
-import asyncpg
+from typing import TYPE_CHECKING, Any
 
 from hindsight_api.config import (
     RECALL_BUDGET_FUNCTIONS,
@@ -25,21 +23,24 @@ from hindsight_api.engine.memory_engine import fq_table
 from hindsight_api.extensions.tenant import TenantExtension
 from hindsight_api.models import RequestContext
 
+if TYPE_CHECKING:
+    from hindsight_api.engine.db.base import DatabaseBackend
+
 logger = logging.getLogger(__name__)
 
 
 class ConfigResolver:
     """Resolves hierarchical configuration with tenant/bank overrides."""
 
-    def __init__(self, pool: asyncpg.Pool, tenant_extension: TenantExtension | None = None):
+    def __init__(self, backend: "DatabaseBackend", tenant_extension: TenantExtension | None = None):
         """
         Initialize config resolver.
 
         Args:
-            pool: Database connection pool
+            backend: Database backend for connection acquisition
             tenant_extension: Optional tenant extension for tenant-level config and permissions
         """
-        self.pool = pool
+        self._backend = backend
         self.tenant_extension = tenant_extension
         self._global_config = _get_raw_config()
         self._configurable_fields = HindsightConfig.get_configurable_fields()
@@ -153,7 +154,7 @@ class ConfigResolver:
             Dict of config overrides (only configurable fields, normalized keys)
         """
         try:
-            async with self.pool.acquire() as conn:
+            async with self._backend.acquire() as conn:
                 row = await conn.fetchrow(
                     f"""
                     SELECT config FROM {fq_table("banks")} WHERE bank_id = $1
@@ -265,7 +266,7 @@ class ConfigResolver:
         _validate_recall_budget_updates(normalized_updates)
 
         # Merge with existing config (JSONB || operator)
-        async with self.pool.acquire() as conn:
+        async with self._backend.acquire() as conn:
             await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}
@@ -286,7 +287,7 @@ class ConfigResolver:
         Args:
             bank_id: Bank identifier
         """
-        async with self.pool.acquire() as conn:
+        async with self._backend.acquire() as conn:
             await conn.execute(
                 f"""
                 UPDATE {fq_table("banks")}

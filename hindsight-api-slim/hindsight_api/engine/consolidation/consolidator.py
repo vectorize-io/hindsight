@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, field_validator
 
 from ...config import get_config
+from ..db_utils import acquire_with_retry
 from ..llm_wrapper import sanitize_llm_output
 from ..memory_engine import Budget, fq_table
 from ..retain import embedding_utils
@@ -53,6 +54,11 @@ async def _filter_live_source_memories(
     check and the subsequent insert/update. Combined with the delete path running
     its stale-observation sweep *after* deleting the source row, this closes the
     race window where consolidation would otherwise produce an orphan observation.
+
+    Oracle note: Oracle doesn't support FOR SHARE, so the SQL rewriter promotes
+    it to FOR UPDATE. Oracle's MVCC consistent-read semantics make FOR SHARE
+    unnecessary (the sweep runs AFTER deletion), but FOR UPDATE is more
+    conservative and still correct.
     """
     if not source_memory_ids:
         return []
@@ -255,10 +261,10 @@ async def run_consolidation_job(
         logger.debug(f"Consolidation disabled for bank {bank_id}")
         return {"status": "disabled", "bank_id": bank_id}
 
-    pool = memory_engine._pool
+    pool = memory_engine._backend
 
     # Get bank profile
-    async with pool.acquire() as conn:
+    async with acquire_with_retry(pool) as conn:
         t0 = time.time()
         bank_row = await conn.fetchrow(
             f"""
@@ -322,7 +328,7 @@ async def run_consolidation_job(
         )
 
         # Fetch next batch of unconsolidated memories
-        async with pool.acquire() as conn:
+        async with acquire_with_retry(pool) as conn:
             t0 = time.time()
             memories = await conn.fetch(
                 f"""
@@ -386,7 +392,7 @@ async def run_consolidation_job(
             while pending:
                 sub_batch = pending.pop(0)
 
-                async with pool.acquire() as conn:
+                async with acquire_with_retry(pool) as conn:
                     # Determine observation_scopes for this sub-batch. All memories share
                     # the same tags (enforced by tag_groups), so we only check the first memory.
                     # asyncpg returns JSONB columns as raw JSON strings, so parse if needed.
@@ -494,7 +500,7 @@ async def run_consolidation_job(
                     all_results.extend(sub_results)
 
             # Commit consolidated_at / consolidation_failed_at in a single DB round-trip
-            async with pool.acquire() as conn:
+            async with acquire_with_retry(pool) as conn:
                 if succeeded_ids:
                     await conn.executemany(
                         f"UPDATE {fq_table('memory_units')} SET consolidated_at = NOW() WHERE id = $1",
@@ -653,13 +659,13 @@ async def _trigger_mental_model_refreshes(
     Returns:
         Number of mental models scheduled for refresh
     """
-    pool = memory_engine._pool
+    pool = memory_engine._backend
 
     # Find mental models with refresh_after_consolidation=true that are actually stale.
     # The tag filter on the SELECT enforces the security boundary (never look outside the
     # relevant tag scope); compute_mental_model_is_stale then verifies that new memories
     # in the MM's scope really were ingested since its last refresh.
-    async with pool.acquire() as conn:
+    async with acquire_with_retry(pool) as conn:
         if consolidated_tags:
             candidates = await conn.fetch(
                 f"""
@@ -1018,6 +1024,23 @@ async def _execute_update_action(
         source_mentioned_at,
         merged_tags,
     )
+
+    # Dual-write: sync observation_sources junction table with updated source_ids.
+    # DELETE + INSERT is simpler than diffing, and this runs inside a transaction.
+    obs_uuid = uuid.UUID(observation_id)
+    await conn.execute(
+        f"DELETE FROM {fq_table('observation_sources')} WHERE observation_id = $1",
+        obs_uuid,
+    )
+    if source_ids:
+        await conn.executemany(
+            f"""
+            INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
+            VALUES ($1, $2)
+            """,
+            [(obs_uuid, sid) for sid in source_ids],
+        )
+
     if perf:
         perf.record_timing("db_write", time.time() - t0)
 
@@ -1387,6 +1410,18 @@ async def _create_observation_directly(
         obs_occurred_end,
         obs_mentioned_at,
     )
+
+    # Dual-write: populate observation_sources junction table alongside
+    # the source_memory_ids column. The junction table enables portable SQL
+    # joins, replacing PG-specific array operators and Oracle JSON_TABLE.
+    if source_memory_ids:
+        await conn.executemany(
+            f"""
+            INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
+            VALUES ($1, $2)
+            """,
+            [(observation_id, sid) for sid in source_memory_ids],
+        )
 
     if perf:
         perf.record_timing("db_write", time.time() - t0)
