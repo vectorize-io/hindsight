@@ -497,6 +497,12 @@ jobs:
         name: rust-cli-hindsight-linux-amd64
         path: ./artifacts/rust-cli-linux
 
+    - name: Download Rust CLI (Linux ARM)
+      uses: actions/download-artifact@v8
+      with:
+        name: rust-cli-hindsight-linux-arm64
+        path: ./artifacts/rust-cli-linux-arm64
+
     - name: Download Rust CLI (macOS Intel)
       uses: actions/download-artifact@v8
       with:
@@ -533,6 +539,7 @@ jobs:
         cp artifacts/control-plane/*.tgz release-assets/ || true
         # Rust CLI binaries
         cp artifacts/rust-cli-linux/hindsight-linux-amd64 release-assets/ || true
+        cp artifacts/rust-cli-linux-arm64/hindsight-linux-arm64 release-assets/ || true
         cp artifacts/rust-cli-darwin-amd64/hindsight-darwin-amd64 release-assets/ || true
         cp artifacts/rust-cli-darwin-arm64/hindsight-darwin-arm64 release-assets/ || true
         # Helm chart
