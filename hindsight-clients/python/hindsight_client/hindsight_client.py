@@ -258,6 +258,7 @@ class Hindsight:
         entities: list[dict[str, str]] | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
+        retain_async: bool = False,
     ) -> RetainResponse:
         """
         Store a single memory (sync wrapper — prefer :meth:`aretain` in async code).
@@ -272,6 +273,7 @@ class Hindsight:
             entities: Optional list of entities [{"text": "...", "type": "..."}]
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
+            retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
             RetainResponse with success status
@@ -290,6 +292,7 @@ class Hindsight:
             bank_id=bank_id,
             items=[item],
             document_id=document_id,
+            retain_async=retain_async,
         )
 
     def retain_batch(
@@ -772,6 +775,7 @@ class Hindsight:
         entities: list[dict[str, str]] | None = None,
         tags: list[str] | None = None,
         update_mode: str | None = None,
+        retain_async: bool = False,
     ) -> RetainResponse:
         """
         Store a single memory (async — preferred over :meth:`retain`).
@@ -786,6 +790,7 @@ class Hindsight:
             entities: Optional list of entities [{"text": "...", "type": "..."}]
             tags: Optional list of tags for filtering memories during recall/reflect
             update_mode: How to handle existing documents ('replace' or 'append')
+            retain_async: If True, process asynchronously in background (default: False)
 
         Returns:
             RetainResponse with success status
@@ -804,6 +809,7 @@ class Hindsight:
             bank_id=bank_id,
             items=[item],
             document_id=document_id,
+            retain_async=retain_async,
         )
 
     async def arecall(
