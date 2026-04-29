@@ -23,6 +23,7 @@ on:
           - retain
           - recall
           - recall-with-observations
+          - consolidation
         default: ""
       locomo_max_conversations:
         description: "LoComo max conversations (0 = skip, blank = all)"
@@ -105,6 +106,14 @@ jobs:
           --scale ${{ inputs.scale || 'large' }} \
           --suite recall-with-observations \
           --output perf-results-recall-with-observations.json
+
+    - name: "Suite: consolidation"
+      if: inputs.suite == '' || inputs.suite == 'consolidation'
+      run: |
+        ./scripts/benchmarks/run-perf-test.sh \
+          --scale ${{ inputs.scale || 'large' }} \
+          --suite consolidation \
+          --output perf-results-consolidation.json
 
     - name: Upload perf results
       if: always()
