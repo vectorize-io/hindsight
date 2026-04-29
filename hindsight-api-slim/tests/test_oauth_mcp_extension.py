@@ -20,9 +20,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hindsight_api.extensions.builtin.oauth_mcp.http import OAuthMcpHttpExtension
-from hindsight_api.extensions.builtin.oauth_mcp.tenant import OAuthMcpTenantExtension
-from hindsight_api.extensions.builtin.oauth_mcp.tokens import (
+from hindsight_api.extensions.builtin.oauth_mcp import (
+    OAuthMcpHttpExtension,
+    OAuthMcpTenantExtension,
     mint_access_token,
     mint_client_id,
     mint_code,
@@ -324,14 +324,12 @@ class TestAuthorize:
         email: str = _EMAIL,
         verify_raises: Exception | None = None,
     ) -> OAuthMcpHttpExtension:
-        """Create extension with CfAccessVerifier.verify mocked."""
+        """Create extension with _cf_verify mocked."""
         ext = _make_http_ext()
-        mock_verifier = AsyncMock()
         if verify_raises:
-            mock_verifier.verify.side_effect = verify_raises
+            ext._cf_verify = AsyncMock(side_effect=verify_raises)
         else:
-            mock_verifier.verify.return_value = {"email": email, "sub": email}
-        ext._cf_verifier = mock_verifier
+            ext._cf_verify = AsyncMock(return_value={"email": email, "sub": email})
         return ext
 
     def _register_client(self, client: TestClient, redirect_uri: str = _REDIRECT_URI) -> str:
@@ -512,9 +510,7 @@ class TestToken:
 
     def _make_ext_with_mock(self) -> OAuthMcpHttpExtension:
         ext = _make_http_ext()
-        mock_verifier = AsyncMock()
-        mock_verifier.verify.return_value = {"email": _EMAIL, "sub": _EMAIL}
-        ext._cf_verifier = mock_verifier
+        ext._cf_verify = AsyncMock(return_value={"email": _EMAIL, "sub": _EMAIL})
         return ext
 
     def test_happy_path_json_body(self):
@@ -663,9 +659,7 @@ class TestFullOAuthDance:
     def test_register_authorize_token_authenticate_mcp(self):
         """Full flow: DCR → /authorize → /token → authenticate_mcp succeeds."""
         http_ext = _make_http_ext()
-        mock_verifier = AsyncMock()
-        mock_verifier.verify.return_value = {"email": _EMAIL, "sub": _EMAIL}
-        http_ext._cf_verifier = mock_verifier
+        http_ext._cf_verify = AsyncMock(return_value={"email": _EMAIL, "sub": _EMAIL})
 
         tenant_ext = _make_tenant_ext()
         tc = _make_test_client(http_ext)
