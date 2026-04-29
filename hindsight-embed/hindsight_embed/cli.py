@@ -138,7 +138,7 @@ def get_config():
     return {
         "llm_api_key": os.environ.get("HINDSIGHT_API_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "llm_provider": provider,
-        "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL", default_model),
+        "llm_model": os.environ.get("HINDSIGHT_API_LLM_MODEL"),  # let hindsight-api resolve provider-default
         "bank_id": os.environ.get("HINDSIGHT_EMBED_BANK_ID", "default"),
     }
 
