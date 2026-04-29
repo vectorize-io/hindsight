@@ -27,19 +27,24 @@ function findContentFiles(dir: string): string[] {
 }
 
 function isLocalPath(input: string): boolean {
-  return input.startsWith("./") || input.startsWith("../") || input.startsWith("/") || input.startsWith("~");
+  return (
+    input.startsWith("./") ||
+    input.startsWith("../") ||
+    input.startsWith("/") ||
+    input.startsWith("~")
+  );
 }
 
 function parseAgentsJson(raw: string): any[] {
   const clean = raw.replace(/\n?\x1b\[[0-9;]*m[^\n]*/g, "").trim();
   const arrStart = clean.indexOf("\n[");
-  const jsonStr = arrStart >= 0 ? clean.slice(arrStart + 1) : (clean.startsWith("[") ? clean : "[]");
+  const jsonStr = arrStart >= 0 ? clean.slice(arrStart + 1) : clean.startsWith("[") ? clean : "[]";
   return JSON.parse(jsonStr);
 }
 
 function resolveFromPluginConfig(
   agentId: string,
-  pc: Record<string, any>,
+  pc: Record<string, any>
 ): { apiUrl: string; bankId: string; apiToken?: string } {
   const apiUrl = pc.hindsightApiUrl || `http://localhost:${pc.apiPort || 9077}`;
   const apiToken = pc.hindsightApiToken || undefined;
@@ -49,7 +54,12 @@ function resolveFromPluginConfig(
     bankId = pc.bankId;
   } else {
     const granularity: string[] = pc.dynamicBankGranularity || ["agent", "channel", "user"];
-    const fieldMap: Record<string, string> = { agent: agentId, channel: "unknown", user: "anonymous", provider: "unknown" };
+    const fieldMap: Record<string, string> = {
+      agent: agentId,
+      channel: "unknown",
+      user: "anonymous",
+      provider: "unknown",
+    };
     const base = granularity.map((f) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
     bankId = pc.bankIdPrefix ? `${pc.bankIdPrefix}-${base}` : base;
   }
@@ -159,7 +169,8 @@ describe("parseAgentsJson", () => {
   });
 
   it("strips ANSI log lines before JSON", () => {
-    const raw = "\x1b[38;5;103mhindsight:\x1b[0m plugin entry invoked\n" +
+    const raw =
+      "\x1b[38;5;103mhindsight:\x1b[0m plugin entry invoked\n" +
       '[\n  {"id": "main"},\n  {"id": "seo-writer", "name": "seo-writer"}\n]';
     const agents = parseAgentsJson(raw);
     expect(agents).toHaveLength(2);

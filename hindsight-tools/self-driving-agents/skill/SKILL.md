@@ -28,6 +28,7 @@ When you learn something durable — a user preference, a working procedure, per
 - `source_query`: a question that produces the page content from observations
 
 Examples:
+
 - `"What are the user's preferences for tone, length, and formatting?"`
 - `"What content strategies have performed well or poorly? Include numbers."`
 - `"What are the best practices for [topic], preferring our data over generic advice?"`

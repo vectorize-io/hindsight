@@ -91,6 +91,29 @@ if [ -d "$INTEGRATIONS_DIR" ] && { [ "$LINT_ALL" = "1" ] || [ -n "$CHANGED_FILES
     done
 fi
 
+# Hindsight tools (Node packages under hindsight-tools/)
+TOOLS_DIR="$REPO_ROOT/hindsight-tools"
+if [ -n "$CI" ] || [ -n "$LINT_ALL_INTEGRATIONS" ]; then
+    LINT_TOOLS_ALL=1
+    TOOLS_CHANGED=""
+else
+    LINT_TOOLS_ALL=0
+    TOOLS_CHANGED=$( { git -C "$REPO_ROOT" diff --name-only HEAD -- "hindsight-tools/"; \
+                       git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "hindsight-tools/"; } | sort -u )
+fi
+
+if [ -d "$TOOLS_DIR" ] && { [ "$LINT_TOOLS_ALL" = "1" ] || [ -n "$TOOLS_CHANGED" ]; }; then
+    for dir in "$TOOLS_DIR"/*/; do
+        name=$(basename "$dir")
+        if [ "$LINT_TOOLS_ALL" != "1" ]; then
+            echo "$TOOLS_CHANGED" | grep -q "^hindsight-tools/$name/" || continue
+        fi
+        if [ -f "$dir/package.json" ]; then
+            run_task "prettier-tool-$name" "$dir" "npx --yes prettier --write --config $REPO_ROOT/.prettierrc.json --ignore-path $REPO_ROOT/.gitignore ."
+        fi
+    done
+fi
+
 # Wait for all tasks to complete
 for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true

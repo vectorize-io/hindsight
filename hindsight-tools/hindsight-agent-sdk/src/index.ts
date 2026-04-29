@@ -77,20 +77,23 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
     apiKey: opts.apiToken,
     userAgent: "hindsight-agent-sdk/0.1.0",
   });
-  const lowLevel = createClient(createConfig({
-    baseUrl: opts.apiUrl,
-    headers: {
-      ...(opts.apiToken ? { Authorization: `Bearer ${opts.apiToken}` } : {}),
-      "User-Agent": "hindsight-agent-sdk/0.1.0",
-    },
-  }));
+  const lowLevel = createClient(
+    createConfig({
+      baseUrl: opts.apiUrl,
+      headers: {
+        ...(opts.apiToken ? { Authorization: `Bearer ${opts.apiToken}` } : {}),
+        "User-Agent": "hindsight-agent-sdk/0.1.0",
+      },
+    })
+  );
   const bankId = opts.bankId;
 
   return [
     {
       name: "agent_knowledge_list_pages",
       label: "List knowledge pages",
-      description: "List all your knowledge pages (IDs and names only). Use agent_knowledge_get_page to read the full content of a specific page.",
+      description:
+        "List all your knowledge pages (IDs and names only). Use agent_knowledge_get_page to read the full content of a specific page.",
       parameters: { type: "object", properties: {} },
       async execute() {
         const resp = await sdk.listMentalModels({
@@ -104,10 +107,13 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
     {
       name: "agent_knowledge_get_page",
       label: "Read a knowledge page",
-      description: "Read a specific knowledge page by its ID. Returns the full synthesized content.",
+      description:
+        "Read a specific knowledge page by its ID. Returns the full synthesized content.",
       parameters: {
         type: "object",
-        properties: { page_id: { type: "string", description: "Page ID (e.g. 'user-preferences')" } },
+        properties: {
+          page_id: { type: "string", description: "Page ID (e.g. 'user-preferences')" },
+        },
         required: ["page_id"],
       },
       async execute(params: Record<string, unknown>) {
@@ -124,9 +130,16 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
       parameters: {
         type: "object",
         properties: {
-          page_id: { type: "string", description: "Unique page ID, lowercase with hyphens (e.g. 'editorial-preferences')" },
+          page_id: {
+            type: "string",
+            description: "Unique page ID, lowercase with hyphens (e.g. 'editorial-preferences')",
+          },
           name: { type: "string", description: "Human-readable page name" },
-          source_query: { type: "string", description: "The question that rebuilds this page (e.g. 'What are the user\\'s editorial preferences?')" },
+          source_query: {
+            type: "string",
+            description:
+              "The question that rebuilds this page (e.g. 'What are the user\\'s editorial preferences?')",
+          },
         },
         required: ["page_id", "name", "source_query"],
       },
@@ -148,7 +161,8 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
     {
       name: "agent_knowledge_update_page",
       label: "Update a knowledge page",
-      description: "Update a page's name or source query. The content will re-synthesize on next consolidation.",
+      description:
+        "Update a page's name or source query. The content will re-synthesize on next consolidation.",
       parameters: {
         type: "object",
         properties: {
@@ -183,7 +197,8 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
     {
       name: "agent_knowledge_recall",
       label: "Search memories",
-      description: "Search across all retained conversations and documents for specific facts, numbers, or details not covered by your knowledge pages.",
+      description:
+        "Search across all retained conversations and documents for specific facts, numbers, or details not covered by your knowledge pages.",
       parameters: {
         type: "object",
         properties: {
@@ -218,7 +233,7 @@ export function createKnowledgeTools(opts: CreateKnowledgeToolsOptions): Knowled
         const result = await client.retainBatch(
           bankId,
           [{ content: params.content as string, document_id: docId }],
-          { async: true },
+          { async: true }
         );
         return ok(result);
       },

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createKnowledgeTools, TOOL_NAMES } from "./index.js";
-import type { KnowledgeTool } from "./index.js";
+import { createKnowledgeTools, TOOL_NAMES } from "../src/index.js";
+import type { KnowledgeTool } from "../src/index.js";
 
 // Mock fetch globally — the SDK uses @vectorize-io/hindsight-client which calls fetch.
 // The generated client passes a Request object (not a plain URL string).
@@ -14,14 +14,16 @@ function mockResponse(data: unknown, status = 200) {
     json: () => Promise.resolve(data),
     text: () => Promise.resolve(JSON.stringify(data)),
     headers: new Headers({ "content-type": "application/json" }),
-    clone: function () { return this; },
+    clone: function () {
+      return this;
+    },
   });
 }
 
 /** Extract the URL string from the first argument (Request object or string). */
 function getUrl(call: any[]): string {
   const arg = call[0];
-  return typeof arg === "string" ? arg : arg?.url ?? String(arg);
+  return typeof arg === "string" ? arg : (arg?.url ?? String(arg));
 }
 
 /** Extract request init/options from the fetch call. */

@@ -15,19 +15,22 @@
  *   *.md, *.txt, ...     — content files (found recursively, excluding bank-template.json)
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from "fs";
 import { join, resolve, extname, basename, relative, dirname } from "path";
 import { homedir, tmpdir } from "os";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import * as p from "@clack/prompts";
 import color from "picocolors";
-import {
-  HindsightClient,
-  sdk,
-  createClient,
-  createConfig,
-} from "@vectorize-io/hindsight-client";
+import { HindsightClient, sdk, createClient, createConfig } from "@vectorize-io/hindsight-client";
 
 const DEFAULT_REPO = "vectorize-io/self-driving-agents";
 
@@ -56,7 +59,12 @@ function findContentFiles(dir: string): string[] {
 // ── Agent resolution ───────────────────────────────────
 
 function isLocalPath(input: string): boolean {
-  return input.startsWith("./") || input.startsWith("../") || input.startsWith("/") || input.startsWith("~");
+  return (
+    input.startsWith("./") ||
+    input.startsWith("../") ||
+    input.startsWith("/") ||
+    input.startsWith("~")
+  );
 }
 
 /**
@@ -66,7 +74,10 @@ function isLocalPath(input: string): boolean {
  * - "name"                          → GitHub: vectorize-io/self-driving-agents/name
  * - "org/repo/path"                 → GitHub: org/repo/path
  */
-async function resolveAgentDir(input: string, spinner: ReturnType<typeof p.spinner>): Promise<{ dir: string; source: string; cleanup?: () => void }> {
+async function resolveAgentDir(
+  input: string,
+  spinner: ReturnType<typeof p.spinner>
+): Promise<{ dir: string; source: string; cleanup?: () => void }> {
   if (isLocalPath(input)) {
     const dir = resolve(input.replace(/^~/, homedir()));
     if (!existsSync(dir)) throw new Error(`Directory not found: ${dir}`);
@@ -90,7 +101,7 @@ async function resolveAgentDir(input: string, spinner: ReturnType<typeof p.spinn
   } else {
     throw new Error(
       `Invalid agent reference: '${input}'\n` +
-      `  Use: <name>, <org>/<repo>/<path>, or a local path (./dir)`
+        `  Use: <name>, <org>/<repo>/<path>, or a local path (./dir)`
     );
   }
 
@@ -104,13 +115,13 @@ async function resolveAgentDir(input: string, spinner: ReturnType<typeof p.spinn
     const tarballUrl = `https://github.com/${org}/${repo}/archive/refs/heads/main.tar.gz`;
     execSync(
       `curl -sL "${tarballUrl}" | tar xz -C "${tmp}" --strip-components=1 "${repo}-main/${subpath}"`,
-      { stdio: "pipe" },
+      { stdio: "pipe" }
     );
   } catch {
     rmSync(tmp, { recursive: true, force: true });
     throw new Error(
       `Failed to fetch ${org}/${repo}/${subpath}\n` +
-      `  Make sure the repository and path exist on GitHub.`
+        `  Make sure the repository and path exist on GitHub.`
     );
   }
 
@@ -154,8 +165,10 @@ function enableKnowledgeTools(): void {
 function isPluginInstalled(): boolean {
   const config = readOpenClawConfig();
   if (!config) return false;
-  return config.plugins?.entries?.["hindsight-openclaw"]?.enabled !== false
-    && config.plugins?.entries?.["hindsight-openclaw"] !== undefined;
+  return (
+    config.plugins?.entries?.["hindsight-openclaw"]?.enabled !== false &&
+    config.plugins?.entries?.["hindsight-openclaw"] !== undefined
+  );
 }
 
 function isPluginConfigured(): boolean {
@@ -178,7 +191,12 @@ function resolveFromPlugin(agentId: string): { apiUrl: string; bankId: string; a
     bankId = pc.bankId;
   } else {
     const granularity: string[] = pc.dynamicBankGranularity || ["agent", "channel", "user"];
-    const fieldMap: Record<string, string> = { agent: agentId, channel: "unknown", user: "anonymous", provider: "unknown" };
+    const fieldMap: Record<string, string> = {
+      agent: agentId,
+      channel: "unknown",
+      user: "anonymous",
+      provider: "unknown",
+    };
     const base = granularity.map((f) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
     bankId = pc.bankIdPrefix ? `${pc.bankIdPrefix}-${base}` : base;
   }
@@ -198,7 +216,7 @@ function getPluginSummary(): string {
 function parseAgentsJson(raw: string): any[] {
   const clean = raw.replace(/\n?\x1b\[[0-9;]*m[^\n]*/g, "").trim();
   const arrStart = clean.indexOf("\n[");
-  const jsonStr = arrStart >= 0 ? clean.slice(arrStart + 1) : (clean.startsWith("[") ? clean : "[]");
+  const jsonStr = arrStart >= 0 ? clean.slice(arrStart + 1) : clean.startsWith("[") ? clean : "[]";
   return JSON.parse(jsonStr);
 }
 
@@ -208,7 +226,9 @@ async function ensurePlugin(): Promise<void> {
     try {
       execSync("openclaw plugins install @vectorize-io/hindsight-openclaw", { stdio: "inherit" });
     } catch {
-      p.cancel("Failed to install plugin. Run manually:\n  openclaw plugins install @vectorize-io/hindsight-openclaw");
+      p.cancel(
+        "Failed to install plugin. Run manually:\n  openclaw plugins install @vectorize-io/hindsight-openclaw"
+      );
       process.exit(1);
     }
   }
@@ -216,9 +236,13 @@ async function ensurePlugin(): Promise<void> {
   if (!isPluginConfigured()) {
     p.log.warn("Hindsight plugin needs configuration.");
     try {
-      execSync("npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup", { stdio: "inherit" });
+      execSync("npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup", {
+        stdio: "inherit",
+      });
     } catch {
-      p.cancel("Run the wizard manually:\n  npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup");
+      p.cancel(
+        "Run the wizard manually:\n  npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup"
+      );
       process.exit(1);
     }
   } else {
@@ -227,13 +251,21 @@ async function ensurePlugin(): Promise<void> {
       const ok = await p.confirm({
         message: `Hindsight: ${color.cyan(summary)}. Use this?\n${color.dim("  Changing this will affect all existing agents — one OpenClaw instance shares a single Hindsight instance.")}`,
       });
-      if (p.isCancel(ok)) { p.cancel("Cancelled."); process.exit(0); }
+      if (p.isCancel(ok)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+      }
       if (!ok) {
         p.log.info("Launching configuration wizard...");
         try {
-          execSync("npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup", { stdio: "inherit" });
+          execSync(
+            "npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup",
+            { stdio: "inherit" }
+          );
         } catch {
-          p.cancel("Configuration failed. Run manually:\n  npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup");
+          p.cancel(
+            "Configuration failed. Run manually:\n  npx --yes --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup"
+          );
           process.exit(1);
         }
       }
@@ -270,7 +302,10 @@ async function main() {
   let dirArg = args[0] === "install" ? args[1] : args[0];
   const restArgs = args[0] === "install" ? args.slice(2) : args.slice(1);
 
-  if (!dirArg) { p.cancel("Agent argument required."); process.exit(1); }
+  if (!dirArg) {
+    p.cancel("Agent argument required.");
+    process.exit(1);
+  }
 
   let harness: string | undefined;
   let agentName: string | undefined;
@@ -280,7 +315,10 @@ async function main() {
     else if (restArgs[i] === "--agent" && restArgs[i + 1]) agentName = restArgs[++i];
   }
 
-  if (!harness) { p.cancel("--harness required (openclaw | hermes | claude-code)"); process.exit(1); }
+  if (!harness) {
+    p.cancel("--harness required (openclaw | hermes | claude-code)");
+    process.exit(1);
+  }
 
   p.intro(color.bgCyan(color.black(` self-driving-agents `)));
 
@@ -302,13 +340,15 @@ async function main() {
 
     const workspaceDir = join(homedir(), ".self-driving-agents", "openclaw", agentId);
 
-    p.log.info([
-      `Agent:     ${color.bold(agentId)}`,
-      `Source:    ${color.dim(source)}`,
-      `Bank:      ${color.dim(bankId)}`,
-      `API:       ${color.dim(apiUrl)}`,
-      `Workspace: ${color.dim(workspaceDir)}`,
-    ].join("\n"));
+    p.log.info(
+      [
+        `Agent:     ${color.bold(agentId)}`,
+        `Source:    ${color.dim(source)}`,
+        `Bank:      ${color.dim(bankId)}`,
+        `API:       ${color.dim(apiUrl)}`,
+        `Workspace: ${color.dim(workspaceDir)}`,
+      ].join("\n")
+    );
 
     // Step 3: Create client + health check
     const client = new HindsightClient({
@@ -316,13 +356,15 @@ async function main() {
       apiKey: apiToken,
       userAgent: "self-driving-agents/0.1.0",
     });
-    const lowLevel = createClient(createConfig({
-      baseUrl: apiUrl,
-      headers: {
-        ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
-        "User-Agent": "self-driving-agents/0.1.0",
-      },
-    }));
+    const lowLevel = createClient(
+      createConfig({
+        baseUrl: apiUrl,
+        headers: {
+          ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
+          "User-Agent": "self-driving-agents/0.1.0",
+        },
+      })
+    );
 
     spin.start("Connecting to Hindsight...");
     try {
@@ -375,13 +417,17 @@ async function main() {
         const listOut = execSync("openclaw agents list --json 2>/dev/null", { encoding: "utf-8" });
         const agents = parseAgentsJson(listOut);
         if (!agents.some((a: any) => a.name === agentId || a.id === agentId)) {
-          execSync(`openclaw agents add ${agentId} --workspace ${workspaceDir} --non-interactive`, { stdio: "pipe" });
+          execSync(`openclaw agents add ${agentId} --workspace ${workspaceDir} --non-interactive`, {
+            stdio: "pipe",
+          });
           p.log.success(`Agent '${agentId}' created`);
         } else {
           p.log.info(`Agent '${agentId}' already exists`);
         }
       } catch {
-        p.log.warn(`Create agent manually:\n  openclaw agents add ${agentId} --workspace ${workspaceDir} --non-interactive`);
+        p.log.warn(
+          `Create agent manually:\n  openclaw agents add ${agentId} --workspace ${workspaceDir} --non-interactive`
+        );
       }
     }
 
@@ -392,17 +438,20 @@ async function main() {
       if (!text.includes("agent-knowledge")) {
         text = text.replace(
           "Don't ask permission. Just do it.",
-          '5. Read `skills/agent-knowledge/SKILL.md` and **execute its mandatory startup sequence**\n\nDon\'t ask permission. Just do it.'
+          "5. Read `skills/agent-knowledge/SKILL.md` and **execute its mandatory startup sequence**\n\nDon't ask permission. Just do it."
         );
         writeFileSync(startupFile, text);
         p.log.success("Startup patched");
       }
     }
 
-    p.note([
-      `${color.dim("1.")} openclaw gateway restart`,
-      `${color.dim("2.")} openclaw tui --session agent:${agentId}:main:session1`,
-    ].join("\n"), "Next steps");
+    p.note(
+      [
+        `${color.dim("1.")} openclaw gateway restart`,
+        `${color.dim("2.")} openclaw tui --session agent:${agentId}:main:session1`,
+      ].join("\n"),
+      "Next steps"
+    );
 
     p.outro(color.green(`'${agentId}' is ready`));
   } finally {

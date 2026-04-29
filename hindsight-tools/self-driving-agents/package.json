@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run src",
+    "test": "vitest run tests",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
