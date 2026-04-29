@@ -34,6 +34,40 @@ See the [source code](https://github.com/vectorize-io/hindsight/blob/main/hindsi
 
 For other multi-tenant setups with separate schemas per tenant (e.g., custom JWT-based auth), implement a custom `TenantExtension`.
 
+**Built-in: OAuthMcpTenantExtension + OAuthMcpHttpExtension**
+
+Turns Hindsight into a spec-compliant OAuth 2.1 authorization server for MCP clients, using [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) for human SSO. HTTP API routes use API key authentication; MCP routes use stateless OAuth JWT bearer tokens issued by Hindsight's own `/authorize` and `/token` endpoints. No separate proxy container or database required.
+
+These two extensions must be loaded together:
+
+```bash
+# Tenant extension: API key for HTTP, OAuth JWT for MCP
+HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpTenantExtension
+HINDSIGHT_API_TENANT_API_KEY=your-http-api-key
+HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET=<32-byte-random-secret>
+HINDSIGHT_API_TENANT_OAUTH_ISSUER=https://hindsight.yourdomain.com
+
+# HTTP extension: mounts OAuth 2.1 server endpoints at the app root
+HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpHttpExtension
+HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET=<same-secret-as-above>
+HINDSIGHT_API_HTTP_OAUTH_ISSUER=https://hindsight.yourdomain.com
+HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM=your-cf-team-name
+HINDSIGHT_API_HTTP_OAUTH_ACCESS_AUD=your-access-app-aud-tag
+HINDSIGHT_API_HTTP_OAUTH_ALLOWED_EMAILS=alice@example.com   # optional; empty = any Access user
+```
+
+Endpoints mounted by `OAuthMcpHttpExtension`:
+
+| Path | Method | Description |
+|------|--------|-------------|
+| `/.well-known/oauth-authorization-server` | GET | RFC 8414 server metadata |
+| `/.well-known/oauth-protected-resource` | GET | RFC 9728 resource metadata |
+| `/register` | POST | RFC 7591 Dynamic Client Registration |
+| `/authorize` | GET | Authorization endpoint (requires CF Access SSO) |
+| `/token` | POST | Token endpoint (PKCE S256 required) |
+
+See the [configuration documentation](./configuration.md#oauth-21-for-mcp-via-cloudflare-access) for the full setup guide.
+
 ---
 
 ### HttpExtension

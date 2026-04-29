@@ -698,6 +698,44 @@ Requests without a valid API key receive a `401 Unauthorized` response.
 For advanced authentication (JWT, OAuth, multi-tenant schemas), implement a custom `TenantExtension`. See the [Extensions documentation](./extensions.md) for details.
 :::
 
+#### OAuth 2.1 for MCP via Cloudflare Access
+
+For self-hosted deployments behind a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/), you can use the built-in OAuth MCP extension to let cloud MCP clients (claude.ai, Claude Code, Codex) authenticate via your existing Cloudflare Access SSO — without a separate proxy container.
+
+HTTP API routes (`/v1/*`) continue to use API key authentication. MCP routes (`/mcp/*`) use OAuth 2.1 bearer tokens issued by Hindsight's own authorization server endpoints.
+
+```bash
+# Tenant extension: API key for HTTP, OAuth JWT for MCP
+export HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpTenantExtension
+export HINDSIGHT_API_TENANT_API_KEY=your-http-api-key
+export HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET=your-256-bit-random-secret
+export HINDSIGHT_API_TENANT_OAUTH_ISSUER=https://hindsight.yourdomain.com
+
+# HTTP extension: mounts OAuth 2.1 authorization server endpoints
+export HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpHttpExtension
+export HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET=your-256-bit-random-secret   # same as above
+export HINDSIGHT_API_HTTP_OAUTH_ISSUER=https://hindsight.yourdomain.com
+export HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM=your-cloudflare-team-name       # e.g. "acme"
+export HINDSIGHT_API_HTTP_OAUTH_ACCESS_AUD=your-access-application-aud-tag  # from CF Access dashboard
+export HINDSIGHT_API_HTTP_OAUTH_ALLOWED_EMAILS=alice@example.com            # comma-separated; empty = any Access user
+```
+
+The signing secret must be the same value for both extensions (it signs and verifies the issued tokens).
+
+**Cloudflare Access configuration:**
+1. Create a new Access application for `hindsight.yourdomain.com/authorize` with your existing identity provider.
+2. Add bypass policies (no auth required) for the paths `/token`, `/register`, `/.well-known/*`, and `/mcp/*`.
+3. Copy the **Application Audience (AUD) Tag** from the Access application settings → `HINDSIGHT_API_HTTP_OAUTH_ACCESS_AUD`.
+
+**Connect MCP clients:**
+```bash
+claude mcp add hindsight https://hindsight.yourdomain.com/mcp/<bank-id>/ --transport http
+```
+
+On first connection, the browser opens a Cloudflare Access login page. After authentication, the MCP client receives a bearer token valid for 1 hour. Subsequent reconnections are instant if the Access session cookie is still valid.
+
+See the [Extensions documentation](./extensions.md) for more detail and the full variable reference.
+
 ### Server
 
 | Variable | Description | Default |
