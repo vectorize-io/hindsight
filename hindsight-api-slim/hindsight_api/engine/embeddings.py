@@ -836,6 +836,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                 embed_kwargs["api_base"] = self.api_base
             if self.output_dimensions is not None:
                 embed_kwargs["dimensions"] = self.output_dimensions
+                if self.model.startswith("openai/"):
+                    embed_kwargs["allowed_openai_params"] = ["dimensions"]
 
             # Use async embedding method (standard in litellm)
             response = await self._litellm.aembedding(**embed_kwargs)
@@ -886,6 +888,8 @@ class LiteLLMSDKEmbeddings(Embeddings):
                     embed_kwargs["api_base"] = self.api_base
                 if self.output_dimensions is not None:
                     embed_kwargs["dimensions"] = self.output_dimensions
+                    if self.model.startswith("openai/"):
+                        embed_kwargs["allowed_openai_params"] = ["dimensions"]
 
                 # Use sync embedding (litellm doesn't have async in thread-safe way)
                 response = self._litellm.embedding(**embed_kwargs)

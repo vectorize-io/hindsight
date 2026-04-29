@@ -18,7 +18,6 @@ from hindsight_api.config import (
     ENV_EMBEDDINGS_LITELLM_SDK_API_KEY,
     ENV_EMBEDDINGS_LITELLM_SDK_MODEL,
     ENV_EMBEDDINGS_PROVIDER,
-    HindsightConfig,
 )
 from hindsight_api.engine.embeddings import LiteLLMSDKEmbeddings, create_embeddings_from_env
 
@@ -292,12 +291,39 @@ class TestLiteLLMSDKEmbeddings:
 
             init_call_args = mock_litellm.aembedding.call_args
             assert init_call_args.kwargs["dimensions"] == 768
+            assert "allowed_openai_params" not in init_call_args.kwargs
 
             mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
             emb.encode(["test"])
 
             encode_call_args = mock_litellm.embedding.call_args
             assert encode_call_args.kwargs["dimensions"] == 768
+            assert "allowed_openai_params" not in encode_call_args.kwargs
+
+    async def test_openai_output_dimensions_allows_litellm_dimensions_param(self, mock_litellm):
+        """OpenAI-compatible custom models need LiteLLM's explicit dimensions allow-list."""
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *args: mock_litellm if name == "litellm" else __import__(name, *args),
+        ):
+            emb = LiteLLMSDKEmbeddings(
+                api_key="test_key",
+                model="openai/Qwen3-Embedding-4B-4bit-DWQ",
+                api_base="https://custom.api.com",
+                output_dimensions=2000,
+            )
+            await emb.initialize()
+
+            init_call_args = mock_litellm.aembedding.call_args
+            assert init_call_args.kwargs["dimensions"] == 2000
+            assert init_call_args.kwargs["allowed_openai_params"] == ["dimensions"]
+
+            mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 2000, "index": 0}]
+            emb.encode(["test"])
+
+            encode_call_args = mock_litellm.embedding.call_args
+            assert encode_call_args.kwargs["dimensions"] == 2000
+            assert encode_call_args.kwargs["allowed_openai_params"] == ["dimensions"]
 
     async def test_output_dimensions_omitted_when_unset(self, mock_litellm):
         """Test output dimensions are omitted when not configured."""
@@ -337,6 +363,7 @@ class TestLiteLLMSDKEmbeddings:
             init_call_args = mock_litellm.aembedding.call_args
             assert init_call_args.kwargs["api_base"] == "https://custom.api.com"
             assert init_call_args.kwargs["dimensions"] == 768
+            assert "allowed_openai_params" not in init_call_args.kwargs
 
             mock_litellm.embedding.return_value.data = [{"embedding": [0.1] * 768, "index": 0}]
             emb.encode(["test"])
@@ -344,6 +371,7 @@ class TestLiteLLMSDKEmbeddings:
             encode_call_args = mock_litellm.embedding.call_args
             assert encode_call_args.kwargs["api_base"] == "https://custom.api.com"
             assert encode_call_args.kwargs["dimensions"] == 768
+            assert "allowed_openai_params" not in encode_call_args.kwargs
 
     async def test_encoding_format_default_is_float(self, mock_litellm):
         """Test that encoding_format defaults to 'float' for backwards compatibility."""
