@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 
+from .utils import mask_network_location
+
 # Load .env file, searching current and parent directories (overrides existing env vars)
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
@@ -1877,9 +1879,9 @@ class HindsightConfig:
 
     def log_config(self) -> None:
         """Log the current configuration (without sensitive values)."""
-        logger.info(f"Database: {self.database_url} (schema: {self.database_schema})")
+        logger.info(f"Database: {mask_network_location(self.database_url)} (schema: {self.database_schema})")
         if self.migration_database_url:
-            logger.info(f"Migration database: {self.migration_database_url}")
+            logger.info(f"Migration database: {mask_network_location(self.migration_database_url)}")
         logger.info(f"LLM: provider={self.llm_provider}, model={self.llm_model}")
         if self.retain_llm_provider or self.retain_llm_model:
             retain_provider = self.retain_llm_provider or self.llm_provider
