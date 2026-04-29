@@ -1,9 +1,9 @@
-"""Tests for the built-in OAuth MCP extension.
+"""Tests for the built-in Cloudflare Access OAuth extension.
 
 Covers:
-  - tokens.py: JWT mint/verify helpers and PKCE S256
-  - OAuthMcpTenantExtension: API key for HTTP, OAuth JWT for MCP
-  - OAuthMcpHttpExtension HTTP routes: well-known, /register, /authorize, /token
+  - JWT mint/verify helpers and PKCE S256
+  - CloudflareAccessTenantExtension: API key for HTTP, OAuth JWT for MCP
+  - CloudflareAccessHttpExtension HTTP routes: well-known, /register, /authorize, /token
   - Full OAuth dance end-to-end (register → authorize → token → authenticate_mcp)
 """
 
@@ -20,9 +20,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from hindsight_api.extensions.builtin.oauth_mcp import (
-    OAuthMcpHttpExtension,
-    OAuthMcpTenantExtension,
+from hindsight_api.extensions.builtin.cloudflare_access import (
+    CloudflareAccessHttpExtension,
+    CloudflareAccessTenantExtension,
     mint_access_token,
     mint_client_id,
     mint_code,
@@ -54,8 +54,8 @@ def _make_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _make_tenant_ext() -> OAuthMcpTenantExtension:
-    return OAuthMcpTenantExtension(
+def _make_tenant_ext() -> CloudflareAccessTenantExtension:
+    return CloudflareAccessTenantExtension(
         {
             "api_key": "http-api-key",
             "oauth_signing_secret": _SECRET,
@@ -68,8 +68,8 @@ def _make_http_ext(
     allowed_emails: str = "",
     access_team: str = "testteam",
     access_aud: str = "test-aud",
-) -> OAuthMcpHttpExtension:
-    return OAuthMcpHttpExtension(
+) -> CloudflareAccessHttpExtension:
+    return CloudflareAccessHttpExtension(
         {
             "oauth_signing_secret": _SECRET,
             "oauth_issuer": _ISSUER,
@@ -83,7 +83,7 @@ def _make_http_ext(
     )
 
 
-def _make_test_client(ext: OAuthMcpHttpExtension) -> TestClient:
+def _make_test_client(ext: CloudflareAccessHttpExtension) -> TestClient:
     """Mount the extension's root router on a minimal FastAPI app."""
     app = FastAPI()
     router = ext.get_root_router(memory=None)
@@ -170,22 +170,22 @@ class TestTokens:
 
 
 # ---------------------------------------------------------------------------
-# OAuthMcpTenantExtension tests
+# CloudflareAccessTenantExtension tests
 # ---------------------------------------------------------------------------
 
 
-class TestOAuthMcpTenantExtension:
+class TestCloudflareAccessTenantExtension:
     def test_init_missing_signing_secret(self):
         with pytest.raises(ValueError, match="OAUTH_SIGNING_SECRET"):
-            OAuthMcpTenantExtension({"api_key": "k", "oauth_issuer": _ISSUER})
+            CloudflareAccessTenantExtension({"api_key": "k", "oauth_issuer": _ISSUER})
 
     def test_init_missing_issuer(self):
         with pytest.raises(ValueError, match="OAUTH_ISSUER"):
-            OAuthMcpTenantExtension({"api_key": "k", "oauth_signing_secret": _SECRET})
+            CloudflareAccessTenantExtension({"api_key": "k", "oauth_signing_secret": _SECRET})
 
     def test_init_missing_api_key(self):
         with pytest.raises(ValueError, match="API_KEY"):
-            OAuthMcpTenantExtension({"oauth_signing_secret": _SECRET, "oauth_issuer": _ISSUER})
+            CloudflareAccessTenantExtension({"oauth_signing_secret": _SECRET, "oauth_issuer": _ISSUER})
 
     @pytest.mark.asyncio
     async def test_authenticate_http_valid_api_key(self):
@@ -239,7 +239,7 @@ class TestOAuthMcpTenantExtension:
 
 
 # ---------------------------------------------------------------------------
-# OAuthMcpHttpExtension: well-known metadata
+# CloudflareAccessHttpExtension: well-known metadata
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ class TestWellKnownEndpoints:
 
 
 # ---------------------------------------------------------------------------
-# OAuthMcpHttpExtension: /register (DCR)
+# CloudflareAccessHttpExtension: /register (DCR)
 # ---------------------------------------------------------------------------
 
 
@@ -309,7 +309,7 @@ class TestRegister:
 
 
 # ---------------------------------------------------------------------------
-# OAuthMcpHttpExtension: /authorize
+# CloudflareAccessHttpExtension: /authorize
 # ---------------------------------------------------------------------------
 
 
@@ -323,7 +323,7 @@ class TestAuthorize:
         self,
         email: str = _EMAIL,
         verify_raises: Exception | None = None,
-    ) -> OAuthMcpHttpExtension:
+    ) -> CloudflareAccessHttpExtension:
         """Create extension with _cf_verify mocked."""
         ext = _make_http_ext()
         if verify_raises:
@@ -481,12 +481,12 @@ class TestAuthorize:
 
 
 # ---------------------------------------------------------------------------
-# OAuthMcpHttpExtension: /token
+# CloudflareAccessHttpExtension: /token
 # ---------------------------------------------------------------------------
 
 
 class TestToken:
-    def _get_code(self, tc: TestClient, ext: OAuthMcpHttpExtension) -> tuple[str, str]:
+    def _get_code(self, tc: TestClient, ext: CloudflareAccessHttpExtension) -> tuple[str, str]:
         """Register a client, run /authorize, extract code from redirect. Returns (code, verifier)."""
         verifier, challenge = _make_pkce_pair()
         client_id = tc.post("/register", json={"redirect_uris": [_REDIRECT_URI]}).json()["client_id"]
@@ -508,7 +508,7 @@ class TestToken:
         code = dict(p.split("=", 1) for p in location.split("?", 1)[1].split("&"))["code"]
         return code, verifier
 
-    def _make_ext_with_mock(self) -> OAuthMcpHttpExtension:
+    def _make_ext_with_mock(self) -> CloudflareAccessHttpExtension:
         ext = _make_http_ext()
         ext._cf_verify = AsyncMock(return_value={"email": _EMAIL, "sub": _EMAIL})
         return ext

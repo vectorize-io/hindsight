@@ -706,13 +706,13 @@ HTTP API routes (`/v1/*`) continue to use API key authentication. MCP routes (`/
 
 ```bash
 # Tenant extension: API key for HTTP, OAuth JWT for MCP
-export HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpTenantExtension
+export HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.cloudflare_access:CloudflareAccessTenantExtension
 export HINDSIGHT_API_TENANT_API_KEY=your-http-api-key
 export HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET=your-256-bit-random-secret
 export HINDSIGHT_API_TENANT_OAUTH_ISSUER=https://hindsight.yourdomain.com
 
 # HTTP extension: mounts OAuth 2.1 authorization server endpoints
-export HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpHttpExtension
+export HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.cloudflare_access:CloudflareAccessHttpExtension
 export HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET=your-256-bit-random-secret   # same as above
 export HINDSIGHT_API_HTTP_OAUTH_ISSUER=https://hindsight.yourdomain.com
 export HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM=your-cloudflare-team-name       # e.g. "acme"

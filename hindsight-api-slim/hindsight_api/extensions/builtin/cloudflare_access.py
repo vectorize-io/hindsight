@@ -1,12 +1,16 @@
-"""OAuth 2.1 built-in extensions for MCP clients via Cloudflare Access SSO.
+"""Built-in OAuth 2.1 extensions for MCP clients using Cloudflare Access SSO.
+
+Implements an OAuth 2.1 authorization server directly inside Hindsight, delegating
+human authentication to Cloudflare Access. No separate proxy container or KV store
+required.
 
 Two extensions must be loaded together:
 
-  OAuthMcpTenantExtension — validates API key on HTTP routes (/v1/*) and OAuth JWT
-    bearer tokens on MCP routes (/mcp/*).
+  CloudflareAccessTenantExtension — API key auth for HTTP routes (/v1/*), OAuth JWT
+    bearer token auth for MCP routes (/mcp/*).
 
-  OAuthMcpHttpExtension — mounts the OAuth 2.1 authorization server endpoints at
-    the app root: /.well-known/*, /register, /authorize, /token.
+  CloudflareAccessHttpExtension — mounts the OAuth 2.1 authorization server endpoints
+    at the app root: /.well-known/*, /register, /authorize, /token.
 
 Cloudflare Access must protect GET /authorize with SSO. All other OAuth endpoints
 (/token, /register, /.well-known/*, /mcp/*) must bypass Access so MCP clients can
@@ -22,12 +26,12 @@ Flow:
 All tokens are HMAC-HS256 signed JWTs — no database writes, no KV storage.
 
 Configuration:
-    HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpTenantExtension
+    HINDSIGHT_API_TENANT_EXTENSION=hindsight_api.extensions.builtin.cloudflare_access:CloudflareAccessTenantExtension
     HINDSIGHT_API_TENANT_API_KEY=<existing-http-api-key>
     HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET=<random-256-bit, must-match-http-extension>
     HINDSIGHT_API_TENANT_OAUTH_ISSUER=https://hindsight.yourdomain.com
 
-    HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.oauth_mcp:OAuthMcpHttpExtension
+    HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.cloudflare_access:CloudflareAccessHttpExtension
     HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET=<same-as-tenant>
     HINDSIGHT_API_HTTP_OAUTH_ISSUER=https://hindsight.yourdomain.com
     HINDSIGHT_API_HTTP_OAUTH_RESOURCE=https://hindsight.yourdomain.com/mcp   (optional)
@@ -253,14 +257,14 @@ def _protected_resource_metadata(issuer: str, resource: str) -> dict:
     }
 
 
-# ── OAuthMcpTenantExtension ────────────────────────────────────────────────────
+# ── CloudflareAccessTenantExtension ────────────────────────────────────────────────────
 
 
-class OAuthMcpTenantExtension(ApiKeyTenantExtension):
+class CloudflareAccessTenantExtension(ApiKeyTenantExtension):
     """TenantExtension: API key auth for HTTP routes, OAuth JWT auth for MCP routes.
 
     Inherits API key validation from ApiKeyTenantExtension. MCP requests must carry
-    a bearer token issued by OAuthMcpHttpExtension's /token endpoint.
+    a bearer token issued by CloudflareAccessHttpExtension's /token endpoint.
 
     On MCP auth failure the WWW-Authenticate header points to the OAuth protected-resource
     metadata endpoint so MCP clients can auto-discover the authorization server.
@@ -271,9 +275,9 @@ class OAuthMcpTenantExtension(ApiKeyTenantExtension):
         self._signing_secret = config.get("oauth_signing_secret", "")
         self._issuer = config.get("oauth_issuer", "").rstrip("/")
         if not self._signing_secret:
-            raise ValueError("HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET is required for OAuthMcpTenantExtension")
+            raise ValueError("HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET is required for CloudflareAccessTenantExtension")
         if not self._issuer:
-            raise ValueError("HINDSIGHT_API_TENANT_OAUTH_ISSUER is required for OAuthMcpTenantExtension")
+            raise ValueError("HINDSIGHT_API_TENANT_OAUTH_ISSUER is required for CloudflareAccessTenantExtension")
 
     def _resource_metadata_url(self) -> str:
         return f"{self._issuer}/.well-known/oauth-protected-resource"
@@ -319,10 +323,10 @@ class OAuthMcpTenantExtension(ApiKeyTenantExtension):
         return TenantContext(schema_name=schema)
 
 
-# ── OAuthMcpHttpExtension ──────────────────────────────────────────────────────
+# ── CloudflareAccessHttpExtension ──────────────────────────────────────────────────────
 
 
-class OAuthMcpHttpExtension(HttpExtension):
+class CloudflareAccessHttpExtension(HttpExtension):
     """HttpExtension: mounts OAuth 2.1 authorization server endpoints at the app root.
 
     Endpoints: /.well-known/oauth-authorization-server, /.well-known/oauth-protected-resource,

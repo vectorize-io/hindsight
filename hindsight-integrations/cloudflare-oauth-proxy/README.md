@@ -1,6 +1,6 @@
 # Cloudflare OAuth Proxy for Self-Hosted Hindsight
 
-> **Alternative:** If you run `hindsight-api` directly (Docker / bare metal) and already use Cloudflare Access, the [built-in OAuth MCP extension](../../hindsight-api-slim/hindsight_api/extensions/builtin/oauth_mcp/) integrates OAuth 2.1 directly into the Hindsight server — no separate Worker or container required. See the [configuration docs](https://vectorize.io/hindsight/developer/configuration#oauth-21-for-mcp-via-cloudflare-access) for setup.
+> **Alternative:** If you run `hindsight-api` directly (Docker / bare metal) and already use Cloudflare Access, the [built-in Cloudflare Access extension](../../hindsight-api-slim/hindsight_api/extensions/builtin/cloudflare_access.py) integrates OAuth 2.1 directly into the Hindsight server — no separate Worker or container required. See the [configuration docs](https://vectorize.io/hindsight/developer/configuration#oauth-21-for-mcp-via-cloudflare-access) for setup.
 
 An [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-12) proxy that connects cloud-based MCP clients (such as [claude.ai](https://claude.ai), [Claude Code](../claude-code/), and [Codex](../codex/)) to a self-hosted [Hindsight](https://vectorize.io/hindsight) instance. Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) using the [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) library.
 
