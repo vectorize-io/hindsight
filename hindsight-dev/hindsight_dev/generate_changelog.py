@@ -58,6 +58,7 @@ INTEGRATIONS: dict[str, IntegrationMeta] = {
     "openai-agents": IntegrationMeta("hindsight-openai-agents"),
     "pipecat": IntegrationMeta("hindsight-pipecat", "Pipecat"),
     "agentcore": IntegrationMeta("hindsight-agentcore", "Bedrock AgentCore"),
+    "smolagents": IntegrationMeta("hindsight-smolagents", "SmolAgents"),
 }
 
 VALID_INTEGRATIONS = list(INTEGRATIONS.keys())

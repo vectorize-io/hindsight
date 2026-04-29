@@ -42,7 +42,6 @@ from hindsight_smolagents import (
     create_hindsight_tools,
 )
 
-
 BLUE = "\033[94m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -131,6 +130,7 @@ def cmd_script(
 
     print(f"\n{DIM}>>> Step 2: Wait 8s for async fact extraction...{RESET}")
     import time
+
     time.sleep(8)
     dump_memories(url, bank, api_key)
 
@@ -154,7 +154,9 @@ def run_tool_mode(args: argparse.Namespace) -> None:
     print(f"\n{GREEN}=== Hindsight SmolAgents — Tool Mode ==={RESET}")
     print(f"Bank:      {args.bank}")
     print(f"Hindsight: {args.hindsight_url}")
-    print(f"\nCommands: {DIM}:retain <content>  :recall <query>  :reflect <query>  :script  :memories  :bank  :quit{RESET}\n")
+    print(
+        f"\nCommands: {DIM}:retain <content>  :recall <query>  :reflect <query>  :script  :memories  :bank  :quit{RESET}\n"
+    )
 
     while True:
         try:
@@ -229,7 +231,7 @@ def run_agent_mode(args: argparse.Namespace) -> None:
     print(f"Bank:      {args.bank}")
     print(f"Hindsight: {args.hindsight_url}")
     print(f"Model:     {model.model_id}")
-    print(f"\nType a task, or :quit to exit.\n")
+    print("\nType a task, or :quit to exit.\n")
 
     while True:
         try:

@@ -33,8 +33,7 @@ def _resolve_client(
 
     if url is None:
         raise HindsightError(
-            "No Hindsight API URL configured. "
-            "Pass client= or hindsight_api_url=, or call configure() first."
+            "No Hindsight API URL configured. Pass client= or hindsight_api_url=, or call configure() first."
         )
 
     kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0}
@@ -152,14 +151,8 @@ class HindsightRecallTool(Tool):
         config = get_config()
         self._budget = budget or (config.budget if config else "mid")
         self._max_tokens = max_tokens or (config.max_tokens if config else 4096)
-        self._recall_tags = (
-            recall_tags
-            if recall_tags is not None
-            else (config.recall_tags if config else None)
-        )
-        self._recall_tags_match = recall_tags_match or (
-            config.recall_tags_match if config else "any"
-        )
+        self._recall_tags = recall_tags if recall_tags is not None else (config.recall_tags if config else None)
+        self._recall_tags_match = recall_tags_match or (config.recall_tags_match if config else "any")
 
     def forward(self, query: str) -> str:
         try:

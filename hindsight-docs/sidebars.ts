@@ -282,6 +282,12 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'link',
+          href: '/sdks/integrations/smolagents',
+          label: 'SmolAgents',
+          customProps: { icon: '/img/icons/smolagents.png' },
+        },
+        {
+          type: 'link',
           href: '/sdks/integrations/ag2',
           label: 'AG2',
           customProps: { icon: '/img/icons/ag2.svg' },
