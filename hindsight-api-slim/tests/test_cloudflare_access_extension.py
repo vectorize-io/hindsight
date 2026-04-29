@@ -73,12 +73,9 @@ def _make_http_ext(
         {
             "oauth_signing_secret": _SECRET,
             "oauth_issuer": _ISSUER,
-            "oauth_resource": _RESOURCE,
             "oauth_access_team": access_team,
             "oauth_access_aud": access_aud,
             "oauth_allowed_emails": allowed_emails,
-            "oauth_access_token_ttl": "3600",
-            "oauth_auth_code_ttl": "600",
         }
     )
 
@@ -596,22 +593,8 @@ class TestToken:
 
     def test_expired_code(self):
         ext = self._make_ext_with_mock()
-        ext._auth_code_ttl = -1  # immediately expired
         tc = _make_test_client(ext)
-        code, verifier = self._get_code(tc, ext)
-        client_id = verify_code.__module__  # just need any string; code already expired
-
-        resp = tc.post(
-            "/token",
-            json={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": _REDIRECT_URI,
-                "code_verifier": verifier,
-            },
-        )
-        # The code was minted with ttl=-1 but auth_code_ttl was changed AFTER mint_code
-        # so we need to test with a pre-expired code instead
+        _, verifier = self._get_code(tc, ext)
         expired_code = mint_code(
             _SECRET,
             client_id="cid",
@@ -622,7 +605,7 @@ class TestToken:
             scope="mcp:full",
             ttl_seconds=-1,
         )
-        resp2 = tc.post(
+        resp = tc.post(
             "/token",
             json={
                 "grant_type": "authorization_code",
@@ -631,8 +614,8 @@ class TestToken:
                 "code_verifier": verifier,
             },
         )
-        assert resp2.status_code == 400
-        assert resp2.json()["error"] == "invalid_grant"
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_grant"
 
     def test_missing_code_verifier(self):
         ext = self._make_ext_with_mock()

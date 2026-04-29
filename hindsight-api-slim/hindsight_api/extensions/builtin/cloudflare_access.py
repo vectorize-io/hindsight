@@ -34,12 +34,9 @@ Configuration:
     HINDSIGHT_API_HTTP_EXTENSION=hindsight_api.extensions.builtin.cloudflare_access:CloudflareAccessHttpExtension
     HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET=<same-as-tenant>
     HINDSIGHT_API_HTTP_OAUTH_ISSUER=https://hindsight.yourdomain.com
-    HINDSIGHT_API_HTTP_OAUTH_RESOURCE=https://hindsight.yourdomain.com/mcp   (optional)
     HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM=<cloudflare-team-name>
     HINDSIGHT_API_HTTP_OAUTH_ACCESS_AUD=<access-application-aud-tag>
     HINDSIGHT_API_HTTP_OAUTH_ALLOWED_EMAILS=alice@example.com   (comma-separated; empty = any Access user)
-    HINDSIGHT_API_HTTP_OAUTH_ACCESS_TOKEN_TTL=3600   (seconds, default 1h)
-    HINDSIGHT_API_HTTP_OAUTH_AUTH_CODE_TTL=600       (seconds, default 10m)
 """
 
 from __future__ import annotations
@@ -79,6 +76,11 @@ _AUD_ACCESS = "hindsight:mcp"
 _JWKS_CACHE_TTL = 600
 _JWKS_MIN_REFRESH_INTERVAL = 30
 _SUPPORTED_CF_ALGORITHMS = ["RS256"]
+
+# ── OAuth token lifetimes ───────────────────────────────────────────────────────
+
+_ACCESS_TOKEN_TTL = 3600  # 1 hour
+_AUTH_CODE_TTL = 600  # 10 minutes
 
 # ── Redirect URI validation ────────────────────────────────────────────────────
 
@@ -275,7 +277,9 @@ class CloudflareAccessTenantExtension(ApiKeyTenantExtension):
         self._signing_secret = config.get("oauth_signing_secret", "")
         self._issuer = config.get("oauth_issuer", "").rstrip("/")
         if not self._signing_secret:
-            raise ValueError("HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET is required for CloudflareAccessTenantExtension")
+            raise ValueError(
+                "HINDSIGHT_API_TENANT_OAUTH_SIGNING_SECRET is required for CloudflareAccessTenantExtension"
+            )
         if not self._issuer:
             raise ValueError("HINDSIGHT_API_TENANT_OAUTH_ISSUER is required for CloudflareAccessTenantExtension")
 
@@ -340,48 +344,41 @@ class CloudflareAccessHttpExtension(HttpExtension):
         super().__init__(config)
         self._signing_secret = config.get("oauth_signing_secret", "")
         self._issuer = config.get("oauth_issuer", "").rstrip("/")
-        resource = config.get("oauth_resource", "").rstrip("/")
-        self._resource = resource or (f"{self._issuer}/mcp" if self._issuer else "")
         access_team = config.get("oauth_access_team", "")
         access_aud = config.get("oauth_access_aud", "")
         allowed_raw = config.get("oauth_allowed_emails", "")
         self._allowed_emails: frozenset[str] = (
             frozenset(e.strip() for e in allowed_raw.split(",") if e.strip()) if allowed_raw.strip() else frozenset()
         )
-        self._access_token_ttl = int(config.get("oauth_access_token_ttl", "3600"))
-        self._auth_code_ttl = int(config.get("oauth_auth_code_ttl", "600"))
 
         if not self._signing_secret:
             raise ValueError("HINDSIGHT_API_HTTP_OAUTH_SIGNING_SECRET is required")
         if not self._issuer:
             raise ValueError("HINDSIGHT_API_HTTP_OAUTH_ISSUER is required")
+        if not access_team:
+            raise ValueError("HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM is required")
+        if not access_aud:
+            raise ValueError("HINDSIGHT_API_HTTP_OAUTH_ACCESS_AUD is required")
+
+        self._resource = f"{self._issuer}/mcp"
 
         # CF Access JWKS state
-        self._cf_team = access_team
         self._cf_aud = access_aud
-        self._cf_jwks_url = f"https://{access_team}.cloudflareaccess.com/cdn-cgi/access/certs" if access_team else ""
-        self._cf_issuer = f"https://{access_team}.cloudflareaccess.com" if access_team else ""
+        self._cf_jwks_url = f"https://{access_team}.cloudflareaccess.com/cdn-cgi/access/certs"
+        self._cf_issuer = f"https://{access_team}.cloudflareaccess.com"
         self._cf_keys: dict[str, PyJWK] = {}
         self._cf_last_fetched: float = 0
         self._cf_http: httpx.AsyncClient | None = None
-        self._cf_configured = bool(access_team and access_aud)
-
-        if not self._cf_configured:
-            logger.warning(
-                "HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM / OAUTH_ACCESS_AUD not configured; "
-                "GET /authorize will reject all requests"
-            )
 
     # ── CF Access JWKS methods ─────────────────────────────────────────────────
 
     async def on_startup(self) -> None:
-        if self._cf_configured:
-            self._cf_http = httpx.AsyncClient(timeout=10.0)
-            try:
-                await self._cf_fetch_jwks()
-                logger.info("CF Access JWKS loaded (%d keys) from %s", len(self._cf_keys), self._cf_jwks_url)
-            except Exception as exc:
-                logger.warning("Could not pre-fetch CF Access JWKS (will retry on first request): %s", exc)
+        self._cf_http = httpx.AsyncClient(timeout=10.0)
+        try:
+            await self._cf_fetch_jwks()
+            logger.info("CF Access JWKS loaded (%d keys) from %s", len(self._cf_keys), self._cf_jwks_url)
+        except Exception as exc:
+            logger.warning("Could not pre-fetch CF Access JWKS (will retry on first request): %s", exc)
 
     async def on_shutdown(self) -> None:
         if self._cf_http:
@@ -450,9 +447,6 @@ class CloudflareAccessHttpExtension(HttpExtension):
         issuer = self._issuer
         resource = self._resource
         allowed_emails = self._allowed_emails
-        access_token_ttl = self._access_token_ttl
-        auth_code_ttl = self._auth_code_ttl
-        cf_configured = self._cf_configured
 
         @router.get("/.well-known/oauth-authorization-server")
         async def oauth_authorization_server_metadata():
@@ -527,14 +521,6 @@ class CloudflareAccessHttpExtension(HttpExtension):
             if redirect_uri not in registered_uris:
                 return _oauth_error("invalid_request", "redirect_uri not registered for this client")
 
-            if not cf_configured:
-                return HTMLResponse(
-                    "<h1>Server Misconfiguration</h1>"
-                    "<p>Cloudflare Access is not configured. "
-                    "Set HINDSIGHT_API_HTTP_OAUTH_ACCESS_TEAM and OAUTH_ACCESS_AUD.</p>",
-                    status_code=500,
-                )
-
             cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion") or request.cookies.get("CF_Authorization")
             if not cf_jwt:
                 return HTMLResponse(
@@ -572,7 +558,7 @@ class CloudflareAccessHttpExtension(HttpExtension):
                 code_challenge_method=code_challenge_method,
                 email=email,
                 scope=scope,
-                ttl_seconds=auth_code_ttl,
+                ttl_seconds=_AUTH_CODE_TTL,
             )
             qs = urlencode({"code": code, "state": state} if state else {"code": code})
             return RedirectResponse(f"{redirect_uri}?{qs}", status_code=302)
@@ -625,13 +611,13 @@ class CloudflareAccessHttpExtension(HttpExtension):
                 email=code_payload["email"],
                 scope=code_payload.get("scope", "mcp:full"),
                 issuer=issuer,
-                ttl_seconds=access_token_ttl,
+                ttl_seconds=_ACCESS_TOKEN_TTL,
             )
             return JSONResponse(
                 {
                     "access_token": access_token,
                     "token_type": "Bearer",
-                    "expires_in": access_token_ttl,
+                    "expires_in": _ACCESS_TOKEN_TTL,
                     "scope": code_payload.get("scope", "mcp:full"),
                 }
             )
