@@ -130,7 +130,7 @@ class DaemonEmbedManager(EmbedManager):
         # Check if we're in development mode
         dev_api_path = Path(__file__).parent.parent.parent / "hindsight-api-slim"
         if dev_api_path.exists() and (dev_api_path / "pyproject.toml").exists():
-            return ["uv", "run", "--project", str(dev_api_path), "hindsight-api"]
+            return ["uv", "run", "--project", str(dev_api_path), "--extra", "all", "hindsight-api"]
 
         # Prefer a hindsight-api entry point installed alongside hindsight-embed
         # (e.g. `uv pip install hindsight-all` or `--target`). Falling through
