@@ -1037,8 +1037,9 @@ async def _execute_update_action(
                 f"""
                 INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
                 VALUES ($1, $2)
+                ON CONFLICT (observation_id, source_id) DO NOTHING
                 """,
-                [(obs_uuid, sid) for sid in source_ids],
+                [(obs_uuid, sid) for sid in dict.fromkeys(source_ids)],
             )
 
     if perf:
@@ -1417,8 +1418,9 @@ async def _create_observation_directly(
             f"""
             INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
             VALUES ($1, $2)
+            ON CONFLICT (observation_id, source_id) DO NOTHING
             """,
-            [(observation_id, sid) for sid in source_memory_ids],
+            [(observation_id, sid) for sid in dict.fromkeys(source_memory_ids)],
         )
 
     if perf:
