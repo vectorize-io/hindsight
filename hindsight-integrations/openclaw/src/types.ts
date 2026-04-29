@@ -69,6 +69,7 @@ export interface PluginConfig {
   daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
   embedVersion?: string; // hindsight-embed version (default: "latest")
   embedPackagePath?: string; // Local path to hindsight package (e.g. '/path/to/hindsight')
+  llmAuthSource?: "env" | "openclaw"; // Credential source for the LLM provider. 'env' (default) reads from env vars / plugin config. 'openclaw' reads from OpenClaw's auth-profiles.json, reusing existing provider credentials.
   llmProvider?: string; // LLM provider (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code')
   llmModel?: string; // LLM model (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022')
   llmApiKey?: string; // LLM provider API key. Configure via SecretRef: openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY

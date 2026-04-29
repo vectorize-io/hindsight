@@ -39,24 +39,33 @@ class CodexLLM(LLMInterface):
         base_url: str,
         model: str,
         reasoning_effort: str = "low",
+        openclaw_access_token: str | None = None,
+        openclaw_account_id: str | None = None,
         **kwargs: Any,
     ):
         """Initialize Codex LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
 
-        # Load Codex OAuth credentials
-        try:
-            self.access_token, self.account_id = self._load_codex_auth()
-            logger.info(f"Loaded Codex OAuth credentials for account: {self.account_id}")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to load Codex OAuth credentials from ~/.codex/auth.json: {e}\n\n"
-                "To set up Codex authentication:\n"
-                "1. Install Codex CLI: npm install -g @openai/codex\n"
-                "2. Login: codex auth login\n"
-                "3. Verify: ls ~/.codex/auth.json\n\n"
-                "Or use a different provider (openai, anthropic, gemini) with API keys."
-            ) from e
+        # Load Codex OAuth credentials — prefer pre-loaded OpenClaw tokens
+        # over reading from ~/.codex/auth.json (which requires Codex CLI).
+        if openclaw_access_token and openclaw_account_id:
+            self.access_token = openclaw_access_token
+            self.account_id = openclaw_account_id
+            logger.info(f"Using OpenClaw-provided Codex credentials for account: {self.account_id}")
+        else:
+            try:
+                self.access_token, self.account_id = self._load_codex_auth()
+                logger.info(f"Loaded Codex OAuth credentials for account: {self.account_id}")
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load Codex OAuth credentials from ~/.codex/auth.json: {e}\n\n"
+                    "To set up Codex authentication:\n"
+                    "1. Install Codex CLI: npm install -g @openai/codex\n"
+                    "2. Login: codex auth login\n"
+                    "3. Verify: ls ~/.codex/auth.json\n\n"
+                    "Or use a different provider (openai, anthropic, gemini) with API keys.\n"
+                    "Or set llmAuthSource=openclaw to use OpenClaw's existing credentials."
+                ) from e
 
         # Use ChatGPT backend API endpoint
         if not self.base_url:
@@ -171,6 +180,42 @@ class CodexLLM(LLMInterface):
                 logger.warning(f"Codex LLM quota exhausted for {self.model}, continuing startup: {e}")
                 return
             raise RuntimeError(f"Codex LLM connection verification failed for {self.model}: {e}") from e
+
+    def _try_openclaw_reauth(self) -> bool:
+        """Re-read OpenClaw auth-profiles and update Codex credentials.
+
+        Called on 401/403 when llmAuthSource="openclaw". The attempted-flag is
+        only cleared after a *successful* API call (see `_mark_openclaw_reauth_succeeded`)
+        so a stale on-disk credential can't trigger a per-retry reload storm.
+        """
+        openclaw_config = getattr(self, "_openclaw_auth_config", None)
+        if not openclaw_config:
+            return False
+        if getattr(self, "_openclaw_reauth_attempted", False):
+            return False
+
+        try:
+            from .openclaw_auth import reload_credentials
+
+            cred = reload_credentials(self.provider, openclaw_config)
+        except Exception as e:
+            logger.warning(f"OpenClaw credential reload failed: {e}")
+            return False
+
+        if not (cred.api_key and cred.account_id):
+            return False
+
+        self.access_token = cred.api_key
+        self.account_id = cred.account_id
+        self._openclaw_reauth_attempted = True
+        logger.info(f"Re-authenticated Codex via OpenClaw profile {cred.profile_id}")
+        return True
+
+    def _mark_openclaw_reauth_succeeded(self) -> None:
+        """Clear the reauth flag after a successful API call so a future token
+        rotation can trigger another reload."""
+        if getattr(self, "_openclaw_reauth_attempted", False):
+            self._openclaw_reauth_attempted = False
 
     async def call(
         self,
@@ -291,6 +336,7 @@ class CodexLLM(LLMInterface):
                     output_tokens=0,
                     success=True,
                 )
+                self._mark_openclaw_reauth_succeeded()
 
                 # Record trace span
                 try:
@@ -332,12 +378,13 @@ class CodexLLM(LLMInterface):
                 last_exception = e
                 status_code = e.response.status_code
 
-                # Fast fail on auth errors
                 if status_code in (401, 403):
+                    if self._try_openclaw_reauth():
+                        continue
                     logger.error(f"Codex auth error (HTTP {status_code}): {e.response.text[:200]}")
                     raise RuntimeError(
                         "Codex authentication failed. Your OAuth token may have expired.\n"
-                        "Run 'codex auth login' to re-authenticate."
+                        "Run 'codex auth login' to re-authenticate, or check OpenClaw auth-profiles."
                     ) from e
 
                 # Log the actual error message from the API
@@ -557,6 +604,7 @@ class CodexLLM(LLMInterface):
                 output_tokens=0,
                 success=True,
             )
+            self._mark_openclaw_reauth_succeeded()
 
             # Record OpenTelemetry span
             try:
@@ -593,6 +641,22 @@ class CodexLLM(LLMInterface):
                 output_tokens=0,
             )
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403) and self._try_openclaw_reauth():
+                # Retry once with refreshed credentials — recursive single attempt.
+                return await self.call_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    max_completion_tokens=max_completion_tokens,
+                    temperature=temperature,
+                    scope=scope,
+                    max_retries=max_retries,
+                    initial_backoff=initial_backoff,
+                    max_backoff=max_backoff,
+                    tool_choice=tool_choice,
+                )
+            logger.error(f"Codex tool call error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Codex tool call error: {e}")
             raise

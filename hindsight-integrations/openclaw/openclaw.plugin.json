@@ -38,6 +38,12 @@
         "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code').",
         "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
       },
+      "llmAuthSource": {
+        "type": "string",
+        "description": "Credential source for the LLM provider. 'env' (default) reads keys from plugin config. 'openclaw' reuses credentials from OpenClaw's auth-profiles, no separate API key needed.",
+        "enum": ["env", "openclaw"],
+        "default": "env"
+      },
       "llmModel": {
         "type": "string",
         "description": "LLM model to use (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022'). Used with llmProvider."

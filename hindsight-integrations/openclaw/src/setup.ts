@@ -55,6 +55,7 @@ export interface ParsedCliArgs {
   provider?: string;
   apiKey?: string;
   apiKeyEnv?: string;
+  authSource?: "env" | "openclaw";
   model?: string;
   positional?: string;
 }
@@ -90,6 +91,7 @@ function usage(): string {
     `  --provider <id>         LLM provider: ${["openai", "anthropic", "gemini", "groq", ...NO_KEY_PROVIDERS].join(" | ")}`,
     "  --api-key <value>       Store the LLM API key inline in openclaw.json",
     "  --api-key-env <VAR>     Env var holding the LLM API key (SecretRef)",
+    "  --auth-source <src>     Credential source: env (default) or openclaw (reuse OpenClaw auth-profiles)",
     "  --model <id>            Optional model override (otherwise uses the provider default)",
     "",
     "  -h, --help              Show this help",
@@ -100,6 +102,7 @@ function usage(): string {
     "  hindsight-openclaw-setup --mode cloud --token-env HINDSIGHT_CLOUD_TOKEN",
     "  hindsight-openclaw-setup --mode api --api-url https://mcp.hindsight.example.com --no-token",
     "  hindsight-openclaw-setup --mode embedded --provider openai --api-key-env OPENAI_API_KEY",
+    "  hindsight-openclaw-setup --mode embedded --provider anthropic --auth-source openclaw",
     "  hindsight-openclaw-setup --mode embedded --provider claude-code",
   ].join("\n");
 }
@@ -154,6 +157,14 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       case "--api-key-env":
         args.apiKeyEnv = next();
         break;
+      case "--auth-source": {
+        const src = next();
+        if (src !== "env" && src !== "openclaw") {
+          throw new Error(`invalid --auth-source: ${src} (expected env | openclaw)`);
+        }
+        args.authSource = src;
+        break;
+      }
       case "--model":
         args.model = next();
         break;
@@ -219,11 +230,18 @@ function buildEmbeddedInput(args: ParsedCliArgs): EmbeddedSetupInput {
   if (args.apiKey && args.apiKeyEnv) {
     throw new Error("--api-key and --api-key-env are mutually exclusive — pick one");
   }
+  if (args.authSource === "openclaw") {
+    return {
+      llmProvider: args.provider,
+      llmModel: args.model,
+      llmAuthSource: "openclaw",
+    };
+  }
   const needsKey = !NO_KEY_PROVIDERS.has(args.provider);
   if (needsKey) {
     if (!args.apiKey && !args.apiKeyEnv) {
       throw new Error(
-        `--provider ${args.provider} requires --api-key <value> or --api-key-env <VAR> (providers that need no key: ${[...NO_KEY_PROVIDERS].join(", ")})`
+        `--provider ${args.provider} requires --api-key <value> or --api-key-env <VAR> or --auth-source openclaw (providers that need no key: ${[...NO_KEY_PROVIDERS].join(", ")})`
       );
     }
     if (args.apiKeyEnv && !isValidEnvVarName(args.apiKeyEnv)) {
@@ -372,13 +390,31 @@ async function promptEmbedded(pluginConfig: Record<string, unknown>): Promise<st
   const llmProvider = provider as string;
 
   let apiKey: string | undefined;
+  let llmAuthSource: "env" | "openclaw" | undefined;
   if (!NO_KEY_PROVIDERS.has(llmProvider)) {
-    const value = await p.password({
-      message: `${llmProvider} API key (paste the value, it will be masked)`,
-      validate: validateRequired("API key is required"),
+    const authChoice = await p.select({
+      message: "Where should Hindsight get LLM credentials?",
+      options: [
+        { value: "key", label: "Enter API key", hint: "paste or reference an env var" },
+        {
+          value: "openclaw",
+          label: "Use OpenClaw's existing credentials",
+          hint: "reads from auth-profiles.json — no separate key needed",
+        },
+      ],
     });
-    assertNotCancelled(value);
-    apiKey = value;
+    assertNotCancelled(authChoice);
+
+    if (authChoice === "openclaw") {
+      llmAuthSource = "openclaw";
+    } else {
+      const value = await p.password({
+        message: `${llmProvider} API key (paste the value, it will be masked)`,
+        validate: validateRequired("API key is required"),
+      });
+      assertNotCancelled(value);
+      apiKey = value;
+    }
   }
 
   const overrideModel = await p.confirm({
@@ -398,7 +434,7 @@ async function promptEmbedded(pluginConfig: Record<string, unknown>): Promise<st
     llmModel = value;
   }
 
-  const input = { llmProvider, apiKey, llmModel };
+  const input = { llmProvider, apiKey, llmModel, llmAuthSource };
   applyEmbeddedMode(pluginConfig, input);
   return summarizeEmbedded(input);
 }

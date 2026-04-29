@@ -132,6 +132,7 @@ export interface EmbeddedSetupInput {
   apiKey?: string;
   apiKeyEnvVar?: string;
   llmModel?: string;
+  llmAuthSource?: "env" | "openclaw";
 }
 
 function pickCredential(
@@ -197,15 +198,21 @@ export function applyEmbeddedMode(
   const key = pickCredential(input.apiKey, input.apiKeyEnvVar);
   clearCloudFields(pluginConfig);
   pluginConfig.llmProvider = input.llmProvider;
-  if (NO_KEY_PROVIDERS.has(input.llmProvider)) {
+
+  if (input.llmAuthSource === "openclaw") {
+    pluginConfig.llmAuthSource = "openclaw";
     delete pluginConfig.llmApiKey;
+  } else if (NO_KEY_PROVIDERS.has(input.llmProvider)) {
+    delete pluginConfig.llmApiKey;
+    delete pluginConfig.llmAuthSource;
   } else {
     if (key === undefined) {
       throw new Error(
-        `llmProvider "${input.llmProvider}" requires either \`apiKey\` or \`apiKeyEnvVar\``
+        `llmProvider "${input.llmProvider}" requires either \`apiKey\` or \`apiKeyEnvVar\` (or use llmAuthSource="openclaw")`
       );
     }
     pluginConfig.llmApiKey = key;
+    delete pluginConfig.llmAuthSource;
   }
   if (input.llmModel && input.llmModel.trim().length > 0) {
     pluginConfig.llmModel = input.llmModel.trim();
@@ -234,6 +241,9 @@ export function summarizeApi(input: ApiSetupInput): string {
 }
 
 export function summarizeEmbedded(input: EmbeddedSetupInput): string {
+  if (input.llmAuthSource === "openclaw") {
+    return `Embedded daemon → ${input.llmProvider} (credentials from OpenClaw auth-profiles)`;
+  }
   if (NO_KEY_PROVIDERS.has(input.llmProvider)) {
     return `Embedded daemon → ${input.llmProvider}`;
   }

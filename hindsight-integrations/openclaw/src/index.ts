@@ -8,8 +8,10 @@ import type {
 } from "./types.js";
 import { HindsightServer, type Logger } from "@vectorize-io/hindsight-all";
 import { HindsightClient, type HindsightClientOptions } from "@vectorize-io/hindsight-client";
+import { defaultOpenClawRoot } from "./backfill-lib.js";
 import { RetainQueue } from "./retain-queue.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
+import { DEFAULT_OPENCLAW_CONFIG_PATH, NO_KEY_PROVIDERS } from "./setup-lib.js";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -1085,14 +1087,14 @@ export function formatMemories(results: MemoryResult[]): string {
     .join("\n\n");
 }
 
-// Providers that authenticate via OAuth or run locally — no API key needed.
-const NO_KEY_REQUIRED_PROVIDERS = new Set(["ollama", "openai-codex", "claude-code"]);
-
 export function detectLLMConfig(pluginConfig?: PluginConfig): {
   provider?: string;
   apiKey?: string;
   model?: string;
   baseUrl?: string;
+  authSource?: string;
+  openclawConfigPath?: string;
+  openclawAuthProfilesPath?: string;
   source: string;
 } {
   // External API mode: the daemon handles LLM credentials, plugin doesn't need them.
@@ -1117,18 +1119,35 @@ export function detectLLMConfig(pluginConfig?: PluginConfig): {
         `is read from an env var (or file/exec source) at runtime instead of stored in plain text:\n` +
         `  openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \\\n` +
         `      --ref-source env --ref-provider default --ref-id OPENAI_API_KEY\n\n` +
-        `Providers that don't need an API key: ${[...NO_KEY_REQUIRED_PROVIDERS].join(", ")}.\n` +
+        `Providers that don't need an API key: ${[...NO_KEY_PROVIDERS].join(", ")}.\n` +
+        `Or set llmAuthSource to "openclaw" to reuse OpenClaw's existing credentials.\n` +
         `Or point the plugin at an external Hindsight API by setting hindsightApiUrl instead.`
     );
   }
 
+  const authSource = pluginConfig?.llmAuthSource ?? "env";
+  if (authSource === "openclaw") {
+    const openclawPaths = resolveOpenClawAuthPaths(provider);
+    return {
+      provider,
+      apiKey: "",
+      model: pluginConfig?.llmModel,
+      baseUrl: pluginConfig?.llmBaseUrl,
+      authSource: "openclaw",
+      openclawConfigPath: openclawPaths.configPath,
+      openclawAuthProfilesPath: openclawPaths.authProfilesPath,
+      source: "openclaw auth-profiles",
+    };
+  }
+
   const apiKey = pluginConfig?.llmApiKey ?? "";
-  if (!apiKey && !NO_KEY_REQUIRED_PROVIDERS.has(provider)) {
+  if (!apiKey && !NO_KEY_PROVIDERS.has(provider)) {
     throw new Error(
       `llmProvider is set to "${provider}" but llmApiKey is empty.\n\n` +
         `Configure it via 'openclaw config set' as a SecretRef:\n` +
         `  openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \\\n` +
-        `      --ref-source env --ref-provider default --ref-id OPENAI_API_KEY`
+        `      --ref-source env --ref-provider default --ref-id OPENAI_API_KEY\n\n` +
+        `Or set llmAuthSource to "openclaw" to reuse OpenClaw's existing credentials.`
     );
   }
 
@@ -1138,6 +1157,23 @@ export function detectLLMConfig(pluginConfig?: PluginConfig): {
     model: pluginConfig?.llmModel,
     baseUrl: pluginConfig?.llmBaseUrl,
     source: "plugin config",
+  };
+}
+
+/**
+ * Resolve paths to OpenClaw's config and auth-profile files for the daemon.
+ *
+ * Returns the default "main" agent path — the Python-side credential resolver
+ * handles profile matching and fallback to other agent dirs. Keeping the
+ * matching logic in one place (Python) avoids schema coupling across languages.
+ */
+function resolveOpenClawAuthPaths(_provider: string): {
+  configPath: string;
+  authProfilesPath: string;
+} {
+  return {
+    configPath: DEFAULT_OPENCLAW_CONFIG_PATH,
+    authProfilesPath: join(defaultOpenClawRoot(), "agents", "main", "agent", "auth-profiles.json"),
   };
 }
 
@@ -1330,6 +1366,7 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     embedVersion: config.embedVersion || "latest",
     embedPackagePath: config.embedPackagePath,
     llmProvider: config.llmProvider,
+    llmAuthSource: config.llmAuthSource,
     llmModel: config.llmModel,
     llmApiKey: config.llmApiKey,
     llmBaseUrl: config.llmBaseUrl,
@@ -1590,6 +1627,14 @@ export default function (api: MoltbotPluginAPI) {
                   HINDSIGHT_API_LLM_MODEL: llmConfig.model,
                   HINDSIGHT_API_LLM_BASE_URL: llmConfig.baseUrl,
                   HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: String(pluginConfig.daemonIdleTimeout ?? 0),
+                  ...(llmConfig.authSource === "openclaw"
+                    ? {
+                        HINDSIGHT_API_LLM_AUTH_SOURCE: "openclaw",
+                        HINDSIGHT_API_LLM_OPENCLAW_CONFIG_PATH: llmConfig.openclawConfigPath || "",
+                        HINDSIGHT_API_LLM_OPENCLAW_AUTH_PROFILES_PATH:
+                          llmConfig.openclawAuthProfilesPath || "",
+                      }
+                    : {}),
                 },
                 logger: embedLogger,
               });
@@ -1732,6 +1777,14 @@ export default function (api: MoltbotPluginAPI) {
                 HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: String(
                   reinitPluginConfig.daemonIdleTimeout ?? 0
                 ),
+                ...(llmConfig.authSource === "openclaw"
+                  ? {
+                      HINDSIGHT_API_LLM_AUTH_SOURCE: "openclaw",
+                      HINDSIGHT_API_LLM_OPENCLAW_CONFIG_PATH: llmConfig.openclawConfigPath || "",
+                      HINDSIGHT_API_LLM_OPENCLAW_AUTH_PROFILES_PATH:
+                        llmConfig.openclawAuthProfilesPath || "",
+                    }
+                  : {}),
               },
               logger: embedLogger,
             });

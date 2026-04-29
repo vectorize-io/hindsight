@@ -36,11 +36,38 @@ openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \
 # Or: Claude Code (no API key needed)
 openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider claude-code
 
+# Or: use OpenClaw's existing credentials (no separate API key needed)
+openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider anthropic
+openclaw config set plugins.entries.hindsight-openclaw.config.llmAuthSource openclaw
+
 # Or: point at an external Hindsight API
 openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiUrl https://mcp.hindsight.example.com
 openclaw config set plugins.entries.hindsight-openclaw.config.hindsightApiToken \
     --ref-source env --ref-id HINDSIGHT_API_TOKEN
 ```
+
+### Using OpenClaw credentials
+
+If you already have LLM providers authenticated in OpenClaw (via `openclaw models auth login` or setup), Hindsight can reuse those credentials directly — no separate API keys or CLI installations required.
+
+```bash
+openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider anthropic
+openclaw config set plugins.entries.hindsight-openclaw.config.llmAuthSource openclaw
+openclaw gateway restart
+```
+
+The plugin reads credentials from OpenClaw's `auth-profiles.json` and passes them to the Hindsight daemon. Supported providers and their OpenClaw profile types:
+
+| Hindsight provider | OpenClaw profile type | Notes                                          |
+| ------------------ | --------------------- | ---------------------------------------------- |
+| `openai`           | `api_key`             | Standard API key                               |
+| `anthropic`        | `token` or `api_key`  | OAuth tokens (OAT) and standard keys both work |
+| `openai-codex`     | `oauth`               | Uses ChatGPT Plus/Pro subscription             |
+| `groq`             | `api_key`             | Standard API key                               |
+| `deepseek`         | `api_key`             | Standard API key                               |
+| `gemini`           | `api_key`             | Mapped from OpenClaw's `google` provider       |
+
+On 401/403 errors, the daemon automatically re-reads the auth-profiles file to pick up tokens refreshed by OpenClaw's gateway.
 
 ## Migrating from 0.5.x
 
@@ -84,6 +111,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `embedVersion`             | `"latest"`                     | hindsight-embed version                                                                                                                                                                                                                                                                                     |
 | `embedPackagePath`         | —                              | Local path to `hindsight-embed` package for development                                                                                                                                                                                                                                                     |
 | `bankMission`              | —                              | Agent identity/purpose stored on the memory bank. Helps the engine understand context for better fact extraction. Set once per bank — not a recall prompt.                                                                                                                                                  |
+| `llmAuthSource`            | `"env"`                        | Credential source. `"env"` reads API keys from plugin config / env vars (default). `"openclaw"` reads credentials from OpenClaw's auth-profiles, reusing existing provider authentication — no separate API key needed.                                                                                     |
 | `llmProvider`              | —                              | LLM provider for memory extraction (`openai`, `anthropic`, `gemini`, `groq`, `ollama`, `openai-codex`, `claude-code`). Required unless `hindsightApiUrl` is set.                                                                                                                                            |
 | `llmModel`                 | provider default               | LLM model used with `llmProvider`                                                                                                                                                                                                                                                                           |
 | `llmApiKey`                | —                              | API key for the LLM provider. **Sensitive** — set via `openclaw config set ... --ref-source env --ref-id OPENAI_API_KEY` to reference an env var (or `--ref-source file`/`exec` for mounted-secret/Vault sources).                                                                                          |
