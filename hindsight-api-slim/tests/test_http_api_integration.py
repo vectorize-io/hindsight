@@ -1386,7 +1386,7 @@ async def test_unknown_params_not_rejected(api_client):
     test_bank_id = f"unknown_params_test_{datetime.now().timestamp()}"
 
     # Ensure bank exists
-    await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+    await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
     # Unknown query params on GET endpoint
     response = await api_client.get(

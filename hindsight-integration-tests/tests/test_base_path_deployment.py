@@ -396,11 +396,7 @@ async def test_full_workflow_with_base_path():
         base_url = f"http://localhost:{server.port}{base_path}"
 
         async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
-            # 1. Get bank profile (creates if needed)
-            response = await client.get(f"/v1/default/banks/{bank_id}/profile")
-            assert response.status_code == 200
-
-            # 2. Store a memory
+            # 1. Store a memory (implicitly creates the bank)
             response = await client.post(
                 f"/v1/default/banks/{bank_id}/memories",
                 json={

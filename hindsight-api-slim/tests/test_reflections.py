@@ -244,8 +244,8 @@ class TestMentalModelsAPI:
         """Test full CRUD cycle through API."""
         import asyncio
 
-        # Create bank first via profile endpoint
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        # Create bank
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         # Create a mental model (async operation)
         response = await api_client.post(
@@ -313,8 +313,8 @@ class TestRecallWithObservationsAndMentalModels:
     @pytest.mark.asyncio
     async def test_recall_includes_observations(self, api_client, test_bank_id):
         """Test that recall can include observations in the response."""
-        # Create bank first via profile endpoint
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        # Create bank
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         # Note: Observations are auto-created via consolidation, not manually
         # This test just verifies the include parameter works
@@ -341,8 +341,8 @@ class TestRecallWithObservationsAndMentalModels:
     @pytest.mark.asyncio
     async def test_recall_includes_mental_models(self, api_client, test_bank_id):
         """Test that recall can include mental models in the response."""
-        # Create bank first via profile endpoint
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        # Create bank
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         # Create a mental model first
         response = await api_client.post(
@@ -378,8 +378,8 @@ class TestRecallWithObservationsAndMentalModels:
     @pytest.mark.asyncio
     async def test_recall_without_observations_by_default(self, api_client, test_bank_id):
         """Test that recall does not include observations by default."""
-        # Create bank first via profile endpoint
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        # Create bank
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         # Recall without specifying observations
         response = await api_client.post(
@@ -666,7 +666,7 @@ class TestReflectRequestValidation:
     @pytest.mark.asyncio
     async def test_reflect_empty_fact_types_rejected(self, api_client, test_bank_id):
         """Passing fact_types=[] to reflect must return 422."""
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         response = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/reflect",
@@ -677,7 +677,7 @@ class TestReflectRequestValidation:
     @pytest.mark.asyncio
     async def test_create_mental_model_empty_fact_types_rejected(self, api_client, test_bank_id):
         """Passing fact_types=[] inside trigger must return 422."""
-        await api_client.get(f"/v1/default/banks/{test_bank_id}/profile")
+        await api_client.put(f"/v1/default/banks/{test_bank_id}", json={})
 
         response = await api_client.post(
             f"/v1/default/banks/{test_bank_id}/mental-models",
