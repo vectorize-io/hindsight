@@ -16,8 +16,9 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "fs";
-import { join, resolve, extname, basename, relative } from "path";
+import { join, resolve, extname, basename, relative, dirname } from "path";
 import { homedir, tmpdir } from "os";
+import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import * as p from "@clack/prompts";
 import color from "picocolors";
@@ -127,48 +128,9 @@ async function resolveAgentDir(input: string, spinner: ReturnType<typeof p.spinn
 
 // ── Skill ───────────────────────────────────────────────
 
-const SKILL_MD = `---
-name: agent-knowledge
-description: Your long-term knowledge pages. Read them at session start. Create new pages for recurring topics. Pages auto-update from your conversations.
----
-
-# Agent Knowledge
-
-You have knowledge pages that persist across sessions and auto-update from your conversations.
-
-**How it works:** Conversations are retained into Hindsight. The system extracts observations and rebuilds each page via its "source query." You create pages; the system maintains them.
-
-## At session start
-
-Call \`agent_knowledge_list_pages\` to see what pages exist, then \`agent_knowledge_get_page\` for each one you need.
-
-## Tools
-
-- \`agent_knowledge_list_pages()\` — list page IDs and names (no content)
-- \`agent_knowledge_get_page(page_id)\` — read the full content of a page
-- \`agent_knowledge_create_page(page_id, name, source_query)\` — create a page
-- \`agent_knowledge_update_page(page_id, name?, source_query?)\` — update a page
-- \`agent_knowledge_delete_page(page_id)\` — delete a page
-- \`agent_knowledge_recall(query)\` — search all memories
-- \`agent_knowledge_ingest(title, content)\` — upload raw content (never summarize)
-
-## Creating pages
-
-Create when you learn something durable — preferences, procedures, performance data.
-The source_query is a question the system re-asks to rebuild the page.
-
-Examples:
-- "What are the user's preferences for tone, length, and formatting?"
-- "What strategies have performed well or poorly? Include numbers."
-- "What are the best practices for [topic], preferring our data over generic advice?"
-
-## Rules
-
-- Pages update automatically — don't edit content directly
-- State preferences clearly in responses so the system captures them
-- Create pages silently
-- Prefer fewer broad pages over many narrow ones
-`;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SKILL_PATH = join(__dirname, "..", "skill", "SKILL.md");
+const SKILL_MD = readFileSync(SKILL_PATH, "utf-8");
 
 // ── Plugin management ───────────────────────────────────
 
