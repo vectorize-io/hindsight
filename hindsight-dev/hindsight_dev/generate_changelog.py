@@ -28,28 +28,39 @@ REPO_PATH = Path(__file__).parent.parent.parent
 CHANGELOG_PATH = REPO_PATH / "hindsight-docs" / "src" / "pages" / "changelog" / "index.md"
 INTEGRATION_CHANGELOG_DIR = REPO_PATH / "hindsight-docs" / "src" / "pages" / "changelog" / "integrations"
 
-VALID_INTEGRATIONS = [
-    "litellm",
-    "pydantic-ai",
-    "crewai",
-    "ag2",
-    "ai-sdk",
-    "chat",
-    "openclaw",
-    "langgraph",
-    "nemoclaw",
-    "strands",
-    "claude-code",
-    "llamaindex",
-    "codex",
-    "autogen",
-    "paperclip",
-    "opencode",
-    "cloudflare-oauth-proxy",
-    "openai-agents",
-    "pipecat",
-    "agentcore",
-]
+
+@dataclass(frozen=True)
+class IntegrationMeta:
+    package_name: str
+    display_name: str | None = None  # falls back to slug
+
+
+# Single source of truth for integrations. Adding a new integration here is
+# enough to make this script accept it — no parallel lists to keep in sync.
+INTEGRATIONS: dict[str, IntegrationMeta] = {
+    "litellm": IntegrationMeta("hindsight-litellm", "LiteLLM"),
+    "pydantic-ai": IntegrationMeta("hindsight-pydantic-ai", "Pydantic AI"),
+    "crewai": IntegrationMeta("hindsight-crewai", "CrewAI"),
+    "ag2": IntegrationMeta("hindsight-ag2"),
+    "ai-sdk": IntegrationMeta("@vectorize-io/hindsight-ai-sdk", "AI SDK"),
+    "chat": IntegrationMeta("@vectorize-io/hindsight-chat", "Chat SDK"),
+    "openclaw": IntegrationMeta("@vectorize-io/hindsight-openclaw", "OpenClaw"),
+    "langgraph": IntegrationMeta("hindsight-langgraph", "LangGraph"),
+    "nemoclaw": IntegrationMeta("@vectorize-io/hindsight-nemoclaw", "NemoClaw"),
+    "strands": IntegrationMeta("hindsight-strands", "Strands"),
+    "claude-code": IntegrationMeta("hindsight-memory", "Claude Code"),
+    "llamaindex": IntegrationMeta("hindsight-llamaindex", "LlamaIndex"),
+    "codex": IntegrationMeta("hindsight-codex", "Codex"),
+    "autogen": IntegrationMeta("hindsight-autogen", "AutoGen"),
+    "paperclip": IntegrationMeta("@vectorize-io/hindsight-paperclip", "Paperclip"),
+    "opencode": IntegrationMeta("@vectorize-io/opencode-hindsight", "OpenCode"),
+    "cloudflare-oauth-proxy": IntegrationMeta("hindsight-cloudflare-oauth-proxy"),
+    "openai-agents": IntegrationMeta("hindsight-openai-agents"),
+    "pipecat": IntegrationMeta("hindsight-pipecat", "Pipecat"),
+    "agentcore": IntegrationMeta("hindsight-agentcore", "Bedrock AgentCore"),
+}
+
+VALID_INTEGRATIONS = list(INTEGRATIONS.keys())
 
 
 class ChangelogEntry(BaseModel):
@@ -613,29 +624,7 @@ For the source code, see [`hindsight-integrations/{integration}`](https://github
 
 
 def _get_package_name(integration: str) -> str:
-    packages = {
-        "litellm": "hindsight-litellm",
-        "pydantic-ai": "hindsight-pydantic-ai",
-        "crewai": "hindsight-crewai",
-        "ag2": "hindsight-ag2",
-        "ai-sdk": "@vectorize-io/hindsight-ai-sdk",
-        "chat": "@vectorize-io/hindsight-chat",
-        "openclaw": "@vectorize-io/hindsight-openclaw",
-        "langgraph": "hindsight-langgraph",
-        "nemoclaw": "@vectorize-io/hindsight-nemoclaw",
-        "strands": "hindsight-strands",
-        "claude-code": "hindsight-memory",
-        "llamaindex": "hindsight-llamaindex",
-        "codex": "hindsight-codex",
-        "autogen": "hindsight-autogen",
-        "paperclip": "@vectorize-io/hindsight-paperclip",
-        "opencode": "@vectorize-io/opencode-hindsight",
-        "cloudflare-oauth-proxy": "hindsight-cloudflare-oauth-proxy",
-        "openai-agents": "hindsight-openai-agents",
-        "pipecat": "hindsight-pipecat",
-        "agentcore": "hindsight-agentcore",
-    }
-    return packages[integration]
+    return INTEGRATIONS[integration].package_name
 
 
 def _package_url(integration: str, package_name: str) -> str:
@@ -647,26 +636,7 @@ def _package_url(integration: str, package_name: str) -> str:
 
 
 def _integration_display_name(integration: str) -> str:
-    names = {
-        "litellm": "LiteLLM",
-        "pydantic-ai": "Pydantic AI",
-        "crewai": "CrewAI",
-        "ai-sdk": "AI SDK",
-        "chat": "Chat SDK",
-        "openclaw": "OpenClaw",
-        "langgraph": "LangGraph",
-        "nemoclaw": "NemoClaw",
-        "strands": "Strands",
-        "claude-code": "Claude Code",
-        "llamaindex": "LlamaIndex",
-        "codex": "Codex",
-        "autogen": "AutoGen",
-        "paperclip": "Paperclip",
-        "opencode": "OpenCode",
-        "pipecat": "Pipecat",
-        "agentcore": "Bedrock AgentCore",
-    }
-    return names.get(integration, integration)
+    return INTEGRATIONS[integration].display_name or integration
 
 
 def main():
