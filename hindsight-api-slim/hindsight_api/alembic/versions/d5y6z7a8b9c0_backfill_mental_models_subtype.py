@@ -8,7 +8,7 @@ h3c4d5e6f7g8 (Step 4b), but databases that had already run the migration
 never re-execute it. This migration adds the missing columns idempotently.
 
 Revision ID: d5y6z7a8b9c0
-Revises: c4x5y6z7a8b9
+Revises: 8c6fa6f7230b
 Create Date: 2026-04-18
 """
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 revision: str = "d5y6z7a8b9c0"
-down_revision: str | Sequence[str] | None = "c4x5y6z7a8b9"
+down_revision: str | Sequence[str] | None = "8c6fa6f7230b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

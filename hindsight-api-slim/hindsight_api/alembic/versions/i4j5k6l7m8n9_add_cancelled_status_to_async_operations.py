@@ -1,7 +1,7 @@
 """Add 'cancelled' to async_operations status check constraint
 
 Revision ID: i4j5k6l7m8n9
-Revises: 8c6fa6f7230b
+Revises: d5y6z7a8b9c0
 Create Date: 2026-04-23
 """
 
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 revision: str = "i4j5k6l7m8n9"
-down_revision: str | Sequence[str] | None = "8c6fa6f7230b"
+down_revision: str | Sequence[str] | None = "d5y6z7a8b9c0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -299,35 +299,46 @@ class PostgreSQLOps(DataAccessOps):
         rows: list[ResultRow] = []
         for start in range(0, len(lateral_unit_ids), batch_size):
             end = min(start + batch_size, len(lateral_unit_ids))
+            # Each LATERAL arm fetches up to half_limit in each direction
+            # (backward + forward = 2×half_limit).  The outer ROW_NUMBER
+            # picks the half_limit closest overall per source unit, matching
+            # the original query behavior.
             batch_rows = await conn.fetch(
                 f"""
-                SELECT sub.from_id, sub.id, sub.event_date, sub.time_diff_hours
-                FROM unnest($1::uuid[], $2::timestamptz[], $3::text[]) AS inp(uid, edate, ftype)
-                CROSS JOIN LATERAL (
-                    (
-                        SELECT inp.uid AS from_id, mu.id, mu.event_date,
-                               EXTRACT(EPOCH FROM (inp.edate - mu.event_date)) / 3600.0 AS time_diff_hours
-                        FROM {mu_table} mu
-                        WHERE mu.bank_id = $4
-                          AND mu.fact_type = inp.ftype
-                          AND mu.event_date <= inp.edate
-                          AND mu.id != inp.uid
-                        ORDER BY mu.event_date DESC
-                        LIMIT $5
-                    )
-                    UNION ALL
-                    (
-                        SELECT inp.uid AS from_id, mu.id, mu.event_date,
-                               EXTRACT(EPOCH FROM (mu.event_date - inp.edate)) / 3600.0 AS time_diff_hours
-                        FROM {mu_table} mu
-                        WHERE mu.bank_id = $4
-                          AND mu.fact_type = inp.ftype
-                          AND mu.event_date > inp.edate
-                          AND mu.id != inp.uid
-                        ORDER BY mu.event_date ASC
-                        LIMIT $5
-                    )
-                ) sub
+                SELECT from_id, id, event_date, time_diff_hours FROM (
+                    SELECT sub.from_id, sub.id, sub.event_date, sub.time_diff_hours,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY sub.from_id
+                               ORDER BY sub.time_diff_hours
+                           ) AS rn
+                    FROM unnest($1::uuid[], $2::timestamptz[], $3::text[]) AS inp(uid, edate, ftype)
+                    CROSS JOIN LATERAL (
+                        (
+                            SELECT inp.uid AS from_id, mu.id, mu.event_date,
+                                   EXTRACT(EPOCH FROM (inp.edate - mu.event_date)) / 3600.0 AS time_diff_hours
+                            FROM {mu_table} mu
+                            WHERE mu.bank_id = $4
+                              AND mu.fact_type = inp.ftype
+                              AND mu.event_date <= inp.edate
+                              AND mu.id != inp.uid
+                            ORDER BY mu.event_date DESC
+                            LIMIT $5
+                        )
+                        UNION ALL
+                        (
+                            SELECT inp.uid AS from_id, mu.id, mu.event_date,
+                                   EXTRACT(EPOCH FROM (mu.event_date - inp.edate)) / 3600.0 AS time_diff_hours
+                            FROM {mu_table} mu
+                            WHERE mu.bank_id = $4
+                              AND mu.fact_type = inp.ftype
+                              AND mu.event_date > inp.edate
+                              AND mu.id != inp.uid
+                            ORDER BY mu.event_date ASC
+                            LIMIT $5
+                        )
+                    ) sub
+                ) ranked
+                WHERE rn <= $5
                 """,
                 lateral_unit_ids[start:end],
                 lateral_event_dates[start:end],
@@ -377,8 +388,12 @@ class PostgreSQLOps(DataAccessOps):
         ml_table: str,
         mu_table: str,
     ) -> str:
+        # DISTINCT ON deduplicates by mu.id (keeping the best weight), but
+        # forces ORDER BY mu.id first.  Wrap in a subquery to re-sort by score
+        # so the LIMIT keeps the globally highest-scored rows (matching the
+        # original GROUP BY + MAX(weight) + ORDER BY score DESC behavior).
         return f"""
-            semantic_expanded AS (
+            sem_deduped AS (
                 SELECT DISTINCT ON (mu.id)
                        mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
@@ -400,9 +415,13 @@ class PostgreSQLOps(DataAccessOps):
                 WHERE mu.fact_type = $2
                   AND mu.id != ALL($1::uuid[])
                 ORDER BY mu.id, ml.weight DESC
+            ),
+            semantic_expanded AS (
+                SELECT * FROM sem_deduped
+                ORDER BY score DESC
                 LIMIT $3
             ),
-            causal_expanded AS (
+            causal_deduped AS (
                 SELECT DISTINCT ON (mu.id)
                        mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
@@ -415,6 +434,10 @@ class PostgreSQLOps(DataAccessOps):
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = $2
                 ORDER BY mu.id, ml.weight DESC
+            ),
+            causal_expanded AS (
+                SELECT * FROM causal_deduped
+                ORDER BY score DESC
                 LIMIT $3
             )"""
 
@@ -482,11 +505,13 @@ class PostgreSQLOps(DataAccessOps):
             budget,
         )
 
-        # Semantic + causal expansion (same as non-observation)
+        # Semantic + causal expansion (same pattern as build_semantic_causal_cte
+        # but hardcoded to fact_type='observation').
+        # Wrap DISTINCT ON in subqueries to re-sort by score before LIMIT.
         sem_causal_rows = await conn.fetch(
             f"""
             WITH
-            semantic_expanded AS (
+            sem_deduped AS (
                 SELECT DISTINCT ON (mu.id)
                        mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
@@ -509,7 +534,10 @@ class PostgreSQLOps(DataAccessOps):
                   AND mu.id != ALL($1::uuid[])
                 ORDER BY mu.id, ml.weight DESC
             ),
-            causal_expanded AS (
+            semantic_expanded AS (
+                SELECT * FROM sem_deduped ORDER BY score DESC LIMIT $2
+            ),
+            causal_deduped AS (
                 SELECT DISTINCT ON (mu.id)
                        mu.id, mu.text, mu.context, mu.event_date, mu.occurred_start,
                        mu.occurred_end, mu.mentioned_at,
@@ -522,11 +550,13 @@ class PostgreSQLOps(DataAccessOps):
                   AND ml.link_type IN ('causes', 'caused_by', 'enables', 'prevents')
                   AND mu.fact_type = 'observation'
                 ORDER BY mu.id, ml.weight DESC
+            ),
+            causal_expanded AS (
+                SELECT * FROM causal_deduped ORDER BY score DESC LIMIT $2
             )
             SELECT * FROM semantic_expanded
             UNION ALL
             SELECT * FROM causal_expanded
-            LIMIT $2
             """,
             seed_ids,
             budget,

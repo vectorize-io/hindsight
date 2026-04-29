@@ -271,54 +271,43 @@ class OracleOps(DataAccessOps):
         half_limit: int,
         batch_size: int = 500,
     ) -> list[ResultRow]:
-        # Uses backend-specific syntax (FETCH FIRST N ROWS ONLY, timestamp arithmetic).
+        # Per-unit queries (no unnest/LATERAL in Oracle).
+        # Fetch up to half_limit in each direction, then combine and keep the
+        # half_limit closest overall via ROW_NUMBER — matching the PG behavior.
         rows: list[ResultRow] = []
         for uid, edate, ftype in zip(lateral_unit_ids, lateral_event_dates, lateral_fact_types):
             uid_str = str(uid) if not isinstance(uid, str) else uid
-            # Backward scan (older events)
             unit_rows = await conn.fetch(
                 f"""
                 SELECT from_id, id, event_date, time_diff_hours FROM (
-                    SELECT sub.*, ROW_NUMBER() OVER (ORDER BY sub.time_diff_hours) AS rn
+                    SELECT combined.*, ROW_NUMBER() OVER (ORDER BY combined.time_diff_hours) AS rn
                     FROM (
-                        SELECT $1 AS from_id, mu.id, mu.event_date,
-                               ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
-                                   + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
-                        FROM {mu_table} mu
-                        WHERE mu.bank_id = $4
-                          AND mu.fact_type = $3
-                          AND mu.event_date <= $2
-                          AND mu.id != $6
-                        ORDER BY mu.event_date DESC
-                        FETCH FIRST $5 ROWS ONLY
-                    ) sub
-                ) ranked
-                WHERE rn <= $5
-                """,
-                uid_str,
-                edate,
-                ftype,
-                bank_id,
-                half_limit,
-                uid,
-            )
-            # Forward scan (newer events)
-            fwd_rows = await conn.fetch(
-                f"""
-                SELECT from_id, id, event_date, time_diff_hours FROM (
-                    SELECT sub.*, ROW_NUMBER() OVER (ORDER BY sub.time_diff_hours) AS rn
-                    FROM (
-                        SELECT $1 AS from_id, mu.id, mu.event_date,
-                               ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
-                                   + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
-                        FROM {mu_table} mu
-                        WHERE mu.bank_id = $4
-                          AND mu.fact_type = $3
-                          AND mu.event_date > $2
-                          AND mu.id != $6
-                        ORDER BY mu.event_date ASC
-                        FETCH FIRST $5 ROWS ONLY
-                    ) sub
+                        SELECT * FROM (
+                            SELECT $1 AS from_id, mu.id, mu.event_date,
+                                   ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
+                                       + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
+                            FROM {mu_table} mu
+                            WHERE mu.bank_id = $4
+                              AND mu.fact_type = $3
+                              AND mu.event_date <= $2
+                              AND mu.id != $6
+                            ORDER BY mu.event_date DESC
+                            FETCH FIRST $5 ROWS ONLY
+                        ) bwd
+                        UNION ALL
+                        SELECT * FROM (
+                            SELECT $1 AS from_id, mu.id, mu.event_date,
+                                   ABS(EXTRACT(DAY FROM (mu.event_date - $2)) * 24
+                                       + EXTRACT(HOUR FROM (mu.event_date - $2))) AS time_diff_hours
+                            FROM {mu_table} mu
+                            WHERE mu.bank_id = $4
+                              AND mu.fact_type = $3
+                              AND mu.event_date > $2
+                              AND mu.id != $6
+                            ORDER BY mu.event_date ASC
+                            FETCH FIRST $5 ROWS ONLY
+                        ) fwd
+                    ) combined
                 ) ranked
                 WHERE rn <= $5
                 """,
@@ -330,7 +319,6 @@ class OracleOps(DataAccessOps):
                 uid,
             )
             rows.extend(unit_rows)
-            rows.extend(fwd_rows)
         return rows
 
     def build_entity_expansion_cte(

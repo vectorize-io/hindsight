@@ -8,7 +8,7 @@ The old source_memory_ids column is retained for now (dual-write) and will
 be dropped in a future migration once all read paths are migrated.
 
 Revision ID: k6l7m8n9o0p1
-Revises: j5k6l7m8n9o0
+Revises: i4j5k6l7m8n9
 Create Date: 2026-04-24
 """
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from alembic import context, op
 
 revision: str = "k6l7m8n9o0p1"
-down_revision: str | Sequence[str] | None = "j5k6l7m8n9o0"
+down_revision: str | Sequence[str] | None = "i4j5k6l7m8n9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
