@@ -304,6 +304,9 @@ jobs:
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
 
+    - name: Build hindsight-agent-sdk (openclaw dep)
+      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
+
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
       run: npm ci
@@ -366,6 +369,9 @@ jobs:
 
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
+
+    - name: Build hindsight-agent-sdk (openclaw dep)
+      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install openclaw dependencies
       working-directory: ./hindsight-integrations/openclaw
@@ -539,18 +545,20 @@ jobs:
       uses: actions/setup-node@v6
       with:
         node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
-    - name: Install dependencies
-      working-directory: ./hindsight-tools/hindsight-agent-sdk
+    - name: Install root workspace dependencies
       run: npm ci
 
+    - name: Build hindsight-client (agent-sdk dep)
+      run: npm run build --workspace=hindsight-clients/typescript
+
     - name: Run tests
-      working-directory: ./hindsight-tools/hindsight-agent-sdk
-      run: npm test
+      run: npm test --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Build
-      working-directory: ./hindsight-tools/hindsight-agent-sdk
-      run: npm run build
+      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
   test-self-driving-agents:
     needs: [detect-changes]
@@ -570,18 +578,20 @@ jobs:
       uses: actions/setup-node@v6
       with:
         node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
-    - name: Install dependencies
-      working-directory: ./hindsight-tools/self-driving-agents
+    - name: Install root workspace dependencies
       run: npm ci
 
+    - name: Build hindsight-client (self-driving-agents dep)
+      run: npm run build --workspace=hindsight-clients/typescript
+
     - name: Run tests
-      working-directory: ./hindsight-tools/self-driving-agents
-      run: npm test
+      run: npm test --workspace=hindsight-tools/self-driving-agents
 
     - name: Build
-      working-directory: ./hindsight-tools/self-driving-agents
-      run: npm run build
+      run: npm run build --workspace=hindsight-tools/self-driving-agents
 
   test-cloudflare-oauth-proxy-integration:
     needs: [detect-changes]
@@ -1950,6 +1960,9 @@ jobs:
 
     - name: Build hindsight-all-npm (openclaw dep)
       run: npm run build --workspace=hindsight-all-npm
+
+    - name: Build hindsight-agent-sdk (openclaw dep)
+      run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
 
     - name: Install openclaw integration dependencies
       working-directory: ./hindsight-integrations/openclaw
