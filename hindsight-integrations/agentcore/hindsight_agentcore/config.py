@@ -71,16 +71,8 @@ def configure(
     """
     global _global_config
 
-    resolved_url = (
-        hindsight_api_url
-        or os.environ.get(HINDSIGHT_API_URL_ENV)
-        or DEFAULT_HINDSIGHT_API_URL
-    )
-    resolved_key = (
-        api_key
-        or os.environ.get(HINDSIGHT_API_KEY_ENV)
-        or os.environ.get(HINDSIGHT_API_TOKEN_ENV)
-    )
+    resolved_url = hindsight_api_url or os.environ.get(HINDSIGHT_API_URL_ENV) or DEFAULT_HINDSIGHT_API_URL
+    resolved_key = api_key or os.environ.get(HINDSIGHT_API_KEY_ENV) or os.environ.get(HINDSIGHT_API_TOKEN_ENV)
 
     _global_config = HindsightAgentCoreConfig(
         hindsight_api_url=resolved_url,

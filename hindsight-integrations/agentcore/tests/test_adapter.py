@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -39,6 +39,15 @@ def _make_recall_response(*texts):
     return resp
 
 
+def _make_mock_client() -> MagicMock:
+    """Mock Hindsight client with async-native methods (arecall/aretain/areflect)."""
+    client = MagicMock()
+    client.arecall = AsyncMock()
+    client.aretain = AsyncMock()
+    client.areflect = AsyncMock()
+    return client
+
+
 class TestBeforeTurn:
     def setup_method(self):
         reset_config()
@@ -49,8 +58,8 @@ class TestBeforeTurn:
 
     def _make_adapter(self, **kwargs):
         adapter = HindsightRuntimeAdapter(**kwargs)
-        mock_client = MagicMock()
-        adapter._local.client = mock_client
+        mock_client = _make_mock_client()
+        adapter._client = mock_client
         return adapter, mock_client
 
     @pytest.mark.asyncio
@@ -58,12 +67,12 @@ class TestBeforeTurn:
         adapter, mock_client = self._make_adapter()
         result = await adapter.before_turn(_ctx(), query="   ")
         assert result == ""
-        mock_client.recall.assert_not_called()
+        mock_client.arecall.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_formatted_memories(self):
         adapter, mock_client = self._make_adapter()
-        mock_client.recall.return_value = _make_recall_response(
+        mock_client.arecall.return_value = _make_recall_response(
             "User prefers Postgres", "Rate limiting blocked by Priya"
         )
         result = await adapter.before_turn(_ctx(), query="project status")
@@ -75,31 +84,31 @@ class TestBeforeTurn:
         adapter, mock_client = self._make_adapter()
         resp = MagicMock()
         resp.results = []
-        mock_client.recall.return_value = resp
+        mock_client.arecall.return_value = resp
         result = await adapter.before_turn(_ctx(), query="anything")
         assert result == ""
 
     @pytest.mark.asyncio
     async def test_gracefully_degrades_on_exception(self):
         adapter, mock_client = self._make_adapter()
-        mock_client.recall.side_effect = ConnectionError("unreachable")
+        mock_client.arecall.side_effect = ConnectionError("unreachable")
         result = await adapter.before_turn(_ctx(), query="anything")
         assert result == ""
 
     @pytest.mark.asyncio
     async def test_uses_correct_bank_id(self):
         adapter, mock_client = self._make_adapter()
-        mock_client.recall.return_value = _make_recall_response()
+        mock_client.arecall.return_value = _make_recall_response()
         await adapter.before_turn(_ctx(tenant_id="acme"), query="test query")
-        call_kwargs = mock_client.recall.call_args[1]
+        call_kwargs = mock_client.arecall.call_args[1]
         assert call_kwargs["bank_id"] == "tenant:acme:user:user-456:agent:support-agent"
 
     @pytest.mark.asyncio
     async def test_session_id_not_in_bank_id(self):
         adapter, mock_client = self._make_adapter()
-        mock_client.recall.return_value = _make_recall_response()
+        mock_client.arecall.return_value = _make_recall_response()
         await adapter.before_turn(_ctx(), query="test")
-        call_kwargs = mock_client.recall.call_args[1]
+        call_kwargs = mock_client.arecall.call_args[1]
         assert "sess-123" not in call_kwargs["bank_id"]
 
     @pytest.mark.asyncio
@@ -107,9 +116,9 @@ class TestBeforeTurn:
         adapter, mock_client = self._make_adapter(
             recall_policy=RecallPolicy(budget="high", max_tokens=2000)
         )
-        mock_client.recall.return_value = _make_recall_response()
+        mock_client.arecall.return_value = _make_recall_response()
         await adapter.before_turn(_ctx(), query="test")
-        call_kwargs = mock_client.recall.call_args[1]
+        call_kwargs = mock_client.arecall.call_args[1]
         assert call_kwargs["budget"] == "high"
         assert call_kwargs["max_tokens"] == 2000
 
@@ -120,10 +129,10 @@ class TestBeforeTurn:
         )
         reflect_resp = MagicMock()
         reflect_resp.answer = "Synthesized context about the user."
-        mock_client.reflect.return_value = reflect_resp
+        mock_client.areflect.return_value = reflect_resp
         result = await adapter.before_turn(_ctx(), query="what should I prioritize?")
-        mock_client.recall.assert_not_called()
-        mock_client.reflect.assert_called_once()
+        mock_client.arecall.assert_not_called()
+        mock_client.areflect.assert_called_once()
         assert "Synthesized context" in result
 
 
@@ -137,15 +146,15 @@ class TestAfterTurn:
 
     def _make_adapter(self, **kwargs):
         adapter = HindsightRuntimeAdapter(**kwargs)
-        mock_client = MagicMock()
-        adapter._local.client = mock_client
+        mock_client = _make_mock_client()
+        adapter._client = mock_client
         return adapter, mock_client
 
     @pytest.mark.asyncio
     async def test_empty_result_does_not_retain(self):
         adapter, mock_client = self._make_adapter()
         await adapter.after_turn(_ctx(), result="   ", query="test")
-        mock_client.retain.assert_not_called()
+        mock_client.aretain.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_retains_result(self):
@@ -153,7 +162,7 @@ class TestAfterTurn:
         await adapter.after_turn(
             _ctx(), result="Fixed the auth bug.", query="help with auth"
         )
-        mock_client.retain.assert_called_once()
+        mock_client.aretain.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_retained_content_includes_user_message(self):
@@ -161,7 +170,7 @@ class TestAfterTurn:
         await adapter.after_turn(
             _ctx(), result="Found the bug.", query="why is login broken?"
         )
-        call_kwargs = mock_client.retain.call_args[1]
+        call_kwargs = mock_client.aretain.call_args[1]
         assert "why is login broken?" in call_kwargs["content"]
         assert "Found the bug." in call_kwargs["content"]
 
@@ -169,7 +178,7 @@ class TestAfterTurn:
     async def test_tags_include_user_agent_session(self):
         adapter, mock_client = self._make_adapter()
         await adapter.after_turn(_ctx(), result="Done.", query="task")
-        call_kwargs = mock_client.retain.call_args[1]
+        call_kwargs = mock_client.aretain.call_args[1]
         assert "user:user-456" in call_kwargs["tags"]
         assert "agent:support-agent" in call_kwargs["tags"]
         assert "session:sess-123" in call_kwargs["tags"]
@@ -178,14 +187,14 @@ class TestAfterTurn:
     async def test_metadata_includes_runtime_session_id(self):
         adapter, mock_client = self._make_adapter()
         await adapter.after_turn(_ctx(), result="Done.", query="task")
-        call_kwargs = mock_client.retain.call_args[1]
+        call_kwargs = mock_client.aretain.call_args[1]
         assert call_kwargs["metadata"]["runtime_session_id"] == "sess-123"
         assert call_kwargs["metadata"]["channel"] == "agentcore-runtime"
 
     @pytest.mark.asyncio
     async def test_gracefully_degrades_on_exception(self):
         adapter, mock_client = self._make_adapter()
-        mock_client.retain.side_effect = Exception("network error")
+        mock_client.aretain.side_effect = Exception("network error")
         # Should not raise
         await adapter.after_turn(_ctx(), result="output", query="task")
 
@@ -195,8 +204,37 @@ class TestAfterTurn:
             retention_policy=RetentionPolicy(extra_tags=["project:payments"])
         )
         await adapter.after_turn(_ctx(), result="Done.", query="task")
-        call_kwargs = mock_client.retain.call_args[1]
+        call_kwargs = mock_client.aretain.call_args[1]
         assert "project:payments" in call_kwargs["tags"]
+
+
+class TestRetainAsync:
+    """retain_async=True schedules a fire-and-forget task that completes."""
+
+    def setup_method(self):
+        reset_config()
+        configure(hindsight_api_url="http://fake:9077", retain_async=True)
+
+    def teardown_method(self):
+        reset_config()
+
+    @pytest.mark.asyncio
+    async def test_pending_task_tracked_and_completes(self):
+        import asyncio
+
+        adapter = HindsightRuntimeAdapter()
+        mock_client = _make_mock_client()
+        adapter._client = mock_client
+
+        await adapter.after_turn(_ctx(), result="async output", query="q")
+
+        # Task should be tracked while pending.
+        assert len(adapter._pending) == 1
+        # Drain pending tasks.
+        await asyncio.gather(*adapter._pending)
+        # Done-callback should have removed it from the set.
+        assert len(adapter._pending) == 0
+        mock_client.aretain.assert_called_once()
 
 
 class TestRunTurn:
@@ -209,11 +247,11 @@ class TestRunTurn:
 
     def _make_adapter(self):
         adapter = HindsightRuntimeAdapter()
-        mock_client = MagicMock()
-        mock_client.recall.return_value = _make_recall_response(
+        mock_client = _make_mock_client()
+        mock_client.arecall.return_value = _make_recall_response(
             "Prior invoice issue resolved"
         )
-        adapter._local.client = mock_client
+        adapter._client = mock_client
         return adapter, mock_client
 
     @pytest.mark.asyncio
@@ -252,16 +290,16 @@ class TestRunTurn:
         await adapter.run_turn(
             _ctx(), {"prompt": "invoice issue"}, agent_callable=my_agent
         )
-        mock_client.retain.assert_called_once()
-        call_kwargs = mock_client.retain.call_args[1]
+        mock_client.aretain.assert_called_once()
+        call_kwargs = mock_client.aretain.call_args[1]
         assert "Fixed the billing discrepancy." in call_kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_default_agent_name_from_adapter(self):
         adapter = HindsightRuntimeAdapter(agent_name="default-agent")
-        mock_client = MagicMock()
-        mock_client.recall.return_value = _make_recall_response()
-        adapter._local.client = mock_client
+        mock_client = _make_mock_client()
+        mock_client.arecall.return_value = _make_recall_response()
+        adapter._client = mock_client
 
         ctx = TurnContext(
             runtime_session_id="sess-1",
@@ -273,5 +311,5 @@ class TestRunTurn:
             return {"output": "done"}
 
         await adapter.run_turn(ctx, {"prompt": "hi"}, agent_callable=my_agent)
-        call_kwargs = mock_client.recall.call_args[1]
+        call_kwargs = mock_client.arecall.call_args[1]
         assert "default-agent" in call_kwargs["bank_id"]

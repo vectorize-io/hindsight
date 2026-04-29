@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -43,8 +42,7 @@ class RecallPolicy:
     """Controls how memories are retrieved before a turn.
 
     Attributes:
-        mode: 'recall' for deterministic lookup, 'reflect' for LLM synthesis,
-              'hybrid' for recall with reflect on retry.
+        mode: 'recall' for deterministic lookup, 'reflect' for LLM synthesis.
         budget: Hindsight search depth — 'low', 'mid', or 'high'.
         max_tokens: Maximum tokens in the retrieved memory block.
     """
@@ -141,12 +139,12 @@ class HindsightRuntimeAdapter:
         self._retain_async = config.retain_async if config else True
         self._timeout = config.timeout if config else 15.0
         self._default_tags = config.tags if config else []
-        self._verbose = (
-            verbose if verbose is not None else (config.verbose if config else False)
-        )
+        self._verbose = verbose if verbose is not None else (config.verbose if config else False)
 
-        # Thread-local storage for the Hindsight client
-        self._local = threading.local()
+        self._client: Any | None = None
+        # Strong refs to fire-and-forget retention tasks so the event loop
+        # cannot GC them mid-flight (asyncio holds only weak refs to tasks).
+        self._pending: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -188,26 +186,19 @@ class HindsightRuntimeAdapter:
             max_tokens = policy.max_tokens or 1500
 
             if policy.mode == "reflect":
-                resp = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: client.reflect(
-                        bank_id=bank_id,
-                        query=query,
-                        budget=budget,
-                        max_tokens=max_tokens,
-                    ),
-                )
-                return resp.answer if resp and resp.answer else ""
-
-            # Default: recall
-            resp = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.recall(
+                resp = await client.areflect(
                     bank_id=bank_id,
                     query=query,
                     budget=budget,
                     max_tokens=max_tokens,
-                ),
+                )
+                return resp.answer if resp and resp.answer else ""
+
+            resp = await client.arecall(
+                bank_id=bank_id,
+                query=query,
+                budget=budget,
+                max_tokens=max_tokens,
             )
             if not resp or not resp.results:
                 return ""
@@ -215,9 +206,7 @@ class HindsightRuntimeAdapter:
 
         except Exception:
             # Graceful degradation — memory is enhancement, not infrastructure
-            logger.warning(
-                "[Hindsight] Recall failed — continuing without memory", exc_info=True
-            )
+            logger.warning("[Hindsight] Recall failed — continuing without memory", exc_info=True)
             return ""
 
     async def after_turn(
@@ -240,7 +229,9 @@ class HindsightRuntimeAdapter:
             return
 
         if self._retain_async:
-            asyncio.ensure_future(self._retain(context, result=result, query=query))
+            task = asyncio.create_task(self._retain(context, result=result, query=query))
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
         else:
             await self._retain(context, result=result, query=query)
 
@@ -318,18 +309,16 @@ class HindsightRuntimeAdapter:
         return self._bank_resolver(context)
 
     def _get_client(self) -> Any:
-        """Return a thread-local Hindsight client."""
-        client = getattr(self._local, "client", None)
-        if client is None:
+        """Return a lazily-initialized Hindsight client."""
+        if self._client is None:
             from hindsight_client import Hindsight  # type: ignore[import]
 
-            client = Hindsight(
+            self._client = Hindsight(
                 base_url=self._api_url,
                 api_key=self._api_key,
                 timeout=self._timeout,
             )
-            self._local.client = client
-        return client
+        return self._client
 
     async def _retain(
         self,
@@ -358,36 +347,26 @@ class HindsightRuntimeAdapter:
 
         try:
             client = self._get_client()
-            document_id = (
-                context.request_id or f"{context.runtime_session_id}:{context.user_id}"
-            )
+            document_id = context.request_id or f"{context.runtime_session_id}:{context.user_id}"
 
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.retain(
-                    bank_id=bank_id,
-                    content=content,
-                    context=policy.context_label,
-                    document_id=document_id,
-                    tags=tags,
-                    metadata=metadata,
-                ),
+            await client.aretain(
+                bank_id=bank_id,
+                content=content,
+                context=policy.context_label,
+                document_id=document_id,
+                tags=tags,
+                metadata=metadata,
             )
         except Exception:
             # Never surface retention failures to the user turn
-            logger.warning(
-                "[Hindsight] Retain failed — memory not stored", exc_info=True
-            )
+            logger.warning("[Hindsight] Retain failed — memory not stored", exc_info=True)
 
 
 def _format_memories(results: list[Any]) -> str:
-    """Format a list of Hindsight memory results as a bullet list."""
+    """Format a list of RecallResult items as a bullet list."""
     lines: list[str] = []
     for r in results:
-        text = getattr(r, "text", str(r))
-        type_ = getattr(r, "type", None)
-        date = getattr(r, "mentioned_at", None) or getattr(r, "mentionedAt", None)
-        type_str = f" [{type_}]" if type_ else ""
-        date_str = f" ({date})" if date else ""
-        lines.append(f"- {text}{type_str}{date_str}")
+        type_str = f" [{r.type}]" if r.type else ""
+        date_str = f" ({r.mentioned_at})" if r.mentioned_at else ""
+        lines.append(f"- {r.text}{type_str}{date_str}")
     return "\n\n".join(lines)
