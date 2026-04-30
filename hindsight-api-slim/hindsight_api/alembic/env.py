@@ -176,8 +176,13 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
-        if not is_oracle:
-            connection.commit()
+        # Always commit. PG needs it for the explicit RW-mode SET to persist;
+        # Oracle needs it because each DDL auto-commits but the trailing
+        # ``UPDATE alembic_version`` is plain DML that would otherwise stay in
+        # an open transaction and roll back when the connection closes —
+        # producing the "schema is created but the version row is one revision
+        # behind" failure mode.
+        connection.commit()
 
 
 if context.is_offline_mode():
