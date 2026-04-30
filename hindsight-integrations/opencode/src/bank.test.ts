@@ -1,12 +1,29 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(),
+}));
+
+import { execFileSync } from "node:child_process";
 import { deriveBankId, ensureBankMission } from "./bank.js";
 import { makeConfig } from "./test-helpers.js";
+
+const mockExec = vi.mocked(execFileSync);
 
 describe("deriveBankId", () => {
   const originalEnv = { ...process.env };
 
+  beforeEach(() => {
+    // Default: simulate "not in a git repo" so the project field falls back
+    // to the directory basename. Individual git-aware tests override this.
+    mockExec.mockImplementation(() => {
+      throw new Error("fatal: not a git repository");
+    });
+  });
+
   afterEach(() => {
     process.env = { ...originalEnv };
+    mockExec.mockReset();
   });
 
   it("returns default bank name in static mode", () => {
@@ -83,6 +100,68 @@ describe("deriveBankId", () => {
       dynamicBankGranularity: ["agent"],
     });
     expect(deriveBankId(config, "/home/user/proj")).toBe("dev-opencode");
+  });
+
+  describe("git-aware project resolution", () => {
+    it("uses main worktree basename when running inside a regular clone", () => {
+      // `git rev-parse --git-common-dir` returns the main repo's .git path.
+      mockExec.mockReturnValueOnce("/home/user/myproj/.git\n" as never);
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "project"],
+      });
+      expect(deriveBankId(config, "/home/user/myproj")).toBe("opencode::myproj");
+    });
+
+    it("returns the same bank id from a linked worktree of the same repo", () => {
+      // Both invocations resolve to the SAME main .git, so worktrees share the bank.
+      mockExec
+        .mockReturnValueOnce("/home/user/myproj/.git\n" as never)
+        .mockReturnValueOnce("/home/user/myproj/.git\n" as never);
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "project"],
+      });
+      const main = deriveBankId(config, "/home/user/myproj");
+      const linked = deriveBankId(config, "/tmp/worktrees/myproj-feature-x");
+      expect(main).toBe("opencode::myproj");
+      expect(linked).toBe(main);
+    });
+
+    it("uses bare repo basename when common-dir is the bare repo itself", () => {
+      mockExec.mockReturnValueOnce("/srv/git/myrepo.git\n" as never);
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["project"],
+      });
+      expect(deriveBankId(config, "/srv/git/myrepo.git")).toBe("myrepo.git");
+    });
+
+    it("falls back to directory basename when git is unavailable or directory is not a repo", () => {
+      mockExec.mockImplementationOnce(() => {
+        throw new Error("git: command not found");
+      });
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["project"],
+      });
+      expect(deriveBankId(config, "/tmp/random")).toBe("random");
+    });
+
+    it("does not invoke git in static mode", () => {
+      const config = makeConfig({ bankId: "fixed" });
+      expect(deriveBankId(config, "/home/user/myproj")).toBe("fixed");
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("does not invoke git when project field is not in the granularity", () => {
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "channel"],
+      });
+      expect(deriveBankId(config, "/home/user/myproj")).toBe("opencode::default");
+      expect(mockExec).not.toHaveBeenCalled();
+    });
   });
 });
 
