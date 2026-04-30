@@ -13,7 +13,7 @@ print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "llamaindex" "nemoclaw" "strands" "claude-code" "codex" "hermes" "autogen" "paperclip" "opencode" "cloudflare-oauth-proxy" "openai-agents" "pipecat" "agentcore" "smolagents")
+VALID_INTEGRATIONS=("litellm" "pydantic-ai" "crewai" "ag2" "ai-sdk" "chat" "openclaw" "langgraph" "llamaindex" "nemoclaw" "strands" "claude-code" "codex" "hermes" "autogen" "paperclip" "opencode" "cloudflare-oauth-proxy" "openai-agents" "pipecat" "agentcore" "smolagents" "n8n")
 
 usage() {
     print_error "Usage: $0 <integration> <version>"

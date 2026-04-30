@@ -1,0 +1,64 @@
+{
+  "name": "@vectorize-io/n8n-nodes-hindsight",
+  "version": "0.1.0",
+  "description": "n8n community nodes for Hindsight - persistent memory for any n8n workflow",
+  "license": "MIT",
+  "homepage": "https://hindsight.vectorize.io",
+  "author": {
+    "name": "Vectorize",
+    "email": "support@vectorize.io"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vectorize-io/hindsight.git",
+    "directory": "hindsight-integrations/n8n"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-icons",
+    "copy-icons": "mkdir -p dist/nodes/Hindsight && cp nodes/Hindsight/*.svg dist/nodes/Hindsight/",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint nodes credentials --ext .ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/HindsightApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Hindsight/Hindsight.node.js"
+    ]
+  },
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "hindsight",
+    "memory",
+    "ai",
+    "agents",
+    "llm",
+    "long-term-memory"
+  ],
+  "dependencies": {
+    "@vectorize-io/hindsight-client": "^0.5.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "n8n-workflow": "^1.82.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "engines": {
+    "node": ">=20.15"
+  }
+}

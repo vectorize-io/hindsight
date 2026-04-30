@@ -211,6 +211,16 @@
       "icon": "/img/icons/opencode.svg"
     },
     {
+      "id": "n8n",
+      "name": "n8n",
+      "description": "Persistent memory community node for n8n workflows. Retain, recall, and reflect operations drop into any workflow alongside Slack, Sheets, OpenAI, and 400+ other integrations.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/n8n",
+      "icon": "/img/icons/n8n.svg"
+    },
+    {
       "id": "openai-agents",
       "name": "OpenAI Agents SDK",
       "description": "Give OpenAI Agents SDK agents persistent long-term memory with Hindsight FunctionTool instances for retain, recall, and reflect.",

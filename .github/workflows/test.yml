@@ -47,6 +47,7 @@ jobs:
       integrations-llamaindex: ${{ steps.filter.outputs.integrations-llamaindex }}
       integrations-paperclip: ${{ steps.filter.outputs.integrations-paperclip }}
       integrations-opencode: ${{ steps.filter.outputs.integrations-opencode }}
+      integrations-n8n: ${{ steps.filter.outputs.integrations-n8n }}
       integrations-cloudflare-oauth-proxy: ${{ steps.filter.outputs.integrations-cloudflare-oauth-proxy }}
       integrations-lockfiles: ${{ steps.filter.outputs.integrations-lockfiles }}
       integrations-openai-agents: ${{ steps.filter.outputs.integrations-openai-agents }}
@@ -133,6 +134,8 @@ jobs:
             - 'hindsight-integrations/paperclip/**'
           integrations-opencode:
             - 'hindsight-integrations/opencode/**'
+          integrations-n8n:
+            - 'hindsight-integrations/n8n/**'
           integrations-cloudflare-oauth-proxy:
             - 'hindsight-integrations/cloudflare-oauth-proxy/**'
           integrations-lockfiles:
@@ -525,6 +528,37 @@ jobs:
 
     - name: Build
       working-directory: ./hindsight-integrations/opencode
+      run: npm run build
+
+  test-n8n-integration:
+    needs: [detect-changes]
+    if: >-
+      github.event_name != 'pull_request_review' &&
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.integrations-n8n == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      working-directory: ./hindsight-integrations/n8n
+      run: npm install --no-fund --no-audit
+
+    - name: Run tests
+      working-directory: ./hindsight-integrations/n8n
+      run: npm test
+
+    - name: Build
+      working-directory: ./hindsight-integrations/n8n
       run: npm run build
 
   test-hindsight-agent-sdk:
@@ -3562,6 +3596,7 @@ jobs:
       - build-ai-sdk-integration
       - test-ai-sdk-integration-deno
       - test-opencode-integration
+      - test-n8n-integration
       - test-cloudflare-oauth-proxy-integration
       - build-chat-integration
       - test-paperclip-integration
