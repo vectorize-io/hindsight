@@ -426,7 +426,12 @@ async function ensureNemoClawPlugin(sandboxName: string, agentId: string): Promi
         { stdio: "inherit" }
       );
     } catch {
-      p.log.warn("Failed to apply sandbox network policy. Retain may not work.");
+      p.cancel(
+        `Failed to apply sandbox network policy.\n` +
+          `  The sandbox may have been destroyed. Check with: nemoclaw list\n` +
+          `  Recreate with: nemoclaw onboard`
+      );
+      process.exit(1);
     }
   }
 
@@ -438,7 +443,12 @@ async function ensureNemoClawPlugin(sandboxName: string, agentId: string): Promi
     execSync(`nemoclaw ${sandboxName} rebuild --yes`, { stdio: "inherit" });
     p.log.success("Sandbox rebuilt");
   } catch {
-    p.log.warn(`Failed to rebuild sandbox. Run manually: nemoclaw ${sandboxName} rebuild`);
+    p.cancel(
+      `Failed to rebuild sandbox '${sandboxName}'.\n` +
+        `  Check with: nemoclaw list\n` +
+        `  Recreate with: nemoclaw onboard`
+    );
+    process.exit(1);
   }
 }
 
