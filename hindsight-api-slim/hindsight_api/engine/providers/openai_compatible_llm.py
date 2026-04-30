@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 
 # Seed applied to every Groq request for deterministic behavior
 DEFAULT_LLM_SEED = 4242
+JSON_MODE_USER_HINT = "Return valid json only."
+
+
+class ProviderResponseError(RuntimeError):
+    """Raised when a provider returns a success response without usable content."""
+
+    def __init__(self, message: str, *, retryable: bool = True):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _strip_code_fences(content: str) -> str:
@@ -59,6 +68,131 @@ def _strip_code_fences(content: str) -> str:
         return content.split("```")[1].split("```")[0].strip()
     except (IndexError, ValueError):
         return content
+
+
+def _response_get(response: Any, key: str, default: Any = None) -> Any:
+    if isinstance(response, dict):
+        return response.get(key, default)
+    return getattr(response, key, default)
+
+
+def _response_to_dict(response: Any) -> dict[str, Any]:
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "model_dump"):
+        try:
+            return response.model_dump(mode="json")
+        except Exception:
+            return {}
+    return {}
+
+
+def _summarize_provider_error_payload(error: Any, max_len: int = 400) -> str:
+    if error is None:
+        return "<none>"
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("error") or error
+        err_type = error.get("type")
+        param = error.get("param")
+        summary = str(message)
+        details = [f"type={err_type}" if err_type else "", f"param={param}" if param else ""]
+        details = [d for d in details if d]
+        if details:
+            summary = f"{summary} ({', '.join(details)})"
+    else:
+        summary = str(error)
+    if len(summary) > max_len:
+        summary = summary[:max_len] + "...TRUNCATED"
+    return summary
+
+
+def _finish_reason_for_choice(choice: Any) -> Any:
+    return _response_get(choice, "finish_reason")
+
+
+def _message_for_choice(choice: Any) -> Any:
+    return _response_get(choice, "message")
+
+
+def _message_content(message: Any) -> Any:
+    return _response_get(message, "content")
+
+
+def _message_tool_calls(message: Any) -> Any:
+    return _response_get(message, "tool_calls")
+
+
+def _message_refusal(message: Any) -> Any:
+    return _response_get(message, "refusal")
+
+
+def _first_choice_or_error(response: Any, *, provider: str, model: str, scope: str) -> Any:
+    """Return the first choice or raise a clear error for malformed success responses."""
+
+    data = _response_to_dict(response)
+    error_payload = _response_get(response, "error") or data.get("error")
+    if error_payload:
+        raise ProviderResponseError(
+            f"Provider returned error payload ({provider}/{model}, scope={scope}): "
+            f"{_summarize_provider_error_payload(error_payload)}",
+            retryable=False,
+        )
+
+    choices = _response_get(response, "choices")
+    if not choices:
+        raise ProviderResponseError(
+            f"Provider returned no choices ({provider}/{model}, scope={scope})",
+            retryable=True,
+        )
+    return choices[0]
+
+
+def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -> tuple[str, Any]:
+    """Extract message.content while turning provider shape issues into useful errors."""
+
+    choice = _first_choice_or_error(response, provider=provider, model=model, scope=scope)
+    message = _message_for_choice(choice)
+    finish_reason = _finish_reason_for_choice(choice)
+    if message is None:
+        raise ProviderResponseError(
+            f"Provider returned a choice without message ({provider}/{model}, scope={scope}, "
+            f"finish_reason={finish_reason})",
+            retryable=True,
+        )
+
+    content = _message_content(message)
+    if content is None or content == "":
+        tool_calls = _message_tool_calls(message)
+        refusal = _message_refusal(message)
+        retryable = finish_reason not in {"content_filter"}
+        raise ProviderResponseError(
+            f"Provider returned empty message content ({provider}/{model}, scope={scope}, "
+            f"finish_reason={finish_reason}, has_tool_calls={bool(tool_calls)}, "
+            f"refusal={bool(refusal)})",
+            retryable=retryable,
+        )
+    return content, choice
+
+
+def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Some OpenAI-compatible gateways require 'json' in a user message for json_object mode."""
+
+    normalized = [dict(message) for message in messages]
+    user_indexes = [
+        index
+        for index, message in enumerate(normalized)
+        if message.get("role") == "user" and isinstance(message.get("content"), str)
+    ]
+    if not user_indexes:
+        normalized.append({"role": "user", "content": JSON_MODE_USER_HINT})
+        return normalized
+
+    if any("json" in normalized[index]["content"] for index in user_indexes):
+        return normalized
+
+    last_user = user_indexes[-1]
+    normalized[last_user]["content"] = f"{JSON_MODE_USER_HINT}\n\n{normalized[last_user]['content']}"
+    return normalized
 
 
 def _summarize_status_error(e: APIStatusError, body_max: int = 400) -> str:
@@ -327,7 +461,7 @@ class OpenAICompatibleLLM(LLMInterface):
         # Build call parameters
         call_params: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": [dict(message) for message in messages],
         }
 
         # Check if model supports reasoning parameter
@@ -401,6 +535,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
                     skip_grammar = get_config().llamacpp_no_grammar
                 if not skip_grammar:
+                    call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
 
         last_exception = None
@@ -415,13 +550,12 @@ class OpenAICompatibleLLM(LLMInterface):
                 if response_format is not None:
                     response = await self._client.chat.completions.create(**call_params)
 
-                    # Coerce None to "" — some providers (notably OpenRouter free
-                    # tiers) occasionally return null content alongside a valid
-                    # finish_reason. Empty string flows naturally into the JSON
-                    # parse error handler below, which already retries; without
-                    # this, downstream string ops crash with TypeError and the
-                    # retry loop cannot recover.
-                    content = response.choices[0].message.content or ""
+                    content, first_choice = _content_or_error(
+                        response,
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                    )
 
                     # Strip reasoning model thinking tags
                     # Supports: <think>, <thinking>, <reasoning>, |startthink|/|endthink|
@@ -454,7 +588,7 @@ class OpenAICompatibleLLM(LLMInterface):
                                 f"  Model: {self.provider}/{self.model}\n"
                                 f"  Content length: {len(content) if content else 0} chars\n"
                                 f"  Content preview: {content_preview!r}\n"
-                                f"  Finish reason: {response.choices[0].finish_reason if response.choices else 'unknown'}"
+                                f"  Finish reason: {_finish_reason_for_choice(first_choice)}"
                             )
                             # Retry on JSON parse errors
                             if attempt < max_retries:
@@ -472,7 +606,12 @@ class OpenAICompatibleLLM(LLMInterface):
                         result = response_format.model_validate(json_data)
                 else:
                     response = await self._client.chat.completions.create(**call_params)
-                    result = response.choices[0].message.content
+                    result, first_choice = _content_or_error(
+                        response,
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                    )
 
                 # Record token usage metrics
                 duration = time.time() - start_time
@@ -496,13 +635,13 @@ class OpenAICompatibleLLM(LLMInterface):
                 # Record trace span
                 from hindsight_api.tracing import _serialize_for_span, get_span_recorder
 
-                finish_reason = response.choices[0].finish_reason if response.choices else None
+                finish_reason = _finish_reason_for_choice(first_choice)
                 span_recorder = get_span_recorder()
                 span_recorder.record_llm_call(
                     provider=self.provider,
                     model=self.model,
                     scope=scope,
-                    messages=messages,
+                    messages=call_params["messages"],
                     response_content=_serialize_for_span(result),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -612,6 +751,22 @@ class OpenAICompatibleLLM(LLMInterface):
                         f"scope={scope}): {_summarize_status_error(e)}"
                     )
                     raise
+
+            except ProviderResponseError as e:
+                last_exception = e
+                if e.retryable and attempt < max_retries:
+                    logger.warning(
+                        f"Provider response error ({self.provider}/{self.model}, scope={scope}, "
+                        f"attempt {attempt + 1}/{max_retries + 1}): {e}"
+                    )
+                    backoff = min(initial_backoff * (2**attempt), max_backoff)
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.error(
+                    f"Provider response error after {attempt + 1} attempts "
+                    f"({self.provider}/{self.model}, scope={scope}): {e}"
+                )
+                raise
 
             except Exception:
                 raise
