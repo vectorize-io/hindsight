@@ -1103,6 +1103,7 @@ async def _streaming_retain_batch(
                                 is_first_batch,
                                 retain_params,
                                 merged_tags,
+                                ops=pool.ops,
                             )
                         doc_tracking_done[0] = True
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (0 facts in first batch)")
@@ -1205,6 +1206,7 @@ async def _streaming_retain_batch(
                                 is_first_batch,
                                 retain_params,
                                 merged_tags,
+                                ops=pool.ops,
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True

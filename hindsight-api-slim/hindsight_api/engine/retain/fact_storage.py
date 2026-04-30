@@ -269,6 +269,7 @@ async def handle_document_tracking(
     is_first_batch: bool,
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
+    ops=None,
 ) -> None:
     """
     Handle document tracking in the database (full-replace mode).
