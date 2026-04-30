@@ -1426,6 +1426,7 @@ class ReprocessDocumentResponse(BaseModel):
     success: bool
     operation_id: str
     items_count: int
+    force: bool = False
 
 
 class DeleteResponse(BaseModel):
@@ -4248,7 +4249,8 @@ def _register_routes(app: FastAPI):
         response_model=ReprocessDocumentResponse,
         summary="Reprocess document",
         description="Re-run the retain pipeline on an existing document without changing its content. "
-        "This deletes the existing memory units and re-extracts facts using the current engine configuration. "
+        "By default, unchanged chunks may be skipped by delta retain. Pass force=true to bypass delta retain "
+        "and re-extract facts for unchanged content using the current engine configuration. "
         "Useful when the LLM model, chunking strategy, or extraction settings have changed.",
         operation_id="reprocess_document",
         tags=["Documents"],
@@ -4257,6 +4259,7 @@ def _register_routes(app: FastAPI):
     async def api_reprocess_document(
         bank_id: str,
         document_id: str,
+        force: bool = False,
         request_context: RequestContext = Depends(get_request_context),
     ):
         """
@@ -4270,6 +4273,7 @@ def _register_routes(app: FastAPI):
             result = await app.state.memory.reprocess_document(
                 bank_id=bank_id,
                 document_id=document_id,
+                force=force,
                 request_context=request_context,
             )
             if result is None:
@@ -4278,6 +4282,7 @@ def _register_routes(app: FastAPI):
                 success=True,
                 operation_id=result["operation_id"],
                 items_count=result["items_count"],
+                force=force,
             )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

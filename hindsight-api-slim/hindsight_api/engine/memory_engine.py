@@ -5495,6 +5495,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         document_id: str,
         *,
+        force: bool = False,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
         """
@@ -5503,6 +5504,7 @@ class MemoryEngine(MemoryEngineInterface):
         Args:
             bank_id: Bank ID
             document_id: Document ID to reprocess
+            force: If True, bypass delta retain and re-extract unchanged chunks.
             request_context: Request context for authentication.
 
         Returns:
@@ -5531,6 +5533,8 @@ class MemoryEngine(MemoryEngineInterface):
             "document_id": document_id,
             "update_mode": "replace",
         }
+        if force:
+            content_dict["force_reprocess"] = True
         if retain_params.get("context"):
             content_dict["context"] = retain_params["context"]
         if retain_params.get("event_date"):

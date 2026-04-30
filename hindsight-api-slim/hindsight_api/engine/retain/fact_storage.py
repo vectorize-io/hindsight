@@ -269,6 +269,7 @@ async def handle_document_tracking(
     is_first_batch: bool,
     retain_params: dict | None = None,
     document_tags: list[str] | None = None,
+    ops=None,
 ) -> None:
     """
     Handle document tracking in the database (full-replace mode).
@@ -284,6 +285,7 @@ async def handle_document_tracking(
         is_first_batch: Whether this is the first batch (for chunked operations)
         retain_params: Optional parameters passed during retain (context, event_date, etc.)
         document_tags: Optional list of tags to associate with the document
+        ops: Optional SQL operations helper for database portability.
     """
     import hashlib
 

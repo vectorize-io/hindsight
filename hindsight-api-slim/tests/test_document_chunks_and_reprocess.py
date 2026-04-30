@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from hindsight_api.api import create_app
+from hindsight_api.engine.response_models import TokenUsage
 
 
 # ── Fixtures ──
@@ -185,6 +186,114 @@ async def test_reprocess_document(memory, request_context):
 
 
 @pytest.mark.asyncio
+async def test_reprocess_document_defaults_to_delta_mode(memory, request_context, monkeypatch):
+    """reprocess_document preserves the existing delta-aware default."""
+    bank_id = f"test_reprocess_delta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Alice works at Google.", "document_id": "doc-reprocess-delta"}],
+            request_context=request_context,
+        )
+
+        captured = {}
+
+        async def fake_submit_async_retain(bank_id, contents, **kwargs):
+            captured["contents"] = contents
+            return {"operation_id": "op-delta", "items_count": len(contents)}
+
+        monkeypatch.setattr(memory, "submit_async_retain", fake_submit_async_retain)
+
+        result = await memory.reprocess_document(
+            bank_id=bank_id, document_id="doc-reprocess-delta", request_context=request_context
+        )
+
+        assert result == {"operation_id": "op-delta", "items_count": 1}
+        assert "force_reprocess" not in captured["contents"][0]
+        assert captured["contents"][0]["update_mode"] == "replace"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_reprocess_document_force_marks_retain_item(memory, request_context, monkeypatch):
+    """reprocess_document(force=True) marks unchanged chunks for re-extraction."""
+    bank_id = f"test_reprocess_force_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Alice works at Google.", "document_id": "doc-reprocess-force"}],
+            request_context=request_context,
+        )
+
+        captured = {}
+
+        async def fake_submit_async_retain(bank_id, contents, **kwargs):
+            captured["bank_id"] = bank_id
+            captured["contents"] = contents
+            captured["kwargs"] = kwargs
+            return {"operation_id": "op-force", "items_count": len(contents)}
+
+        monkeypatch.setattr(memory, "submit_async_retain", fake_submit_async_retain)
+
+        result = await memory.reprocess_document(
+            bank_id=bank_id, document_id="doc-reprocess-force", force=True, request_context=request_context
+        )
+
+        assert result == {"operation_id": "op-force", "items_count": 1}
+        assert captured["contents"][0]["force_reprocess"] is True
+        assert captured["contents"][0]["update_mode"] == "replace"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_force_reprocess_bypasses_delta_and_streaming_recovery(memory, request_context, monkeypatch):
+    """The internal force_reprocess flag bypasses delta retain and streaming recovery."""
+    from hindsight_api.engine.retain import orchestrator
+
+    bank_id = f"test_reprocess_skip_delta_{datetime.now(timezone.utc).timestamp()}"
+
+    try:
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "Alice works at Google.", "document_id": "doc-skip-delta"}],
+            request_context=request_context,
+        )
+
+        async def fail_if_delta_called(*args, **kwargs):
+            raise AssertionError("force_reprocess should bypass delta retain")
+
+        async def fake_streaming_retain_batch(*args, **kwargs):
+            assert kwargs["force_reprocess"] is True
+            return [["forced-unit"]], TokenUsage(), None
+
+        monkeypatch.setattr(orchestrator, "_try_delta_retain", fail_if_delta_called)
+        monkeypatch.setattr(orchestrator, "_streaming_retain_batch", fake_streaming_retain_batch)
+
+        result, usage = await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[
+                {
+                    "content": "Alice works at Google.",
+                    "document_id": "doc-skip-delta",
+                    "update_mode": "replace",
+                    "force_reprocess": True,
+                }
+            ],
+            request_context=request_context,
+            return_usage=True,
+        )
+
+        assert result == [["forced-unit"]]
+        assert usage == TokenUsage()
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_reprocess_document_not_found(memory, request_context):
     """reprocess_document returns None for non-existent document."""
     result = await memory.reprocess_document(
@@ -281,6 +390,23 @@ async def test_http_reprocess_document(api_client, bank_id):
     data = response.json()
     assert data["success"] is True
     assert "operation_id" in data
+    assert data["force"] is False
+
+
+@pytest.mark.asyncio
+async def test_http_reprocess_document_accepts_force(api_client, bank_id):
+    """HTTP POST .../documents/{id}/reprocess?force=true exposes force mode."""
+    await _retain(api_client, bank_id, "doc-http-reprocess-force", "Alice works at Google.")
+
+    response = await api_client.post(
+        f"/v1/default/banks/{bank_id}/documents/doc-http-reprocess-force/reprocess",
+        params={"force": "true"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "operation_id" in data
+    assert data["force"] is True
 
 
 @pytest.mark.asyncio

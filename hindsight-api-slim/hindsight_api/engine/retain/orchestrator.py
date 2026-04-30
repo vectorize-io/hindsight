@@ -559,6 +559,8 @@ async def retain_batch(
     if not effective_doc_id:
         effective_doc_id = str(uuid.uuid4())
 
+    force_reprocess = any(bool(item.get("force_reprocess")) for item in contents_dicts)
+
     # Record effective_doc_id on the operation (idempotent set-append). Captures
     # both user-provided and generated ids so the operation shows every document
     # it touched, and lets retries reuse the same generated id.
@@ -642,7 +644,7 @@ async def retain_batch(
             return [[] for _ in contents], TokenUsage(), 0
 
     # --- Delta retain: check if we can skip unchanged chunks ---
-    if is_first_batch:
+    if is_first_batch and not force_reprocess:
         delta_result = await _try_delta_retain(
             pool,
             embeddings_model,
@@ -666,6 +668,8 @@ async def retain_batch(
         )
         if delta_result is not None:
             return delta_result
+    elif is_first_batch and force_reprocess:
+        log_buffer.append("[reprocess] Force reprocess requested — bypassing delta retain")
 
     # --- Always use the streaming pipeline (producer-consumer batching) ---
     # Even small documents go through the same path — they just end up as a
@@ -711,6 +715,7 @@ async def retain_batch(
         schema=schema,
         outbox_callback=outbox_callback,
         db_semaphore=db_semaphore,
+        force_reprocess=force_reprocess,
     )
 
 
@@ -848,6 +853,7 @@ async def _streaming_retain_batch(
     schema: str | None = None,
     outbox_callback: Callable[["asyncpg.Connection"], Awaitable[None]] | None = None,
     db_semaphore: "asyncio.Semaphore | None" = None,
+    force_reprocess: bool = False,
 ) -> tuple[list[list[str]], TokenUsage]:
     """
     Process a large document in streaming mini-batches to bound memory usage.
@@ -887,24 +893,27 @@ async def _streaming_retain_batch(
     new_content_hash = hashlib.sha256(sanitized_content.encode()).hexdigest()
     is_recovery = False
 
-    try:
-        async with acquire_with_retry(pool) as conn:
-            doc_row = await conn.fetchrow(
-                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                effective_doc_id,
-                bank_id,
-            )
-            if doc_row and doc_row["content_hash"] == new_content_hash:
-                existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
-                existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
-                if existing_chunk_hashes:
-                    is_recovery = True
-                    log_buffer.append(
-                        f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
-                        f"will skip matching and preserve existing data"
-                    )
-    except Exception:
-        pass  # If we can't load, just process all chunks
+    if force_reprocess:
+        log_buffer.append("[streaming] Force reprocess requested — ignoring already-committed chunks")
+    else:
+        try:
+            async with acquire_with_retry(pool) as conn:
+                doc_row = await conn.fetchrow(
+                    f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+                    effective_doc_id,
+                    bank_id,
+                )
+                if doc_row and doc_row["content_hash"] == new_content_hash:
+                    existing_rows = await chunk_storage.load_existing_chunks(conn, bank_id, effective_doc_id)
+                    existing_chunk_hashes = {c.content_hash for c in existing_rows if c.content_hash}
+                    if existing_chunk_hashes:
+                        is_recovery = True
+                        log_buffer.append(
+                            f"[streaming] RECOVERY: found {len(existing_chunk_hashes)} already-committed chunks — "
+                            f"will skip matching and preserve existing data"
+                        )
+        except Exception:
+            pass  # If we can't load, just process all chunks
 
     # ---------------------------------------------------------------------------
     # Document tracking is DEFERRED to the first consumer batch TXN.
@@ -1103,6 +1112,7 @@ async def _streaming_retain_batch(
                                 is_first_batch,
                                 retain_params,
                                 merged_tags,
+                                ops=pool.ops,
                             )
                         doc_tracking_done[0] = True
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (0 facts in first batch)")
@@ -1205,6 +1215,7 @@ async def _streaming_retain_batch(
                                 is_first_batch,
                                 retain_params,
                                 merged_tags,
+                                ops=pool.ops,
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
@@ -1361,6 +1372,7 @@ async def _streaming_retain_batch(
                             is_first_batch,
                             retain_params,
                             merged_tags,
+                            ops=pool.ops,
                         )
                     doc_tracking_done[0] = True
                     log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
