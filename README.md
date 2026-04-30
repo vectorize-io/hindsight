@@ -84,6 +84,8 @@ cd docker/docker-compose
 docker compose up 
 ```
 
+> Oracle Database is also supported for enterprise deployments with full feature parity. See the [storage documentation](https://hindsight.vectorize.io/developer/storage) for details.
+
 
 >API: http://localhost:8888
 >UI: http://localhost:9999
