@@ -45,7 +45,7 @@ MODEL_MATRIX = [
     # Claude Code (uses Claude Agent SDK with Claude models)
     ("claude-code", "claude-sonnet-4-20250514"),
     # OpenAI Codex (uses MCP with Codex-specific models)
-    ("openai-codex", "gpt-5.4"),
+    ("openai-codex", "gpt-5.4-mini"),
     # Bedrock models (via LiteLLM)
     ("bedrock", "us.amazon.nova-2-lite-v1:0"),
     # Mock provider (for testing)
@@ -316,7 +316,7 @@ async def test_llm_provider_memory_operations(provider: str, model: str):
 
 @pytest.mark.parametrize("provider,model", [
     ("claude-code", "claude-sonnet-4-20250514"),
-    ("openai-codex", "gpt-5.4"),
+    ("openai-codex", "gpt-5.4-mini"),
 ])
 @pytest.mark.asyncio
 async def test_llm_provider_consolidation(memory_no_llm_verify, request_context, provider: str, model: str):

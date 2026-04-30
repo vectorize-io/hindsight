@@ -455,7 +455,7 @@ PROVIDER_DEFAULT_MODELS = {
     "llamacpp": "gemma-4-e2b-it",
     "lmstudio": "local-model",
     "vertexai": "google/gemini-2.5-flash-lite",
-    "openai-codex": "gpt-5.4",
+    "openai-codex": "gpt-5.4-mini",
     "claude-code": "claude-sonnet-4-5-20250929",
     "mock": "mock-model",
     "none": "none",

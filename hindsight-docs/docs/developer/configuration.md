@@ -235,7 +235,7 @@ export HINDSIGHT_API_LLM_MODEL=your-model-name
 
 # OpenAI Codex (ChatGPT Plus/Pro subscription - uses OAuth, no API key needed)
 export HINDSIGHT_API_LLM_PROVIDER=openai-codex
-export HINDSIGHT_API_LLM_MODEL=gpt-5.4
+export HINDSIGHT_API_LLM_MODEL=gpt-5.4-mini
 # No API key needed - uses OAuth tokens from ~/.codex/auth.json
 
 # Claude Code (Claude Pro/Max subscription - uses OAuth, no API key needed)
