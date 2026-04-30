@@ -415,30 +415,13 @@ class OpenAICompatibleLLM(LLMInterface):
                 if response_format is not None:
                     response = await self._client.chat.completions.create(**call_params)
 
-                    content = response.choices[0].message.content
-
-                    # Some providers (notably OpenRouter free tiers) occasionally
-                    # return null content alongside a valid finish_reason. Without
-                    # this guard the downstream string ops crash with TypeError,
-                    # which the retry loop cannot recover from — every attempt
-                    # hits the same unhandled error.
-                    if not content:
-                        finish_reason = response.choices[0].finish_reason if response.choices else "unknown"
-                        logger.warning(
-                            f"LLM returned null/empty content (attempt {attempt + 1}/{max_retries + 1}): "
-                            f"{self.provider}/{self.model}, scope={scope}, finish_reason={finish_reason}"
-                        )
-                        if attempt < max_retries:
-                            backoff = min(initial_backoff * (2**attempt), max_backoff)
-                            await asyncio.sleep(backoff)
-                            last_exception = ValueError(
-                                f"LLM returned null/empty content for {self.provider}/{self.model}"
-                            )
-                            continue
-                        raise ValueError(
-                            f"LLM returned null/empty content after {max_retries + 1} attempts "
-                            f"({self.provider}/{self.model}, scope={scope}, finish_reason={finish_reason})"
-                        )
+                    # Coerce None to "" — some providers (notably OpenRouter free
+                    # tiers) occasionally return null content alongside a valid
+                    # finish_reason. Empty string flows naturally into the JSON
+                    # parse error handler below, which already retries; without
+                    # this, downstream string ops crash with TypeError and the
+                    # retry loop cannot recover.
+                    content = response.choices[0].message.content or ""
 
                     # Strip reasoning model thinking tags
                     # Supports: <think>, <thinking>, <reasoning>, |startthink|/|endthink|

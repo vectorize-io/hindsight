@@ -10,6 +10,7 @@ retry hits the same unhandled error so the entire retry budget is wasted.
 See https://github.com/vectorize-io/hindsight/issues/1334.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -44,13 +45,13 @@ def _make_chat_response(content: str | None) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_null_content_raises_after_retries_exhausted():
-    """All retries return null content -> ValueError is raised, not TypeError."""
+    """All retries return null content -> JSONDecodeError, not TypeError."""
     llm = _make_llm()
 
     with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = _make_chat_response(None)
 
-        with pytest.raises(ValueError, match="null/empty content"):
+        with pytest.raises(json.JSONDecodeError):
             await llm.call(
                 messages=[{"role": "user", "content": "extract facts"}],
                 response_format=_Response,
@@ -86,24 +87,4 @@ async def test_null_content_recovers_on_retry():
 
     assert isinstance(result, _Response)
     assert result.answer == "ok"
-    assert mock_create.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_empty_string_content_is_treated_as_null():
-    """Empty-string content also triggers retry (would otherwise hit JSONDecodeError)."""
-    llm = _make_llm()
-
-    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = _make_chat_response("")
-
-        with pytest.raises(ValueError, match="null/empty content"):
-            await llm.call(
-                messages=[{"role": "user", "content": "extract facts"}],
-                response_format=_Response,
-                max_retries=1,
-                initial_backoff=0.0,
-                max_backoff=0.0,
-            )
-
     assert mock_create.call_count == 2
