@@ -53,31 +53,41 @@ First, install the Hindsight AgentCore integration:
 pip install hindsight-agentcore
 ```
 
-Then configure it in your agent:
+Then configure it globally and create an adapter:
 
 ```python
-from hindsight_agentcore import HindsightRuntimeAdapter
-from hindsight_client import Hindsight
+from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
+import os
 
-# Create Hindsight client
-hindsight = Hindsight(
-    base_url="https://api.hindsight.vectorize.io",
-    api_key="your-hindsight-key"
+# Configure Hindsight once (globally)
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key=os.environ["HINDSIGHT_API_KEY"]
 )
 
-# Wrap your AgentCore runtime with the adapter
-adapter = HindsightRuntimeAdapter(
-    hindsight_client=hindsight,
-    bank_id="my-agent-memory",
-    agent_name="my-agentcore-agent"
-)
-
-# In your agent's turn processing:
-# Instead of: result = runtime.invoke(request)
-# Use: result = adapter.run_turn(runtime, request, turn_context)
+# Create the adapter
+adapter = HindsightRuntimeAdapter(agent_name="my-support-agent")
 ```
 
-The adapter handles all memory operations automatically. Your agent logic stays clean.
+In your AgentCore Runtime handler, create a TurnContext and call `run_turn`:
+
+```python
+# Inside your AgentCore event handler
+context = TurnContext(
+    runtime_session_id=event["sessionId"],
+    user_id=event["userId"],
+    agent_name="my-support-agent",
+    tenant_id=event.get("tenantId")
+)
+
+result = await adapter.run_turn(
+    context=context,
+    payload={"prompt": user_message},
+    agent_callable=my_agent_function
+)
+```
+
+The adapter automatically recalls relevant context before execution and retains learnings after. Your agent function stays clean—it just receives the payload plus recalled memories.
 
 ## Real-World Use Cases
 
@@ -86,173 +96,217 @@ The adapter handles all memory operations automatically. Your agent logic stays 
 An AgentCore agent that handles multi-session customer support with persistent case context:
 
 ```python
-from hindsight_agentcore import HindsightRuntimeAdapter
-from hindsight_client import Hindsight
+from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
+import os
 
-hindsight = Hindsight(
-    base_url="https://api.hindsight.vectorize.io",
-    api_key="your-hindsight-key"
+# Configure once
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key=os.environ["HINDSIGHT_API_KEY"]
 )
 
-adapter = HindsightRuntimeAdapter(
-    hindsight_client=hindsight,
-    bank_id="support-cases",
-    agent_name="support-agent"
-)
+adapter = HindsightRuntimeAdapter(agent_name="support-agent")
 
-# Customer calls back days later
-# Agent automatically recalls the case context
-result = adapter.run_turn(
-    runtime=support_agent_runtime,
-    request=user_message,
-    turn_context=TurnContext(
-        session_id=customer_id,
-        conversation_id=case_number
+# Your LLM-backed agent function
+async def support_agent(payload: dict, memory_context: str) -> dict:
+    user_message = payload["prompt"]
+    
+    # Inject prior case context if available
+    system_prompt = "You are a helpful support agent."
+    if memory_context:
+        system_prompt += f"\n\nPrior context about this customer:\n{memory_context}"
+    
+    # Call your LLM
+    response = await llm.invoke(
+        system_prompt=system_prompt,
+        user_message=user_message
     )
+    
+    return {"output": response}
+
+# When a customer returns days later
+context = TurnContext(
+    runtime_session_id=event["sessionId"],
+    user_id=customer_id,
+    agent_name="support-agent",
+    tenant_id=account_id
 )
 
-# Agent knows the history and continues helping
+result = await adapter.run_turn(
+    context=context,
+    payload={"prompt": "I need help with my invoice from last week"},
+    agent_callable=support_agent
+)
 ```
 
-The agent remembers the customer's issue, previous solutions tried, and relevant account context—without the customer having to repeat everything.
+The agent automatically recalls the customer's issue, previous solutions, and account details—without the customer repeating anything.
 
 ### Use Case 2: Data Analysis Agent
 
 An AgentCore agent that explores datasets and remembers discoveries for follow-up analysis:
 
 ```python
-from hindsight_agentcore import HindsightRuntimeAdapter
-from hindsight_client import Hindsight
+from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
+import os
 
-hindsight = Hindsight(
-    base_url="https://api.hindsight.vectorize.io",
-    api_key="your-hindsight-key"
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key=os.environ["HINDSIGHT_API_KEY"]
 )
 
-adapter = HindsightRuntimeAdapter(
-    hindsight_client=hindsight,
-    bank_id="data-analysis",
+adapter = HindsightRuntimeAdapter(agent_name="analytics-agent")
+
+async def analytics_agent(payload: dict, memory_context: str) -> dict:
+    query = payload["prompt"]
+    
+    # Build prompt with prior analysis context
+    system = "You are a data analyst. Analyze trends carefully."
+    if memory_context:
+        system += f"\n\nPrevious analyses:\n{memory_context}"
+    
+    # Run analysis
+    analysis = await llm.invoke(system_prompt=system, user_message=query)
+    return {"output": analysis}
+
+# Session 1: Initial Q1 analysis
+context1 = TurnContext(
+    runtime_session_id="session-1",
+    user_id="analyst-1",
     agent_name="analytics-agent"
 )
-
-# Session 1: Initial analysis
-result1 = adapter.run_turn(
-    runtime=analytics_agent,
-    request="Analyze Q1 sales trends",
-    turn_context=TurnContext(session_id="session-1")
+result1 = await adapter.run_turn(
+    context=context1,
+    payload={"prompt": "Analyze Q1 sales trends from our database"},
+    agent_callable=analytics_agent
 )
 
-# Session 2 (days later): Follow-up analysis
-result2 = adapter.run_turn(
-    runtime=analytics_agent,
-    request="How do Q2 trends compare to what you found in Q1?",
-    turn_context=TurnContext(session_id="session-2")
+# Session 2 (days later): Compare Q2 to Q1
+context2 = TurnContext(
+    runtime_session_id="session-2",
+    user_id="analyst-1",
+    agent_name="analytics-agent"
 )
-
-# Agent recalls Q1 findings and makes comparative insights
+result2 = await adapter.run_turn(
+    context=context2,
+    payload={"prompt": "How do Q2 trends compare to what you found in Q1?"},
+    agent_callable=analytics_agent
+)
 ```
 
-The agent's analysis compounds over time—each new query builds on what was previously discovered.
+The agent's analysis compounds—each new query automatically has access to prior findings, enabling comparative insights without manual context passing.
 
 ### Use Case 3: Code Review Agent
 
 An AgentCore agent that learns codebase patterns and applies learnings across reviews:
 
 ```python
-from hindsight_agentcore import HindsightRuntimeAdapter
-from hindsight_client import Hindsight
+from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
+import os
 
-hindsight = Hindsight(
-    base_url="https://api.hindsight.vectorize.io",
-    api_key="your-hindsight-key"
+configure(
+    hindsight_api_url="https://api.hindsight.vectorize.io",
+    api_key=os.environ["HINDSIGHT_API_KEY"]
 )
 
-adapter = HindsightRuntimeAdapter(
-    hindsight_client=hindsight,
-    bank_id="code-reviews",
-    agent_name="code-reviewer"
-)
+adapter = HindsightRuntimeAdapter(agent_name="code-reviewer")
 
-# Review PRs over multiple sessions
+async def code_reviewer(payload: dict, memory_context: str) -> dict:
+    pr_diff = payload["prompt"]
+    
+    system = """You are a code reviewer. Check for:
+- Performance issues
+- Security problems
+- Style inconsistencies
+- Design patterns"""
+    
+    # Inject codebase patterns from prior reviews
+    if memory_context:
+        system += f"\n\nCoding patterns in this repo:\n{memory_context}"
+    
+    review = await llm.invoke(system_prompt=system, user_message=pr_diff)
+    return {"output": review}
+
+# Review PRs across multiple sessions
 for pr in pull_requests:
-    result = adapter.run_turn(
-        runtime=review_agent,
-        request=f"Review PR {pr.number}: {pr.diff}",
-        turn_context=TurnContext(
-            session_id=f"review-session-{pr.number}",
-            metadata={"repo": pr.repo, "pr": pr.number}
-        )
+    context = TurnContext(
+        runtime_session_id=f"review-{pr.id}",
+        user_id="reviewer-team",
+        agent_name="code-reviewer",
+        tenant_id="engineering"
     )
-    # Agent recalls patterns from previous reviews
-    # Applies codebase learnings to this review
+    
+    result = await adapter.run_turn(
+        context=context,
+        payload={"prompt": f"Review this PR:\n\n{pr.diff}"},
+        agent_callable=code_reviewer
+    )
+    # Agent automatically recalls patterns from prior reviews
+    # and applies them to this review
 ```
 
-The agent builds institutional knowledge of your codebase style, patterns, and conventions—improving review quality over time.
+The agent builds institutional knowledge—improving review quality by recognizing and enforcing codebase patterns across all reviews.
 
 ## How the Adapter Works
 
-The **HindsightRuntimeAdapter** is a thin middleware layer:
+The **HindsightRuntimeAdapter** orchestrates three phases around your agent:
 
 ```python
-class HindsightRuntimeAdapter:
-    def before_turn(self, request, turn_context):
-        # Recall relevant memories based on context
-        # Inject context into agent's internal state
-        pass
-    
-    def run_turn(self, runtime, request, turn_context):
-        # Recall prior context
-        context = self.before_turn(request, turn_context)
-        
-        # Run agent normally
-        result = runtime.invoke(request)
-        
-        # Persist learnings
-        self.after_turn(result, turn_context)
-        
-        return result
-    
-    def after_turn(self, result, turn_context):
-        # Extract agent outputs and decisions
-        # Store as persistent memory
-        pass
+# 1. Before turn: Recall relevant context
+memory_context = await adapter.before_turn(
+    context=turn_context,
+    query=user_message
+)
+
+# 2. Execute agent with recalled memories
+result = await agent_callable(
+    payload={"prompt": user_message},
+    memory_context=memory_context  # Injected by adapter
+)
+
+# 3. After turn: Retain the output for future recall
+await adapter.after_turn(
+    context=turn_context,
+    result=result["output"],
+    query=user_message
+)
 ```
 
 The adapter integrates with **TurnContext** to key memories by:
-- **session_id**: Multi-tenant support (different users/sessions)
-- **conversation_id**: Grouping related turns
-- **metadata**: Custom tags and context
+- **runtime_session_id**: Session identifier for ephemeral tracking
+- **user_id**: User who initiated the turn (memory scoping)
+- **agent_name**: Which agent produced the memory
+- **tenant_id**: Optional multi-tenant isolation
+- **request_id**: Optional request tracing
 
-This ensures memories are correctly scoped and retrievable.
+These fields ensure memories are correctly scoped, isolated, and retrievable across sessions.
 
 ## Memory Scoping: Multi-Tenant Deployments
 
-For deployments serving multiple users, TurnContext provides identity:
+For deployments serving multiple users/tenants, TurnContext enforces proper isolation:
 
 ```python
 from hindsight_agentcore import TurnContext
 
-# Each user gets isolated memory
+# Each user/tenant gets isolated memory
 turn_context = TurnContext(
-    session_id=user_id,           # Isolates memory by user
-    conversation_id=thread_id,    # Groups related turns
-    metadata={
-        "user_tier": "premium",
-        "department": "sales"
-    }
+    runtime_session_id=runtime_session_id,  # AgentCore session tracking
+    user_id=authenticated_user_id,          # Isolates memory by user
+    agent_name="my-agent",                  # Identifies the agent
+    tenant_id=customer_account_id,          # Multi-tenant isolation (optional)
+    request_id=request_id                   # Tracing (optional)
 )
 
-result = adapter.run_turn(
-    runtime=agent_runtime,
-    request=user_request,
-    turn_context=turn_context
+result = await adapter.run_turn(
+    context=turn_context,
+    payload={"prompt": user_request},
+    agent_callable=agent_function
 )
 
 # User A's memories never leak to User B
-# Recall filters by session_id automatically
+# Bank ID is derived from tenant_id:user_id:agent_name
 ```
 
-The adapter ensures memory is always scoped correctly—critical for multi-tenant systems.
+The adapter uses **tenant_id** and **user_id** to construct isolated memory banks. Memories stored by one user are never recalled for another—critical for multi-tenant systems.
 
 ## Best Practices
 
