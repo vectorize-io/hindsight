@@ -102,13 +102,35 @@ describe("deriveBankId", () => {
     expect(deriveBankId(config, "/home/user/proj")).toBe("dev-opencode");
   });
 
-  describe("git-aware project resolution", () => {
+  describe("project field stays directory-only (backwards compatibility)", () => {
+    it("uses raw directory basename for `project` even inside a git repo", () => {
+      mockExec.mockReturnValueOnce("/home/user/myproj/.git\n" as never);
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "project"],
+      });
+      expect(deriveBankId(config, "/tmp/worktrees/myproj-feature-x")).toBe(
+        "opencode::myproj-feature-x"
+      );
+    });
+
+    it("does not invoke git when only `project` is in the granularity", () => {
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "project"],
+      });
+      deriveBankId(config, "/home/user/myproj");
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("gitProject field (git-aware)", () => {
     it("uses main worktree basename when running inside a regular clone", () => {
       // `git rev-parse --git-common-dir` returns the main repo's .git path.
       mockExec.mockReturnValueOnce("/home/user/myproj/.git\n" as never);
       const config = makeConfig({
         dynamicBankId: true,
-        dynamicBankGranularity: ["agent", "project"],
+        dynamicBankGranularity: ["agent", "gitProject"],
       });
       expect(deriveBankId(config, "/home/user/myproj")).toBe("opencode::myproj");
     });
@@ -120,7 +142,7 @@ describe("deriveBankId", () => {
         .mockReturnValueOnce("/home/user/myproj/.git\n" as never);
       const config = makeConfig({
         dynamicBankId: true,
-        dynamicBankGranularity: ["agent", "project"],
+        dynamicBankGranularity: ["agent", "gitProject"],
       });
       const main = deriveBankId(config, "/home/user/myproj");
       const linked = deriveBankId(config, "/tmp/worktrees/myproj-feature-x");
@@ -132,7 +154,7 @@ describe("deriveBankId", () => {
       mockExec.mockReturnValueOnce("/srv/git/myrepo.git\n" as never);
       const config = makeConfig({
         dynamicBankId: true,
-        dynamicBankGranularity: ["project"],
+        dynamicBankGranularity: ["gitProject"],
       });
       expect(deriveBankId(config, "/srv/git/myrepo.git")).toBe("myrepo.git");
     });
@@ -143,7 +165,7 @@ describe("deriveBankId", () => {
       });
       const config = makeConfig({
         dynamicBankId: true,
-        dynamicBankGranularity: ["project"],
+        dynamicBankGranularity: ["gitProject"],
       });
       expect(deriveBankId(config, "/tmp/random")).toBe("random");
     });
@@ -154,13 +176,24 @@ describe("deriveBankId", () => {
       expect(mockExec).not.toHaveBeenCalled();
     });
 
-    it("does not invoke git when project field is not in the granularity", () => {
+    it("does not invoke git when gitProject is not in the granularity", () => {
       const config = makeConfig({
         dynamicBankId: true,
         dynamicBankGranularity: ["agent", "channel"],
       });
       expect(deriveBankId(config, "/home/user/myproj")).toBe("opencode::default");
       expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it("can combine project and gitProject as separate segments", () => {
+      mockExec.mockReturnValueOnce("/home/user/myproj/.git\n" as never);
+      const config = makeConfig({
+        dynamicBankId: true,
+        dynamicBankGranularity: ["agent", "project", "gitProject"],
+      });
+      expect(deriveBankId(config, "/tmp/worktrees/myproj-feature-x")).toBe(
+        "opencode::myproj-feature-x::myproj"
+      );
     });
   });
 });

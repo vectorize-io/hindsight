@@ -4,12 +4,13 @@
  * Port of Claude Code plugin's bank.py, adapted for OpenCode's context model.
  *
  * Dimensions for dynamic bank IDs:
- *   - agent   → configured name or "opencode"
- *   - project → derived from the main worktree's basename when inside a git
- *               repository (so all linked worktrees of the same repo share a
- *               single memory bank), falling back to the working directory
- *               basename when git is unavailable or the directory is not a
- *               repo.
+ *   - agent      → configured name or "opencode"
+ *   - project    → derived from the working directory basename
+ *   - gitProject → derived from the main worktree's basename when inside a
+ *                  git repository (so all linked worktrees of the same repo
+ *                  share a single memory bank). Falls back to the working
+ *                  directory basename when git is unavailable or the
+ *                  directory is not a repo.
  */
 
 import { basename, dirname } from "node:path";
@@ -19,7 +20,7 @@ import { debugLog } from "./config.js";
 import type { HindsightClient } from "@vectorize-io/hindsight-client";
 
 const DEFAULT_BANK_NAME = "opencode";
-const VALID_FIELDS = new Set(["agent", "project", "channel", "user"]);
+const VALID_FIELDS = new Set(["agent", "project", "gitProject", "channel", "user"]);
 
 /**
  * Resolve the main worktree root for a directory inside a git repository.
@@ -59,7 +60,7 @@ function getProjectRootFromGit(directory: string): string | null {
   }
 }
 
-function deriveProjectName(directory: string): string {
+function deriveGitProjectName(directory: string): string {
   const projectRoot = getProjectRootFromGit(directory);
   if (projectRoot) return basename(projectRoot);
   return directory ? basename(directory) : "unknown";
@@ -95,11 +96,12 @@ export function deriveBankId(config: HindsightConfig, directory: string): string
   const channelId = process.env.HINDSIGHT_CHANNEL_ID || "";
   const userId = process.env.HINDSIGHT_USER_ID || "";
 
-  // Lazy resolution so we don't spawn `git` for `project` when the field
+  // Lazy resolution so we don't spawn `git` for `gitProject` when the field
   // isn't part of the configured granularity.
   const fieldResolvers: Record<string, () => string> = {
     agent: () => config.agentName || "opencode",
-    project: () => deriveProjectName(directory),
+    project: () => (directory ? basename(directory) : "unknown"),
+    gitProject: () => deriveGitProjectName(directory),
     channel: () => channelId || "default",
     user: () => userId || "anonymous",
   };

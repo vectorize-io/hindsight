@@ -145,7 +145,17 @@ For multi-project setups, enable dynamic bank ID derivation:
 export HINDSIGHT_DYNAMIC_BANK_ID=true
 ```
 
-The bank ID is composed from granularity fields (default: `agent::project`). Supported fields: `agent`, `project`, `channel`, `user`.
+The bank ID is composed from granularity fields (default: `agent::project`). Supported fields: `agent`, `project`, `gitProject`, `channel`, `user`.
+
+- `project` uses the working directory basename. With this field, separate git worktrees of the same repository end up with different bank IDs because their paths differ.
+- `gitProject` resolves to the main worktree's basename via `git rev-parse --git-common-dir`, so all linked worktrees of the same repository share a single bank. Falls back to the working directory basename when git is unavailable or the directory is not a repo. Use this in place of `project` if you want worktrees to share memory:
+
+```json
+{
+  "dynamicBankId": true,
+  "dynamicBankGranularity": ["agent", "gitProject"]
+}
+```
 
 **Note:** The bank ID is derived once when the plugin loads, from environment variables set before OpenCode starts. These dimensions are process-scoped — they don't change per session within a running OpenCode process. For per-user isolation, set the env vars before launching each user's OpenCode instance:
 
