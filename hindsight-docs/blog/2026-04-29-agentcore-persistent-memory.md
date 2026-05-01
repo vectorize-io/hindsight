@@ -10,9 +10,9 @@ hide_table_of_contents: true
 
 ![Multi-Turn Agent Memory with AWS AgentCore: Remember Across Sessions](/img/blog/agentcore-persistent-memory.png)
 
-AWS AgentCore (Amazon Bedrock Agents) excels at building intelligent agents that reason and act across multiple turns. But agents without persistent memory struggle with multi-session workflows. Hindsight now integrates with AgentCore as a runtime adapter that automatically captures agent context, decisions, and learnings—persisting them across sessions and enabling agents to build long-term institutional knowledge.
-
 <!-- truncate -->
+
+AWS AgentCore (Amazon Bedrock Agents) excels at building intelligent agents that reason and act across multiple turns. But agents without persistent memory struggle with multi-session workflows. Hindsight now integrates with AgentCore as a runtime adapter that automatically captures agent context, decisions, and learnings—persisting them across sessions and enabling agents to build long-term institutional knowledge.
 
 ## Why Your Agents Need Memory
 
