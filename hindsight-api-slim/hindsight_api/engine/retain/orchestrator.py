@@ -1309,7 +1309,14 @@ async def _streaming_retain_batch(
                         if isinstance(row["result_metadata"], dict)
                         else json.loads(row["result_metadata"])
                     )
-                    if meta.get("facts_committed"):
+                    committed_doc_ids = meta.get("facts_committed_document_ids") or []
+                    document_ids = meta.get("document_ids") or []
+                    legacy_single_doc_checkpoint = (
+                        meta.get("facts_committed")
+                        and not committed_doc_ids
+                        and (len(document_ids) <= 1 or document_ids == [effective_doc_id])
+                    )
+                    if effective_doc_id in committed_doc_ids or legacy_single_doc_checkpoint:
                         facts_already_committed = True
                         log_buffer.append(
                             f"[streaming] Recovery: facts already committed ({meta.get('unit_ids_count', '?')} units), "
@@ -1375,10 +1382,21 @@ async def _streaming_retain_batch(
                     await conn.execute(
                         f"""
                         UPDATE {fq_table("async_operations")}
-                        SET result_metadata = result_metadata || $1::jsonb, updated_at = now()
-                        WHERE operation_id = $2
+                        SET result_metadata = jsonb_set(
+                            result_metadata || $1::jsonb,
+                            '{{facts_committed_document_ids}}',
+                            CASE
+                                WHEN COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) @> $2::jsonb
+                                    THEN result_metadata->'facts_committed_document_ids'
+                                ELSE COALESCE(result_metadata->'facts_committed_document_ids', '[]'::jsonb) || $2::jsonb
+                            END,
+                            true
+                        ),
+                        updated_at = now()
+                        WHERE operation_id = $3
                         """,
                         json.dumps({"facts_committed": True, "unit_ids_count": len(all_unit_ids)}),
+                        json.dumps([effective_doc_id]),
                         uuid.UUID(operation_id),
                     )
                 log_buffer.append(f"[streaming] Checkpoint: {len(all_unit_ids)} facts committed, ANN pass next")

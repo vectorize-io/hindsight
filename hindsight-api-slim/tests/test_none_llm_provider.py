@@ -9,6 +9,7 @@ Verifies that when HINDSIGHT_API_LLM_PROVIDER=none:
 - NoneLLM.call() raises LLMNotAvailableError
 """
 
+import asyncio
 import os
 from datetime import datetime, timezone
 
@@ -25,9 +26,40 @@ from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 
 
+class _TestEmbeddings:
+    provider_name = "test"
+    dimension = 384
+
+    async def initialize(self) -> None:
+        return None
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * self.dimension for _ in texts]
+
+
+class _TestCrossEncoder:
+    provider_name = "test"
+
+    async def initialize(self) -> None:
+        return None
+
+    async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        return [1.0 for _ in pairs]
+
+
 @pytest.fixture(scope="function")
 def request_context():
     return RequestContext()
+
+
+@pytest.fixture(scope="function")
+def embeddings():
+    return _TestEmbeddings()
+
+
+@pytest.fixture(scope="function")
+def cross_encoder():
+    return _TestCrossEncoder()
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -127,6 +159,36 @@ async def test_retain_works_with_none_provider(none_memory, request_context):
     )
 
     assert len(unit_ids) > 0, "Should store chunks even without an LLM"
+
+
+@pytest.mark.asyncio
+async def test_async_batch_retain_tracks_all_document_ids_with_none_provider(none_memory, request_context):
+    """Async batch retain should materialize every distinct per-item document_id."""
+    bank_id = f"test_none_async_batch_docs_{datetime.now(timezone.utc).timestamp()}"
+    contents = [
+        {"content": "Alpha document content for async batch retain.", "document_id": "doc-alpha"},
+        {"content": "Beta document content for async batch retain.", "document_id": "doc-beta"},
+    ]
+
+    result = await none_memory.submit_async_retain(
+        bank_id=bank_id,
+        contents=contents,
+        request_context=request_context,
+    )
+    await asyncio.sleep(0.1)
+
+    status = await none_memory.get_operation_status(
+        bank_id=bank_id,
+        operation_id=result["operation_id"],
+        request_context=request_context,
+    )
+    assert status["status"] == "completed", status
+
+    alpha = await none_memory.get_document("doc-alpha", bank_id, request_context=request_context)
+    beta = await none_memory.get_document("doc-beta", bank_id, request_context=request_context)
+
+    assert alpha["memory_unit_count"] > 0
+    assert beta["memory_unit_count"] > 0
 
 
 @pytest.mark.asyncio
