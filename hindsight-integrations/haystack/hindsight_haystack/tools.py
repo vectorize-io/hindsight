@@ -626,6 +626,8 @@ class HindsightToolset(Toolset):
         include_reflect: Include the reflect tool (default True).
         auto_recall: Auto-recall memories into system prompt before each turn.
         auto_retain: Auto-retain user/assistant messages after each turn.
+        max_recall_results: Maximum number of memories to inject into the
+            system prompt during auto-recall (default 10).
         memory_prompt_template: Template for injecting memories into system
             prompt. Must contain ``{memories}`` placeholder.
     """
@@ -658,6 +660,7 @@ class HindsightToolset(Toolset):
         include_reflect: bool = True,
         auto_recall: bool = False,
         auto_retain: bool = False,
+        max_recall_results: int = 10,
         memory_prompt_template: str = DEFAULT_MEMORY_PROMPT,
     ):
         backend_kwargs = _build_backend_kwargs(
@@ -687,6 +690,7 @@ class HindsightToolset(Toolset):
         self._backend_kwargs = backend_kwargs
         self._auto_recall = auto_recall
         self._auto_retain = auto_retain
+        self._max_recall_results = max_recall_results
         self._memory_prompt_template = memory_prompt_template
         self._include_retain = include_retain
         self._include_recall = include_recall
@@ -702,11 +706,22 @@ class HindsightToolset(Toolset):
         super().__init__(tools=tools)
 
     def _recall_for_prompt(self, query: str) -> str:
-        """Recall memories and format for system prompt injection."""
-        result = self._backend.recall_memory(query)
-        if result == "No relevant memories found." or result.startswith("Failed to"):
+        """Recall memories and format for system prompt injection.
+
+        Caps results at ``max_recall_results`` to prevent unbounded prompt growth.
+        """
+        try:
+            self._backend._ensure_bank()
+            response = _run_sync(self._backend._client.arecall(**self._backend._recall_kwargs(query)))
+            if not response.results:
+                return ""
+            lines = []
+            for i, r in enumerate(response.results[: self._max_recall_results], 1):
+                lines.append(f"{i}. {r.text}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"Auto-recall failed: {e}")
             return ""
-        return result
 
     @staticmethod
     def _extract_last_user_text(messages: list[ChatMessage]) -> str:
@@ -727,12 +742,20 @@ class HindsightToolset(Toolset):
         return memory_block
 
     def _retain_messages(self, messages: list[ChatMessage]) -> None:
-        """Retain user and assistant messages to Hindsight."""
+        """Retain user and assistant messages to Hindsight.
+
+        Includes message role in metadata so recalled turns are distinguishable.
+        """
         for msg in messages:
             role = msg.role.value
             if role in ("user", "assistant") and msg.text:
                 try:
-                    self._backend.retain_memory(msg.text)
+                    self._backend._ensure_bank()
+                    kwargs = self._backend._retain_kwargs(msg.text)
+                    # Merge role metadata with any configured retain_metadata
+                    existing_meta = kwargs.get("metadata") or {}
+                    kwargs["metadata"] = {**existing_meta, "role": role, "source": "haystack"}
+                    _run_sync(self._backend._client.aretain(**kwargs))
                 except Exception as e:
                     logger.error(f"Auto-retain failed for {role} message: {e}")
 
@@ -838,6 +861,7 @@ class HindsightToolset(Toolset):
                 "include_reflect": self._include_reflect,
                 "auto_recall": self._auto_recall,
                 "auto_retain": self._auto_retain,
+                "max_recall_results": self._max_recall_results,
                 "memory_prompt_template": self._memory_prompt_template,
             },
         }
@@ -854,5 +878,6 @@ class HindsightToolset(Toolset):
             include_reflect=inner.get("include_reflect", True),
             auto_recall=inner.get("auto_recall", False),
             auto_retain=inner.get("auto_retain", False),
+            max_recall_results=inner.get("max_recall_results", 10),
             memory_prompt_template=inner.get("memory_prompt_template", DEFAULT_MEMORY_PROMPT),
         )

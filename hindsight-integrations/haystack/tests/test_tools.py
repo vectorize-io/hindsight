@@ -952,6 +952,33 @@ class TestToolsetAutoRecall:
         toolset.run(agent, messages=[ChatMessage.from_user("hello")])
         client.arecall.assert_not_called()
 
+    def test_auto_recall_respects_max_recall_results(self):
+        client = _mock_client()
+        # Return many results
+        client.arecall.return_value = _mock_recall_response(
+            [f"Memory {i}" for i in range(20)]
+        )
+        toolset = HindsightToolset(
+            bank_id="test",
+            client=client,
+            auto_recall=True,
+            max_recall_results=3,
+        )
+
+        agent = MagicMock()
+        agent.system_prompt = "base"
+        agent.run.return_value = {
+            "messages": [],
+            "last_message": ChatMessage.from_assistant("ok"),
+        }
+
+        toolset.run(agent, messages=[ChatMessage.from_user("hello")])
+        call_kwargs = agent.run.call_args[1]
+        prompt = call_kwargs["system_prompt"]
+        # Should only have 3 memories, not 20
+        assert "3. Memory 2" in prompt
+        assert "4." not in prompt
+
     def test_auto_recall_no_memories_passes_base_prompt(self):
         client = _mock_client()
         client.arecall.return_value = _mock_recall_response([])
@@ -998,6 +1025,30 @@ class TestToolsetAutoRetain:
         calls = [c[1]["content"] for c in client.aretain.call_args_list]
         assert "My favorite color is blue." in calls
         assert "I'll remember that." in calls
+
+    def test_auto_retain_includes_role_metadata(self):
+        client = _mock_client()
+        client.aretain.return_value = _mock_retain_response()
+        toolset = HindsightToolset(
+            bank_id="test", client=client, auto_retain=True
+        )
+
+        agent = MagicMock()
+        agent.system_prompt = None
+        last_msg = ChatMessage.from_assistant("ok")
+        agent.run.return_value = {
+            "messages": [last_msg],
+            "last_message": last_msg,
+        }
+
+        toolset.run(agent, messages=[ChatMessage.from_user("hello")])
+
+        # Check metadata includes role
+        user_call = client.aretain.call_args_list[0][1]
+        assert user_call["metadata"]["role"] == "user"
+        assert user_call["metadata"]["source"] == "haystack"
+        assistant_call = client.aretain.call_args_list[1][1]
+        assert assistant_call["metadata"]["role"] == "assistant"
 
     def test_auto_retain_skips_system_messages(self):
         client = _mock_client()
