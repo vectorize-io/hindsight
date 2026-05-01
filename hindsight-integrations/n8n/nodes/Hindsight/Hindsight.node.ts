@@ -27,7 +27,7 @@ export class Hindsight implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Hindsight',
 		name: 'hindsight',
-		icon: 'file:hindsight.svg',
+		icon: 'file:hindsight.png',
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"]}}',

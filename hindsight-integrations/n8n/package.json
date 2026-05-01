@@ -16,7 +16,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && npm run copy-icons",
-    "copy-icons": "mkdir -p dist/nodes/Hindsight && cp nodes/Hindsight/*.svg dist/nodes/Hindsight/",
+    "copy-icons": "mkdir -p dist/nodes/Hindsight && cp nodes/Hindsight/hindsight.* dist/nodes/Hindsight/",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",
