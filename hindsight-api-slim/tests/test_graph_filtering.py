@@ -4,6 +4,8 @@ Tests for server-side filtering in the graph API endpoint.
 Verifies that q (text search) and tags filters work correctly
 when passed as query parameters to GET /v1/default/banks/{bank_id}/graph.
 """
+
+import uuid
 from datetime import datetime
 
 import httpx
@@ -69,9 +71,7 @@ async def test_graph_q_filter_returns_matching(api_client, test_bank_id):
     assert response.status_code == 200
     data = response.json()
     texts = [row["text"] for row in data["table_rows"]]
-    assert all("Alice" in t or "alice" in t.lower() for t in texts), (
-        f"Expected only Alice memories, got: {texts}"
-    )
+    assert all("Alice" in t or "alice" in t.lower() for t in texts), f"Expected only Alice memories, got: {texts}"
     assert not any("Bob" in t for t in texts)
 
 
@@ -147,6 +147,106 @@ async def test_graph_q_and_tags_filter_combined(api_client, test_bank_id):
     assert any("hiking" in t.lower() for t in texts)
     assert not any("coding" in t.lower() for t in texts)
     assert not any("Bob" in t for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_graph_document_filter_includes_observations_via_source_memories(
+    memory, api_client, test_bank_id, request_context
+):
+    """Filtering the graph by document_id surfaces observations whose source
+    memories belong to that document.
+
+    Observations are consolidated rows that have no document_id of their own,
+    so a naive equality filter on memory_units.document_id excludes them and
+    leaves the document detail's Observations tab perpetually empty even when
+    the bank has observations consolidated from facts in that document.
+    """
+    bank_id = test_bank_id
+    document_id = f"doc-{uuid.uuid4().hex[:8]}"
+
+    await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+    fact_id = uuid.uuid4()
+    observation_id = uuid.uuid4()
+    other_fact_id = uuid.uuid4()
+    unrelated_observation_id = uuid.uuid4()
+
+    async with memory._pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO documents (id, bank_id, original_text, content_hash)
+            VALUES ($1, $2, $3, $4)
+            """,
+            document_id,
+            bank_id,
+            "doc body",
+            "hash-test",
+        )
+
+        # World fact tied to the document.
+        await conn.execute(
+            """
+            INSERT INTO memory_units (id, bank_id, text, fact_type, document_id, history)
+            VALUES ($1, $2, $3, 'world', $4, '[]'::jsonb)
+            """,
+            fact_id,
+            bank_id,
+            "fact in document",
+            document_id,
+        )
+
+        # Unrelated fact NOT tied to the document.
+        await conn.execute(
+            """
+            INSERT INTO memory_units (id, bank_id, text, fact_type, history)
+            VALUES ($1, $2, $3, 'world', '[]'::jsonb)
+            """,
+            other_fact_id,
+            bank_id,
+            "unrelated fact",
+        )
+
+        # Observation consolidated from the document fact.
+        await conn.execute(
+            """
+            INSERT INTO memory_units (
+                id, bank_id, text, fact_type, source_memory_ids, history, proof_count
+            )
+            VALUES ($1, $2, $3, 'observation', $4::uuid[], '[]'::jsonb, 1)
+            """,
+            observation_id,
+            bank_id,
+            "observation from document",
+            [fact_id],
+        )
+
+        # Observation that has no overlap with the document; should NOT match.
+        await conn.execute(
+            """
+            INSERT INTO memory_units (
+                id, bank_id, text, fact_type, source_memory_ids, history, proof_count
+            )
+            VALUES ($1, $2, $3, 'observation', $4::uuid[], '[]'::jsonb, 1)
+            """,
+            unrelated_observation_id,
+            bank_id,
+            "observation from elsewhere",
+            [other_fact_id],
+        )
+
+    response = await api_client.get(
+        f"/v1/default/banks/{bank_id}/graph",
+        params={"type": "observation", "document_id": document_id},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    returned_ids = {row["id"] for row in data["table_rows"]}
+    assert str(observation_id) in returned_ids, (
+        f"Observation linked via source memory should be returned; got {returned_ids}"
+    )
+    assert str(unrelated_observation_id) not in returned_ids, (
+        "Unrelated observation must not leak into document-scoped results"
+    )
 
 
 @pytest.mark.asyncio

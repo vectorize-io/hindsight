@@ -151,8 +151,11 @@ async def test_get_document_nodes_by_fact_type(memory, request_context):
         assert isinstance(nbt["experience"], int)
         assert isinstance(nbt["observation"], int)
 
-        # Total should match memory_unit_count
-        assert nbt["world"] + nbt["experience"] + nbt["observation"] == doc["memory_unit_count"]
+        # memory_unit_count counts facts with document_id set (world + experience).
+        # Observations have no document_id and are counted via source links, so
+        # they are reported separately.
+        assert nbt["world"] + nbt["experience"] == doc["memory_unit_count"]
+        assert nbt["observation"] >= 0
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

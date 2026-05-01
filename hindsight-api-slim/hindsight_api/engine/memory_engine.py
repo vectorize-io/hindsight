@@ -3723,6 +3723,36 @@ class MemoryEngine(MemoryEngineInterface):
 
         return filtered_results, total_tokens
 
+    def _observations_via_source_match_sql(
+        self,
+        source_column: str,
+        source_placeholder: int,
+        bank_placeholder: int | None,
+    ) -> str:
+        """SQL predicate matching `memory_units` rows that are observations
+        whose source memories satisfy ``<source_column> = $source_placeholder``.
+
+        Observations have no `document_id` / `chunk_id` of their own; the link
+        to a source row lives in `source_memory_ids` (PG) or the
+        `observation_sources` junction (Oracle).
+        """
+        if source_column not in ("document_id", "chunk_id"):
+            raise ValueError(f"Unsupported source_column: {source_column!r}")
+        if self._backend.ops.uses_observation_sources_table:
+            bank_clause = f" AND src.bank_id = ${bank_placeholder}" if bank_placeholder else ""
+            return (
+                f"id IN (SELECT os.observation_id "
+                f"FROM {fq_table('observation_sources')} os "
+                f"JOIN {fq_table('memory_units')} src ON src.id = os.source_id "
+                f"WHERE src.{source_column} = ${source_placeholder}{bank_clause})"
+            )
+        bank_clause = f" AND bank_id = ${bank_placeholder}" if bank_placeholder else ""
+        return (
+            f"source_memory_ids && (SELECT array_agg(id) "
+            f"FROM {fq_table('memory_units')} "
+            f"WHERE {source_column} = ${source_placeholder}{bank_clause})"
+        )
+
     async def get_document(
         self,
         document_id: str,
@@ -3749,6 +3779,12 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
+            obs_match = self._observations_via_source_match_sql("document_id", source_placeholder=1, bank_placeholder=2)
+            observation_count_sql = (
+                f"(SELECT COUNT(*) FROM {fq_table('memory_units')} "
+                f"WHERE bank_id = $2 AND fact_type = 'observation' AND {obs_match})"
+            )
+
             # Use a subquery for counts to avoid GROUP BY on CLOB columns
             # (Oracle cannot use CLOB types as comparison keys in GROUP BY).
             doc = await conn.fetchrow(
@@ -3758,14 +3794,13 @@ class MemoryEngine(MemoryEngineInterface):
                        COALESCE(stats.unit_count, 0) as unit_count,
                        COALESCE(stats.world_count, 0) as world_count,
                        COALESCE(stats.experience_count, 0) as experience_count,
-                       COALESCE(stats.observation_count, 0) as observation_count
+                       COALESCE({observation_count_sql}, 0) as observation_count
                 FROM {fq_table("documents")} d
                 LEFT JOIN (
                     SELECT mu.document_id, mu.bank_id,
                            COUNT(mu.id) as unit_count,
                            COUNT(CASE WHEN mu.fact_type = 'world' THEN 1 END) as world_count,
-                           COUNT(CASE WHEN mu.fact_type = 'experience' THEN 1 END) as experience_count,
-                           COUNT(CASE WHEN mu.fact_type = 'observation' THEN 1 END) as observation_count
+                           COUNT(CASE WHEN mu.fact_type = 'experience' THEN 1 END) as experience_count
                     FROM {fq_table("memory_units")} mu
                     WHERE mu.document_id = $1 AND mu.bank_id = $2
                     GROUP BY mu.document_id, mu.bank_id
@@ -4478,8 +4513,10 @@ class MemoryEngine(MemoryEngineInterface):
             query_params = []
             param_count = 0
 
+            bank_id_placeholder: int | None = None
             if bank_id:
                 param_count += 1
+                bank_id_placeholder = param_count
                 query_conditions.append(f"bank_id = ${param_count}")
                 query_params.append(bank_id)
 
@@ -4490,12 +4527,20 @@ class MemoryEngine(MemoryEngineInterface):
 
             if document_id:
                 param_count += 1
-                query_conditions.append(f"document_id = ${param_count}")
+                obs_match = self._observations_via_source_match_sql(
+                    "document_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
+                )
+                query_conditions.append(
+                    f"(document_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))"
+                )
                 query_params.append(document_id)
 
             if chunk_id:
                 param_count += 1
-                query_conditions.append(f"chunk_id = ${param_count}")
+                obs_match = self._observations_via_source_match_sql(
+                    "chunk_id", source_placeholder=param_count, bank_placeholder=bank_id_placeholder
+                )
+                query_conditions.append(f"(chunk_id = ${param_count} OR (fact_type = 'observation' AND {obs_match}))")
                 query_params.append(chunk_id)
 
             if q:
