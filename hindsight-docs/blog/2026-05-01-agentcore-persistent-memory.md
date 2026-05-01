@@ -1,7 +1,7 @@
 ---
 title: "Multi-Turn Agent Memory with AWS AgentCore: Remember Across Sessions"
 authors: [benfrank241]
-date: 2026-04-29T16:00:00Z
+date: 2026-05-01T16:00:00Z
 tags: [integrations, aws, agentcore, bedrock, agents, memory, guide]
 description: "Add persistent memory to AWS AgentCore agents with Hindsight. Agents remember context, decisions, and learnings across multi-turn conversations and sessions."
 image: /img/blog/agentcore-persistent-memory.png
