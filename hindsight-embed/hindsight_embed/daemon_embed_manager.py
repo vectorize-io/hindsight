@@ -47,8 +47,8 @@ def _detach_popen_kwargs(log_handle) -> dict:
     write from the child crashes with "handle is invalid".
 
     If a `log_handle` is supplied, stdout/stderr are routed to it on both
-    platforms (matches the existing UI-spawn behavior). If `None`, the
-    POSIX child inherits the parent's fds (legacy daemon-spawn behavior).
+    platforms. If `None`, the POSIX child inherits the parent's fds (only
+    used when the caller intentionally wants to surface child output).
     """
     if platform.system() == "Windows":
         # Windows-only constants; use getattr so type checkers (e.g. ty) running
@@ -387,19 +387,13 @@ class DaemonEmbedManager(EmbedManager):
             cmd.extend(extra_args)
 
         try:
-            # Start daemon. On Windows we must redirect stdout/stderr before
-            # the child Python runs; DETACHED_PROCESS leaves it without a
-            # console so any print/log to stdio would raise. We open the
-            # daemon log for append here and hand it to the child; Python's
-            # own logging (via HINDSIGHT_API_DAEMON_LOG) will append to the
-            # same path once logging initializes. On POSIX we keep the
-            # existing inherit-fd behavior to avoid touching working code.
-            if platform.system() == "Windows":
-                daemon_log_handle = open(daemon_log, "ab")
-                popen_kwargs = _detach_popen_kwargs(daemon_log_handle)
-            else:
-                daemon_log_handle = None
-                popen_kwargs = _detach_popen_kwargs(None)
+            # Start daemon. Redirect stdout/stderr to the daemon log so that
+            # any output from the subprocess (e.g. uvx download progress,
+            # Python library init messages) does not leak into the parent
+            # process terminal. Python's own logging (via
+            # HINDSIGHT_API_DAEMON_LOG) will append to the same path.
+            daemon_log_handle = open(daemon_log, "ab")
+            popen_kwargs = _detach_popen_kwargs(daemon_log_handle)
             subprocess.Popen(cmd, env=env, **popen_kwargs)
 
             # Wait for daemon to be ready with rich UI
