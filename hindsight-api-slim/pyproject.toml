@@ -28,12 +28,19 @@ dependencies = [
     "PyJWT[crypto]>=2.8.0",
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-instrumentation-fastapi>=0.41b0",
-    "opentelemetry-exporter-prometheus>=0.41b0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
-    "opentelemetry-semantic-conventions>=0.41b0",
+    # opentelemetry-exporter-prometheus 0.62b1 calls
+    # MetricReader.__init__(otel_component_type=…), a kwarg added in
+    # opentelemetry-sdk 1.41.0 (open-telemetry/opentelemetry-python#4970).
+    # Without these floors, pip happily resolves a 0.62b1 exporter against
+    # an older sdk and metric initialisation crashes at startup with
+    # "MetricReader.__init__() got an unexpected keyword argument
+    # 'otel_component_type'".  Keep all six pins moving together.
+    "opentelemetry-api>=1.41.0",
+    "opentelemetry-sdk>=1.41.0",
+    "opentelemetry-instrumentation-fastapi>=0.62b1",
+    "opentelemetry-exporter-prometheus>=0.62b1",
+    "opentelemetry-exporter-otlp-proto-http>=1.41.0",
+    "opentelemetry-semantic-conventions>=0.62b1",
     "dateparser>=1.2.2",
     "google-genai>=1.0.0",
     "google-auth>=2.0.0",
