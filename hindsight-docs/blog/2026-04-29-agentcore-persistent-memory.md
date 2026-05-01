@@ -14,70 +14,91 @@ AWS AgentCore (Amazon Bedrock Agents) excels at building intelligent agents that
 
 <!-- truncate -->
 
-## Why Persistent Memory Matters for AgentCore
+## Why Your Agents Need Memory
 
-AgentCore agents are powerful within a single session, but they face a critical limitation:
-- Each new session starts fresh, losing context from previous interactions
-- Agents can't learn from past decisions or incorporate prior insights
-- Users must re-explain context and history constantly
-- Multi-turn workflows lose continuity when agents restart
+Imagine a customer support agent. The first time a customer reaches out, the agent solves their issue. Days later, the same customer returns with a follow-up question. **Without memory, the agent forgets everything.** The customer has to re-explain their context, the agent re-diagnoses the problem, and you lose all the learning from the first interaction.
 
-Hindsight solves this with the **HindsightRuntimeAdapter**—a middleware that intercepts each agent turn, extracts relevant context, and stores it as persistent memory. Your agents now remember across sessions.
+AgentCore sessions are ephemeral—they spin up to handle a request and tear down afterward. The next customer request starts with a fresh agent that knows nothing about what happened before. This works for stateless transactions, but it breaks for agents that should grow smarter over time.
 
-## How Hindsight Integrates with AgentCore
+Hindsight solves this by automatically capturing what your agent learns and making it available in the next session. Your agent remembers customer context, previous solutions, and patterns it has discovered—without you writing retrieval code or managing memory manually.
 
-The integration is a single runtime adapter that hooks into AgentCore's turn lifecycle:
+## How Memory Works in Your Agent
 
-1. **Before Each Turn** - Recall relevant prior context
-   - Agent retrieves memories related to the incoming request
-   - Context is injected into the agent's reasoning
-   - Agent builds on what it learned previously
+Adding Hindsight to your agent is straightforward. A thin adapter wraps your agent and automates three things:
 
-2. **During the Turn** - Agent acts normally
-   - Processes the user input with recall context
-   - Makes decisions using internal reasoning
-   - Produces outputs and tool calls as usual
+1. **Before handling a request** - Recall what you've learned
+   - Look up relevant memories from previous interactions
+   - Inject that context into the agent's prompt
+   - Agent uses it to make better decisions
 
-3. **After Each Turn** - Persist new learning
-   - Adapter captures agent decisions, outputs, and insights
-   - New facts are stored in the memory bank
-   - Tagged and indexed for future recall
+2. **While handling the request** - Your agent acts normally
+   - Processes the user input with the recalled context
+   - Makes decisions and produces outputs
+   - Everything else stays the same
 
-All three operations happen transparently—your agent code stays unchanged.
+3. **After responding** - Automatically remember what you learned
+   - Extract key insights from the agent's output
+   - Store them for future recall
+   - Indexed and ready for next time
 
-## Setting Up Hindsight with AgentCore
+All of this happens automatically. You configure Hindsight once, and your agent starts remembering.
 
-First, install the Hindsight AgentCore integration:
+## Hindsight vs AgentCore Memory: When to Use Each
+
+AWS AgentCore includes **AgentCoreMemory**, a built-in memory service. Both can persist agent state, but they solve different problems:
+
+| Feature | AgentCoreMemory | Hindsight |
+|---------|-----------------|-----------|
+| **Service Type** | AWS-managed, AWS-native | Specialized memory system |
+| **Operations** | Low-level (write records, query) | High-level (retain, recall, reflect) |
+| **Retrieval** | Explicit API calls required | Automatic pre-turn recall |
+| **Customization** | External pipeline required | Built-in (retention policies, extraction modes, observation synthesis) |
+| **Knowledge** | Raw records | Consolidated observations, mental models, synthesized insights |
+
+**Choose AgentCoreMemory if:**
+- You want AWS-native control and AWS management workflows
+- Your memory needs are simple (store/retrieve records)
+- You prefer AWS's standard strategies and namespaces
+
+**Choose Hindsight if:**
+- You want specialized memory operations (retain, recall, reflect for synthesis)
+- You need richer retrieval (observations, mental models, consolidated knowledge)
+- You want automation to handle both reads and writes without explicit API calls
+- You need built-in customization (extraction policies, retention rules, observation synthesis)
+
+**In this integration:** Hindsight automates the full lifecycle—before each turn, the adapter automatically recalls memories; after each turn, it automatically retains insights. AgentCore's post-event retention requires explicit writes; read-side retrieval requires explicit API calls.
+
+## Adding Memory to Your Agent
+
+**Step 1: Install the integration**
 
 ```bash
 pip install hindsight-agentcore
 ```
 
-Then configure it globally and create an adapter:
+**Step 2: Configure Hindsight** (once, at startup)
 
 ```python
 from hindsight_agentcore import HindsightRuntimeAdapter, TurnContext, configure
 import os
 
-# Configure Hindsight once (globally)
 configure(
     hindsight_api_url="https://api.hindsight.vectorize.io",
     api_key=os.environ["HINDSIGHT_API_KEY"]
 )
 
-# Create the adapter
 adapter = HindsightRuntimeAdapter(agent_name="my-support-agent")
 ```
 
-In your AgentCore Runtime handler, create a TurnContext and call `run_turn`:
+**Step 3: Wrap your agent's handler**
 
 ```python
-# Inside your AgentCore event handler
+# Your AgentCore event handler
 context = TurnContext(
     runtime_session_id=event["sessionId"],
     user_id=event["userId"],
     agent_name="my-support-agent",
-    tenant_id=event.get("tenantId")
+    tenant_id=event.get("tenantId")  # optional
 )
 
 result = await adapter.run_turn(
@@ -87,7 +108,7 @@ result = await adapter.run_turn(
 )
 ```
 
-The adapter automatically recalls relevant context before execution and retains learnings after. Your agent function stays clean—it just receives the payload plus recalled memories.
+That's it. The adapter now automatically recalls memories before each request and stores new insights after. Your agent code doesn't change—it just gets smarter over time.
 
 ## Real-World Use Cases
 
@@ -310,25 +331,45 @@ The adapter uses **tenant_id** and **user_id** to construct isolated memory bank
 
 ## Best Practices
 
-**Scope Memory Carefully:** Use session_id and conversation_id to isolate user contexts. In multi-tenant systems, session_id is the primary isolation boundary.
+**Set user_id consistently:** The user_id field in TurnContext is your primary isolation boundary. Use a stable user identifier that remains the same across sessions for the same person.
 
-**Tag for Organization:** Apply tags like `["customer", "account-123"]` or `["analysis", "q1-2026"]` to organize memories by context.
+**Add tenant_id for multi-tenant apps:** If you're building for multiple customers, use tenant_id to ensure memories never leak between customers.
 
-**Let the Adapter Handle It:** Don't manually call retain/recall. The adapter handles memory operations transparently during turn processing.
+**Start simple, add features later:** You don't need to optimize memory immediately. Configure Hindsight, add the adapter, and let it run. Review the Hindsight Cloud dashboard later to see what's being stored and refine as needed.
 
-**Monitor Memory Growth:** In long-running systems, review stored memories periodically to ensure they remain relevant and don't accumulate noise.
+**Monitor in production:** In high-volume systems, periodically check the Hindsight dashboard to ensure the agent is storing relevant memories and not accumulating noise.
 
-**Test with Realistic Sessions:** Test multi-session workflows to verify the agent correctly recalls and applies prior context.
+**Test with multiple sessions:** Create a test scenario where your agent handles a request, the session ends, a new session starts with the same user, and a follow-up request comes in. Verify that the agent recalls the prior context and uses it correctly.
+
+## Where to Deploy Hindsight
+
+Hindsight works with two deployment options—choose based on your infrastructure preferences:
+
+**Hindsight Cloud** (Recommended for Getting Started)
+- Fully managed by Hindsight
+- No infrastructure to operate
+- Automatic scaling and backups
+- Authentication via API key
+- Best for: Teams that want to focus on building, not running databases
+
+**Self-Hosted Hindsight OSS** (For Advanced Deployments)
+- Run Hindsight in your AWS account (EC2, ECS, Lambda)
+- Database: PostgreSQL-compatible (RDS, Aurora)
+- Full control over data residency and networking
+- Integrate with your existing infrastructure
+- Best for: Teams with strict data residency requirements or existing database infrastructure
+
+Both options work identically with the AgentCore integration—the adapter doesn't care where Hindsight runs. Start with Hindsight Cloud to get up and running in minutes, then migrate to self-hosted if your needs change.
 
 ## Troubleshooting
 
-**Agent Doesn't Recall Context:** Ensure turn_context is consistent across sessions for the same user/conversation. Check that session_id and conversation_id match expected values.
+**Agent isn't using prior context:** Make sure you're using the same user_id across sessions. If user_id changes between the first request and the follow-up, the agent will have different memory banks. Check your TurnContext creation logic.
 
-**Memory Feels Repetitive:** The agent may be storing overlapping facts. Review stored memories in the Hindsight Cloud dashboard and adjust what gets retained if needed.
+**Memories aren't being stored:** Verify the agent is actually returning output (result must have an "output" key in the result dict). If your agent returns early or errors out, nothing gets stored. Check logs and agent output.
 
-**Performance Degradation:** In high-volume systems, memory recalls may add latency. Monitor recall performance and consider adjusting budget levels (low/mid/high) if needed.
+**I'm seeing old memories:** Review what's stored in the Hindsight Cloud dashboard. The agent may be storing things you don't expect. Once you understand what's stored, you can adjust retention policies or extraction instructions.
 
-**Multi-Tenant Isolation:** Verify TurnContext.session_id is always set and unique per user. Test that one user's memories don't appear in another user's recalls.
+**Multi-user isolation isn't working:** If you're sharing a single adapter across multiple users, make sure each user has a unique user_id in their TurnContext. Memories are keyed by user_id, so if everyone has the same user_id, they'll share memories.
 
 ## Next Steps
 
