@@ -352,6 +352,7 @@ ENV_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 ENV_CONSOLIDATION_RECALL_BUDGET = "HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET"
 ENV_CONSOLIDATION_MAX_ATTEMPTS = "HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS"
+ENV_CONSOLIDATION_OBSERVATION_DEDUP_THRESHOLD = "HINDSIGHT_API_CONSOLIDATION_OBSERVATION_DEDUP_THRESHOLD"
 ENV_OBSERVATIONS_MISSION = "HINDSIGHT_API_OBSERVATIONS_MISSION"
 ENV_MAX_OBSERVATIONS_PER_SCOPE = "HINDSIGHT_API_MAX_OBSERVATIONS_PER_SCOPE"
 ENV_ENABLE_OBSERVATION_HISTORY = "HINDSIGHT_API_ENABLE_OBSERVATION_HISTORY"
@@ -612,6 +613,7 @@ DEFAULT_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION = (
 )
 DEFAULT_OBSERVATIONS_MISSION = None  # Declarative spec of what observations are for this bank
 DEFAULT_MAX_OBSERVATIONS_PER_SCOPE = -1  # Max observations per tag scope (-1 = unlimited)
+DEFAULT_CONSOLIDATION_OBSERVATION_DEDUP_THRESHOLD = 0.92  # Cosine similarity threshold for deduplicating observations during consolidation (0 = disabled)
 
 # Database migrations
 DEFAULT_RUN_MIGRATIONS_ON_STARTUP = True
@@ -1034,6 +1036,7 @@ class HindsightConfig:
     consolidation_source_facts_max_tokens: int
     consolidation_source_facts_max_tokens_per_observation: int
     consolidation_max_attempts: int
+    consolidation_observation_dedup_threshold: float
     observations_mission: str | None
     max_observations_per_scope: int
 
@@ -1182,6 +1185,7 @@ class HindsightConfig:
         "consolidation_max_memories_per_round",
         "consolidation_source_facts_max_tokens",
         "consolidation_source_facts_max_tokens_per_observation",
+        "consolidation_observation_dedup_threshold",
         "observations_mission",
         "max_observations_per_scope",
         # Reflect settings
@@ -1714,6 +1718,12 @@ class HindsightConfig:
             ),
             consolidation_max_attempts=int(
                 os.getenv(ENV_CONSOLIDATION_MAX_ATTEMPTS, str(DEFAULT_CONSOLIDATION_MAX_ATTEMPTS))
+            ),
+            consolidation_observation_dedup_threshold=float(
+                os.getenv(
+                    ENV_CONSOLIDATION_OBSERVATION_DEDUP_THRESHOLD,
+                    str(DEFAULT_CONSOLIDATION_OBSERVATION_DEDUP_THRESHOLD),
+                )
             ),
             observations_mission=os.getenv(ENV_OBSERVATIONS_MISSION) or DEFAULT_OBSERVATIONS_MISSION,
             max_observations_per_scope=int(

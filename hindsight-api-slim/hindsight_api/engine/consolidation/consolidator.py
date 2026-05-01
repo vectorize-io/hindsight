@@ -31,6 +31,7 @@ from ..db_utils import acquire_with_retry
 from ..llm_wrapper import sanitize_llm_output
 from ..memory_engine import Budget, fq_table
 from ..retain import embedding_utils
+from ..sql import create_sql_dialect
 from .prompts import build_batch_consolidation_prompt
 
 if TYPE_CHECKING:
@@ -889,7 +890,8 @@ async def _process_memory_batch(
         if not source_mems:
             continue
         agg = _aggregate_source_fields(source_mems, tags=fact_tags)
-        await _execute_create_action(
+        dedup_threshold = getattr(config, "consolidation_observation_dedup_threshold", 0.0) or 0.0
+        result = await _execute_create_action(
             conn=conn,
             memory_engine=memory_engine,
             bank_id=bank_id,
@@ -901,9 +903,13 @@ async def _process_memory_batch(
             occurred_end=agg.occurred_end,
             mentioned_at=agg.mentioned_at,
             perf=perf,
+            dedup_threshold=dedup_threshold,
         )
         for m in source_mems:
-            per_memory_created.add(str(m["id"]))
+            if result.get("action") == "updated":
+                per_memory_updated.add(str(m["id"]))
+            else:
+                per_memory_created.add(str(m["id"]))
 
     # Build per-memory result dicts for the stats tracker in the outer loop
     results: list[dict[str, Any]] = []
@@ -1060,14 +1066,18 @@ async def _execute_create_action(
     occurred_end: datetime | None = None,
     mentioned_at: datetime | None = None,
     perf: ConsolidationPerfLog | None = None,
-) -> None:
+    dedup_threshold: float = 0.0,
+) -> dict[str, Any]:
     """
     Create a new observation from one or more source memories.
 
     Tags are inherited from the source facts (determined algorithmically, not by LLM)
     to maintain visibility scope.
+
+    Returns:
+        Dict with "action" ("created" or "updated") and "observation_id".
     """
-    await _create_observation_directly(
+    result = await _create_observation_directly(
         conn=conn,
         memory_engine=memory_engine,
         bank_id=bank_id,
@@ -1079,8 +1089,10 @@ async def _execute_create_action(
         occurred_end=occurred_end,
         mentioned_at=mentioned_at,
         perf=perf,
+        dedup_threshold=dedup_threshold,
     )
-    logger.debug(f"Created observation from {len(source_memory_ids)} source memories")
+    logger.debug(f"{result.get('action', 'created').capitalize()} observation from {len(source_memory_ids)} source memories")
+    return result
 
 
 async def _execute_delete_action(
@@ -1335,6 +1347,184 @@ async def _consolidate_batch_with_llm(
     return _BatchLLMResult(obs_count=len(union_observations), prompt_chars=len(prompt), failed=True)
 
 
+async def _find_semantic_duplicate_observation(
+    conn: "Connection",
+    bank_id: str,
+    embedding_str: str,
+    tags: list[str] | None = None,
+    threshold: float = 0.92,
+) -> tuple[str, float] | None:
+    """Find an existing observation with high semantic similarity to the proposed text.
+
+    Uses the SQL dialect's vector_similarity expression for cross-database compatibility.
+    Restricts the search to the same bank and tag scope to prevent cross-tenant leakage.
+
+    Returns:
+        Tuple of (observation_id, similarity) if a duplicate is found above the threshold,
+        else None.
+    """
+    dialect = create_sql_dialect(getattr(conn, "backend_type", "postgresql"))
+    p_emb = dialect.param(1)
+    p_bank = dialect.param(2)
+    p_thresh = dialect.param(3)
+    params: list[Any] = [embedding_str, bank_id, threshold]
+    tags_clause = ""
+    if tags:
+        p_tags = dialect.param(4)
+        tags_clause = f"AND {dialect.array_contains('tags', p_tags)}"
+        params.append(tags)
+
+    similarity_expr = dialect.vector_similarity("embedding", p_emb)
+    order_by = dialect.vector_distance("embedding", p_emb) + " ASC"
+    row = await conn.fetchrow(
+        f"""
+        SELECT id, {similarity_expr} AS similarity
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = {p_bank}
+          AND fact_type = 'observation'
+          {tags_clause}
+          AND {similarity_expr} >= {p_thresh}
+        ORDER BY {order_by}
+        LIMIT 1
+        """,
+        *params,
+    )
+    if row and row["similarity"] is not None:
+        sim = float(row["similarity"])
+        if sim >= threshold:
+            return str(row["id"]), sim
+    return None
+
+
+async def _merge_into_observation(
+    conn: "Connection",
+    memory_engine: "MemoryEngine",
+    bank_id: str,
+    observation_id: str,
+    new_text: str,
+    source_memory_ids: list[uuid.UUID],
+    source_fact_tags: list[str] | None = None,
+    source_occurred_start: datetime | None = None,
+    source_occurred_end: datetime | None = None,
+    source_mentioned_at: datetime | None = None,
+    perf: ConsolidationPerfLog | None = None,
+    embedding_str: str | None = None,
+) -> None:
+    """Merge new source memories into an existing observation, treating it as an update.
+
+    Unlike `_execute_update_action`, this does not require the `MemoryFact` model to be
+    present in the LLM's recall results. It fetches the current state from the DB and
+    performs the same merge logic (source_memory_ids, tags, temporal fields, history).
+
+    If ``embedding_str`` is provided, the embedding is reused instead of regenerating it.
+    """
+    live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
+    if not live_source_memory_ids:
+        logger.debug(
+            f"Merge skipped: all {len(source_memory_ids)} source memories for observation "
+            f"{observation_id} were deleted concurrently"
+        )
+        return
+    source_memory_ids = live_source_memory_ids
+
+    row = await conn.fetchrow(
+        f"""
+        SELECT text, source_memory_ids, tags, occurred_start, occurred_end, mentioned_at
+        FROM {fq_table("memory_units")}
+        WHERE id = $1 AND bank_id = $2 AND fact_type = 'observation'
+        """,
+        uuid.UUID(observation_id),
+        bank_id,
+    )
+    if not row:
+        logger.debug(f"Merge skipped: observation {observation_id} not found in DB")
+        return
+
+    existing_text = row["text"]
+    existing_source_ids = list(row["source_memory_ids"] or [])
+    existing_tags = set(row["tags"] or [])
+    source_tags = set(source_fact_tags or [])
+    merged_tags = list(existing_tags | source_tags)
+    # Deduplicate source memory IDs before concatenation
+    seen = set(existing_source_ids)
+    source_ids = list(existing_source_ids)
+    for sid in source_memory_ids:
+        if sid not in seen:
+            source_ids.append(sid)
+            seen.add(sid)
+
+    config = get_config()
+    history_entry = {
+        "previous_text": existing_text,
+        "previous_tags": list(existing_tags),
+        "previous_occurred_start": row["occurred_start"],
+        "previous_occurred_end": row["occurred_end"],
+        "previous_mentioned_at": row["mentioned_at"],
+        "changed_at": datetime.now(timezone.utc).isoformat(),
+        "new_source_memory_ids": [str(mid) for mid in source_memory_ids],
+    }
+
+    t0 = time.time()
+    if embedding_str is None:
+        embeddings = await embedding_utils.generate_embeddings_batch(memory_engine.embeddings, [new_text])
+        embedding_str = str(embeddings[0]) if embeddings else None
+        if perf:
+            perf.record_timing("embedding", time.time() - t0)
+    # If embedding_str was passed in, no timing is recorded for the reuse
+
+    history_clause = (
+        "history = COALESCE(history, '[]'::jsonb) || $3::jsonb," if config.enable_observation_history else ""
+    )
+
+    t0 = time.time()
+    await conn.execute(
+        f"""
+        UPDATE {fq_table("memory_units")}
+        SET text = $1,
+            embedding = $2::vector,
+            {history_clause}
+            source_memory_ids = $4,
+            proof_count = $5,
+            tags = $10,
+            updated_at = now(),
+            occurred_start = LEAST(occurred_start, COALESCE($7, occurred_start)),
+            occurred_end = GREATEST(occurred_end, COALESCE($8, occurred_end)),
+            mentioned_at = GREATEST(mentioned_at, COALESCE($9, mentioned_at))
+        WHERE id = $6
+        """,
+        new_text,
+        embedding_str,
+        json.dumps([history_entry]),
+        source_ids,
+        len(source_ids),
+        uuid.UUID(observation_id),
+        source_occurred_start,
+        source_occurred_end,
+        source_mentioned_at,
+        merged_tags,
+    )
+    if perf:
+        perf.record_timing("db_write", time.time() - t0)
+
+    if memory_engine._backend.ops.uses_observation_sources_table:
+        obs_uuid = uuid.UUID(observation_id)
+        await conn.execute(
+            f"DELETE FROM {fq_table('observation_sources')} WHERE observation_id = $1",
+            obs_uuid,
+        )
+        if source_ids:
+            await conn.executemany(
+                f"""
+                INSERT INTO {fq_table("observation_sources")} (observation_id, source_id)
+                VALUES ($1, $2)
+                ON CONFLICT (observation_id, source_id) DO NOTHING
+                """,
+                [(obs_uuid, sid) for sid in dict.fromkeys(source_ids)],
+            )
+
+    logger.debug(f"Merged {len(source_memory_ids)} source memories into observation {observation_id}")
+
+
 async def _create_observation_directly(
     conn: "Connection",
     memory_engine: "MemoryEngine",
@@ -1347,8 +1537,15 @@ async def _create_observation_directly(
     occurred_end: datetime | None = None,
     mentioned_at: datetime | None = None,
     perf: ConsolidationPerfLog | None = None,
+    dedup_threshold: float = 0.0,
 ) -> dict[str, Any]:
-    """Create an observation from one or more source memories with pre-processed text."""
+    """Create an observation from one or more source memories with pre-processed text.
+
+    If ``dedup_threshold`` > 0 and an existing observation with cosine similarity >= threshold
+    is found, the new source memories are merged into the existing observation instead of
+    creating a duplicate row. This prevents unbounded observation growth when the LLM
+    repeatedly fails to match new facts to existing observations.
+    """
     live_source_memory_ids = await _filter_live_source_memories(conn, bank_id, source_memory_ids)
     if not live_source_memory_ids:
         logger.debug(f"Create skipped: all {len(source_memory_ids)} source memories were deleted concurrently")
@@ -1361,6 +1558,34 @@ async def _create_observation_directly(
     embedding_str = str(embeddings[0]) if embeddings else None
     if perf:
         perf.record_timing("embedding", time.time() - t0)
+
+    # Deduplication guard: if an existing observation is semantically identical,
+    # merge into it instead of creating a duplicate row.
+    if dedup_threshold > 0 and embedding_str:
+        dup = await _find_semantic_duplicate_observation(
+            conn, bank_id, embedding_str, tags=tags, threshold=dedup_threshold
+        )
+        if dup:
+            dup_id, similarity = dup
+            logger.debug(
+                f"Observation dedup: merging into {dup_id} "
+                f"(similarity={similarity:.3f}, threshold={dedup_threshold})"
+            )
+            await _merge_into_observation(
+                conn=conn,
+                memory_engine=memory_engine,
+                bank_id=bank_id,
+                observation_id=dup_id,
+                new_text=observation_text,
+                source_memory_ids=source_memory_ids,
+                source_fact_tags=tags,
+                source_occurred_start=occurred_start,
+                source_occurred_end=occurred_end,
+                source_mentioned_at=mentioned_at,
+                perf=perf,
+                embedding_str=embedding_str,
+            )
+            return {"action": "updated", "observation_id": dup_id}
 
     # Create the observation as a memory_unit
     now = datetime.now(timezone.utc)
