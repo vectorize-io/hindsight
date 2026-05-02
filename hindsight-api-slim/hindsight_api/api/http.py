@@ -1448,6 +1448,42 @@ class ClearMemoryObservationsResponse(BaseModel):
     deleted_count: int
 
 
+class InvalidateMemoryRequest(BaseModel):
+    """Request model for marking a memory unit as superseded."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "valid_to": "2026-05-02T17:30:00Z",
+                "reason": "Server srv-04 was decommissioned",
+            }
+        }
+    )
+
+    valid_to: str | None = None  # ISO-8601; defaults to now() if omitted
+    reason: str | None = None
+
+
+class InvalidateMemoryResponse(BaseModel):
+    """Response model for invalidating a memory unit."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "0c14e4f1-9eb6-4dde-b0a4-c2e8b3a3e5f1",
+                "valid_to": "2026-05-02T17:30:00.123456+00:00",
+                "fact_type": "world",
+                "preview": "Server srv-04 runs PostgreSQL 17 on Debian 12...",
+            }
+        }
+    )
+
+    id: str
+    valid_to: str | None
+    fact_type: str
+    preview: str
+
+
 class RecoverConsolidationResponse(BaseModel):
     """Response model for recovering failed consolidation."""
 
@@ -5176,6 +5212,72 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidation/recover: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/memories/{memory_id}/invalidate",
+        response_model=InvalidateMemoryResponse,
+        summary="Invalidate a memory unit",
+        description=(
+            "Mark a memory unit as invalidated as of a timestamp. The row stays in the timeline "
+            "(reachable via GET /memories/{id} and GET /memories/{id}/history) but recall queries "
+            "no longer return it once valid_to <= now(). Use when a fact has been superseded "
+            "(server decommissioned, person changed roles, default value changed) — not for "
+            "deletion of accidentally retained data."
+        ),
+        operation_id="invalidate_memory",
+        tags=["Memory"],
+    )
+    @audited("invalidate_memory", request_param="payload")
+    async def api_invalidate_memory(
+        bank_id: str,
+        memory_id: str,
+        payload: InvalidateMemoryRequest | None = None,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Mark a memory unit as superseded as of a timestamp (default: now()).
+
+        The memory is *not* deleted; recall filters it out, but the audit trail
+        remains accessible via the regular get / history endpoints.
+        """
+        from datetime import datetime as _datetime
+
+        valid_to_dt: _datetime | None = None
+        reason: str | None = None
+        if payload is not None:
+            reason = payload.reason
+            if payload.valid_to:
+                try:
+                    valid_to_dt = _datetime.fromisoformat(payload.valid_to.replace("Z", "+00:00"))
+                except ValueError as ve:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"valid_to is not a valid ISO-8601 timestamp: {payload.valid_to!r}",
+                    ) from ve
+        try:
+            result = await app.state.memory.invalidate_memory_unit(
+                bank_id=bank_id,
+                memory_id=memory_id,
+                valid_to=valid_to_dt,
+                reason=reason,
+                request_context=request_context,
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Memory unit '{memory_id}' not found")
+            return InvalidateMemoryResponse(**result)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(
+                f"Error in POST /v1/default/banks/{bank_id}/memories/{memory_id}/invalidate: {error_detail}"
+            )
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(

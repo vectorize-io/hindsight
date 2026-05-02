@@ -4395,6 +4395,84 @@ class MemoryEngine(MemoryEngineInterface):
 
         return {"deleted_count": deleted_count}
 
+    async def invalidate_memory_unit(
+        self,
+        bank_id: str,
+        memory_id: str,
+        *,
+        valid_to: "datetime | None" = None,
+        reason: str | None = None,
+        request_context: "RequestContext",
+    ) -> dict | None:
+        """
+        Mark a memory unit as invalidated as of ``valid_to``. The row remains in
+        the timeline (still reachable via ``GET /memories/{id}`` and
+        ``GET /memories/{id}/history``) but recall queries will no longer
+        surface it once ``valid_to <= now()``.
+
+        Args:
+            bank_id: Bank ID.
+            memory_id: ID of the memory unit to invalidate.
+            valid_to: Timestamp at which the fact stops being valid. Defaults to
+                ``now()`` if omitted.
+            reason: Free-text rationale, stored to ``metadata.invalidation_reason``.
+            request_context: Request context for authentication.
+
+        Returns:
+            Dict with ``id``, ``valid_to``, ``fact_type`` and a short ``preview``
+            of the row's text, or ``None`` if no matching row was found.
+
+        Raises:
+            ValueError: If ``memory_id`` is not a valid UUID.
+        """
+        import uuid as uuid_module
+        from datetime import datetime, timezone
+
+        try:
+            memory_uuid = uuid_module.UUID(memory_id)
+        except ValueError:
+            raise ValueError(f"Invalid memory_id: '{memory_id}' is not a valid UUID")
+
+        if valid_to is None:
+            valid_to = datetime.now(timezone.utc)
+
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation="invalidate_memory_unit", request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE {fq_table("memory_units")}
+                   SET valid_to = $3::timestamptz,
+                       metadata = COALESCE(metadata, '{{}}'::jsonb)
+                                  || jsonb_build_object('invalidation_reason', $4::text)
+                 WHERE id = $1::uuid
+                   AND bank_id = $2
+                RETURNING id, valid_to, fact_type, LEFT(text, 200) AS preview
+                """,
+                str(memory_uuid),
+                bank_id,
+                valid_to,
+                reason,
+            )
+
+        if row is None:
+            return None
+
+        return {
+            "id": str(row["id"]),
+            "valid_to": row["valid_to"].isoformat() if row["valid_to"] else None,
+            "fact_type": row["fact_type"],
+            "preview": row["preview"],
+        }
+
     async def run_consolidation(
         self,
         bank_id: str,
@@ -5030,7 +5108,7 @@ class MemoryEngine(MemoryEngineInterface):
                 f"""
                 SELECT id, text, context, event_date, occurred_start, occurred_end,
                        mentioned_at, fact_type, document_id, chunk_id, tags, source_memory_ids,
-                       observation_scopes
+                       observation_scopes, valid_to
                 FROM {fq_table("memory_units")}
                 WHERE id = $1 AND bank_id = $2
                 """,

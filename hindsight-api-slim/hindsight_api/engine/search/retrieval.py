@@ -190,6 +190,15 @@ async def retrieve_semantic_bm25_combined(
         created_range_clause += f" AND updated_at < ${_next_idx}"
         _next_idx += 1
 
+    # --- validity-window filter ---------------------------------------------
+    # Skip memories that have been explicitly invalidated (valid_to <= now()).
+    # NULL valid_to means "still valid" — the default for every retain.
+    # The partial index ``idx_memory_units_active`` covers the hot path.
+    validity_clause = (
+        f" AND (valid_to IS NULL OR valid_to > {dialect.current_timestamp()})"
+    )
+    extra_where_clause = validity_clause + created_range_clause
+
     # --- Semantic UNION ALL arms (one per fact_type) ---
     # Each arm has its own ORDER BY ... LIMIT, enabling the partial HNSW indexes
     # per fact_type instead of forcing a full sequential scan.
@@ -203,7 +212,7 @@ async def retrieve_semantic_bm25_combined(
             fetch_limit=hnsw_fetch,
             tags_clause=tags_clause,
             groups_clause=groups_clause,
-            extra_where=created_range_clause,
+            extra_where=extra_where_clause,
         )
         for ft in fact_types
     ]
@@ -225,7 +234,7 @@ async def retrieve_semantic_bm25_combined(
                     groups_clause=groups_clause,
                     arm_index=i,
                     text_search_extension=text_ext,
-                    extra_where=created_range_clause,
+                    extra_where=extra_where_clause,
                 )
             )
 
@@ -264,6 +273,7 @@ async def retrieve_semantic_bm25_combined(
             if created_before is not None:
                 fb_created_clause += f" AND updated_at < ${fb_next_idx}"
                 fb_next_idx += 1
+            fb_extra_where = validity_clause + fb_created_clause
             fb_arms = [
                 dialect.build_semantic_arm(
                     table=table,
@@ -274,7 +284,7 @@ async def retrieve_semantic_bm25_combined(
                     fetch_limit=hnsw_fetch,
                     tags_clause=fb_tags_clause,
                     groups_clause=fb_groups_clause,
-                    extra_where=fb_created_clause,
+                    extra_where=fb_extra_where,
                 )
                 for ft in fact_types
             ]
@@ -391,6 +401,7 @@ async def retrieve_temporal_combined(
             WHERE bank_id = $2
               AND fact_type = ANY($3)
               AND embedding IS NOT NULL
+              AND (valid_to IS NULL OR valid_to > now())
               AND (
                   (occurred_start IS NOT NULL AND occurred_end IS NOT NULL
                    AND occurred_start <= $5 AND occurred_end >= $4)
@@ -529,6 +540,7 @@ async def retrieve_temporal_combined(
                 WHERE mu.bank_id = $6
                   AND mu.fact_type = $3
                   AND mu.embedding IS NOT NULL
+                  AND (mu.valid_to IS NULL OR mu.valid_to > now())
                   AND (1 - (mu.embedding <=> $1::vector)) >= $4
                   {spreading_tags_clause}
                   {spreading_groups_clause}
