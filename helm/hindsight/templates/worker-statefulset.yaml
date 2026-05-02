@@ -65,6 +65,57 @@ spec:
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
+        {{- /* Consolidation settings (same as api) */}}
+        {{- if .Values.consolidation }}
+        {{- if hasKey .Values.consolidation "enableObservations" }}
+        - name: HINDSIGHT_API_ENABLE_OBSERVATIONS
+          value: {{ .Values.consolidation.enableObservations | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "maxMemoriesPerRound" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_MAX_MEMORIES_PER_ROUND
+          value: {{ .Values.consolidation.maxMemoriesPerRound | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "batchSize" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_BATCH_SIZE
+          value: {{ .Values.consolidation.batchSize | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "llmBatchSize" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_LLM_BATCH_SIZE
+          value: {{ .Values.consolidation.llmBatchSize | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "maxTokens" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_MAX_TOKENS
+          value: {{ .Values.consolidation.maxTokens | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "recallBudget" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_RECALL_BUDGET
+          value: {{ .Values.consolidation.recallBudget | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "sourceFactsMaxTokens" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS
+          value: {{ .Values.consolidation.sourceFactsMaxTokens | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "sourceFactsMaxTokensPerObservation" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_SOURCE_FACTS_MAX_TOKENS_PER_OBSERVATION
+          value: {{ .Values.consolidation.sourceFactsMaxTokensPerObservation | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "maxAttempts" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_MAX_ATTEMPTS
+          value: {{ .Values.consolidation.maxAttempts | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "llmProvider" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER
+          value: {{ .Values.consolidation.llmProvider | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "llmModel" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_LLM_MODEL
+          value: {{ .Values.consolidation.llmModel | quote }}
+        {{- end }}
+        {{- if hasKey .Values.consolidation "llmBaseUrl" }}
+        - name: HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL
+          value: {{ .Values.consolidation.llmBaseUrl | quote }}
+        {{- end }}
+        {{- end }}
         {{- /* Worker-specific env vars */}}
         {{- range $key, $value := .Values.worker.env }}
         - name: {{ $key }}

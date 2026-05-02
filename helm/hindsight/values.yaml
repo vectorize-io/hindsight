@@ -104,6 +104,42 @@ api:
     # HINDSIGHT_API_LLM_API_KEY: "your-api-key"
     # HINDSIGHT_API_LLM_BASE_URL: "https://api.groq.com/openai/v1"
 
+# Consolidation settings (observation generation from retained facts)
+# Each setting maps to a HINDSIGHT_API_* env var. Set via the per-cluster values override.
+# All are optional — Hindsight uses safe defaults if unset.
+consolidation:
+  # Master toggle for observation consolidation
+  # enableObservations: true
+
+  # Max memories processed per consolidation run (0 = unlimited)
+  # maxMemoriesPerRound: 100
+
+  # Memories to load per batch (internal optimization)
+  # batchSize: 50
+
+  # Facts per LLM call (1 = no batching, each fact gets its own LLM call)
+  # llmBatchSize: 8
+
+  # Max tokens for recall when finding related observations
+  # maxTokens: 8192
+
+  # Budget level for consolidation recall: low, mid, high
+  # recallBudget: "low"
+
+  # Max tokens of source facts to include in consolidation prompt (-1 = unlimited)
+  # sourceFactsMaxTokens: 4096
+
+  # Max tokens of source facts per observation (-1 = unlimited)
+  # sourceFactsMaxTokensPerObservation: 256
+
+  # Retry attempts when LLM call fails
+  # maxAttempts: 3
+
+  # Optional dedicated LLM for consolidation (falls back to main LLM if unset)
+  # llmProvider: ""
+  # llmModel: ""
+  # llmBaseUrl: ""
+
 # Worker settings (distributed task processing)
 # When enabled, dedicated worker pods process tasks and the API's internal worker is disabled
 worker:
