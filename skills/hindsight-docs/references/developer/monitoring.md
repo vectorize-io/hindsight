@@ -227,7 +227,7 @@ export HINDSIGHT_API_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 # Open http://localhost:3000 → Explore → Tempo
 ```
 
-Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, New Relic, Honeycomb, etc.).
+Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, New Relic, Honeycomb, [Pydantic Logfire](https://logfire.pydantic.dev), etc.).
 
 ### Span Hierarchy
 

@@ -1,6 +1,6 @@
 # Storage
 
-Hindsight uses PostgreSQL as its sole storage backend.
+Hindsight uses PostgreSQL as its primary storage backend, with Oracle AI Database available as an alternative for enterprise deployments.
 
 ## Why PostgreSQL?
 
@@ -32,11 +32,15 @@ We believe PostgreSQL is becoming the standard database API. Its popularity, ext
 
 Supporting multiple databases would increase flexibility but conflict with our core goals: Hindsight is fully open source and designed to be as simple as possible to run and use. Adding database abstractions introduces complexity in code, testing, documentation, and operations—complexity that we pass on to users.
 
-By committing to PostgreSQL, we keep the system simple:
+By building on PostgreSQL, we keep the system simple:
 - One set of deployment instructions
 - One set of performance characteristics to understand
 - One codebase optimized for one backend
 - No configuration decisions about which database to use
+
+### Oracle AI Database Support
+
+For enterprise deployments, Hindsight also supports Oracle AI Database with full feature parity. All memory operations—retain, recall, and reflect—work identically on Oracle, making it a drop-in option for organizations that standardize on Oracle infrastructure.
 
 ## Development with pg0
 
