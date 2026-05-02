@@ -438,9 +438,7 @@ async function ensureNemoClawPlugin(sandboxName: string, agentId: string): Promi
     execSync(`nemoclaw ${sandboxName} rebuild --yes`, { stdio: "inherit" });
     p.log.success("Sandbox rebuilt");
   } catch {
-    p.log.warn(
-      `Failed to rebuild sandbox. Run manually: nemoclaw ${sandboxName} rebuild`
-    );
+    p.log.warn(`Failed to rebuild sandbox. Run manually: nemoclaw ${sandboxName} rebuild`);
   }
 }
 
