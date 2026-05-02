@@ -11,6 +11,7 @@ This provider enables using Claude models from Anthropic with support for:
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -65,6 +66,26 @@ class AnthropicLLM(LLMInterface):
                 client_kwargs["base_url"] = self.base_url
             if timeout:
                 client_kwargs["timeout"] = timeout
+
+            # Optional env-driven knobs for operators with custom proxy / retry policy needs.
+            # Both no-op when unset, so existing deployments are unaffected.
+            _max_retries_env = os.environ.get("HINDSIGHT_API_LLM_MAX_RETRIES")
+            if _max_retries_env is not None:
+                try:
+                    client_kwargs["max_retries"] = int(_max_retries_env)
+                except ValueError as exc:
+                    logger.warning(
+                        "HINDSIGHT_API_LLM_MAX_RETRIES is not an integer, ignoring: %s", exc
+                    )
+
+            _default_headers_env = os.environ.get("HINDSIGHT_API_LLM_DEFAULT_HEADERS")
+            if _default_headers_env:
+                try:
+                    client_kwargs["default_headers"] = json.loads(_default_headers_env)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "HINDSIGHT_API_LLM_DEFAULT_HEADERS is not valid JSON, ignoring: %s", exc
+                    )
 
             self._client = AsyncAnthropic(**client_kwargs)
             logger.info(f"Anthropic client initialized for model: {self.model}")
