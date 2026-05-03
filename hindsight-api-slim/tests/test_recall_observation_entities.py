@@ -184,3 +184,31 @@ async def test_recall_includes_inherited_entities_for_observations(seeded):
     assert {"HeadClaw", "waitlist users", "Reddit"}.issubset(aggregate_names), (
         f"Top-level entities map must include inherited + direct entities; got {aggregate_names}"
     )
+
+
+@pytest.mark.asyncio
+async def test_get_memory_unit_inherits_observation_entities(seeded):
+    """get_memory_unit shares the recall helper, so observation inheritance
+    must keep working through the per-memory endpoint as well.
+    """
+    engine, bank_id = seeded
+
+    inherited = await engine.get_memory_unit(
+        memory_id=ID_OBS_INHERITED,
+        bank_id=bank_id,
+        request_context=RC,
+    )
+    assert inherited is not None
+    assert set(inherited["entities"]) >= {"HeadClaw", "waitlist users"}, (
+        f"Observation must inherit source-memory entities; got {inherited['entities']}"
+    )
+
+    direct = await engine.get_memory_unit(
+        memory_id=ID_OBS_DIRECT,
+        bank_id=bank_id,
+        request_context=RC,
+    )
+    assert direct is not None
+    assert "Reddit" in direct["entities"], (
+        f"Direct unit_entities link must still resolve via get_memory_unit; got {direct['entities']}"
+    )

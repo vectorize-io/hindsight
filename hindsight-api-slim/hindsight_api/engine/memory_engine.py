@@ -3572,91 +3572,23 @@ class MemoryEngine(MemoryEngineInterface):
                                     source_facts_dict[sid] = _make_source_fact(sid, r)
                                     total_source_tokens += fact_tokens
 
-            # Get entities for each fact if include_entities is requested
-            fact_entity_map = {}  # unit_id -> list of (entity_id, entity_name)
+            # Get entities for each fact if include_entities is requested.
+            # _entity_rows_for_units_sql resolves both direct unit_entities rows
+            # and observation-via-source-memory inheritance in a single query.
+            fact_entity_map = {}  # unit_id -> list of {entity_id, canonical_name}
             if include_entities and top_scored:
                 unit_ids = [uuid.UUID(sr.id) for sr in top_scored]
                 if unit_ids:
                     async with acquire_with_retry(backend) as entity_conn:
                         entity_rows = await entity_conn.fetch(
-                            f"""
-                            SELECT ue.unit_id, e.id as entity_id, e.canonical_name
-                            FROM {fq_table("unit_entities")} ue
-                            JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                            WHERE ue.unit_id = ANY($1::uuid[])
-                            """,
+                            self._entity_rows_for_units_sql(unit_ids_placeholder=1),
                             unit_ids,
                         )
                         for row in entity_rows:
                             unit_id = str(row["unit_id"])
-                            if unit_id not in fact_entity_map:
-                                fact_entity_map[unit_id] = []
-                            fact_entity_map[unit_id].append(
+                            fact_entity_map.setdefault(unit_id, []).append(
                                 {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
                             )
-
-                        # Observations don't carry rows in unit_entities; their entity
-                        # association lives transitively through source_memory_ids.
-                        # Mirror get_memory_unit's fallback so observation-only recall
-                        # surfaces the same entities the per-memory endpoint exposes,
-                        # both per-result and in the top-level aggregate map.
-                        obs_unit_ids_without_entities = [
-                            uuid.UUID(sr.id)
-                            for sr in top_scored
-                            if sr.retrieval.fact_type == "observation" and str(sr.id) not in fact_entity_map
-                        ]
-                        if obs_unit_ids_without_entities:
-                            source_id_rows = await entity_conn.fetch(
-                                f"""
-                                SELECT id, source_memory_ids
-                                FROM {fq_table("memory_units")}
-                                WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
-                                """,
-                                obs_unit_ids_without_entities,
-                            )
-                            obs_to_sources: dict[str, list[uuid.UUID]] = {}
-                            all_source_ids: set[uuid.UUID] = set()
-                            for row in source_id_rows:
-                                sids = [
-                                    s if isinstance(s, uuid.UUID) else uuid.UUID(str(s))
-                                    for s in (row["source_memory_ids"] or [])
-                                ]
-                                if not sids:
-                                    continue
-                                obs_to_sources[str(row["id"])] = sids
-                                all_source_ids.update(sids)
-
-                            if all_source_ids:
-                                source_entity_rows = await entity_conn.fetch(
-                                    f"""
-                                    SELECT ue.unit_id, e.id as entity_id, e.canonical_name
-                                    FROM {fq_table("unit_entities")} ue
-                                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                                    WHERE ue.unit_id = ANY($1::uuid[])
-                                    """,
-                                    list(all_source_ids),
-                                )
-                                source_unit_to_entities: dict[str, list[dict[str, str]]] = {}
-                                for row in source_entity_rows:
-                                    sid = str(row["unit_id"])
-                                    source_unit_to_entities.setdefault(sid, []).append(
-                                        {
-                                            "entity_id": str(row["entity_id"]),
-                                            "canonical_name": row["canonical_name"],
-                                        }
-                                    )
-
-                                for obs_id, sids in obs_to_sources.items():
-                                    seen: set[str] = set()
-                                    inherited: list[dict[str, str]] = []
-                                    for sid in sids:
-                                        for ent in source_unit_to_entities.get(str(sid), []):
-                                            if ent["entity_id"] in seen:
-                                                continue
-                                            seen.add(ent["entity_id"])
-                                            inherited.append(ent)
-                                    if inherited:
-                                        fact_entity_map[obs_id] = inherited
 
             # Convert results to MemoryFact objects
             memory_facts = []
@@ -3750,6 +3682,59 @@ class MemoryEngine(MemoryEngineInterface):
             if not quiet:
                 logger.error("\n" + "\n".join(log_buffer))
             raise Exception(f"Failed to search memories: {type(e).__name__}: {e}")
+
+    def _entity_rows_for_units_sql(self, unit_ids_placeholder: int) -> str:
+        """SQL SELECT producing ``(unit_id, entity_id, canonical_name)`` rows for
+        the given unit IDs.
+
+        Direct rows come from ``unit_entities``. Observations rarely carry
+        direct rows there; their entity association lives transitively through
+        their source memories (``source_memory_ids`` on PG, the
+        ``observation_sources`` junction on Oracle). When an observation has
+        no direct entity rows the SELECT inherits its source memories'
+        entities, so the result is the same set callers would get from
+        ``get_memory_unit``.
+
+        ``unit_ids_placeholder`` is the 1-based parameter index that holds the
+        ``uuid[]`` of unit IDs. The placeholder is referenced twice — both
+        sides of the UNION need it — so callers should not reuse the slot.
+        """
+        ue = fq_table("unit_entities")
+        ents = fq_table("entities")
+        mu = fq_table("memory_units")
+        p = unit_ids_placeholder
+
+        direct = (
+            f"SELECT ue.unit_id, e.id AS entity_id, e.canonical_name "
+            f"FROM {ue} ue "
+            f"JOIN {ents} e ON e.id = ue.entity_id "
+            f"WHERE ue.unit_id = ANY(${p}::uuid[])"
+        )
+
+        if self._backend.ops.uses_observation_sources_table:
+            os_t = fq_table("observation_sources")
+            inherited = (
+                f"SELECT os.observation_id AS unit_id, e.id AS entity_id, e.canonical_name "
+                f"FROM {os_t} os "
+                f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id "
+                f"JOIN {ents} e ON e.id = src_ue.entity_id "
+                f"WHERE os.observation_id = ANY(${p}::uuid[]) "
+                f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = os.observation_id)"
+            )
+        else:
+            inherited = (
+                f"SELECT obs.id AS unit_id, e.id AS entity_id, e.canonical_name "
+                f"FROM {mu} obs "
+                f"CROSS JOIN LATERAL unnest(obs.source_memory_ids) AS src_id "
+                f"JOIN {ue} src_ue ON src_ue.unit_id = src_id "
+                f"JOIN {ents} e ON e.id = src_ue.entity_id "
+                f"WHERE obs.id = ANY(${p}::uuid[]) "
+                f"AND obs.fact_type = 'observation' "
+                f"AND obs.source_memory_ids IS NOT NULL "
+                f"AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = obs.id)"
+            )
+
+        return f"({direct}) UNION ({inherited})"
 
     def _filter_by_token_budget(
         self, results: list[dict[str, Any]], max_tokens: int
@@ -5104,30 +5089,14 @@ class MemoryEngine(MemoryEngineInterface):
             if not row:
                 return None
 
-            # Get entity information
+            # Get entity information. _entity_rows_for_units_sql handles the
+            # observation→source_memory_ids inheritance fallback in SQL, so a
+            # single query covers direct rows and inherited ones.
             entities_rows = await conn.fetch(
-                f"""
-                SELECT e.canonical_name
-                FROM {fq_table("unit_entities")} ue
-                JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                WHERE ue.unit_id = $1
-                """,
-                row["id"],
+                self._entity_rows_for_units_sql(unit_ids_placeholder=1),
+                [row["id"]],
             )
             entities = [r["canonical_name"] for r in entities_rows]
-
-            # For observations with no direct entities, inherit from source memories
-            if not entities and row["fact_type"] == "observation" and row["source_memory_ids"]:
-                source_entities_rows = await conn.fetch(
-                    f"""
-                    SELECT DISTINCT e.canonical_name
-                    FROM {fq_table("unit_entities")} ue
-                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
-                    WHERE ue.unit_id = ANY($1::uuid[])
-                    """,
-                    row["source_memory_ids"],
-                )
-                entities = [r["canonical_name"] for r in source_entities_rows]
 
             result = {
                 "id": str(row["id"]),
