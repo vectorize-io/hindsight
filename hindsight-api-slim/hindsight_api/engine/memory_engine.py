@@ -3595,6 +3595,69 @@ class MemoryEngine(MemoryEngineInterface):
                                 {"entity_id": str(row["entity_id"]), "canonical_name": row["canonical_name"]}
                             )
 
+                        # Observations don't carry rows in unit_entities; their entity
+                        # association lives transitively through source_memory_ids.
+                        # Mirror get_memory_unit's fallback so observation-only recall
+                        # surfaces the same entities the per-memory endpoint exposes,
+                        # both per-result and in the top-level aggregate map.
+                        obs_unit_ids_without_entities = [
+                            uuid.UUID(sr.id)
+                            for sr in top_scored
+                            if sr.retrieval.fact_type == "observation" and str(sr.id) not in fact_entity_map
+                        ]
+                        if obs_unit_ids_without_entities:
+                            source_id_rows = await entity_conn.fetch(
+                                f"""
+                                SELECT id, source_memory_ids
+                                FROM {fq_table("memory_units")}
+                                WHERE id = ANY($1::uuid[]) AND fact_type = 'observation'
+                                """,
+                                obs_unit_ids_without_entities,
+                            )
+                            obs_to_sources: dict[str, list[uuid.UUID]] = {}
+                            all_source_ids: set[uuid.UUID] = set()
+                            for row in source_id_rows:
+                                sids = [
+                                    s if isinstance(s, uuid.UUID) else uuid.UUID(str(s))
+                                    for s in (row["source_memory_ids"] or [])
+                                ]
+                                if not sids:
+                                    continue
+                                obs_to_sources[str(row["id"])] = sids
+                                all_source_ids.update(sids)
+
+                            if all_source_ids:
+                                source_entity_rows = await entity_conn.fetch(
+                                    f"""
+                                    SELECT ue.unit_id, e.id as entity_id, e.canonical_name
+                                    FROM {fq_table("unit_entities")} ue
+                                    JOIN {fq_table("entities")} e ON ue.entity_id = e.id
+                                    WHERE ue.unit_id = ANY($1::uuid[])
+                                    """,
+                                    list(all_source_ids),
+                                )
+                                source_unit_to_entities: dict[str, list[dict[str, str]]] = {}
+                                for row in source_entity_rows:
+                                    sid = str(row["unit_id"])
+                                    source_unit_to_entities.setdefault(sid, []).append(
+                                        {
+                                            "entity_id": str(row["entity_id"]),
+                                            "canonical_name": row["canonical_name"],
+                                        }
+                                    )
+
+                                for obs_id, sids in obs_to_sources.items():
+                                    seen: set[str] = set()
+                                    inherited: list[dict[str, str]] = []
+                                    for sid in sids:
+                                        for ent in source_unit_to_entities.get(str(sid), []):
+                                            if ent["entity_id"] in seen:
+                                                continue
+                                            seen.add(ent["entity_id"])
+                                            inherited.append(ent)
+                                    if inherited:
+                                        fact_entity_map[obs_id] = inherited
+
             # Convert results to MemoryFact objects
             memory_facts = []
             for result_dict in top_results_dicts:
