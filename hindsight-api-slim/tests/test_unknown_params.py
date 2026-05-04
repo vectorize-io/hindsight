@@ -3,7 +3,7 @@
 import pytest
 from fastapi import FastAPI, Query
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 def _make_test_app() -> FastAPI:
@@ -59,6 +59,9 @@ def _make_test_app() -> FastAPI:
                                         ann = param.annotation
                                         if isinstance(ann, type) and issubclass(ann, BaseModel):
                                             known_fields = set(ann.model_fields.keys())
+                                            for field in ann.model_fields.values():
+                                                if isinstance(field.alias, str):
+                                                    known_fields.add(field.alias)
                                             for key in body_json:
                                                 if key not in known_fields:
                                                     body_ignored.append(key)
@@ -86,6 +89,10 @@ def _make_test_app() -> FastAPI:
         name: str
         value: int = 0
 
+    class AliasedRequest(BaseModel):
+        name: str
+        async_: bool = Field(default=False, alias="async")
+
     @app.get("/items")
     async def list_items(limit: int = 10, offset: int = 0):
         return {"items": [], "limit": limit, "offset": offset}
@@ -97,6 +104,10 @@ def _make_test_app() -> FastAPI:
     @app.post("/items")
     async def create_item(request: ItemRequest):
         return {"name": request.name, "value": request.value}
+
+    @app.post("/aliased")
+    async def create_aliased(request: AliasedRequest):
+        return {"name": request.name, "async": request.async_}
 
     return app
 
@@ -146,6 +157,12 @@ class TestUnknownBodyFields:
     def test_known_body_fields_no_header(self, client):
         resp = client.post("/items", json={"name": "test", "value": 42})
         assert resp.status_code == 200
+        assert "X-Ignored-Params" not in resp.headers
+
+    def test_body_field_alias_no_header(self, client):
+        resp = client.post("/aliased", json={"name": "test", "async": True})
+        assert resp.status_code == 200
+        assert resp.json()["async"] is True
         assert "X-Ignored-Params" not in resp.headers
 
     def test_unknown_body_field_sets_header(self, client):

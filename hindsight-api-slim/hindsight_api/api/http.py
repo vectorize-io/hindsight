@@ -2784,6 +2784,13 @@ def create_app(
                                         ann = param.annotation
                                         if isinstance(ann, type) and issubclass(ann, BaseModel):
                                             known_fields = set(ann.model_fields.keys())
+                                            for field in ann.model_fields.values():
+                                                # Pydantic models can expose public JSON names via aliases
+                                                # (for example RetainRequest.async_ is sent as "async").
+                                                # Treat aliases as known fields so valid client payloads are
+                                                # not reported as ignored parameters.
+                                                if isinstance(field.alias, str):
+                                                    known_fields.add(field.alias)
                                             for key in body_json:
                                                 if key not in known_fields:
                                                     body_ignored.append(key)
