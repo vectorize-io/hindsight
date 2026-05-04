@@ -106,6 +106,104 @@ def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
         )
 
 
+def _language_to_text_config(language: str) -> str:
+    """Map a user-friendly language name to a PostgreSQL text search config name.
+
+    Recognized shortcuts: 'english' -> 'english', 'chinese' -> 'public.zh_cn'.
+    Any other value is passed through as-is (e.g. 'german', 'french', 'simple').
+    """
+    _KNOWN_MAP: dict[str, str] = {
+        "english": "english",
+        "chinese": "public.zh_cn",
+    }
+    return _KNOWN_MAP.get(language, language)
+
+
+def _ensure_pg_textsearch_language(conn: Connection, schema_name: str, language: str) -> None:
+    """
+    Ensure the pg_textsearch BM25 index uses the correct text_config for the language.
+
+    Detects the current text_config from the index definition and rebuilds it
+    if it doesn't match the configured language.
+    """
+    target_config = _language_to_text_config(language)
+
+    # Check current text_config in the BM25 index definition
+    for table_name in ("memory_units", "reflections"):
+        index_info = conn.execute(
+            text("""
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = :schema
+                  AND tablename = :table_name
+                  AND indexname LIKE '%text_search%'
+            """),
+            {"schema": schema_name, "table_name": table_name},
+        ).fetchone()
+
+        if not index_info:
+            continue
+
+        indexdef = index_info[0]
+
+        # Check if the index already uses the target text_config
+        if f"text_config={target_config}" in indexdef or f"text_config='{target_config}'" in indexdef:
+            logger.debug(f"BM25 index on {table_name} already uses text_config={target_config}")
+            continue
+
+        logger.info(
+            f"BM25 index text_config mismatch on {table_name}: "
+            f"target={target_config}, recreating index"
+        )
+
+        # Rebuild zhparser config if Chinese
+        if language == "chinese":
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS zhparser"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                ext_exists = conn.execute(
+                    text("SELECT 1 FROM pg_extension WHERE extname = 'zhparser'")
+                ).fetchone()
+                if not ext_exists:
+                    raise RuntimeError(
+                        "zhparser extension is required for Chinese text search but could not be installed. "
+                        "Ensure zhparser is available in your PostgreSQL installation."
+                    )
+
+            # CREATE TEXT SEARCH CONFIGURATION doesn't support IF NOT EXISTS
+            config_exists = conn.execute(
+                text("SELECT 1 FROM pg_ts_config WHERE cfgname = 'zh_cn'")
+            ).fetchone()
+            if not config_exists:
+                conn.execute(text("CREATE TEXT SEARCH CONFIGURATION public.zh_cn (PARSER = zhparser)"))
+                conn.execute(
+                    text("ALTER TEXT SEARCH CONFIGURATION public.zh_cn ADD MAPPING FOR n,v,a,i,e,l WITH simple")
+                )
+                conn.commit()
+
+        # Rebuild the index
+        idx_name = f"idx_{table_name.replace('.', '_')}_text_search"
+        conn.execute(text(f"DROP INDEX IF EXISTS {schema_name}.{idx_name}"))
+
+        if table_name == "memory_units":
+            index_expr = "(text)"
+        else:
+            index_expr = "(COALESCE(name, '') || ' ' || content)"
+
+        conn.execute(
+            text(f"""
+                CREATE INDEX {idx_name}
+                ON {schema_name}.{table_name}
+                USING bm25({index_expr})
+                WITH (text_config='{target_config}')
+            """)
+        )
+        conn.commit()
+        logger.info(f"Rebuilt BM25 index on {table_name} with text_config={target_config}")
+
+
 def _get_schema_lock_id(schema: str) -> int:
     """
     Generate a unique advisory lock ID for a schema.
@@ -884,6 +982,7 @@ def ensure_vector_extension(
 def ensure_text_search_extension(
     database_url: str,
     text_search_extension: str = "native",
+    text_search_language: str = "english",
     schema: str | None = None,
 ) -> None:
     """
@@ -895,9 +994,13 @@ def ensure_text_search_extension(
     - If they differ and tables are empty: drop old column/index, recreate with new type
     - If they differ and tables have data: raise error with migration guidance
 
+    For pg_textsearch, also checks that the BM25 index uses the correct text_config
+    for the configured language (e.g., 'english' vs 'public.zh_cn' for Chinese).
+
     Args:
         database_url: SQLAlchemy database URL
         text_search_extension: Configured text search extension ("native" or "vchord")
+        text_search_language: Configured text search language ("english" or "chinese")
         schema: Target PostgreSQL schema name (None for public)
 
     Raises:
@@ -1001,6 +1104,9 @@ def ensure_text_search_extension(
 
         # If no mismatches, we're done
         if not mismatched_tables:
+            # For pg_textsearch, also check that the BM25 index uses the correct text_config
+            if text_search_extension == "pg_textsearch":
+                _ensure_pg_textsearch_language(conn, schema_name, text_search_language)
             logger.debug(f"All text search columns/indexes match configured extension: {text_search_extension}")
             return
 

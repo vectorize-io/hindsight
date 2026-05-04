@@ -267,6 +267,7 @@ ENV_RERANKER_GOOGLE_SERVICE_ACCOUNT_KEY = "HINDSIGHT_API_RERANKER_GOOGLE_SERVICE
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_TEXT_SEARCH_EXTENSION = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION"
+ENV_TEXT_SEARCH_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_LANGUAGE"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
 ENV_PORT = "HINDSIGHT_API_PORT"
@@ -534,6 +535,7 @@ DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvecto
 
 # Text search extension (native PostgreSQL, vchord BM25, or Timescale pg_textsearch)
 DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch"
+DEFAULT_TEXT_SEARCH_LANGUAGE = "english"  # Options: "english", "chinese"
 
 # LiteLLM defaults
 DEFAULT_LITELLM_API_BASE = "http://localhost:4000"
@@ -831,6 +833,7 @@ class HindsightConfig:
     database_schema: str
     vector_extension: str  # "pgvector" or "vchord"
     text_search_extension: str  # "native" or "vchord"
+    text_search_language: str  # "english" or "chinese"
 
     # LLM (default, used as fallback for per-operation config)
     llm_provider: str
@@ -1283,6 +1286,10 @@ class HindsightConfig:
                 f"Invalid text_search_extension: {self.text_search_extension}. Must be one of: {', '.join(valid_text_search)}"
             )
 
+        # Validate text_search_language (informational only — any value is accepted)
+        if not self.text_search_language:
+            raise ValueError("text_search_language must not be empty")
+
         # When LLM provider is "none", force chunks-only mode and disable LLM-dependent features
         if self.llm_provider == "none":
             self.retain_extraction_mode = "chunks"
@@ -1356,6 +1363,7 @@ class HindsightConfig:
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
             vector_extension=os.getenv(ENV_VECTOR_EXTENSION, DEFAULT_VECTOR_EXTENSION).lower(),
             text_search_extension=os.getenv(ENV_TEXT_SEARCH_EXTENSION, DEFAULT_TEXT_SEARCH_EXTENSION).lower(),
+            text_search_language=os.getenv(ENV_TEXT_SEARCH_LANGUAGE, DEFAULT_TEXT_SEARCH_LANGUAGE).lower(),
             # LLM
             llm_provider=llm_provider,
             llm_api_key=os.getenv(ENV_LLM_API_KEY),
