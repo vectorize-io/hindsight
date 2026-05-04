@@ -11,7 +11,6 @@ This provider enables using Claude models from Anthropic with support for:
 import asyncio
 import json
 import logging
-import os
 import time
 from typing import Any
 
@@ -38,6 +37,7 @@ class AnthropicLLM(LLMInterface):
         model: str,
         reasoning_effort: str = "low",
         timeout: float = 300.0,
+        default_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ):
         """
@@ -50,6 +50,10 @@ class AnthropicLLM(LLMInterface):
             model: Model name (e.g., "claude-sonnet-4-20250514").
             reasoning_effort: Reasoning effort level (not used by Anthropic).
             timeout: Request timeout in seconds.
+            default_headers: Optional custom headers passed as ``default_headers`` to
+                the Anthropic SDK client. Used by operators routing through proxies
+                or request-tracing middleware. Sourced from ``llm_default_headers`` in
+                ``HindsightConfig`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``).
             **kwargs: Additional provider-specific parameters.
         """
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
@@ -61,31 +65,16 @@ class AnthropicLLM(LLMInterface):
         try:
             from anthropic import AsyncAnthropic
 
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+            # SDK retries disabled — wrapper-level retry loop in ``call`` handles
+            # backoff (mirrors ``OpenAICompatibleLLM`` so the two providers behave
+            # consistently).
+            client_kwargs: dict[str, Any] = {"api_key": self.api_key, "max_retries": 0}
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
             if timeout:
                 client_kwargs["timeout"] = timeout
-
-            # Optional env-driven knobs for operators with custom proxy / retry policy needs.
-            # Both no-op when unset, so existing deployments are unaffected.
-            _max_retries_env = os.environ.get("HINDSIGHT_API_LLM_MAX_RETRIES")
-            if _max_retries_env is not None:
-                try:
-                    client_kwargs["max_retries"] = int(_max_retries_env)
-                except ValueError as exc:
-                    logger.warning(
-                        "HINDSIGHT_API_LLM_MAX_RETRIES is not an integer, ignoring: %s", exc
-                    )
-
-            _default_headers_env = os.environ.get("HINDSIGHT_API_LLM_DEFAULT_HEADERS")
-            if _default_headers_env:
-                try:
-                    client_kwargs["default_headers"] = json.loads(_default_headers_env)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "HINDSIGHT_API_LLM_DEFAULT_HEADERS is not valid JSON, ignoring: %s", exc
-                    )
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
 
             self._client = AsyncAnthropic(**client_kwargs)
             logger.info(f"Anthropic client initialized for model: {self.model}")
