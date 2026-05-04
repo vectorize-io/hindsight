@@ -218,6 +218,15 @@ class CrossEncoderReranker:
 
         import numpy as np
 
+        # Defensive flatten: ``predict`` is contracted to return ``list[float]``
+        # but a misbehaving backend (or future custom subclass) might return a
+        # 2-D shape — that crashes the sigmoid below with
+        # ``TypeError: bad operand type for unary -: list`` (issue #1369).
+        # Coercing to a 1-D list of plain floats here keeps recall robust even
+        # if a single backend slips a shape past its own boundary.
+        flat_scores = np.asarray(scores).reshape(-1).tolist()
+        scores = [float(s) for s in flat_scores]
+
         def sigmoid(x):
             return 1 / (1 + np.exp(-x))
 

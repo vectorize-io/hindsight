@@ -60,6 +60,37 @@ from ..config import (
 logger = logging.getLogger(__name__)
 
 
+def _coerce_scores_1d(scores) -> list[float]:
+    """Coerce cross-encoder model output to a flat ``list[float]``.
+
+    sentence-transformers' ``CrossEncoder.predict`` returns a 1-D ``ndarray``
+    of shape ``(n,)`` for single-label ranking models, but some models /
+    configurations (e.g. multi-label heads, ``activation_fn=None`` with
+    certain checkpoints) return a 2-D ``ndarray`` of shape ``(n, 1)``. The
+    raw 2-D shape leaks single-element lists into downstream sigmoid /
+    ``float()`` calls and crashes recall with
+    ``TypeError: bad operand type for unary -: list`` (issue #1369).
+
+    We honor the ``-> list[float]`` type contract on ``predict`` by
+    flattening here, at the boundary, so every downstream consumer sees a
+    clean 1-D list of plain Python floats.
+    """
+    import numpy as np
+
+    if hasattr(scores, "shape") and getattr(scores, "ndim", 1) > 1:
+        scores = np.asarray(scores).reshape(-1)
+    if hasattr(scores, "tolist"):
+        flat = scores.tolist()
+    else:
+        flat = list(scores)
+    # Defensive: handle nested-list inputs (shape (n, 1)) that arrived as
+    # plain Python lists rather than ndarrays — these still trigger the same
+    # downstream crash and the cost of an isinstance check is trivial.
+    if flat and isinstance(flat[0], (list, tuple)):
+        flat = [item for row in flat for item in row]
+    return [float(s) for s in flat]
+
+
 class CrossEncoderModel(ABC):
     """
     Abstract base class for cross-encoder reranking.
@@ -275,7 +306,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             sorted_pairs = [pairs[i] for i in sorted_indices]
 
             sorted_scores = self._model.predict(sorted_pairs, batch_size=self.batch_size, show_progress_bar=False)
-            sorted_scores = sorted_scores.tolist() if hasattr(sorted_scores, "tolist") else list(sorted_scores)
+            sorted_scores = _coerce_scores_1d(sorted_scores)
 
             # Restore original order
             scores = [0.0] * len(pairs)
@@ -284,7 +315,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             return scores
 
         scores = self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
-        return scores.tolist() if hasattr(scores, "tolist") else list(scores)
+        return _coerce_scores_1d(scores)
 
     async def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
         """
