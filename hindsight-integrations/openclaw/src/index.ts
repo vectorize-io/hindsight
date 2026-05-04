@@ -1412,7 +1412,18 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   };
 }
 
+// Registration guard: WeakSet keyed by api instance to prevent double-registration
+// on the same api object while allowing fresh registration on new api objects.
+// Does not reintroduce issue #1029 because WeakSet.has() checks object identity,
+// not a module-level boolean.
+const _registeredApis = new WeakSet<MoltbotPluginAPI>();
+
 export default function (api: MoltbotPluginAPI) {
+  if (_registeredApis.has(api)) {
+    debug("[Hindsight] Plugin entry skipped (this api instance already registered)");
+    return;
+  }
+  _registeredApis.add(api);
   try {
     log.info("plugin entry invoked");
     debug("[Hindsight] Plugin loading...");
