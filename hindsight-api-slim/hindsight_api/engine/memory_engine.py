@@ -3681,12 +3681,14 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         except Exception as e:
+            # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())
+            # still emit a discriminating class+args string into operations.error_message.
             log_buffer.append(
-                f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {type(e).__name__}: {e}"
+                f"[RECALL {recall_id}] ERROR after {time.time() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
             )
             if not quiet:
-                logger.error("\n" + "\n".join(log_buffer))
-            raise Exception(f"Failed to search memories: {type(e).__name__}: {e}")
+                logger.error("\n" + "\n".join(log_buffer), exc_info=True)
+            raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
 
     def _filter_by_token_budget(
         self, results: list[dict[str, Any]], max_tokens: int
