@@ -511,6 +511,23 @@ paths:
           title: Period
           type: string
         style: form
+      - description: "Timestamp column to bucket on. `created_at` (default) = ingest\
+          \ time; `mentioned_at` / `occurred_start` = event time, useful for migrated\
+          \ corpora where ingest time is a single point and doesn't reflect the underlying\
+          \ knowledge timeline. Unknown values fall back to `created_at`."
+        explode: true
+        in: query
+        name: time_field
+        required: false
+        schema:
+          default: created_at
+          description: "Timestamp column to bucket on. `created_at` (default) = ingest\
+            \ time; `mentioned_at` / `occurred_start` = event time, useful for migrated\
+            \ corpora where ingest time is a single point and doesn't reflect the\
+            \ underlying knowledge timeline. Unknown values fall back to `created_at`."
+          title: Time Field
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization
@@ -5199,6 +5216,7 @@ components:
     MemoriesTimeseriesResponse:
       description: Time-series of memory ingestion bucketed by time and fact type.
       example:
+        time_field: created_at
         period: period
         trunc: trunc
         bank_id: bank_id
@@ -5222,6 +5240,13 @@ components:
         trunc:
           description: "Bucket granularity: minute, hour, day."
           title: Trunc
+          type: string
+        time_field:
+          default: created_at
+          description: Timestamp column used to assign each row to a bucket. `created_at`
+            shows ingest time; `mentioned_at` / `occurred_start` show event time (falls
+            back to `created_at` per row when null).
+          title: Time Field
           type: string
         buckets:
           description: "Per-bucket counts, always returned fully padded for the requested\

@@ -910,11 +910,18 @@ type ApiGetMemoriesTimeseriesRequest struct {
 	ApiService *BanksAPIService
 	bankId string
 	period *string
+	timeField *string
 	authorization *string
 }
 
 func (r ApiGetMemoriesTimeseriesRequest) Period(period string) ApiGetMemoriesTimeseriesRequest {
 	r.period = &period
+	return r
+}
+
+// Timestamp column to bucket on. &#x60;created_at&#x60; (default) &#x3D; ingest time; &#x60;mentioned_at&#x60; / &#x60;occurred_start&#x60; &#x3D; event time, useful for migrated corpora where ingest time is a single point and doesn&#39;t reflect the underlying knowledge timeline. Unknown values fall back to &#x60;created_at&#x60;.
+func (r ApiGetMemoriesTimeseriesRequest) TimeField(timeField string) ApiGetMemoriesTimeseriesRequest {
+	r.timeField = &timeField
 	return r
 }
 
@@ -971,6 +978,12 @@ func (a *BanksAPIService) GetMemoriesTimeseriesExecute(r ApiGetMemoriesTimeserie
 	} else {
 		var defaultValue string = "7d"
 		r.period = &defaultValue
+	}
+	if r.timeField != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "time_field", r.timeField, "form", "")
+	} else {
+		var defaultValue string = "created_at"
+		r.timeField = &defaultValue
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}

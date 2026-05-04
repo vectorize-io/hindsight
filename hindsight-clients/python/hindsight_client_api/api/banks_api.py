@@ -16,8 +16,9 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import StrictStr
+from pydantic import Field, StrictStr
 from typing import Optional
+from typing_extensions import Annotated
 from hindsight_client_api.models.add_background_request import AddBackgroundRequest
 from hindsight_client_api.models.background_response import BackgroundResponse
 from hindsight_client_api.models.bank_config_response import BankConfigResponse
@@ -2063,6 +2064,7 @@ class BanksApi:
         self,
         bank_id: StrictStr,
         period: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2085,6 +2087,8 @@ class BanksApi:
         :type bank_id: str
         :param period:
         :type period: str
+        :param time_field: Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.
+        :type time_field: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2112,6 +2116,7 @@ class BanksApi:
         _param = self._get_memories_timeseries_serialize(
             bank_id=bank_id,
             period=period,
+            time_field=time_field,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2139,6 +2144,7 @@ class BanksApi:
         self,
         bank_id: StrictStr,
         period: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2161,6 +2167,8 @@ class BanksApi:
         :type bank_id: str
         :param period:
         :type period: str
+        :param time_field: Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.
+        :type time_field: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2188,6 +2196,7 @@ class BanksApi:
         _param = self._get_memories_timeseries_serialize(
             bank_id=bank_id,
             period=period,
+            time_field=time_field,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2215,6 +2224,7 @@ class BanksApi:
         self,
         bank_id: StrictStr,
         period: Optional[StrictStr] = None,
+        time_field: Annotated[Optional[StrictStr], Field(description="Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2237,6 +2247,8 @@ class BanksApi:
         :type bank_id: str
         :param period:
         :type period: str
+        :param time_field: Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.
+        :type time_field: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2264,6 +2276,7 @@ class BanksApi:
         _param = self._get_memories_timeseries_serialize(
             bank_id=bank_id,
             period=period,
+            time_field=time_field,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2286,6 +2299,7 @@ class BanksApi:
         self,
         bank_id,
         period,
+        time_field,
         authorization,
         _request_auth,
         _content_type,
@@ -2314,6 +2328,10 @@ class BanksApi:
         if period is not None:
             
             _query_params.append(('period', period))
+            
+        if time_field is not None:
+            
+            _query_params.append(('time_field', time_field))
             
         # process the header parameters
         if authorization is not None:

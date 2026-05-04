@@ -1813,6 +1813,12 @@ export type MemoriesTimeseriesResponse = {
    */
   trunc: string;
   /**
+   * Time Field
+   *
+   * Timestamp column used to assign each row to a bucket. `created_at` shows ingest time; `mentioned_at` / `occurred_start` show event time (falls back to `created_at` per row when null).
+   */
+  time_field?: string;
+  /**
    * Buckets
    *
    * Per-bucket counts, always returned fully padded for the requested period.
@@ -3805,6 +3811,12 @@ export type GetMemoriesTimeseriesData = {
      * Period
      */
     period?: string;
+    /**
+     * Time Field
+     *
+     * Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.
+     */
+    time_field?: string;
   };
   url: "/v1/default/banks/{bank_id}/stats/memories-timeseries";
 };

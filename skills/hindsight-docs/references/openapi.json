@@ -772,6 +772,18 @@
             }
           },
           {
+            "name": "time_field",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`.",
+              "default": "created_at",
+              "title": "Time Field"
+            },
+            "description": "Timestamp column to bucket on. `created_at` (default) = ingest time; `mentioned_at` / `occurred_start` = event time, useful for migrated corpora where ingest time is a single point and doesn't reflect the underlying knowledge timeline. Unknown values fall back to `created_at`."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -7898,6 +7910,12 @@
             "type": "string",
             "title": "Trunc",
             "description": "Bucket granularity: minute, hour, day."
+          },
+          "time_field": {
+            "type": "string",
+            "title": "Time Field",
+            "description": "Timestamp column used to assign each row to a bucket. `created_at` shows ingest time; `mentioned_at` / `occurred_start` show event time (falls back to `created_at` per row when null).",
+            "default": "created_at"
           },
           "buckets": {
             "items": {

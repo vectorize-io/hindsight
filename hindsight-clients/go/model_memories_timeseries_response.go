@@ -26,6 +26,8 @@ type MemoriesTimeseriesResponse struct {
 	Period string `json:"period"`
 	// Bucket granularity: minute, hour, day.
 	Trunc string `json:"trunc"`
+	// Timestamp column used to assign each row to a bucket. `created_at` shows ingest time; `mentioned_at` / `occurred_start` show event time (falls back to `created_at` per row when null).
+	TimeField *string `json:"time_field,omitempty"`
 	// Per-bucket counts, always returned fully padded for the requested period.
 	Buckets []MemoryTimeseriesBucket `json:"buckets,omitempty"`
 }
@@ -41,6 +43,8 @@ func NewMemoriesTimeseriesResponse(bankId string, period string, trunc string) *
 	this.BankId = bankId
 	this.Period = period
 	this.Trunc = trunc
+	var timeField string = "created_at"
+	this.TimeField = &timeField
 	return &this
 }
 
@@ -49,6 +53,8 @@ func NewMemoriesTimeseriesResponse(bankId string, period string, trunc string) *
 // but it doesn't guarantee that properties required by API are set
 func NewMemoriesTimeseriesResponseWithDefaults() *MemoriesTimeseriesResponse {
 	this := MemoriesTimeseriesResponse{}
+	var timeField string = "created_at"
+	this.TimeField = &timeField
 	return &this
 }
 
@@ -124,6 +130,38 @@ func (o *MemoriesTimeseriesResponse) SetTrunc(v string) {
 	o.Trunc = v
 }
 
+// GetTimeField returns the TimeField field value if set, zero value otherwise.
+func (o *MemoriesTimeseriesResponse) GetTimeField() string {
+	if o == nil || IsNil(o.TimeField) {
+		var ret string
+		return ret
+	}
+	return *o.TimeField
+}
+
+// GetTimeFieldOk returns a tuple with the TimeField field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *MemoriesTimeseriesResponse) GetTimeFieldOk() (*string, bool) {
+	if o == nil || IsNil(o.TimeField) {
+		return nil, false
+	}
+	return o.TimeField, true
+}
+
+// HasTimeField returns a boolean if a field has been set.
+func (o *MemoriesTimeseriesResponse) HasTimeField() bool {
+	if o != nil && !IsNil(o.TimeField) {
+		return true
+	}
+
+	return false
+}
+
+// SetTimeField gets a reference to the given string and assigns it to the TimeField field.
+func (o *MemoriesTimeseriesResponse) SetTimeField(v string) {
+	o.TimeField = &v
+}
+
 // GetBuckets returns the Buckets field value if set, zero value otherwise.
 func (o *MemoriesTimeseriesResponse) GetBuckets() []MemoryTimeseriesBucket {
 	if o == nil || IsNil(o.Buckets) {
@@ -169,6 +207,9 @@ func (o MemoriesTimeseriesResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize["bank_id"] = o.BankId
 	toSerialize["period"] = o.Period
 	toSerialize["trunc"] = o.Trunc
+	if !IsNil(o.TimeField) {
+		toSerialize["time_field"] = o.TimeField
+	}
 	if !IsNil(o.Buckets) {
 		toSerialize["buckets"] = o.Buckets
 	}

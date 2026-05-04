@@ -30,8 +30,9 @@ class MemoriesTimeseriesResponse(BaseModel):
     bank_id: StrictStr
     period: StrictStr = Field(description="One of: 1h, 12h, 1d, 7d, 30d, 90d.")
     trunc: StrictStr = Field(description="Bucket granularity: minute, hour, day.")
+    time_field: Optional[StrictStr] = Field(default='created_at', description="Timestamp column used to assign each row to a bucket. `created_at` shows ingest time; `mentioned_at` / `occurred_start` show event time (falls back to `created_at` per row when null).")
     buckets: Optional[List[MemoryTimeseriesBucket]] = Field(default=None, description="Per-bucket counts, always returned fully padded for the requested period.")
-    __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "buckets"]
+    __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "time_field", "buckets"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -94,6 +95,7 @@ class MemoriesTimeseriesResponse(BaseModel):
             "bank_id": obj.get("bank_id"),
             "period": obj.get("period"),
             "trunc": obj.get("trunc"),
+            "time_field": obj.get("time_field") if obj.get("time_field") is not None else 'created_at',
             "buckets": [MemoryTimeseriesBucket.from_dict(_item) for _item in obj["buckets"]] if obj.get("buckets") is not None else None
         })
         return _obj
