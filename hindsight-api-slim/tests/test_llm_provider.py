@@ -9,6 +9,8 @@ Tests validate that providers work correctly with:
 import os
 from datetime import datetime
 import pytest
+
+pytestmark = pytest.mark.llm
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.utils import extract_facts
 from hindsight_api.engine.search.think_utils import reflect

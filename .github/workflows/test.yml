@@ -1131,9 +1131,15 @@ jobs:
         print('Models downloaded successfully')
         "
 
-    - name: Run tests
+    - name: Run core tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v
+      run: uv run pytest tests -v -m "not llm"
+
+    - name: Run LLM provider tests
+      if: always()
+      continue-on-error: true
+      working-directory: ./hindsight-api-slim
+      run: uv run pytest tests -v -m "llm" --timeout 600
 
   test-api-oracle:
     needs: [detect-changes]

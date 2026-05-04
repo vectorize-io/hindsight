@@ -141,6 +141,7 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 addopts = "--timeout 300 -n 8 --dist loadgroup --durations=10 -v"
 markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
+    "llm: Tests that make real LLM API calls (non-deterministic, require API keys)",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

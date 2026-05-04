@@ -1,0 +1,70 @@
+name: LLM Provider Nightly
+
+on:
+  schedule:
+    # Run daily at 6am UTC (after perf-test.yml at 6am — stagger by using different minute)
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  test-llm-providers:
+    runs-on: ubuntu-latest
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: vertexai
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      HINDSIGHT_API_LLM_MODEL: google/gemini-2.5-flash-lite
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION_NAME: ${{ secrets.AWS_REGION_NAME }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run python -c "
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        print('Models downloaded')
+        "
+
+    - name: Run LLM provider tests (all models)
+      working-directory: ./hindsight-api-slim
+      run: uv run pytest tests/test_llm_provider.py -v --timeout 600 -n 4 --dist loadgroup

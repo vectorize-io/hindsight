@@ -1,60 +1,75 @@
-"""Test automatic batch chunking based on character count."""
-import asyncio
+"""Test automatic batch chunking based on token count.
+
+Verifies that retain_batch_async splits large batches into sub-batches
+and processes them sequentially. Uses mocking to verify the split happens
+without making real LLM calls.
+"""
+
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from hindsight_api import MemoryEngine
-import os
+
+from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.llm_wrapper import TokenUsage
 
 
 @pytest.mark.asyncio
-async def test_large_batch_auto_chunks(memory, request_context):
+async def test_large_batch_splits_into_sub_batches(memory: MemoryEngine, request_context):
+    """A batch exceeding the token threshold should be split into sub-batches."""
     bank_id = "test_chunking_agent"
-    # Create a large batch that should trigger chunking
-    # Each item is ~2000 chars, so 30 items = 60k chars (exceeds 50k threshold)
-    large_content = "Alice met with Bob at the coffee shop. " * 50  # ~2000 chars
+
+    # Create a batch large enough to trigger chunking.
+    # Default retain_batch_tokens is 10000. Each item is ~326 tokens,
+    # so 40 items = ~13000 tokens, which exceeds the threshold.
+    large_content = "Alice met with Bob at the coffee shop to discuss the project. " * 25
     contents = [
         {"content": large_content, "context": f"conversation_{i}"}
-        for i in range(30)
+        for i in range(40)
     ]
 
-    # Calculate total chars
-    total_chars = sum(len(item["content"]) for item in contents)
-    print(f"\nTotal characters: {total_chars:,}")
-    print(f"Should trigger chunking: {total_chars > 50_000}")
+    with patch.object(
+        memory, "_retain_batch_async_internal", new_callable=AsyncMock
+    ) as mock_internal:
+        mock_internal.return_value = (["unit_id"], TokenUsage(), 0)
 
-    # Ingest the large batch (should auto-chunk)
-    result = await memory.retain_batch_async(
-        bank_id=bank_id,
-        contents=contents,
-        request_context=request_context,
-    )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
 
-    # Verify we got results back
-    assert len(result) == 30, f"Expected 30 results, got {len(result)}"
-    print(f"Successfully ingested {len(result)} items (auto-chunked)")
+        # Should have been called multiple times (once per sub-batch)
+        assert mock_internal.call_count > 1, (
+            f"Expected multiple sub-batch calls, got {mock_internal.call_count}. "
+            "Batch should have been split."
+        )
+
+        # Total items across all calls should equal input
+        total_items = sum(len(call.kwargs["contents"]) for call in mock_internal.call_args_list)
+        assert total_items == 40
 
 
 @pytest.mark.asyncio
-async def test_small_batch_no_chunking(memory, request_context):
+async def test_small_batch_not_split(memory: MemoryEngine, request_context):
+    """A batch under the token threshold should NOT be split."""
     bank_id = "test_no_chunking_agent"
 
-    # Create a small batch that should NOT trigger chunking
     contents = [
         {"content": "Alice works at Google", "context": "conversation_1"},
-        {"content": "Bob loves Python", "context": "conversation_2"}
+        {"content": "Bob loves Python", "context": "conversation_2"},
     ]
 
-    # Calculate total chars
-    total_chars = sum(len(item["content"]) for item in contents)
-    print(f"\nTotal characters: {total_chars:,}")
-    print(f"Should NOT trigger chunking: {total_chars <= 50_000}")
+    with patch.object(
+        memory, "_retain_batch_async_internal", new_callable=AsyncMock
+    ) as mock_internal:
+        mock_internal.return_value = (["unit_id"], TokenUsage(), 0)
 
-    # Ingest the small batch (should NOT auto-chunk)
-    result = await memory.retain_batch_async(
-        bank_id=bank_id,
-        contents=contents,
-        request_context=request_context,
-    )
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=contents,
+            request_context=request_context,
+        )
 
-    # Verify we got results back
-    assert len(result) == 2, f"Expected 2 results, got {len(result)}"
-    print(f"Successfully ingested {len(result)} items (no chunking)")
+        # Should be called exactly once (no splitting)
+        assert mock_internal.call_count == 1
+        assert len(mock_internal.call_args.kwargs["contents"]) == 2
