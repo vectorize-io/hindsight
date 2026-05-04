@@ -1,5 +1,7 @@
 """
 Pytest configuration and shared fixtures.
+
+CI audit: trigger test-api run for test suite review.
 """
 import asyncio
 import os
