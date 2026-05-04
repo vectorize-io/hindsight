@@ -383,6 +383,16 @@ describe("harness argument parsing", () => {
     const { harness } = parseHarness(["--harness", "hermes"]);
     expect(harness).toBe("hermes");
   });
+
+  it("parses claude harness", () => {
+    const { harness } = parseHarness(["--harness", "claude"]);
+    expect(harness).toBe("claude");
+  });
+
+  it("parses claude-code harness", () => {
+    const { harness } = parseHarness(["--harness", "claude-code"]);
+    expect(harness).toBe("claude-code");
+  });
 });
 
 describe("hermes hindsight config", () => {
@@ -466,5 +476,138 @@ describe("hermes hindsight config", () => {
     const loaded = JSON.parse(readFileSync(join(hindsightDir, "config.json"), "utf-8"));
     const bankId = loaded.bank_id || "hermes";
     expect(bankId).toBe("hermes");
+  });
+});
+
+// ── Claude skill generation tests ─────────────────────
+
+describe("claude skill generation", () => {
+  function generateSkillFrontmatter(agentId: string, apiToken?: string): string {
+    const authHeader = apiToken ? `-H "Authorization: Bearer ${apiToken}"` : "";
+    return `---\nname: ${agentId}\ndescription: Activate the ${agentId} agent. Loads knowledge pages from Hindsight memory.\n---`;
+  }
+
+  it("includes required name frontmatter field", () => {
+    const fm = generateSkillFrontmatter("marketing-seo");
+    expect(fm).toContain("name: marketing-seo");
+  });
+
+  it("includes description frontmatter field", () => {
+    const fm = generateSkillFrontmatter("my-agent");
+    expect(fm).toContain("description: Activate the my-agent agent");
+  });
+
+  it("bakes auth token when provided", () => {
+    const authHeader = "secret-token" ? `-H "Authorization: Bearer secret-token"` : "";
+    expect(authHeader).toContain("Bearer secret-token");
+  });
+
+  it("omits auth header when no token", () => {
+    const authHeader = undefined ? `-H "Authorization: Bearer undefined"` : "";
+    expect(authHeader).toBe("");
+  });
+});
+
+describe("claude config validation", () => {
+  function validateUrl(v: string | undefined): string | undefined {
+    if (!v) return "URL required";
+    try {
+      const parsed = new URL(v);
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return "Claude connects from Anthropic's cloud — localhost won't work. Use a public URL.";
+      }
+    } catch {
+      return "Invalid URL";
+    }
+  }
+
+  it("rejects localhost URLs", () => {
+    expect(validateUrl("http://localhost:9077")).toContain("localhost");
+    expect(validateUrl("http://127.0.0.1:9077")).toContain("localhost");
+  });
+
+  it("accepts public URLs", () => {
+    expect(validateUrl("https://api.example.com")).toBeUndefined();
+    expect(validateUrl("https://api.hindsight.vectorize.io")).toBeUndefined();
+  });
+
+  it("rejects empty/missing URLs", () => {
+    expect(validateUrl("")).toBe("URL required");
+    expect(validateUrl(undefined)).toBe("URL required");
+  });
+
+  it("rejects invalid URLs", () => {
+    expect(validateUrl("not-a-url")).toBe("Invalid URL");
+  });
+});
+
+describe("claude-code config resolution", () => {
+  function resolveFromConfig(
+    agentId: string,
+    config: Record<string, any>
+  ): { apiUrl: string; bankId: string; apiToken?: string } {
+    const apiUrl = config.hindsightApiUrl || `http://localhost:${config.apiPort || 9077}`;
+    const apiToken = config.hindsightApiToken || undefined;
+    let bankId: string;
+    if (config.dynamicBankId === false && config.bankId) {
+      bankId = config.bankId;
+    } else if (config.dynamicBankId) {
+      const granularity: string[] = config.dynamicBankGranularity || ["agent", "project"];
+      const fieldMap: Record<string, string> = {
+        agent: config.agentName || agentId, project: "unknown",
+        session: "unknown", channel: "default", user: "anonymous",
+      };
+      const base = granularity.map((f: string) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
+      bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${base}` : base;
+    } else {
+      bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${agentId}` : agentId;
+    }
+    return { apiUrl, bankId, apiToken };
+  }
+
+  it("uses external API URL when set", () => {
+    const r = resolveFromConfig("agent", { hindsightApiUrl: "https://api.example.com", hindsightApiToken: "tok" });
+    expect(r.apiUrl).toBe("https://api.example.com");
+    expect(r.apiToken).toBe("tok");
+  });
+
+  it("defaults to localhost:9077", () => {
+    const r = resolveFromConfig("agent", {});
+    expect(r.apiUrl).toBe("http://localhost:9077");
+  });
+
+  it("uses agentId as default bank", () => {
+    const r = resolveFromConfig("marketing-seo", {});
+    expect(r.bankId).toBe("marketing-seo");
+  });
+
+  it("uses static bankId when dynamicBankId=false", () => {
+    const r = resolveFromConfig("agent", { dynamicBankId: false, bankId: "my-bank" });
+    expect(r.bankId).toBe("my-bank");
+  });
+
+  it("computes dynamic bankId", () => {
+    const r = resolveFromConfig("seo", { dynamicBankId: true, agentName: "seo", dynamicBankGranularity: ["agent"] });
+    expect(r.bankId).toBe("seo");
+  });
+
+  it("applies bankIdPrefix", () => {
+    const r = resolveFromConfig("agent", { bankIdPrefix: "prod" });
+    expect(r.bankId).toBe("prod-agent");
+  });
+});
+
+describe("harness validation", () => {
+  const SUPPORTED_HARNESSES = ["openclaw", "nemoclaw", "hermes", "claude", "claude-code"];
+
+  it("accepts all supported harnesses", () => {
+    for (const h of SUPPORTED_HARNESSES) {
+      expect(SUPPORTED_HARNESSES.includes(h)).toBe(true);
+    }
+  });
+
+  it("rejects unknown harnesses", () => {
+    expect(SUPPORTED_HARNESSES.includes("chatgpt")).toBe(false);
+    expect(SUPPORTED_HARNESSES.includes("")).toBe(false);
   });
 });

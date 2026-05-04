@@ -575,6 +575,240 @@ function ensureHermesPlugin(
   p.log.success("Knowledge skill installed");
 }
 
+// ── Claude skill generation ────────────────────────────
+
+const CLAUDE_SKILLS_DIR = join(homedir(), "self-driving-agents", "claude");
+const HINDSIGHT_CLOUD_API_URL = "https://api.hindsight.vectorize.io";
+
+async function generateClaudeSkill(
+  agentId: string,
+  apiUrl: string,
+  bankId: string,
+  apiToken?: string
+): Promise<string> {
+  const authHeader = apiToken ? `-H "Authorization: Bearer ${apiToken}" \\\n      ` : "";
+  const skillMd = `# Hindsight Memory — ${agentId}
+
+## Mandatory Startup Sequence
+
+On every new conversation, run these commands **before doing anything else**:
+
+### 1. List all knowledge pages
+\`\`\`bash
+curl -s ${apiUrl}/v1/default/banks/${bankId}/knowledge/pages \\
+  ${authHeader}-H "Content-Type: application/json"
+\`\`\`
+
+### 2. Read each page (replace PAGE_ID)
+\`\`\`bash
+curl -s ${apiUrl}/v1/default/banks/${bankId}/knowledge/pages/PAGE_ID \\
+  ${authHeader}-H "Content-Type: application/json"
+\`\`\`
+
+Read **every** page listed in step 1 to load the agent's full knowledge base.
+
+## Creating Knowledge Pages
+
+\`\`\`bash
+curl -s -X POST ${apiUrl}/v1/default/banks/${bankId}/knowledge/pages \\
+  ${authHeader}-H "Content-Type: application/json" \\
+  -d '{"title": "Page Title", "content": "Markdown content here"}'
+\`\`\`
+
+## Searching Memories
+
+\`\`\`bash
+curl -s -X POST ${apiUrl}/v1/default/banks/${bankId}/memories/recall \\
+  ${authHeader}-H "Content-Type: application/json" \\
+  -d '{"query": "your search query"}'
+\`\`\`
+
+## Ingesting Documents
+
+\`\`\`bash
+curl -s -X POST ${apiUrl}/v1/default/banks/${bankId}/memories/retain \\
+  ${authHeader}-H "Content-Type: application/json" \\
+  -d '{"content": "Document content to remember"}'
+\`\`\`
+
+## Updating Knowledge Pages
+
+\`\`\`bash
+curl -s -X PUT ${apiUrl}/v1/default/banks/${bankId}/knowledge/pages/PAGE_ID \\
+  ${authHeader}-H "Content-Type: application/json" \\
+  -d '{"title": "Updated Title", "content": "Updated content"}'
+\`\`\`
+
+## Deleting Knowledge Pages
+
+\`\`\`bash
+curl -s -X DELETE ${apiUrl}/v1/default/banks/${bankId}/knowledge/pages/PAGE_ID \\
+  ${authHeader}-H "Content-Type: application/json"
+\`\`\`
+
+## Retaining Conversations
+
+Claude Chat and Cowork do not have automatic hooks. You must **self-retain** important conversation content.
+
+After any significant exchange (decisions, new information, task outcomes), retain it:
+
+\`\`\`bash
+curl -s -X POST ${apiUrl}/v1/default/banks/${bankId}/memories/retain \\
+  ${authHeader}-H "Content-Type: application/json" \\
+  -d '{"content": "Summary of the conversation or key information learned"}'
+\`\`\`
+
+**When to self-retain:**
+- After learning user preferences or project context
+- After completing a task (retain the outcome)
+- After receiving corrections or feedback
+- After discovering important facts during research
+
+## Important Notes
+
+- Always run the startup sequence at the beginning of every conversation
+- Knowledge pages are persistent — they survive across conversations
+- Use recall to search existing memories before creating duplicates
+- Self-retain is essential since there are no automatic hooks in Claude Chat/Cowork
+`;
+
+  const outDir = join(CLAUDE_SKILLS_DIR, agentId);
+  mkdirSync(outDir, { recursive: true });
+  const skillPath = join(outDir, "SKILL.md");
+  writeFileSync(skillPath, skillMd);
+
+  // Create a zip of the skill directory
+  const zipPath = join(outDir, `${agentId}-skill.zip`);
+  execSync(`cd "${outDir}" && zip -j "${zipPath}" SKILL.md`, { stdio: "pipe" });
+
+  return zipPath;
+}
+
+async function promptClaudeConfig(
+  agentId: string
+): Promise<{ apiUrl: string; bankId: string; apiToken?: string }> {
+  const deploymentType = await p.select({
+    message: "Hindsight deployment:",
+    options: [
+      { value: "cloud", label: "Cloud (api.hindsight.vectorize.io)" },
+      { value: "self-hosted", label: "Self-hosted" },
+    ],
+  });
+  if (p.isCancel(deploymentType)) {
+    p.cancel("Cancelled.");
+    process.exit(0);
+  }
+
+  let apiUrl: string;
+  if (deploymentType === "cloud") {
+    apiUrl = HINDSIGHT_CLOUD_API_URL;
+  } else {
+    const urlInput = await p.text({
+      message: "Hindsight API URL:",
+      placeholder: "https://your-hindsight.example.com",
+      validate: (val) => {
+        if (!val) return "URL is required";
+        if (val.startsWith("http://localhost") || val.startsWith("http://127.0.0.1")) {
+          return "Claude cannot reach localhost. Use a publicly accessible URL.";
+        }
+        return undefined;
+      },
+    });
+    if (p.isCancel(urlInput)) {
+      p.cancel("Cancelled.");
+      process.exit(0);
+    }
+    apiUrl = urlInput as string;
+    p.log.warn("Make sure your Hindsight instance is publicly accessible from Claude's servers.");
+  }
+
+  const tokenInput = await p.text({ message: "Hindsight API token:" });
+  if (p.isCancel(tokenInput)) {
+    p.cancel("Cancelled.");
+    process.exit(0);
+  }
+  const apiToken = (tokenInput as string) || undefined;
+
+  const bankInput = await p.text({
+    message: "Bank ID:",
+    initialValue: agentId,
+  });
+  if (p.isCancel(bankInput)) {
+    p.cancel("Cancelled.");
+    process.exit(0);
+  }
+  const bankId = (bankInput as string).trim() || agentId;
+
+  return { apiUrl, bankId, apiToken };
+}
+
+// ── Claude Code plugin management ─────────────────────
+
+const CLAUDE_CODE_USER_CONFIG_DIR = join(homedir(), ".hindsight");
+const CLAUDE_CODE_USER_CONFIG_PATH = join(CLAUDE_CODE_USER_CONFIG_DIR, "claude-code.json");
+
+function readClaudeCodeConfig(): any {
+  if (!existsSync(CLAUDE_CODE_USER_CONFIG_PATH)) return null;
+  return JSON.parse(readFileSync(CLAUDE_CODE_USER_CONFIG_PATH, "utf-8"));
+}
+
+function writeClaudeCodeConfig(config: any): void {
+  mkdirSync(CLAUDE_CODE_USER_CONFIG_DIR, { recursive: true });
+  writeFileSync(CLAUDE_CODE_USER_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+}
+
+function resolveFromClaudeCode(agentId: string): {
+  apiUrl: string;
+  bankId: string;
+  apiToken?: string;
+} {
+  const config = readClaudeCodeConfig();
+  if (!config) throw new Error("Claude Code config not found at " + CLAUDE_CODE_USER_CONFIG_PATH);
+
+  const apiUrl = config.apiUrl || HINDSIGHT_CLOUD_API_URL;
+  const apiToken = config.apiToken || undefined;
+
+  let bankId: string;
+  if (config.dynamicBankId === false && config.bankId) {
+    bankId = config.bankId;
+  } else {
+    const granularity: string[] = config.dynamicBankGranularity || ["agent"];
+    const fieldMap: Record<string, string> = {
+      agent: agentId,
+    };
+    const base = granularity.map((f) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
+    bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${base}` : base;
+  }
+
+  return { apiUrl, bankId, apiToken };
+}
+
+async function ensureClaudeCodePlugin(agentId: string): Promise<{ apiUrl: string; bankId: string; apiToken?: string }> {
+  // Write or update config
+  const config = readClaudeCodeConfig() || {};
+  config.agentName = agentId;
+  config.enableKnowledgeTools = true;
+
+  // Always prompt for Hindsight connection — each agent install needs correct API + token
+  let resolvedApiUrl = config.hindsightApiUrl || `http://localhost:${config.apiPort || 9077}`;
+  let resolvedBankId = agentId;
+  let resolvedApiToken = config.hindsightApiToken || undefined;
+
+  if (process.stdin.isTTY) {
+    const claudeConfig = await promptClaudeConfig(agentId);
+    config.hindsightApiUrl = claudeConfig.apiUrl;
+    config.hindsightApiToken = claudeConfig.apiToken;
+    config.dynamicBankId = false;
+    resolvedApiUrl = claudeConfig.apiUrl;
+    resolvedBankId = claudeConfig.bankId;
+    resolvedApiToken = claudeConfig.apiToken;
+  }
+
+  writeClaudeCodeConfig(config);
+
+  return { apiUrl: resolvedApiUrl, bankId: resolvedBankId, apiToken: resolvedApiToken };
+}
+
 // ── Main ────────────────────────────────────────────────
 
 async function main() {
@@ -593,7 +827,7 @@ async function main() {
     ${color.cyan("./local-dir")}                 → local directory
 
   ${color.dim("Options:")}
-    ${color.cyan("--harness <h>")}      Required. openclaw | nemoclaw | hermes
+    ${color.cyan("--harness <h>")}      Required. openclaw | nemoclaw | hermes | claude | claude-code
     ${color.cyan("--agent <name>")}     Agent name (defaults to directory name)
     ${color.cyan("--sandbox <name>")}   NemoClaw sandbox (auto-detected if only one exists)
 `);
@@ -619,7 +853,7 @@ async function main() {
   }
 
   if (!harness) {
-    p.cancel("--harness required (openclaw | nemoclaw)");
+    p.cancel("--harness required (openclaw | nemoclaw | hermes | claude | claude-code)");
     process.exit(1);
   }
 
@@ -655,6 +889,7 @@ async function main() {
     let apiUrl: string;
     let bankId: string;
     let apiToken: string | undefined;
+    let claudeSkillZip: string | undefined;
 
     if (harness === "openclaw") {
       await ensurePlugin();
@@ -734,6 +969,13 @@ async function main() {
 
       bankId = agentId;
       ensureHermesPlugin(agentId, apiUrl, bankId, apiToken);
+    } else if (harness === "claude") {
+      const claudeConfig = await promptClaudeConfig(agentId);
+      apiUrl = claudeConfig.apiUrl;
+      bankId = claudeConfig.bankId;
+      apiToken = claudeConfig.apiToken;
+    } else if (harness === "claude-code") {
+      ({ apiUrl, bankId, apiToken } = await ensureClaudeCodePlugin(agentId));
     } else {
       p.cancel(`Unknown harness: ${harness}`);
       process.exit(1);
@@ -806,7 +1048,71 @@ async function main() {
     }
 
     // Step 6: Create agent + install skill (hermes handled in ensureHermesPlugin)
-    if (harness === "hermes") {
+    if (harness === "claude") {
+      claudeSkillZip = await generateClaudeSkill(agentId, apiUrl, bankId, apiToken);
+    } else if (harness === "claude-code") {
+      // Install per-agent subagent at ~/.claude/agents/<agentId>.md
+      const agentsDir = join(homedir(), ".claude", "agents");
+      mkdirSync(agentsDir, { recursive: true });
+      const agentFile = join(agentsDir, `${agentId}.md`);
+      writeFileSync(
+        agentFile,
+        `---
+name: ${agentId}
+description: ${agentId} agent with long-term memory. Delegate to this agent for tasks related to ${agentId.replace(/-/g, " ")}. It has access to knowledge pages and memory search via Hindsight.
+skills:
+  - agent-knowledge
+mcpServers:
+  - hindsight
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: HINDSIGHT_BANK_ID="${bankId}" python3 "\${CLAUDE_PLUGIN_ROOT}/scripts/subagent_retain.py"
+          timeout: 15
+          async: true
+---
+
+You are the **${agentId}** agent with long-term memory powered by Hindsight.
+
+## Startup — run these steps immediately
+
+1. Call \`agent_knowledge_list_pages(bank_id="${bankId}")\` to see your knowledge pages.
+2. Call \`agent_knowledge_get_page(page_id, bank_id="${bankId}")\` for each page to load your knowledge.
+3. Use this knowledge to inform everything you do in this conversation.
+
+## Creating pages
+
+When you learn something durable — a user preference, a working procedure, performance data — create a page:
+
+\`agent_knowledge_create_page(page_id, name, source_query, bank_id="${bankId}")\`
+
+- \`page_id\`: lowercase with hyphens (\`editorial-preferences\`)
+- \`source_query\`: a question that rebuilds the page from observations
+
+## Searching memories
+
+\`agent_knowledge_recall(query, bank_id="${bankId}")\` — search conversations and documents for specific facts.
+
+## Ingesting documents
+
+\`agent_knowledge_ingest(title, content, bank_id="${bankId}")\` — upload raw content into memory.
+
+## Updating and deleting
+
+- \`agent_knowledge_update_page(page_id, name?, source_query?, bank_id="${bankId}")\`
+- \`agent_knowledge_delete_page(page_id, bank_id="${bankId}")\`
+
+## Important
+
+- Always pass \`bank_id="${bankId}"\` on every agent_knowledge_* tool call
+- Pages update automatically — don't edit content directly
+- Create pages silently — don't announce it to the user
+- Prefer fewer broad pages over many narrow ones
+`
+      );
+      p.log.success(`Subagent installed at ${color.dim(agentFile)}`);
+    } else if (harness === "hermes") {
       // Skill + plugin already installed by ensureHermesPlugin
     } else if (harness === "nemoclaw") {
       // NemoClaw: install skill into the sandbox via nemoclaw CLI
@@ -875,7 +1181,21 @@ async function main() {
 
     // Next steps
     let nextSteps: string[];
-    if (harness === "hermes") {
+    if (harness === "claude") {
+      const apiHost = new URL(apiUrl).hostname;
+      nextSteps = [
+        `${color.dim("1.")} Open Claude → Customize → Skills → Upload skill`,
+        `${color.dim("2.")} Select: ${color.cyan(claudeSkillZip!)}`,
+        `${color.dim("3.")} Allowlist the API host: Settings → Capabilities → add ${color.cyan(apiHost)}`,
+        `${color.dim("4.")} Start a conversation and type ${color.cyan(`/${agentId}`)} to activate the agent`,
+      ];
+    } else if (harness === "claude-code") {
+      nextSteps = [
+        `${color.dim("1.")} Start Claude Code: ${color.cyan("claude")}`,
+        `${color.dim("2.")} Claude will auto-delegate to ${color.cyan(agentId)} when relevant, or mention ${color.cyan(`@${agentId}`)}`,
+        `${color.dim("3.")} Conversations are automatically retained via hooks`,
+      ];
+    } else if (harness === "hermes") {
       nextSteps = [`${color.dim("1.")} hermes -p ${agentId} chat`];
     } else if (harness === "nemoclaw") {
       nextSteps = [

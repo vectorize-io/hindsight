@@ -57,7 +57,7 @@ class HindsightClient:
             headers["Authorization"] = f"Bearer {self.api_token}"
         return headers
 
-    def _request(self, method: str, path: str, body: Optional[dict] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    def request(self, method: str, path: str, body: Optional[dict] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
         url = f"{self.api_url}{path}"
         data = json.dumps(body).encode() if body else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
@@ -115,7 +115,7 @@ class HindsightClient:
             body["budget"] = budget
         if types:
             body["types"] = types
-        return self._request("POST", path, body, timeout=timeout)
+        return self.request("POST", path, body, timeout=timeout)
 
     def retain(
         self,
@@ -147,7 +147,7 @@ class HindsightClient:
             "items": [item],
             "async": True,
         }
-        return self._request("POST", path, body, timeout=timeout)
+        return self.request("POST", path, body, timeout=timeout)
 
     def set_bank_mission(
         self, bank_id: str, mission: str, retain_mission: Optional[str] = None, timeout: int = 15
@@ -161,4 +161,4 @@ class HindsightClient:
         updates = {"reflect_mission": mission}
         if retain_mission:
             updates["retain_mission"] = retain_mission
-        return self._request("PATCH", path, {"updates": updates}, timeout=timeout)
+        return self.request("PATCH", path, {"updates": updates}, timeout=timeout)

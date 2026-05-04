@@ -22,6 +22,18 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__hindsight__agent_knowledge_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/inject_bank_id.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
