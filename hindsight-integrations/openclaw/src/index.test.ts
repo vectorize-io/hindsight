@@ -799,6 +799,68 @@ describe("prepareRetentionTranscript", () => {
     // The middle message becomes empty after tag stripping, so messageCount should be 2
     expect(result?.messageCount).toBe(2);
   });
+
+  it("prepends a session-context system message when sessionContext is provided (json)", () => {
+    const config: PluginConfig = { ...baseConfig, retainToolCalls: false };
+    const messages = [{ role: "user", content: "What's MIN-123 status?" }];
+    const result = prepareRetentionTranscript(messages, config, false, {
+      senderId: "U7JAF258R",
+      channelId: "C04L6E0H3SQ",
+      provider: "slack",
+    });
+    expect(result).not.toBeNull();
+    const parsed = JSON.parse(result!.transcript);
+    expect(parsed[0]).toEqual({
+      role: "system",
+      content:
+        "[context]\nsender: U7JAF258R\nchannel: C04L6E0H3SQ\nprovider: slack\n[/context]",
+    });
+    expect(parsed[1]).toEqual({ role: "user", content: "What's MIN-123 status?" });
+    expect(result?.messageCount).toBe(2);
+  });
+
+  it("prepends a session-context block when sessionContext is provided (text format)", () => {
+    const config: PluginConfig = { ...baseConfig, retainFormat: "text" };
+    const messages = [{ role: "user", content: "ping" }];
+    const result = prepareRetentionTranscript(messages, config, false, {
+      senderId: "U7JAF258R",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.transcript.startsWith("[context]\nsender: U7JAF258R\n[/context]\n\n")).toBe(
+      true
+    );
+    expect(result!.transcript).toContain("[role: user]\nping\n[user:end]");
+  });
+
+  it("omits the context header when includeSenderContext is explicitly disabled", () => {
+    const config: PluginConfig = {
+      ...baseConfig,
+      retainFormat: "text",
+      includeSenderContext: false,
+    };
+    const messages = [{ role: "user", content: "ping" }];
+    const result = prepareRetentionTranscript(messages, config, false, {
+      senderId: "U7JAF258R",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.transcript).not.toContain("[context]");
+    expect(result!.transcript.startsWith("[role: user]")).toBe(true);
+  });
+
+  it("omits the context header when sessionContext has no usable fields", () => {
+    const config: PluginConfig = { ...baseConfig, retainFormat: "text" };
+    const messages = [{ role: "user", content: "ping" }];
+    const result = prepareRetentionTranscript(messages, config, false, {});
+    expect(result).not.toBeNull();
+    expect(result!.transcript).not.toContain("[context]");
+  });
+
+  it("falls back gracefully when sessionContext is omitted", () => {
+    const messages = [{ role: "user", content: "ping" }];
+    const result = prepareRetentionTranscript(messages, baseConfig);
+    expect(result).not.toBeNull();
+    expect(result!.transcript).not.toContain("[context]");
+  });
 });
 
 // ---------------------------------------------------------------------------
