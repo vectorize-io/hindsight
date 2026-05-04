@@ -284,10 +284,12 @@ async def _insert_facts_and_links(
         )
         # Update semantic_ann_links with remapped IDs for Phase 2
         semantic_ann_links = remapped_semantic
-        # INSERT unit_entities (FK to memory_units, must be in transaction)
+        # INSERT unit_entities (FK to memory_units, must be in transaction).
+        # Pass fact_date alongside so entity_cooccurrences.last_cooccurred
+        # tracks the event timeline, not the ingest moment.
         unit_entity_pairs = [
-            (unit_id, resolved_entity_ids[idx])
-            for idx, (unit_id, _local_idx, _fact_date) in enumerate(remapped_entity_to_unit)
+            (unit_id, resolved_entity_ids[idx], fact_date)
+            for idx, (unit_id, _local_idx, fact_date) in enumerate(remapped_entity_to_unit)
         ]
         await entity_resolver.link_units_to_entities_batch(unit_entity_pairs, conn=conn)
         log_buffer.append(f"  Insert unit_entities: {len(unit_entity_pairs)} pairs in {time.time() - step_start:.3f}s")

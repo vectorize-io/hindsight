@@ -326,3 +326,88 @@ class TestOracleFuzzyEntityResolution:
         # The candidate IDs should be passed as bind parameter
         cooc_bind_args = mock_conn.fetch.call_args_list[1].args[1:]
         assert "eid-1" in cooc_bind_args[0], "Co-occurrence query must receive candidate IDs"
+
+
+@pytest.mark.asyncio
+async def test_link_units_carries_event_date_into_cooccurrences(pg0_db_url):
+    """
+    `link_units_to_entities_batch` must propagate each unit's event_date onto the
+    accumulated _CooccurrencePair entries, so flush_pending_stats() stamps
+    entity_cooccurrences.last_cooccurred with the event time instead of "now".
+
+    This protects banks that were backfilled from another memory system —
+    without it, every pair collapses to the import moment and the UI's entity
+    graph recency heat loses the underlying knowledge timeline.
+    """
+    resolved_url = await resolve_database_url(pg0_db_url)
+    backend = create_database_backend("postgresql")
+    await backend.initialize(resolved_url, min_size=1, max_size=2, command_timeout=30)
+    bank_id = f"test-cooccurrence-evt-{uuid.uuid4().hex[:8]}"
+    resolver = EntityResolver(pool=backend, entity_lookup="full")
+
+    historical = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+    try:
+        async with backend.acquire() as conn:
+            unit_id = await conn.fetchval(
+                """
+                INSERT INTO memory_units
+                    (bank_id, text, fact_type, mentioned_at, occurred_start, created_at)
+                VALUES ($1, 'paired-entity unit', 'experience', $2, $2, now())
+                RETURNING id
+                """,
+                bank_id,
+                historical,
+            )
+            e1 = await conn.fetchval(
+                "INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count) "
+                "VALUES ($1, 'alpha', $2, $2, 1) RETURNING id",
+                bank_id,
+                historical,
+            )
+            e2 = await conn.fetchval(
+                "INSERT INTO entities (bank_id, canonical_name, first_seen, last_seen, mention_count) "
+                "VALUES ($1, 'beta', $2, $2, 1) RETURNING id",
+                bank_id,
+                historical,
+            )
+
+            await resolver.link_units_to_entities_batch(
+                [(str(unit_id), str(e1), historical), (str(unit_id), str(e2), historical)],
+                conn=conn,
+            )
+
+        # Flush accumulates to entity_cooccurrences on a fresh connection, as
+        # the production flush runs post-transaction to avoid lock contention.
+        await resolver.flush_pending_stats()
+
+        async with backend.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT last_cooccurred
+                FROM entity_cooccurrences
+                WHERE entity_id_1 = LEAST($1::uuid, $2::uuid)
+                  AND entity_id_2 = GREATEST($1::uuid, $2::uuid)
+                """,
+                e1,
+                e2,
+            )
+        assert row is not None, "co-occurrence row should exist"
+        assert row["last_cooccurred"] == historical, (
+            f"expected last_cooccurred == {historical}, got {row['last_cooccurred']}"
+        )
+    finally:
+        async with backend.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM unit_entities WHERE unit_id IN (SELECT id FROM memory_units WHERE bank_id = $1)", bank_id
+            )
+            await conn.execute(
+                "DELETE FROM entity_cooccurrences WHERE entity_id_1 IN "
+                "(SELECT id FROM entities WHERE bank_id = $1) "
+                "OR entity_id_2 IN "
+                "(SELECT id FROM entities WHERE bank_id = $1)",
+                bank_id,
+            )
+            await conn.execute("DELETE FROM memory_units WHERE bank_id = $1", bank_id)
+            await conn.execute("DELETE FROM entities WHERE bank_id = $1", bank_id)
+        await backend.shutdown()

@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "fs";
-import { execSync } from "child_process";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
 import { extname, relative, basename } from "path";
 
 // ── Extracted helpers (mirroring cli.ts logic for unit testing) ──
@@ -380,219 +379,92 @@ describe("harness argument parsing", () => {
     expect(sandbox).toBeUndefined();
   });
 
-  it("parses claude harness", () => {
-    const { harness } = parseHarness(["--harness", "claude"]);
-    expect(harness).toBe("claude");
+  it("parses hermes harness", () => {
+    const { harness } = parseHarness(["--harness", "hermes"]);
+    expect(harness).toBe("hermes");
   });
 });
 
-// ── Claude skill generation (mirroring generateClaudeSkill logic) ──
-
-function generateSkillMd(
-  agentId: string,
-  apiUrl: string,
-  bankId: string,
-  apiToken?: string
-): string {
-  const authHeader = apiToken ? `-H "Authorization: Bearer ${apiToken}"` : "";
-  return `---
-name: ${agentId}
-description: Activate the ${agentId} agent. Loads knowledge pages from Hindsight memory.
----
-
-# ${agentId}
-
-You are the **${agentId}** agent with long-term memory powered by Hindsight.
-
-## Startup — run these steps immediately
-
-1. List your knowledge pages and read each one:
-
-\`\`\`bash
-curl -s ${authHeader} "${apiUrl}/v1/default/banks/${bankId}/mental-models?detail=metadata"
-\`\`\`
-`.trim();
-}
-
-describe("generateClaudeSkill", () => {
+describe("hermes hindsight config", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "sda-claude-test-"));
+    tmpDir = await mkdtemp(join(tmpdir(), "sda-hermes-test-"));
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("generates SKILL.md with correct frontmatter", () => {
-    const md = generateSkillMd("marketing-seo", "https://api.example.com", "marketing-seo", "tok-123");
+  it("generates correct hindsight/config.json", async () => {
+    const hindsightDir = join(tmpDir, "hindsight");
+    await mkdir(hindsightDir, { recursive: true });
+    const cfg = {
+      mode: "cloud",
+      api_url: "https://api.hindsight.vectorize.io",
+      api_key: "hsk_test",
+      bank_id: "marketing-seo",
+      bank_id_template: "",
+      recall_budget: "mid",
+      memory_mode: "hybrid",
+    };
+    await writeFile(join(hindsightDir, "config.json"), JSON.stringify(cfg));
 
-    // Required frontmatter fields
-    expect(md).toContain("name: marketing-seo");
-    expect(md).toContain("description: Activate the marketing-seo agent");
-
-    // Starts with frontmatter
-    expect(md.startsWith("---")).toBe(true);
+    const loaded = JSON.parse(readFileSync(join(hindsightDir, "config.json"), "utf-8"));
+    expect(loaded.bank_id).toBe("marketing-seo");
+    expect(loaded.bank_id_template).toBe("");
+    expect(loaded.api_url).toBe("https://api.hindsight.vectorize.io");
+    expect(loaded.api_key).toBe("hsk_test");
+    expect(loaded.mode).toBe("cloud");
   });
 
-  it("bakes API URL and bank ID into curl commands", () => {
-    const md = generateSkillMd("my-agent", "https://api.hindsight.vectorize.io", "my-bank");
+  it("empty bank_id_template prevents dynamic resolution", () => {
+    // Mirrors _resolve_bank_id_template logic: empty template → use fallback
+    function resolveTemplate(template: string, fallback: string): string {
+      if (!template) return fallback;
+      return template; // simplified — real impl does placeholder substitution
+    }
 
-    expect(md).toContain("https://api.hindsight.vectorize.io/v1/default/banks/my-bank/mental-models");
+    expect(resolveTemplate("", "marketing-seo")).toBe("marketing-seo");
+    expect(resolveTemplate("hermes-{profile}", "fallback")).toBe("hermes-{profile}");
   });
 
-  it("bakes auth token into curl commands when provided", () => {
-    const md = generateSkillMd("my-agent", "https://api.example.com", "bank", "secret-token");
+  it("plugin config is read from hindsight/config.json", async () => {
+    // Simulates what the hermes plugin does: read from HERMES_HOME/hindsight/config.json
+    const hindsightDir = join(tmpDir, "hindsight");
+    await mkdir(hindsightDir, { recursive: true });
+    const cfg = {
+      mode: "cloud",
+      api_url: "https://custom.api.com",
+      api_key: "hsk_custom",
+      bank_id: "my-agent",
+    };
+    await writeFile(join(hindsightDir, "config.json"), JSON.stringify(cfg));
 
-    expect(md).toContain('-H "Authorization: Bearer secret-token"');
-  });
-
-  it("omits auth header when no token", () => {
-    const md = generateSkillMd("my-agent", "https://api.example.com", "bank");
-
-    expect(md).not.toContain("Authorization");
-  });
-
-  it("uses agent ID as skill name", () => {
-    const md = generateSkillMd("seo-writer", "https://api.example.com", "bank");
-
-    expect(md).toContain("name: seo-writer");
-    expect(md).toContain("# seo-writer");
-  });
-
-  it("generates valid zip structure with directory wrapping", () => {
-    const agentId = "test-agent";
-    const skillDir = join(tmpDir, agentId);
-    mkdirSync(skillDir, { recursive: true });
-    writeFileSync(join(skillDir, "SKILL.md"), generateSkillMd(agentId, "https://api.example.com", "bank"));
-
-    // Zip the same way the CLI does: cd to parent, zip the directory
-    const zipPath = join(tmpDir, `${agentId}.zip`);
-    execSync(`cd ${JSON.stringify(tmpDir)} && zip -r ${JSON.stringify(zipPath)} ${JSON.stringify(agentId)}`, {
-      stdio: "pipe",
-    });
-
-    expect(existsSync(zipPath)).toBe(true);
-
-    // Verify zip contents have directory structure: test-agent/SKILL.md
-    const listing = execSync(`unzip -l ${JSON.stringify(zipPath)}`, { encoding: "utf-8" });
-    expect(listing).toContain(`${agentId}/SKILL.md`);
-    // Should NOT have SKILL.md at root
-    expect(listing).not.toMatch(/^\s+\d+.*\s+SKILL\.md$/m);
-  });
-
-  it("generates skill with list pages curl command", () => {
-    const md = generateSkillMd("my-agent", "https://api.example.com", "my-bank", "tok");
-
-    expect(md).toContain("curl -s");
-    expect(md).toContain("/mental-models?detail=metadata");
-  });
-});
-
-describe("claude skill content completeness", () => {
-  // Test against a full skill generation to verify all API operations are present
-  function generateFullSkillMd(
-    agentId: string,
-    apiUrl: string,
-    bankId: string,
-    apiToken?: string
-  ): string {
-    const authHeader = apiToken ? `-H "Authorization: Bearer ${apiToken}"` : "";
-    // This mirrors the full template from cli.ts
-    return [
-      `curl -s ${authHeader} "${apiUrl}/v1/default/banks/${bankId}/mental-models?detail=metadata"`,
-      `curl -s ${authHeader} "${apiUrl}/v1/default/banks/${bankId}/mental-models/PAGE_ID?detail=full"`,
-      `curl -s -X POST ${authHeader}`,
-      `"${apiUrl}/v1/default/banks/${bankId}/mental-models"`,
-      `curl -s -X POST ${authHeader}`,
-      `"${apiUrl}/v1/default/banks/${bankId}/memories/recall"`,
-      `curl -s -X POST ${authHeader}`,
-      `"${apiUrl}/v1/default/banks/${bankId}/memories"`,
-      `curl -s -X PATCH ${authHeader}`,
-      `curl -s -X DELETE ${authHeader}`,
-    ].join("\n");
-  }
-
-  it("includes list pages endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("/mental-models?detail=metadata");
-  });
-
-  it("includes get page endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("/mental-models/PAGE_ID?detail=full");
-  });
-
-  it("includes create page endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("POST");
-    expect(md).toContain("/mental-models");
-  });
-
-  it("includes recall endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("/memories/recall");
-  });
-
-  it("includes retain/ingest endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("/memories");
-  });
-
-  it("includes update endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("PATCH");
-  });
-
-  it("includes delete endpoint", () => {
-    const md = generateFullSkillMd("a", "https://h.io", "b");
-    expect(md).toContain("DELETE");
-  });
-});
-
-describe("claude config validation", () => {
-  it("rejects localhost URLs", () => {
-    const validate = (v: string | undefined) => {
-      if (!v) return "URL required";
-      try {
-        const parsed = new URL(v);
-        if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
-          return "Claude connects from Anthropic's cloud — localhost won't work. Use a public URL.";
-        }
-      } catch {
-        return "Invalid URL";
-      }
+    // Read it back the way the plugin does
+    const cfgPath = join(tmpDir, "hindsight", "config.json");
+    const loaded = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    const normalized = {
+      api_url: loaded.api_url || "",
+      api_token: loaded.api_key || "",
+      bank_id: loaded.bank_id || "hermes",
     };
 
-    expect(validate("http://localhost:9077")).toContain("localhost");
-    expect(validate("http://127.0.0.1:9077")).toContain("localhost");
-    expect(validate("https://api.example.com")).toBeUndefined();
-    expect(validate("")).toBe("URL required");
-    expect(validate(undefined)).toBe("URL required");
-    expect(validate("not-a-url")).toBe("Invalid URL");
+    expect(normalized.api_url).toBe("https://custom.api.com");
+    expect(normalized.api_token).toBe("hsk_custom");
+    expect(normalized.bank_id).toBe("my-agent");
   });
 
-  it("cloud URL is the correct constant", () => {
-    const HINDSIGHT_CLOUD_API_URL = "https://api.hindsight.vectorize.io";
-    expect(HINDSIGHT_CLOUD_API_URL).toMatch(/^https:\/\//);
-    expect(HINDSIGHT_CLOUD_API_URL).not.toContain("localhost");
-  });
-});
+  it("falls back to default bank_id when not set", async () => {
+    const hindsightDir = join(tmpDir, "hindsight");
+    await mkdir(hindsightDir, { recursive: true });
+    await writeFile(
+      join(hindsightDir, "config.json"),
+      JSON.stringify({ mode: "cloud", api_url: "https://api.example.com", api_key: "tok" })
+    );
 
-describe("harness validation", () => {
-  const SUPPORTED_HARNESSES = ["openclaw", "nemoclaw", "claude"];
-
-  it("accepts all supported harnesses", () => {
-    for (const h of SUPPORTED_HARNESSES) {
-      expect(SUPPORTED_HARNESSES.includes(h)).toBe(true);
-    }
-  });
-
-  it("rejects unknown harnesses", () => {
-    expect(SUPPORTED_HARNESSES.includes("chatgpt")).toBe(false);
-    expect(SUPPORTED_HARNESSES.includes("claude-code")).toBe(false);
-    expect(SUPPORTED_HARNESSES.includes("claude-cowork")).toBe(false);
-    expect(SUPPORTED_HARNESSES.includes("")).toBe(false);
+    const loaded = JSON.parse(readFileSync(join(hindsightDir, "config.json"), "utf-8"));
+    const bankId = loaded.bank_id || "hermes";
+    expect(bankId).toBe("hermes");
   });
 });

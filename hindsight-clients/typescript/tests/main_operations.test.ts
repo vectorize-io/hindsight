@@ -470,11 +470,7 @@ describe("TestMission", () => {
   });
 });
 
-// Skip under Deno: jest.spyOn cannot patch ES-module namespace objects whose
-// properties are frozen. These unit tests are covered by the Jest suite.
-const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
-
-(canSpyOnModules ? describe : describe.skip)("TestAbortSignal", () => {
+describe("TestAbortSignal", () => {
   test("retain passes abort signal to SDK", async () => {
     const bankId = randomBankId();
     const controller = new AbortController();
