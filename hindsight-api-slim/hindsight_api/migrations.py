@@ -151,10 +151,7 @@ def _ensure_pg_textsearch_language(conn: Connection, schema_name: str, language:
             logger.debug(f"BM25 index on {table_name} already uses text_config={target_config}")
             continue
 
-        logger.info(
-            f"BM25 index text_config mismatch on {table_name}: "
-            f"target={target_config}, recreating index"
-        )
+        logger.info(f"BM25 index text_config mismatch on {table_name}: target={target_config}, recreating index")
 
         # Rebuild zhparser config if Chinese
         if language == "chinese":
@@ -163,9 +160,7 @@ def _ensure_pg_textsearch_language(conn: Connection, schema_name: str, language:
                 conn.commit()
             except Exception:
                 conn.rollback()
-                ext_exists = conn.execute(
-                    text("SELECT 1 FROM pg_extension WHERE extname = 'zhparser'")
-                ).fetchone()
+                ext_exists = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'zhparser'")).fetchone()
                 if not ext_exists:
                     raise RuntimeError(
                         "zhparser extension is required for Chinese text search but could not be installed. "
@@ -173,9 +168,7 @@ def _ensure_pg_textsearch_language(conn: Connection, schema_name: str, language:
                     )
 
             # CREATE TEXT SEARCH CONFIGURATION doesn't support IF NOT EXISTS
-            config_exists = conn.execute(
-                text("SELECT 1 FROM pg_ts_config WHERE cfgname = 'zh_cn'")
-            ).fetchone()
+            config_exists = conn.execute(text("SELECT 1 FROM pg_ts_config WHERE cfgname = 'zh_cn'")).fetchone()
             if not config_exists:
                 conn.execute(text("CREATE TEXT SEARCH CONFIGURATION public.zh_cn (PARSER = zhparser)"))
                 conn.execute(
