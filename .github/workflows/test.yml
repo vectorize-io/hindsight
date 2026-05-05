@@ -1164,7 +1164,7 @@ jobs:
             model: openai/gpt-oss-20b
             api_key_secret: GROQ_API_KEY
           - provider: bedrock
-            model: us.amazon.nova-2-lite-v1:0
+            model: us.amazon.nova-2-pro-v1:0
     name: LLM acceptance (${{ matrix.provider }}/${{ matrix.model }})
     env:
       HINDSIGHT_API_LLM_PROVIDER: ${{ matrix.provider }}

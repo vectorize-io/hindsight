@@ -1,2 +1,2 @@
-export { Hindsight } from './nodes/Hindsight/Hindsight.node';
-export { HindsightApi } from './credentials/HindsightApi.credentials';
+export { Hindsight } from "./nodes/Hindsight/Hindsight.node";
+export { HindsightApi } from "./credentials/HindsightApi.credentials";

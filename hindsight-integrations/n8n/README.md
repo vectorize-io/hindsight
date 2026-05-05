@@ -37,31 +37,31 @@ Restart n8n and the **Hindsight** node appears in the node panel.
 
 ### Retain — store content in a bank
 
-| Field | Description |
-|---|---|
-| Bank ID | The memory bank to store in (auto-created on first use) |
+| Field   | Description                                                             |
+| ------- | ----------------------------------------------------------------------- |
+| Bank ID | The memory bank to store in (auto-created on first use)                 |
 | Content | Free text to retain. Hindsight extracts structured facts asynchronously |
-| Tags | Comma-separated tags applied to the stored memory |
+| Tags    | Comma-separated tags applied to the stored memory                       |
 
 ### Recall — search a bank
 
-| Field | Description |
-|---|---|
-| Bank ID | Memory bank to search |
-| Query | Natural-language query |
-| Budget | `low` / `mid` / `high` — controls retrieval depth |
-| Max Tokens | Cap on returned memory tokens |
-| Tags Filter | Filter memories by tag |
+| Field       | Description                                       |
+| ----------- | ------------------------------------------------- |
+| Bank ID     | Memory bank to search                             |
+| Query       | Natural-language query                            |
+| Budget      | `low` / `mid` / `high` — controls retrieval depth |
+| Max Tokens  | Cap on returned memory tokens                     |
+| Tags Filter | Filter memories by tag                            |
 
 Returns: `{ results: [{ text, score, ... }, ...] }`
 
 ### Reflect — LLM-synthesized answer
 
-| Field | Description |
-|---|---|
+| Field   | Description               |
+| ------- | ------------------------- |
 | Bank ID | Memory bank to reflect on |
-| Query | Question to answer |
-| Budget | `low` / `mid` / `high` |
+| Query   | Question to answer        |
+| Budget  | `low` / `mid` / `high`    |
 
 Returns: `{ text: "...", citations: [...] }`
 

@@ -42,6 +42,16 @@
   },
   "workspace": {
     "members": {
+      "hindsight-all-npm": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@types/node@22",
+            "npm:tsup@^8.5.1",
+            "npm:typescript@^5.7.0",
+            "npm:vitest@^4.1.2"
+          ]
+        }
+      },
       "hindsight-clients/typescript": {
         "packageJson": {
           "dependencies": [
@@ -58,6 +68,7 @@
       "hindsight-control-plane": {
         "packageJson": {
           "dependencies": [
+            "npm:@chenglou/pretext@^0.0.3",
             "npm:@eslint/eslintrc@^3.3.3",
             "npm:@eslint/js@^9.39.2",
             "npm:@radix-ui/react-alert-dialog@^1.1.15",
@@ -91,11 +102,12 @@
             "npm:eslint@^9.39.1",
             "npm:lucide-react@0.553",
             "npm:next-themes@~0.4.6",
-            "npm:next@^16.1.6",
+            "npm:next@^16.1.7",
             "npm:postcss@^8.5.6",
             "npm:prettier@^3.7.4",
             "npm:react-chrono@^2.9.1",
             "npm:react-dom@^19.2.0",
+            "npm:react-is@^19.2.4",
             "npm:react-markdown@^10.1.0",
             "npm:react18-json-view@~0.2.9",
             "npm:react@^19.2.0",
@@ -131,6 +143,26 @@
             "npm:react@19",
             "npm:redocusaurus@^2.5.0",
             "npm:typescript@~5.6.2"
+          ]
+        }
+      },
+      "hindsight-tools/hindsight-agent-sdk": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@vectorize-io/hindsight-client@~0.5.6",
+            "npm:typescript@^5.4.0",
+            "npm:vitest@^4.1.2"
+          ]
+        }
+      },
+      "hindsight-tools/self-driving-agents": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@clack/prompts@^1.2.0",
+            "npm:@vectorize-io/hindsight-client@~0.5.6",
+            "npm:picocolors@^1.1.0",
+            "npm:typescript@^5.4.0",
+            "npm:vitest@^4.1.2"
           ]
         }
       }
