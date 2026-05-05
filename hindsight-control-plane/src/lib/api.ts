@@ -624,6 +624,17 @@ export class ControlPlaneClient {
   }
 
   /**
+   * Recover stuck tasks from dead workers (reset tasks in processing state >5min)
+   */
+  async recoverStuckTasks(bankId: string) {
+    return this.fetchApi<{
+      recovered_count: number;
+    }>(bankApi(bankId, "/tasks/recover"), {
+      method: "POST",
+    });
+  }
+
+  /**
    * List memory units for a bank with optional filters.
    */
   async listMemories(

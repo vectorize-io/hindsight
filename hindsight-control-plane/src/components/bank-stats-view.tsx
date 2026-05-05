@@ -6,6 +6,7 @@ import { useFeatures } from "@/lib/features-context";
 import { client, MentalModel } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  AlertTriangle,
   Database,
   Link2,
   FolderOpen,
@@ -67,6 +68,7 @@ interface BankStats {
   last_consolidated_at: string | null;
   pending_consolidation: number;
   failed_consolidation: number;
+  stuck_consolidation: number;
   total_observations: number;
 }
 
@@ -480,17 +482,20 @@ function ConsolidationCard({
   done,
   pending,
   failed,
+  stuck,
   total,
   lastConsolidatedAt,
 }: {
   done: number;
   pending: number;
   failed: number;
+  stuck: number;
   total: number;
   lastConsolidatedAt: string | null;
 }) {
   const [failedOpen, setFailedOpen] = useState(false);
   const hasFailed = failed > 0;
+  const hasStuck = stuck > 0;
 
   return (
     <Card>
@@ -499,6 +504,15 @@ function ConsolidationCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <ProgressRow done={done} total={total} doneColor={CHART_COLORS.success} />
+        {hasStuck && (
+          <div className="flex items-center gap-2 bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20 rounded-md px-3 py-2 text-xs">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>
+              {stuck} consolidation task{stuck > 1 ? "s" : ""} stuck from dead worker — use{" "}
+              <code className="bg-red-500/20 px-1 py-0.5 rounded">Recover Stuck Tasks</code> in Actions
+            </span>
+          </div>
+        )}
         <div className="grid grid-cols-4 gap-3 pt-1">
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5">
@@ -951,6 +965,7 @@ export function BankStatsView() {
             done={consolidatedDone}
             pending={stats.pending_consolidation}
             failed={stats.failed_consolidation ?? 0}
+            stuck={stats.stuck_consolidation ?? 0}
             total={stats.total_nodes}
             lastConsolidatedAt={stats.last_consolidated_at}
           />

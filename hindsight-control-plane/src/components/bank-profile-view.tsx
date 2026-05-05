@@ -100,6 +100,7 @@ interface BankStats {
   // Consolidation stats
   last_consolidated_at: string | null;
   pending_consolidation: number;
+  stuck_consolidation: number;
   total_observations: number;
 }
 

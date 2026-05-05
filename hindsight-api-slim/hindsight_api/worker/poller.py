@@ -142,6 +142,7 @@ class WorkerPoller:
         self._in_flight_count = 0
         self._in_flight_lock = asyncio.Lock()
         self._last_progress_log = 0.0
+        self._last_stuck_check = 0.0
         self._tasks_completed_since_log = 0
         # Track active tasks locally: operation_id -> ActiveTaskInfo
         self._active_tasks: dict[str, ActiveTaskInfo] = {}
@@ -864,6 +865,18 @@ class WorkerPoller:
                 # Log progress stats periodically
                 await self._log_progress_if_due()
 
+                # Check for stuck tasks from dead workers periodically (opt-in feature)
+                now = time.time()
+                if now - self._last_stuck_check >= self._get_check_interval_s():
+                    self._last_stuck_check = now
+                    try:
+                        from ..config import get_config
+
+                        if get_config().worker_auto_recover_dead_tasks:
+                            await self._recover_dead_worker_tasks()
+                    except Exception as e:
+                        logger.debug(f"Stuck task recovery check failed: {e}")
+
             except asyncio.CancelledError:
                 logger.info(f"Worker {self._worker_id} polling loop cancelled")
                 break
@@ -874,6 +887,77 @@ class WorkerPoller:
                 await asyncio.sleep(1)
 
         logger.info(f"Worker {self._worker_id} polling loop stopped")
+
+    # Threshold for detecting stuck tasks from dead workers (seconds)
+    _STUCK_TASK_THRESHOLD_S_DEFAULT = 300  # Fallback default
+    # How often to check for stuck tasks (seconds)
+    _STUCK_TASK_CHECK_INTERVAL_S_DEFAULT = 60
+
+    def _get_stuck_threshold_s(self) -> int:
+        """Get the stuck task threshold from config, with fallback to class default."""
+        try:
+            from ..config import get_config
+            return get_config().worker_stuck_task_threshold_s
+        except Exception:
+            return self._STUCK_TASK_THRESHOLD_S_DEFAULT
+
+    def _get_check_interval_s(self) -> int:
+        """Get the check interval from config, with fallback to class default."""
+        try:
+            from ..config import get_config
+            return get_config().worker_stuck_task_check_interval_s
+        except Exception:
+            return self._STUCK_TASK_CHECK_INTERVAL_S_DEFAULT
+
+    async def _recover_dead_worker_tasks(self) -> int:
+        """Recover tasks stuck in 'processing' from workers that are no longer alive.
+
+        A task is considered stuck if it has been in 'processing' state for longer than
+        ``_STUCK_TASK_THRESHOLD_S`` (based on ``claimed_at`` timestamp). This handles the
+        case where another worker dies while processing tasks, leaving them orphaned.
+
+        Unlike ``recover_own_tasks``, this recovers tasks from ANY dead worker, not just
+        this worker's own tasks.
+
+        Returns:
+            Number of tasks recovered.
+        """
+        schemas = await self._get_schemas()
+        total_count = 0
+
+        for schema in schemas:
+            try:
+                table = fq_table("async_operations", schema)
+                schema_display = f'"{schema}"' if schema else str(schema)
+
+                async with self._backend.acquire() as conn:
+                    result = await conn.execute(
+                        f"""
+                        UPDATE {table}
+                        SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                        WHERE status = 'processing'
+                          AND worker_id IS DISTINCT FROM $1
+                          AND claimed_at < now() - make_interval(secs => $2)
+                        """,
+                        self._worker_id,
+                        self._get_stuck_threshold_s(),
+                    )
+
+                count = int(result.split()[-1]) if result else 0
+                total_count += count
+                if count > 0:
+                    logger.info(
+                        f"Worker {self._worker_id} recovered {count} stuck tasks "
+                        f"from dead worker(s) in schema {schema_display}"
+                    )
+            except Exception as e:
+                schema_display = f'"{schema}"' if schema else str(schema)
+                logger.warning(
+                    f"Worker {self._worker_id} failed to recover dead worker tasks "
+                    f"for schema {schema_display}: {e}"
+                )
+
+        return total_count
 
     async def shutdown_graceful(self, timeout: float = 30.0):
         """

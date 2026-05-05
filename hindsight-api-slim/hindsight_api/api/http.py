@@ -1456,6 +1456,14 @@ class RecoverConsolidationResponse(BaseModel):
     retried_count: int
 
 
+class RecoverStuckTasksResponse(BaseModel):
+    """Response model for recovering stuck tasks from dead workers."""
+
+    model_config = ConfigDict(json_schema_extra={"example": {"recovered_count": 3}})
+
+    recovered_count: int
+
+
 class BankStatsResponse(BaseModel):
     """Response model for bank statistics endpoint."""
 
@@ -1500,6 +1508,10 @@ class BankStatsResponse(BaseModel):
     failed_consolidation: int = Field(
         default=0,
         description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.",
+    )
+    stuck_consolidation: int = Field(
+        default=0,
+        description="Number of consolidation tasks stuck in 'processing' state for more than 5 minutes (worker likely dead). Use the tasks/recover endpoint to reset them.",
     )
     total_observations: int = Field(default=0, description="Total number of observations")
 
@@ -3504,6 +3516,7 @@ def _register_routes(app: FastAPI):
                 last_consolidated_at=stats["last_consolidated_at"],
                 pending_consolidation=stats["pending_consolidation"],
                 failed_consolidation=stats.get("failed_consolidation", 0),
+                stuck_consolidation=stats.get("stuck_consolidation", 0),
                 total_observations=stats["total_observations"],
             )
         except OperationValidationError as e:
@@ -5200,6 +5213,76 @@ def _register_routes(app: FastAPI):
 
             error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
             logger.error(f"Error in POST /v1/default/banks/{bank_id}/consolidation/recover: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post(
+        "/v1/default/banks/{bank_id}/tasks/recover",
+        response_model=RecoverStuckTasksResponse,
+        summary="Recover stuck tasks",
+        description=(
+            "Recover tasks that are stuck in 'processing' state because the worker that claimed "
+            "them died (container restart, crash, etc.). Tasks older than 5 minutes in 'processing' "
+            "state are reset to 'pending' so they can be picked up by any live worker. "
+            "This is useful when a consolidation task blocks the bank serialization lock."
+        ),
+        operation_id="recover_stuck_tasks",
+        tags=["Banks"],
+    )
+    @audited("recover_stuck_tasks", request_param=None)
+    async def api_recover_stuck_tasks(bank_id: str, request_context: RequestContext = Depends(get_request_context)):
+        """Reset stuck tasks from dead workers."""
+        try:
+            result = await app.state.memory.recover_stuck_tasks(bank_id, request_context=request_context)
+            return RecoverStuckTasksResponse(recovered_count=result["recovered_count"])
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in POST /v1/default/banks/{bank_id}/tasks/recover: {error_detail}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    class WorkerConfigRequest(BaseModel):
+        """Request body for updating worker configuration at runtime."""
+        worker_auto_recover_dead_tasks: bool | None = Field(
+            default=None,
+            description="Enable automatic recovery of stuck tasks from dead workers (default: false)",
+        )
+
+    class WorkerConfigResponse(BaseModel):
+        """Current worker configuration."""
+        worker_auto_recover_dead_tasks: bool
+        warning: str | None = None
+
+    @app.put(
+        "/v1/default/config/worker",
+        response_model=WorkerConfigResponse,
+        summary="Update worker configuration",
+        description="Update worker configuration settings at runtime without restarting the service.",
+        operation_id="update_worker_config",
+        tags=["Config"],
+    )
+    async def api_update_worker_config(request: WorkerConfigRequest):
+        """Update worker configuration at runtime."""
+        try:
+            config = get_config()
+            if request.worker_auto_recover_dead_tasks is not None:
+                config.worker_auto_recover_dead_tasks = request.worker_auto_recover_dead_tasks
+                logger.info(
+                    f"Worker config updated: worker_auto_recover_dead_tasks={config.worker_auto_recover_dead_tasks}"
+                )
+            return WorkerConfigResponse(
+                worker_auto_recover_dead_tasks=config.worker_auto_recover_dead_tasks,
+                warning="This setting is in-memory only and will not persist across restarts or propagate to other processes.",
+            )
+        except Exception as e:
+            import traceback
+
+            error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            logger.error(f"Error in PUT /v1/default/config/worker: {error_detail}")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete(

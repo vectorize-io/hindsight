@@ -1072,6 +1072,123 @@ class TestWorkerRecovery:
         recovered_count = await poller.recover_own_tasks()
         assert recovered_count == 0
 
+    @pytest.mark.asyncio
+    async def test_recover_dead_worker_tasks_resets_old_processing(self, pool, backend, clean_operations):
+        """Test that _recover_dead_worker_tasks resets tasks from other workers stuck >5min."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        current_worker = "current-worker"
+
+        # Create a task from a dead worker, claimed 10 minutes ago
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "consolidation", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, $4, now() - interval '10 minutes')
+            """,
+            op_id,
+            bank_id,
+            payload,
+            "dead-worker",
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id=current_worker,
+            executor=lambda x: None,
+        )
+
+        recovered = await poller._recover_dead_worker_tasks()
+        assert recovered == 1
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id, claimed_at FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+        assert row["claimed_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_recover_dead_worker_tasks_skips_recent(self, pool, backend, clean_operations):
+        """Test that tasks claimed <5min ago are NOT recovered (they're still running normally)."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # Create a task from another worker, claimed 2 minutes ago (within threshold)
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "consolidation", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, $4, now() - interval '2 minutes')
+            """,
+            op_id,
+            bank_id,
+            payload,
+            "other-worker",
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="current-worker",
+            executor=lambda x: None,
+        )
+
+        recovered = await poller._recover_dead_worker_tasks()
+        assert recovered == 0
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "other-worker"
+
+    @pytest.mark.asyncio
+    async def test_recover_dead_worker_tasks_skips_self(self, pool, backend, clean_operations):
+        """Test that the current worker's own tasks are NOT recovered even if old."""
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        current_worker = "my-worker"
+
+        # Create a task from the current worker, claimed 10 minutes ago
+        op_id = uuid.uuid4()
+        payload = json.dumps({"type": "consolidation", "bank_id": bank_id})
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, $4, now() - interval '10 minutes')
+            """,
+            op_id,
+            bank_id,
+            payload,
+            current_worker,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id=current_worker,
+            executor=lambda x: None,
+        )
+
+        recovered = await poller._recover_dead_worker_tasks()
+        assert recovered == 0
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            op_id,
+        )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == current_worker
+
 
 class TestConcurrentWorkers:
     """Tests for concurrent worker task claiming (FOR UPDATE SKIP LOCKED)."""
@@ -3100,3 +3217,84 @@ class TestWorkerStatus:
         )
 
         assert len(rows) == 0
+
+
+class TestRecoverStuckTasksMemoryEngine:
+    """Tests for MemoryEngine.recover_stuck_tasks() method."""
+
+    @pytest.mark.asyncio
+    async def test_recover_stuck_tasks_memory_engine(self, memory_no_llm_verify, request_context):
+        """Test that recover_stuck_tasks resets tasks older than threshold."""
+        import datetime
+        import uuid
+
+        bank_id = f"test-recover-stuck-{uuid.uuid4().hex[:8]}"
+        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Create a stuck task (claimed 15 minutes ago)
+        op_id = uuid.uuid4()
+        async with memory_no_llm_verify._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+                VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, $4, now() - interval '15 minutes')
+                """,
+                op_id,
+                bank_id,
+                '{"type": "consolidation", "bank_id": "' + bank_id + '"}',
+                "dead-worker",
+            )
+
+        result = await memory_no_llm_verify.recover_stuck_tasks(
+            bank_id, request_context=request_context
+        )
+
+        assert result["recovered_count"] == 1
+
+        async with memory_no_llm_verify._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+                op_id,
+            )
+        assert row["status"] == "pending"
+        assert row["worker_id"] is None
+
+        await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)
+
+    @pytest.mark.asyncio
+    async def test_recover_stuck_tasks_skips_recent(self, memory_no_llm_verify, request_context):
+        """Test that recover_stuck_tasks doesn't touch tasks claimed recently."""
+        import uuid
+
+        bank_id = f"test-recover-stuck-recent-{uuid.uuid4().hex[:8]}"
+        await memory_no_llm_verify.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Create a recent task (claimed 2 minutes ago)
+        op_id = uuid.uuid4()
+        async with memory_no_llm_verify._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at)
+                VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, $4, now() - interval '2 minutes')
+                """,
+                op_id,
+                bank_id,
+                '{"type": "consolidation", "bank_id": "' + bank_id + '"}',
+                "other-worker",
+            )
+
+        result = await memory_no_llm_verify.recover_stuck_tasks(
+            bank_id, request_context=request_context
+        )
+
+        assert result["recovered_count"] == 0
+
+        async with memory_no_llm_verify._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+                op_id,
+            )
+        assert row["status"] == "processing"
+        assert row["worker_id"] == "other-worker"
+
+        await memory_no_llm_verify.delete_bank(bank_id, request_context=request_context)

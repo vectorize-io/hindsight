@@ -13,6 +13,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import socket
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -4372,6 +4373,56 @@ class MemoryEngine(MemoryEngineInterface):
             )
             return {"retried_count": count or 0}
 
+    async def recover_stuck_tasks(
+        self,
+        bank_id: str,
+        *,
+        request_context: "RequestContext",
+    ) -> dict[str, int]:
+        """
+        Recover tasks stuck in 'processing' state from dead workers.
+
+        Resets tasks older than the configured threshold to 'pending'.
+
+        Args:
+            bank_id: Bank ID to recover tasks for
+            request_context: Request context for authentication
+
+        Returns:
+            Dictionary with count of recovered tasks.
+        """
+        from ..config import get_config
+
+        await self._authenticate_tenant(request_context)
+        if self._operation_validator:
+            from hindsight_api.extensions import BankWriteContext
+
+            ctx = BankWriteContext(
+                bank_id=bank_id, operation="recover_stuck_tasks", request_context=request_context
+            )
+            await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        threshold_s = get_config().worker_stuck_task_threshold_s
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            result = await conn.execute(
+                f"""
+                UPDATE {fq_table("async_operations")}
+                SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
+                WHERE bank_id = $1
+                  AND status = 'processing'
+                  AND claimed_at < now() - make_interval(secs => $2)
+                """,
+                bank_id,
+                threshold_s,
+            )
+            count = int(result.split()[-1]) if result else 0
+            if count > 0:
+                logger.info(
+                    f"Recovered {count} stuck tasks for bank {bank_id} "
+                    f"(older than {threshold_s}s)"
+                )
+            return {"recovered_count": count}
+
     async def clear_observations_for_memory(
         self,
         bank_id: str,
@@ -6714,6 +6765,10 @@ class MemoryEngine(MemoryEngineInterface):
 
             ctx = BankReadContext(bank_id=bank_id, operation="get_bank_stats", request_context=request_context)
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
+        from ..config import get_config
+
+        threshold_s = get_config().worker_stuck_task_threshold_s
+        worker_id = get_config().worker_id or socket.gethostname()
         backend = await self._get_backend()
 
         async with acquire_with_retry(backend) as conn:
@@ -6775,6 +6830,20 @@ class MemoryEngine(MemoryEngineInterface):
                 """,
                 bank_id,
             )
+            stuck_row = await conn.fetchrow(
+                f"""
+                SELECT COUNT(*) as count
+                FROM {fq_table("async_operations")}
+                WHERE bank_id = $1
+                  AND status = 'processing'
+                  AND operation_type = 'consolidation'
+                  AND claimed_at < now() - make_interval(secs => $2)
+                  AND worker_id IS DISTINCT FROM $3
+                """,
+                bank_id,
+                threshold_s,
+                worker_id,
+            )
 
             node_counts = {row["fact_type"]: row["count"] for row in node_stats}
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
@@ -6794,6 +6863,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "last_consolidated_at": last_consolidated_at.isoformat() if last_consolidated_at else None,
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
                 "failed_consolidation": consolidation_row["failed"] if consolidation_row else 0,
+                "stuck_consolidation": stuck_row["count"] if stuck_row else 0,
                 "total_observations": node_counts.get("observation", 0),
             }
 

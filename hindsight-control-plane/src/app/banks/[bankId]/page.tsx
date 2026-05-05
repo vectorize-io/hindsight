@@ -39,7 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
+import { AlertTriangle, Brain, Download, Trash2, Loader2, MoreVertical, Pencil, RotateCcw } from "lucide-react";
 
 type NavItem = "recall" | "reflect" | "data" | "documents" | "entities" | "profile";
 type DataSubTab = "world" | "experience" | "observations" | "mental-models";
@@ -65,6 +65,7 @@ export default function BankPage() {
   const [isClearingObservations, setIsClearingObservations] = useState(false);
   const [isConsolidating, setIsConsolidating] = useState(false);
   const [isRecoveringConsolidation, setIsRecoveringConsolidation] = useState(false);
+  const [isRecoveringStuck, setIsRecoveringStuck] = useState(false);
   const [showResetConfigDialog, setShowResetConfigDialog] = useState(false);
   const [isResettingConfig, setIsResettingConfig] = useState(false);
 
@@ -93,7 +94,7 @@ export default function BankPage() {
       setCurrentBank(null);
       await loadBanks();
       router.push("/");
-    } catch (error) {
+    } catch (/* eslint-disable-next-line @typescript-eslint/no-unused-vars */ error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsDeleting(false);
@@ -110,7 +111,7 @@ export default function BankPage() {
       toast.success("Success", {
         description: result.message || "Observations cleared successfully",
       });
-    } catch (error) {
+    } catch (/* eslint-disable-next-line @typescript-eslint/no-unused-vars */ error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsClearingObservations(false);
@@ -136,7 +137,7 @@ export default function BankPage() {
     setIsConsolidating(true);
     try {
       await client.triggerConsolidation(bankId);
-    } catch (error) {
+    } catch (/* eslint-disable-next-line @typescript-eslint/no-unused-vars */ error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsConsolidating(false);
@@ -152,10 +153,30 @@ export default function BankPage() {
       toast.success(
         `Recovered ${result.retried_count} failed ${result.retried_count === 1 ? "memory" : "memories"} for re-consolidation`
       );
-    } catch (error) {
+    } catch (/* eslint-disable-next-line @typescript-eslint/no-unused-vars */ error) {
       // Error toast is shown automatically by the API client interceptor
     } finally {
       setIsRecoveringConsolidation(false);
+    }
+  };
+
+  const handleRecoverStuckTasks = async () => {
+    if (!bankId) return;
+
+    setIsRecoveringStuck(true);
+    try {
+      const result = await client.recoverStuckTasks(bankId);
+      if (result.recovered_count > 0) {
+        toast.success(
+          `Recovered ${result.recovered_count} stuck ${result.recovered_count === 1 ? "task" : "tasks"} from dead worker`
+        );
+      } else {
+        toast.success("No stuck tasks found");
+      }
+    } catch (/* eslint-disable-next-line @typescript-eslint/no-unused-vars */ error) {
+      // Error toast is shown automatically by the API client interceptor
+    } finally {
+      setIsRecoveringStuck(false);
     }
   };
 
@@ -224,7 +245,9 @@ export default function BankPage() {
                         onClick={handleRecoverConsolidation}
                         disabled={isRecoveringConsolidation || !observationsEnabled}
                         title={
-                          !observationsEnabled ? "Observations feature is not enabled" : undefined
+                          !observationsEnabled
+                            ? "Observations feature is not enabled"
+                            : "Reset memories that permanently failed LLM processing (after all retries exhausted)"
                         }
                       >
                         {isRecoveringConsolidation ? (
@@ -236,6 +259,18 @@ export default function BankPage() {
                         {!observationsEnabled && (
                           <span className="ml-auto text-xs text-muted-foreground">Off</span>
                         )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={handleRecoverStuckTasks}
+                        disabled={isRecoveringStuck}
+                        title="Reset tasks stuck in processing state from a dead worker (container crash/restart)"
+                      >
+                        {isRecoveringStuck ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 mr-2" />
+                        )}
+                        {isRecoveringStuck ? "Recovering..." : "Recover Stuck Tasks"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setShowClearObservationsDialog(true)}

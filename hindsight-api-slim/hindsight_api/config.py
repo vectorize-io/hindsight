@@ -392,6 +392,9 @@ ENV_WORKER_POLL_INTERVAL_MS = "HINDSIGHT_API_WORKER_POLL_INTERVAL_MS"
 ENV_WORKER_MAX_RETRIES = "HINDSIGHT_API_WORKER_MAX_RETRIES"
 ENV_WORKER_HTTP_PORT = "HINDSIGHT_API_WORKER_HTTP_PORT"
 ENV_WORKER_MAX_SLOTS = "HINDSIGHT_API_WORKER_MAX_SLOTS"
+ENV_WORKER_AUTO_RECOVER_DEAD_TASKS = "HINDSIGHT_WORKER_AUTO_RECOVER_DEAD_TASKS"
+ENV_WORKER_STUCK_TASK_THRESHOLD_S = "HINDSIGHT_WORKER_STUCK_TASK_THRESHOLD_S"
+ENV_WORKER_STUCK_TASK_CHECK_INTERVAL_S = "HINDSIGHT_WORKER_STUCK_TASK_CHECK_INTERVAL_S"
 
 # Per-operation-type slot reservations. Each entry maps an operation_type
 # (as stored in async_operations.operation_type) to its env var and default.
@@ -630,6 +633,9 @@ DEFAULT_WORKER_POLL_INTERVAL_MS = 500  # Poll database every 500ms
 DEFAULT_WORKER_MAX_RETRIES = 3  # Max retries before marking task failed
 DEFAULT_WORKER_HTTP_PORT = 8889  # HTTP port for worker metrics/health
 DEFAULT_WORKER_MAX_SLOTS = 10  # Total concurrent tasks per worker
+DEFAULT_WORKER_AUTO_RECOVER_DEAD_TASKS = False  # Auto-recover orphaned tasks from dead workers
+DEFAULT_WORKER_STUCK_TASK_THRESHOLD_S = 600  # 10 minutes - threshold for detecting stuck tasks
+DEFAULT_WORKER_STUCK_TASK_CHECK_INTERVAL_S = 60  # Check every 60 seconds
 DEFAULT_RETAIN_MAX_CONCURRENT = 4  # Max concurrent retain DB phases (HNSW reads + writes). Limits I/O contention.
 
 # Reflect agent settings
@@ -1094,6 +1100,9 @@ class HindsightConfig:
     worker_http_port: int
     worker_max_slots: int
     worker_slot_reservations: dict[str, int]
+    worker_auto_recover_dead_tasks: bool
+    worker_stuck_task_threshold_s: int
+    worker_stuck_task_check_interval_s: int
     retain_max_concurrent: int
 
     # Reflect agent settings
@@ -1741,6 +1750,9 @@ class HindsightConfig:
                 for op_type, (env_var, default) in WORKER_SLOT_RESERVATION_TYPES.items()
                 if int(os.getenv(env_var, str(default))) > 0
             },
+            worker_auto_recover_dead_tasks=os.getenv(ENV_WORKER_AUTO_RECOVER_DEAD_TASKS, str(DEFAULT_WORKER_AUTO_RECOVER_DEAD_TASKS)).lower() == "true",
+            worker_stuck_task_threshold_s=int(os.getenv(ENV_WORKER_STUCK_TASK_THRESHOLD_S, str(DEFAULT_WORKER_STUCK_TASK_THRESHOLD_S))),
+            worker_stuck_task_check_interval_s=int(os.getenv(ENV_WORKER_STUCK_TASK_CHECK_INTERVAL_S, str(DEFAULT_WORKER_STUCK_TASK_CHECK_INTERVAL_S))),
             retain_max_concurrent=int(os.getenv(ENV_RETAIN_MAX_CONCURRENT, str(DEFAULT_RETAIN_MAX_CONCURRENT))),
             # Reflect agent settings
             reflect_max_iterations=int(os.getenv(ENV_REFLECT_MAX_ITERATIONS, str(DEFAULT_REFLECT_MAX_ITERATIONS))),
