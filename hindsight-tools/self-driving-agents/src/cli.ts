@@ -772,9 +772,12 @@ function resolveFromClaudeCode(agentId: string): {
   if (config.dynamicBankId === false && config.bankId) {
     bankId = config.bankId;
   } else {
+    // Must match the plugin's retain hook bank derivation (bank.py:derive_bank_id).
+    // Use agentName from plugin config — NOT the CLI's agentId — so ingested content
+    // lands in the same bank where the plugin retains conversations at runtime.
     const granularity: string[] = config.dynamicBankGranularity || ["agent", "project"];
     const fieldMap: Record<string, string> = {
-      agent: config.agentName || agentId,
+      agent: config.agentName || "claude-code",
       project: basename(process.cwd()),
       session: "unknown",
       channel: process.env.HINDSIGHT_CHANNEL_ID || "default",
