@@ -957,6 +957,12 @@ def _build_request_body(llm_config, config, prompt: str, user_message: str, resp
     return request_body
 
 
+def _retain_llm_attempts(config) -> int:
+    """Return the retain extraction retry budget as a bounded attempt count."""
+    configured = config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
+    return max(1, int(configured))
+
+
 async def _extract_facts_from_chunk(
     chunk: str,
     chunk_index: int,
@@ -992,13 +998,11 @@ async def _extract_facts_from_chunk(
 
     # Retry logic for JSON validation errors
     # Use retain-specific overrides if set, otherwise fall back to global LLM config
-    llm_max_retries = (
-        config.retain_llm_max_retries if config.retain_llm_max_retries is not None else config.llm_max_retries
-    )
+    llm_attempts = _retain_llm_attempts(config)
     last_error: Exception | None = None
 
     usage = TokenUsage()  # Track cumulative usage across retries
-    for attempt in range(llm_max_retries):
+    for attempt in range(llm_attempts):
         try:
             initial_backoff = (
                 config.retain_llm_initial_backoff
@@ -1015,7 +1019,10 @@ async def _extract_facts_from_chunk(
                 scope="retain_extract_facts",
                 temperature=0.1,
                 max_completion_tokens=config.retain_max_completion_tokens,
-                max_retries=llm_max_retries,
+                # The retain extraction loop owns the schema/content retry
+                # budget. Passing the same budget into provider-level structured
+                # retries multiplies LLM calls for every chunk.
+                max_retries=0,
                 initial_backoff=initial_backoff,
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
@@ -1029,14 +1036,14 @@ async def _extract_facts_from_chunk(
 
             # Handle malformed LLM responses
             if not isinstance(extraction_response_json, dict):
-                if attempt < llm_max_retries - 1:
+                if attempt < llm_attempts - 1:
                     logger.warning(
-                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{llm_max_retries}: {type(extraction_response_json).__name__}. Retrying..."
+                        f"LLM returned non-dict JSON on attempt {attempt + 1}/{llm_attempts}: {type(extraction_response_json).__name__}. Retrying..."
                     )
                     continue
                 else:
                     logger.warning(
-                        f"LLM returned non-dict JSON after {llm_max_retries} attempts: {type(extraction_response_json).__name__}. "
+                        f"LLM returned non-dict JSON after {llm_attempts} attempts: {type(extraction_response_json).__name__}. "
                         f"Raw: {str(extraction_response_json)[:500]}"
                     )
                     return [], usage
@@ -1242,9 +1249,9 @@ async def _extract_facts_from_chunk(
                     continue
 
             # If we got malformed facts and haven't exhausted retries, try again
-            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < llm_max_retries - 1:
+            if has_malformed_facts and len(chunk_facts) < len(raw_facts) * 0.8 and attempt < llm_attempts - 1:
                 logger.warning(
-                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_max_retries}. Retrying..."
+                    f"Got {len(raw_facts) - len(chunk_facts)} malformed facts out of {len(raw_facts)} on attempt {attempt + 1}/{llm_attempts}. Retrying..."
                 )
                 continue
 
@@ -1277,9 +1284,9 @@ async def _extract_facts_from_chunk(
 
             if "json_validate_failed" in str(e):
                 logger.warning(
-                    f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{llm_max_retries} failed with JSON validation error: {e}"
+                    f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{llm_attempts} failed with JSON validation error: {e}"
                 )
-                if attempt < llm_max_retries - 1:
+                if attempt < llm_attempts - 1:
                     logger.info(f"          [1.3.{chunk_index + 1}] Retrying...")
                     continue
             # If it's not a JSON validation error or we're out of retries, re-raise
@@ -1288,7 +1295,7 @@ async def _extract_facts_from_chunk(
     # If we exhausted all retries, raise the last error or a descriptive fallback
     if last_error is not None:
         raise last_error
-    raise RuntimeError(f"Fact extraction failed after {llm_max_retries} attempts: LLM did not return valid JSON")
+    raise RuntimeError(f"Fact extraction failed after {llm_attempts} attempts: LLM did not return valid JSON")
 
 
 async def _extract_facts_with_auto_split(
@@ -1455,17 +1462,19 @@ async def extract_facts_from_text(
             f"chunk_size={config.retain_chunk_size:,}) - starting parallel LLM extraction"
         )
 
-    # Per-chunk retry wrapper: each chunk gets up to MAX_CHUNK_RETRIES attempts.
+    # Per-chunk retry wrapper: each chunk gets up to the configured retain LLM
+    # attempt budget. This keeps chunk-level retries aligned with the operator's
+    # retry cap instead of multiplying it by a hardcoded constant.
     # This handles transient LLM failures (timeouts, rate limits, malformed responses)
     # without discarding the entire batch. If a chunk still fails after all retries,
     # the ENTIRE retain fails — we do not accept partial extraction.
-    MAX_CHUNK_RETRIES = 3
+    max_chunk_attempts = _retain_llm_attempts(config)
     CHUNK_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
 
     async def _extract_chunk_with_retry(chunk: str, chunk_index: int) -> tuple:
         """Extract facts from a single chunk with retries on failure."""
         last_exception = None
-        for attempt in range(MAX_CHUNK_RETRIES):
+        for attempt in range(max_chunk_attempts):
             try:
                 return await _extract_facts_with_auto_split(
                     chunk=chunk,
@@ -1480,18 +1489,18 @@ async def extract_facts_from_text(
                 )
             except Exception as e:
                 last_exception = e
-                if attempt < MAX_CHUNK_RETRIES - 1:
+                if attempt < max_chunk_attempts - 1:
                     delay = CHUNK_RETRY_BASE_DELAY * (2**attempt)
                     logger.warning(
                         f"Chunk {chunk_index}/{len(chunks)} extraction failed "
-                        f"(attempt {attempt + 1}/{MAX_CHUNK_RETRIES}): "
+                        f"(attempt {attempt + 1}/{max_chunk_attempts}): "
                         f"{type(e).__name__}. Retrying in {delay:.0f}s..."
                     )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
                         f"Chunk {chunk_index}/{len(chunks)} extraction failed after "
-                        f"{MAX_CHUNK_RETRIES} attempts: {type(e).__name__}: {e}"
+                        f"{max_chunk_attempts} attempts: {type(e).__name__}: {e}"
                     )
         raise last_exception
 
@@ -1522,7 +1531,7 @@ async def extract_facts_from_text(
         failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
         raise RuntimeError(
             f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed "
-            f"after {MAX_CHUNK_RETRIES} retries each. First failures: {failed_summary}"
+            f"after {max_chunk_attempts} attempts each. First failures: {failed_summary}"
         )
 
     return all_facts, chunk_metadata, total_usage

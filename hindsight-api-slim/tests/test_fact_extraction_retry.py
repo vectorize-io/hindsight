@@ -24,6 +24,7 @@ def _make_config(llm_max_retries: int = 3, retain_llm_max_retries: int | None = 
     cfg.retain_llm_max_backoff = None
     cfg.llm_max_backoff = 0.0
     cfg.retain_max_completion_tokens = 8192
+    cfg.retain_chunk_size = 3000
     cfg.retain_extraction_mode = "concise"
     cfg.retain_extract_causal_links = False
     cfg.retain_mission = None
@@ -139,6 +140,201 @@ async def test_retain_llm_max_retries_overrides_global():
     assert facts == []
     # Verify it retried exactly retain_llm_max_retries times
     assert llm_config.call.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_retain_extraction_owns_structured_retry_budget():
+    """
+    Retain fact extraction has its own validation/retry loop. It should not pass
+    the same retry budget down to the provider, otherwise structured-output
+    validation failures are multiplied across nested retry layers.
+    """
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=3)
+    llm_config = _make_llm_config(mock_response=[{"invalid": "response"}])
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert facts == []
+    assert llm_config.call.call_count == 3
+    assert {call.kwargs["max_retries"] for call in llm_config.call.await_args_list} == {0}
+
+
+@pytest.mark.asyncio
+async def test_chunk_retry_wrapper_respects_retain_retry_budget():
+    """
+    Chunk-level retries should use the retain LLM retry budget instead of a
+    hardcoded retry count. Otherwise a user who lowers retain_llm_max_retries
+    still gets repeated structured extraction attempts for each chunk.
+    """
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=1)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with (
+        patch(
+            "hindsight_api.engine.retain.fact_extraction._extract_facts_with_auto_split",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("schema validation failed"),
+        ) as extract_chunk,
+        patch("hindsight_api.engine.retain.fact_extraction.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        with pytest.raises(RuntimeError, match="Fact extraction failed"):
+            await extract_facts_from_text(
+                text="Alice visited Paris in 2023.",
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                llm_config=llm_config,
+                agent_name="test-agent",
+                config=config,
+                context="travel notes",
+            )
+
+    assert extract_chunk.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_chunk_retry_wrapper_falls_back_to_global_retry_budget():
+    """When retain_llm_max_retries is unset, chunk retries use llm_max_retries."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = _make_config(llm_max_retries=2, retain_llm_max_retries=None)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with (
+        patch(
+            "hindsight_api.engine.retain.fact_extraction._extract_facts_with_auto_split",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("upstream unavailable"),
+        ) as extract_chunk,
+        patch("hindsight_api.engine.retain.fact_extraction.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        with pytest.raises(RuntimeError, match="Fact extraction failed"):
+            await extract_facts_from_text(
+                text="Alice visited Paris in 2023.",
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                llm_config=llm_config,
+                agent_name="test-agent",
+                config=config,
+                context="travel notes",
+            )
+
+    assert extract_chunk.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_retain_retry_budget_still_allows_one_attempt():
+    """A zero retry budget should mean no retries, not zero total attempts."""
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=0)
+    llm_config = _make_llm_config(mock_response={
+        "facts": [
+            {
+                "what": "Alice visited Paris",
+                "when": "2023",
+                "who": "Alice",
+                "why": "vacation",
+            }
+        ]
+    })
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=("system prompt", MagicMock()),
+    ):
+        facts, usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="travel notes",
+            llm_config=llm_config,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert len(facts) == 1
+    assert llm_config.call.call_count == 1
+    assert llm_config.call.await_args.kwargs["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_chunk_retry_budget_is_bounded_per_chunk():
+    """Total failed chunk attempts are bounded by chunk_count * retry budget."""
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=2)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with (
+        patch("hindsight_api.engine.retain.fact_extraction.chunk_text", return_value=["chunk one", "chunk two"]),
+        patch(
+            "hindsight_api.engine.retain.fact_extraction._extract_facts_with_auto_split",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("schema validation failed"),
+        ) as extract_chunk,
+        patch("hindsight_api.engine.retain.fact_extraction.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        with pytest.raises(RuntimeError, match="2/2 chunks failed after 2 attempts each"):
+            await extract_facts_from_text(
+                text="long text split into two chunks",
+                event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                llm_config=llm_config,
+                agent_name="test-agent",
+                config=config,
+                context="travel notes",
+            )
+
+    assert extract_chunk.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_chunk_retry_still_recovers_from_transient_failure():
+    """The retry cap is bounded, but a transient chunk failure can still recover."""
+    from hindsight_api.engine.response_models import TokenUsage
+    from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
+
+    config = _make_config(llm_max_retries=10, retain_llm_max_retries=2)
+    llm_config = _make_llm_config(mock_response={"facts": []})
+
+    with (
+        patch(
+            "hindsight_api.engine.retain.fact_extraction._extract_facts_with_auto_split",
+            new_callable=AsyncMock,
+            side_effect=[
+                RuntimeError("temporary provider failure"),
+                ([], TokenUsage()),
+            ],
+        ) as extract_chunk,
+        patch("hindsight_api.engine.retain.fact_extraction.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        facts, chunks, usage = await extract_facts_from_text(
+            text="Alice visited Paris in 2023.",
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            llm_config=llm_config,
+            agent_name="test-agent",
+            config=config,
+            context="travel notes",
+        )
+
+    assert facts == []
+    assert chunks == [("Alice visited Paris in 2023.", 0)]
+    assert extract_chunk.await_count == 2
 
 
 @pytest.mark.asyncio
