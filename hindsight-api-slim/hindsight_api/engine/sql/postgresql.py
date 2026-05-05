@@ -185,8 +185,9 @@ class PostgreSQLDialect(SQLDialect):
         extra_where: str = "",
     ) -> str:
         if text_search_extension == "vchord":
+            # <&> returns a distance (lower = more relevant), negate for score
             bm25_score_expr = (
-                f"search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2'))"
+                f"-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize({text_param}, 'llmlingua2')))"
             )
             bm25_order_by = f"{bm25_score_expr} DESC"
             bm25_where_filter = ""
