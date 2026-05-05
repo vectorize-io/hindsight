@@ -765,18 +765,22 @@ function resolveFromClaudeCode(agentId: string): {
   const config = readClaudeCodeConfig();
   if (!config) throw new Error("Claude Code config not found at " + CLAUDE_CODE_USER_CONFIG_PATH);
 
-  const apiUrl = config.apiUrl || HINDSIGHT_CLOUD_API_URL;
-  const apiToken = config.apiToken || undefined;
+  const apiUrl = config.hindsightApiUrl || `http://localhost:${config.apiPort || 9077}`;
+  const apiToken = config.hindsightApiToken || undefined;
 
   let bankId: string;
   if (config.dynamicBankId === false && config.bankId) {
     bankId = config.bankId;
   } else {
-    const granularity: string[] = config.dynamicBankGranularity || ["agent"];
+    const granularity: string[] = config.dynamicBankGranularity || ["agent", "project"];
     const fieldMap: Record<string, string> = {
-      agent: agentId,
+      agent: config.agentName || agentId,
+      project: basename(process.cwd()),
+      session: "unknown",
+      channel: process.env.HINDSIGHT_CHANNEL_ID || "default",
+      user: process.env.HINDSIGHT_USER_ID || "anonymous",
     };
-    const base = granularity.map((f) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
+    const base = granularity.map((f) => fieldMap[f] || "unknown").join("::");
     bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${base}` : base;
   }
 
