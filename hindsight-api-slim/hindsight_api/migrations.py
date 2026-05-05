@@ -27,7 +27,15 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import Connection, create_engine, text
 
-from ._vector_index import bootstrap_extension, detect_vector_extension, index_type_keyword, index_using_clause
+from ._vector_index import (
+    bootstrap_extension,
+    detect_vector_extension,
+    index_type_keyword,
+    index_using_clause,
+    minimum_rows_for_index,
+    should_defer_index_creation,
+    uses_per_bank_vector_indexes,
+)
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
@@ -47,6 +55,25 @@ _alembic_lock = threading.Lock()
 def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
     """Validate configured vector extension and preserve Azure DiskANN detection."""
     return detect_vector_extension(conn, vector_extension)
+
+
+def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
+    """Drop per-bank partial memory_units vector indexes after global ScaNN is ready."""
+    rows = conn.execute(
+        text("""
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = :schema_name
+              AND tablename = 'memory_units'
+              AND indexname LIKE 'idx_mu_emb_%'
+              AND indexdef LIKE '%embedding%'
+        """),
+        {"schema_name": schema_name},
+    ).fetchall()
+    safe_schema = schema_name.replace('"', '""')
+    for row in rows:
+        safe_index = row[0].replace('"', '""')
+        conn.execute(text(f'DROP INDEX IF EXISTS "{safe_schema}"."{safe_index}"'))
 
 
 def _get_schema_lock_id(schema: str) -> int:
@@ -482,6 +509,18 @@ def _migrate_table_embedding_dimension(
         )
 
     index_type = index_type_keyword(vector_ext)
+    if should_defer_index_creation(vector_ext, row_count):
+        minimum_rows = minimum_rows_for_index(vector_ext)
+        logger.warning(
+            "Skipping %s index recreation on %s: AlloyDB ScaNN AUTO indexes need at least %s populated "
+            "embedding rows; table currently has %s",
+            vector_ext,
+            table_name,
+            minimum_rows,
+            row_count,
+        )
+        return
+
     conn.execute(
         text(f"""
             CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_{index_type}
@@ -603,6 +642,10 @@ def ensure_vector_extension(
                 logger.debug(f"Table {table_name} does not exist in schema '{schema_name}', skipping")
                 continue
 
+            row_count = conn.execute(
+                text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
+            ).scalar()
+
             # Check current index type by querying pg_indexes
             current_index_info = conn.execute(
                 text("""
@@ -616,26 +659,27 @@ def ensure_vector_extension(
             ).fetchone()
 
             if not current_index_info:
-                # Check whether per-bank partial vector indexes already cover this table
-                # (created by the bank_utils lifecycle — no global index needed in that case)
-                per_bank_index_count = conn.execute(
-                    text("""
-                        SELECT COUNT(*)
-                        FROM pg_indexes
-                        WHERE schemaname = :schema
-                          AND tablename = :table_name
-                          AND indexname LIKE 'idx_mu_emb_%'
-                    """),
-                    {"schema": schema_name, "table_name": table_name},
-                ).scalar()
-                if per_bank_index_count and per_bank_index_count > 0:
-                    logger.debug(
-                        f"No global embedding index on {table_name}, but {per_bank_index_count} "
-                        f"per-bank partial vector indexes exist — skipping global index creation"
-                    )
-                    continue
-                logger.warning(f"No embedding index found for {table_name}, will create it")
-                mismatched_tables.append((table_name, index_name, None))
+                if table_name == "memory_units" and uses_per_bank_vector_indexes(target_ext):
+                    # Check whether per-bank partial vector indexes already cover this table
+                    # (created by the bank_utils lifecycle — no global index needed in that case)
+                    per_bank_index_count = conn.execute(
+                        text("""
+                            SELECT COUNT(*)
+                            FROM pg_indexes
+                            WHERE schemaname = :schema
+                              AND tablename = :table_name
+                              AND indexname LIKE 'idx_mu_emb_%'
+                        """),
+                        {"schema": schema_name, "table_name": table_name},
+                    ).scalar()
+                    if per_bank_index_count and per_bank_index_count > 0:
+                        logger.debug(
+                            f"No global embedding index on {table_name}, but {per_bank_index_count} "
+                            f"per-bank partial vector indexes exist — skipping global index creation"
+                        )
+                        continue
+                logger.warning(f"No embedding index found for {table_name}, will create it if safe")
+                mismatched_tables.append((table_name, index_name, None, row_count))
                 continue
 
             indexdef = current_index_info[0].lower()
@@ -656,24 +700,22 @@ def ensure_vector_extension(
                 logger.info(
                     f"Index type mismatch on {table_name}: current={current_index_type}, target={target_index_type}"
                 )
-                mismatched_tables.append((table_name, index_name, current_index_type))
+                mismatched_tables.append((table_name, index_name, current_index_type, row_count))
 
-                # Check if table has data
-                row_count = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
-                ).scalar()
-
-                if row_count > 0:
+                if row_count > 0 and target_ext != "scann":
                     tables_with_data.append((table_name, row_count, current_index_type))
             else:
                 logger.debug(f"Index type OK for {table_name}: {current_index_type}")
+                if target_ext == "scann" and table_name == "memory_units":
+                    _drop_per_bank_vector_indexes(conn, schema_name)
+                    conn.commit()
 
         # If no mismatches, we're done
         if not mismatched_tables:
             logger.debug(f"All vector indexes match configured extension: {target_ext}")
             return
 
-        # If there's data in any mismatched table, raise error
+        # If there's data in any non-ScaNN mismatched table, raise error
         if tables_with_data:
             table_list = ", ".join([f"{table}({count} rows)" for table, count, _ in tables_with_data])
             current_index_type = tables_with_data[0][2]
@@ -694,10 +736,21 @@ def ensure_vector_extension(
                 f"  2. Use the current vector extension (set HINDSIGHT_API_VECTOR_EXTENSION='{current_ext_name}')"
             )
 
-        # Tables are empty, safe to recreate indexes
-        logger.info(f"Recreating vector indexes for {target_ext}")
+        logger.info(f"Reconciling vector indexes for {target_ext}")
 
-        for table_name, index_name, current_type in mismatched_tables:
+        for table_name, index_name, current_type, row_count in mismatched_tables:
+            if should_defer_index_creation(target_ext, row_count):
+                minimum_rows = minimum_rows_for_index(target_ext)
+                logger.warning(
+                    "Skipping %s index creation on %s: AlloyDB ScaNN AUTO indexes need at least %s populated "
+                    "embedding rows; table currently has %s",
+                    target_ext,
+                    table_name,
+                    minimum_rows,
+                    row_count,
+                )
+                continue
+
             # Drop existing index if it exists
             if current_type:
                 logger.info(f"Dropping {current_type} index on {table_name}")
@@ -732,9 +785,11 @@ def ensure_vector_extension(
                     {index_using_clause(target_ext)}
                 """)
             )
+            if target_ext == "scann" and table_name == "memory_units":
+                _drop_per_bank_vector_indexes(conn, schema_name)
 
         conn.commit()
-        logger.info(f"Successfully migrated vector indexes to {target_ext}")
+        logger.info(f"Successfully reconciled vector indexes for {target_ext}")
 
 
 def ensure_text_search_extension(

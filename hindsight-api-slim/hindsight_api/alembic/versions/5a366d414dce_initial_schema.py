@@ -15,7 +15,6 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
-from hindsight_api._vector_index import detect_vector_extension, index_using_clause
 from hindsight_api.alembic._dialect import run_for_dialect
 
 # revision identifiers, used by Alembic.
@@ -23,6 +22,71 @@ revision: str = "5a366d414dce"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+
+def _detect_vector_extension() -> str:
+    """
+    Detect or validate vector extension for this immutable migration revision.
+    Respects HINDSIGHT_API_VECTOR_EXTENSION env var if set.
+    """
+    conn = op.get_bind()
+    vector_extension = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
+
+    if vector_extension == "pgvectorscale":
+        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+        if not pgvector_check:
+            raise RuntimeError(
+                "DiskANN requires pgvector. Install with: CREATE EXTENSION vector; then vectorscale or pg_diskann CASCADE;"
+            )
+        vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
+        pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
+
+        if vectorscale_check:
+            return "pgvectorscale"
+        if pg_diskann_check:
+            return "pg_diskann"
+        raise RuntimeError(
+            "Configured vector extension 'pgvectorscale' not found. Install either:\n"
+            "  - pgvectorscale: CREATE EXTENSION vectorscale CASCADE;\n"
+            "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
+        )
+    if vector_extension == "vchord":
+        vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
+        if not vchord_check:
+            raise RuntimeError(
+                "Configured vector extension 'vchord' not found. Install it with: CREATE EXTENSION vchord CASCADE;"
+            )
+        return "vchord"
+    if vector_extension == "scann":
+        scann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'alloydb_scann'")).scalar()
+        if not scann_check:
+            raise RuntimeError(
+                "Configured vector extension 'scann' not found. Install it with: CREATE EXTENSION alloydb_scann CASCADE;"
+            )
+        return "scann"
+    if vector_extension == "pgvector":
+        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
+        if not pgvector_check:
+            raise RuntimeError(
+                "Configured vector extension 'pgvector' not found. Install it with: CREATE EXTENSION vector;"
+            )
+        return "pgvector"
+    raise ValueError(
+        "Invalid HINDSIGHT_API_VECTOR_EXTENSION: "
+        f"{vector_extension}. Must be 'pgvector', 'vchord', 'pgvectorscale', or 'scann'"
+    )
+
+
+def _vector_index_using_clause(ext: str) -> str:
+    if ext == "pgvectorscale":
+        return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
+    if ext == "pg_diskann":
+        return "USING diskann (embedding vector_cosine_ops) WITH (max_neighbors = 50)"
+    if ext == "vchord":
+        return "USING vchordrq (embedding vector_l2_ops)"
+    if ext == "scann":
+        return "USING scann (embedding cosine) WITH (mode = 'AUTO')"
+    return "USING hnsw (embedding vector_cosine_ops)"
 
 
 def _detect_text_search_extension() -> str:
@@ -263,11 +327,12 @@ def _pg_upgrade() -> None:
         postgresql_where=sa.text("fact_type = 'observation'"),
     )
     # Create vector index - conditional based on available extension
-    vector_ext = detect_vector_extension(op.get_bind(), os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector"))
-    op.execute(f"""
-        CREATE INDEX idx_memory_units_embedding ON memory_units
-        {index_using_clause(vector_ext)}
-    """)
+    vector_ext = _detect_vector_extension()
+    if vector_ext != "scann":
+        op.execute(f"""
+            CREATE INDEX idx_memory_units_embedding ON memory_units
+            {_vector_index_using_clause(vector_ext)}
+        """)
 
     # Create full-text search index on search_vector
     # Index type depends on text search backend

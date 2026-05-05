@@ -8,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 VALID_EXTENSIONS = ("pgvector", "pgvectorscale", "vchord", "scann")
 
+SCANN_MIN_ROWS_FOR_AUTO_INDEX = 10_000
+
+
 _EXTENSION_NAMES = {
     "pgvector": "vector",
     "pgvectorscale": "vectorscale",
@@ -80,6 +83,28 @@ def index_type_keyword(ext: str) -> str:
     if normalized == "pg_diskann":
         return _INDEX_TYPE_KEYWORDS[normalized]
     return _INDEX_TYPE_KEYWORDS[validate_extension(normalized)]
+
+
+def minimum_rows_for_index(ext: str) -> int:
+    """Return the minimum populated embedding rows before creating this index type."""
+    normalized = ext.lower()
+    if normalized == "pg_diskann":
+        return 0
+    return SCANN_MIN_ROWS_FOR_AUTO_INDEX if validate_extension(normalized) == "scann" else 0
+
+
+def should_defer_index_creation(ext: str, row_count: int) -> bool:
+    """Return True when index creation should wait for more embeddings."""
+    minimum_rows = minimum_rows_for_index(ext)
+    return minimum_rows > 0 and row_count < minimum_rows
+
+
+def uses_per_bank_vector_indexes(ext: str) -> bool:
+    """Return whether the backend should create per-bank partial vector indexes."""
+    normalized = ext.lower()
+    if normalized == "pg_diskann":
+        return True
+    return validate_extension(normalized) != "scann"
 
 
 def bootstrap_extension(conn, ext: str) -> None:

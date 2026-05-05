@@ -10,7 +10,7 @@ from typing import TypedDict
 
 from pydantic import BaseModel, Field
 
-from ..._vector_index import index_using_clause
+from ..._vector_index import index_using_clause, uses_per_bank_vector_indexes
 from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table, get_current_schema
@@ -36,31 +36,40 @@ def _bank_index_name(ft: str, internal_id: str) -> str:
     return f"idx_mu_emb_{_BANK_INDEX_FACT_TYPES[ft]}_{uid}"
 
 
-def _vector_index_clause() -> str:
-    """Return the USING clause for vector index creation based on the configured extension."""
-    return index_using_clause(get_config().vector_extension)
+def _vector_index_clause() -> str | None:
+    """Return the USING clause for per-bank vector indexes, if this backend uses them."""
+    ext = get_config().vector_extension
+    if not uses_per_bank_vector_indexes(ext):
+        return None
+    return index_using_clause(ext)
 
 
 async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, ops=None) -> None:
     """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
 
     Respects the HINDSIGHT_API_VECTOR_EXTENSION config to use the appropriate
-    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord, ScaNN for AlloyDB).
+    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord).
 
-    Called immediately after the bank row is first inserted. Safe on empty banks
-    (index build is instant). Idempotent via CREATE INDEX IF NOT EXISTS.
+    AlloyDB ScaNN uses global vector indexes with filtered vector search; it
+    cannot safely create per-bank indexes at bank-creation time because new
+    banks have no embedding rows.
     bank_id is escaped for SQL literal safety (apostrophes doubled).
 
     On Oracle 23ai, this is a no-op — Oracle uses a single global vector index
     created during migrations. Partial indexes (WHERE clause) are not supported
     for Oracle vector indexes.
     """
+    index_clause = _vector_index_clause()
+    if index_clause is None:
+        logger.debug("Skipping per-bank vector indexes for configured backend")
+        return
+
     await ops.create_bank_vector_indexes(
         conn,
         fq_table("memory_units"),
         bank_id,
         internal_id,
-        _vector_index_clause(),
+        index_clause,
         _BANK_INDEX_FACT_TYPES,
     )
 
