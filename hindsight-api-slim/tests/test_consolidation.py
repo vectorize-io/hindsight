@@ -335,6 +335,7 @@ class TestConsolidationIntegration:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    @pytest.mark.hs_llm_mat
     @pytest.mark.asyncio
     async def test_consolidation_merges_only_redundant_facts(self, memory: MemoryEngine, request_context):
         """Test that consolidation only merges truly redundant facts.

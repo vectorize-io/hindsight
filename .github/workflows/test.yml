@@ -1167,7 +1167,91 @@ jobs:
 
     - name: Run tests
       working-directory: ./hindsight-api-slim
-      run: uv run pytest tests -v -m "not llm"
+      run: uv run pytest tests -v -m "not hs_llm_mat"
+
+  test-api-llm-acceptance:
+    needs: [detect-changes]
+    if: >-
+      needs.detect-changes.outputs.has_secrets == 'true' &&
+      ((github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: vertexai
+            model: google/gemini-2.5-flash
+          - provider: vertexai
+            model: google/gemini-2.5-flash-lite
+          - provider: openai
+            model: gpt-4.1-mini
+          - provider: anthropic
+            model: claude-sonnet-4-20250514
+          - provider: anthropic
+            model: claude-haiku-4-20250514
+          - provider: deepseek
+            model: deepseek-chat
+    name: LLM acceptance (${{ matrix.provider }}/${{ matrix.model }})
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: ${{ matrix.provider }}
+      HINDSIGHT_API_LLM_MODEL: ${{ matrix.model }}
+      HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Setup GCP credentials
+      run: |
+        printf '%s' '${{ secrets.GCP_VERTEXAI_CREDENTIALS }}' > /tmp/gcp-credentials.json
+        PROJECT_ID=$(jq -r '.project_id' /tmp/gcp-credentials.json)
+        echo "HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install dependencies
+      working-directory: ./hindsight-api-slim
+      run: uv sync --frozen --all-extras --index-strategy unsafe-best-match
+
+    - name: Cache HuggingFace models
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('hindsight-api-slim/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+
+    - name: Pre-download models
+      working-directory: ./hindsight-api-slim
+      run: |
+        uv run python -c "
+        from sentence_transformers import SentenceTransformer, CrossEncoder
+        SentenceTransformer('BAAI/bge-small-en-v1.5')
+        CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        "
+
+    - name: Run LLM acceptance tests
+      working-directory: ./hindsight-api-slim
+      run: uv run pytest tests -v -m "hs_llm_mat" --timeout 600
 
   test-api-oracle:
     needs: [detect-changes]

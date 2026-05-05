@@ -305,6 +305,7 @@ Family is the most important thing to her.
             f"Found: {found_evaluative}"
         )
 
+    @pytest.mark.hs_llm_mat
     @pytest.mark.asyncio
     async def test_comprehensive_multi_dimension(self):
         """Test a realistic scenario with multiple dimensions in one fact."""

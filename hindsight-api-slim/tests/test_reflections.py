@@ -401,6 +401,7 @@ class TestRecallWithObservationsAndMentalModels:
 class TestReflectUsesMentalModels:
     """Test that reflect searches and uses mental models when available."""
 
+    @pytest.mark.hs_llm_mat
     @pytest.mark.asyncio
     async def test_reflect_searches_mental_models_when_available(self, memory: MemoryEngine, request_context):
         """Test that reflect uses search_mental_models when the bank has mental models.

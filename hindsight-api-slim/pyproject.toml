@@ -141,7 +141,7 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 addopts = "--timeout 300 -n 8 --dist loadgroup --durations=10 -v"
 markers = [
     "oracle: Oracle 23ai integration tests (require ORACLE_TEST_DSN env var)",
-    "llm: LLM acceptance tests (require LLM_TEST_PROVIDER and LLM_TEST_MODEL env vars)",
+    "hs_llm_mat: LLM minimum acceptance tests — run in CI matrix across multiple providers",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
