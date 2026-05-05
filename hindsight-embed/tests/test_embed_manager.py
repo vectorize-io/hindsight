@@ -109,38 +109,64 @@ def test_find_ui_command_uses_npx_yes_flag_for_published_control_plane(monkeypat
         ]
 
 
-def test_find_api_command_prefers_sibling_binary_over_uvx(tmp_path, monkeypatch):
+def test_find_api_command_prefers_installed_binary_over_uvx(tmp_path, monkeypatch):
     """
     When hindsight-api is installed alongside hindsight-embed (e.g. via
-    `uv pip install hindsight-all`), _find_api_command should invoke that
-    binary directly rather than shelling out to uvx. uvx downloads a
-    standalone Python whose ABI won't match sibling C extensions compiled
-    for the host Python (regression for issue #1240, NixOS asyncpg failure).
+    `pip install hindsight-all`), _find_api_command should invoke that
+    binary directly rather than shelling out to uvx. Uses sysconfig to
+    locate the venv's scripts directory (issue #1401, #1240).
     """
-    package_root = tmp_path / "site-packages" / "hindsight_embed"
-    package_root.mkdir(parents=True)
-    fake_module = package_root / "daemon_embed_manager.py"
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    api_binary = scripts_dir / "hindsight-api"
+    api_binary.touch()
+
+    manager = DaemonEmbedManager()
+    # Point __file__ away from monorepo so dev-mode check doesn't trigger
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
+
+    assert manager._find_api_command() == [str(api_binary)]
+
+
+def test_find_api_command_target_install_uses_file_relative_fallback(tmp_path, monkeypatch):
+    """
+    When installed with `pip install --target`, sysconfig still points at the
+    system/venv scripts dir (no binary there). The __file__-relative fallback
+    should find the sibling binary in <target>/bin/ (issue #1240).
+    """
+    # sysconfig points to an empty venv scripts dir (no binary)
+    venv_scripts = tmp_path / "venv_bin"
+    venv_scripts.mkdir()
+
+    # --target layout: binary sits next to site-packages contents
+    target_dir = tmp_path / "target"
+    pkg_dir = target_dir / "hindsight_embed"
+    pkg_dir.mkdir(parents=True)
+    fake_module = pkg_dir / "daemon_embed_manager.py"
     fake_module.write_text("")
-    sibling_bin = tmp_path / "site-packages" / "bin" / "hindsight-api"
-    sibling_bin.parent.mkdir(parents=True)
+    sibling_bin = target_dir / "bin" / "hindsight-api"
+    sibling_bin.parent.mkdir()
     sibling_bin.touch()
 
     manager = DaemonEmbedManager()
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(venv_scripts))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
 
     assert manager._find_api_command() == [str(sibling_bin)]
 
 
-def test_find_api_command_falls_back_to_uvx_when_no_sibling_binary(tmp_path, monkeypatch):
-    """Without a sibling binary or dev checkout, fall back to uvx."""
-    package_root = tmp_path / "site-packages" / "hindsight_embed"
-    package_root.mkdir(parents=True)
-    fake_module = package_root / "daemon_embed_manager.py"
-    fake_module.write_text("")
+def test_find_api_command_falls_back_to_uvx_when_no_binary(tmp_path, monkeypatch):
+    """Without an installed binary or dev checkout, fall back to uvx."""
+    scripts_dir = tmp_path / "bin"
+    scripts_dir.mkdir()
+    # No hindsight-api binary in scripts_dir
 
     manager = DaemonEmbedManager()
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Linux")
     monkeypatch.setenv("HINDSIGHT_EMBED_API_VERSION", "1.2.3")
 
@@ -148,17 +174,16 @@ def test_find_api_command_falls_back_to_uvx_when_no_sibling_binary(tmp_path, mon
 
 
 def test_find_api_command_windows_uses_exe_suffix(tmp_path, monkeypatch):
-    """On Windows, the sibling binary has a .exe suffix."""
-    package_root = tmp_path / "site-packages" / "hindsight_embed"
-    package_root.mkdir(parents=True)
-    fake_module = package_root / "daemon_embed_manager.py"
-    fake_module.write_text("")
-    sibling_bin = tmp_path / "site-packages" / "Scripts" / "hindsight-api.exe"
-    sibling_bin.parent.mkdir(parents=True)
-    sibling_bin.touch()
+    """On Windows, the installed binary has a .exe suffix."""
+    scripts_dir = tmp_path / "Scripts"
+    scripts_dir.mkdir()
+    api_binary = scripts_dir / "hindsight-api.exe"
+    api_binary.touch()
 
     manager = DaemonEmbedManager()
-    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(fake_module))
+    # Point __file__ away from monorepo so dev-mode check doesn't trigger
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.__file__", str(tmp_path / "hindsight_embed" / "daemon_embed_manager.py"))
+    monkeypatch.setattr("hindsight_embed.daemon_embed_manager.sysconfig.get_path", lambda key: str(scripts_dir))
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
 
-    assert manager._find_api_command() == [str(sibling_bin)]
+    assert manager._find_api_command() == [str(api_binary)]

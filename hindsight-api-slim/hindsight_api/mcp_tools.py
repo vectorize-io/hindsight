@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from fastmcp import FastMCP
+from pydantic import TypeAdapter
 
 from hindsight_api import MemoryEngine
 from hindsight_api.config import (
@@ -21,8 +22,11 @@ from hindsight_api.config import (
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
 from hindsight_api.engine.memory_engine import Budget
 from hindsight_api.engine.response_models import VALID_RECALL_FACT_TYPES
+from hindsight_api.engine.search.tags import TagGroup
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
+
+_TAG_GROUP_LIST_ADAPTER = TypeAdapter(list[TagGroup])
 
 # All tools available in the system (explicit list — no wildcards).
 # Defined here (shared module) to avoid circular imports with api/mcp.py.
@@ -773,6 +777,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             types: list[str] | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
             bank_id: str | None = None,
         ) -> str | dict:
@@ -782,8 +787,12 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
-                tags: Optional tags to filter results by (e.g., ['project:alpha'])
+                tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
+                    {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
+                    Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
+                    Mutually exclusive with tags.
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
                 bank_id: Optional bank to search in (defaults to session bank). Use for cross-bank operations.
             """
@@ -791,6 +800,11 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 target_bank = bank_id or config.bank_id_resolver()
                 if target_bank is None:
                     return "Error: No bank_id configured"
+
+                if tags is not None and tag_groups is not None:
+                    raise ValueError(
+                        "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
+                    )
 
                 budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
                 budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
@@ -807,6 +821,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 if tags is not None:
                     recall_kwargs["tags"] = tags
                     recall_kwargs["tags_match"] = tags_match
+                if tag_groups is not None:
+                    recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
                 if query_timestamp is not None:
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
 
@@ -832,6 +848,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
             types: list[str] | None = None,
             tags: list[str] | None = None,
             tags_match: str = "any",
+            tag_groups: list[dict] | None = None,
             query_timestamp: str | None = None,
         ) -> dict:
             """
@@ -840,14 +857,23 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 max_tokens: Maximum tokens to return in results (default: 4096)
                 budget: Search budget - 'low', 'mid', or 'high' (default: 'high'). Higher budgets search more thoroughly.
                 types: Fact types to include (e.g., ['world', 'experience']). Default: all types.
-                tags: Optional tags to filter results by (e.g., ['project:alpha'])
+                tags: Optional tags to filter results by (e.g., ['project:alpha']). Mutually exclusive with tag_groups.
                 tags_match: How to match tags - 'any' (match any tag) or 'all' (match all tags). Default: 'any'
+                tag_groups: Compound tag filter using boolean groups (AND-ed together). Each group is a leaf
+                    {"tags": [...], "match": "any_strict"} or compound {"and": [...]}, {"or": [...]}, {"not": {...}}.
+                    Example: [{"not": {"tags": ["closeout"], "match": "any_strict"}}] excludes memories tagged closeout.
+                    Mutually exclusive with tags.
                 query_timestamp: Temporal context for the query (ISO format, e.g., '2024-01-15T10:30:00Z'). Helps retrieve time-relevant memories.
             """
             try:
                 target_bank = config.bank_id_resolver()
                 if target_bank is None:
                     return {"error": "No bank_id configured", "results": []}
+
+                if tags is not None and tag_groups is not None:
+                    raise ValueError(
+                        "'tags' and 'tag_groups' are mutually exclusive. Use 'tag_groups' for compound filtering."
+                    )
 
                 budget_map = {"low": Budget.LOW, "mid": Budget.MID, "high": Budget.HIGH}
                 budget_enum = budget_map.get(budget.lower(), Budget.HIGH)
@@ -864,6 +890,8 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
                 if tags is not None:
                     recall_kwargs["tags"] = tags
                     recall_kwargs["tags_match"] = tags_match
+                if tag_groups is not None:
+                    recall_kwargs["tag_groups"] = _TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups)
                 if query_timestamp is not None:
                     recall_kwargs["question_date"] = parse_timestamp(query_timestamp)
 

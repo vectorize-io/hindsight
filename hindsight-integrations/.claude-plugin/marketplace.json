@@ -1,0 +1,14 @@
+{
+  "name": "hindsight-local",
+  "owner": {
+    "name": "Hindsight Team",
+    "url": "https://vectorize.io/hindsight"
+  },
+  "plugins": [
+    {
+      "name": "hindsight-memory",
+      "description": "Automatic long-term memory via Hindsight. Retains conversations, provides knowledge page tools.",
+      "source": "./claude-code"
+    }
+  ]
+}

@@ -9,8 +9,7 @@
   },
   "files": [
     "dist",
-    "skill",
-    "hermes-plugin"
+    "skill"
   ],
   "scripts": {
     "build": "tsc",

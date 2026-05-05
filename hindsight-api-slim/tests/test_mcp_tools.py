@@ -949,6 +949,51 @@ class TestRecallNewParams:
         call_kwargs = mock_memory.recall_async.call_args.kwargs
         assert call_kwargs["question_date"] == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
+    async def test_recall_with_tag_groups_negative_filter(self, mock_memory):
+        """tag_groups with NOT should pass through to engine after Pydantic validation."""
+        from hindsight_api.engine.search.tags import TagGroupNot
+
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(
+            query="test",
+            tag_groups=[{"not": {"tags": ["closeout"], "match": "any_strict"}}],
+        )
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert "tag_groups" in call_kwargs
+        assert len(call_kwargs["tag_groups"]) == 1
+        group = call_kwargs["tag_groups"][0]
+        assert isinstance(group, TagGroupNot)
+        assert group.filter.tags == ["closeout"]
+
+    async def test_recall_without_tag_groups_no_kwarg(self, mock_memory):
+        """tag_groups omitted should not appear in engine kwargs."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        await _tools(mcp)["recall"].fn(query="test")
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert "tag_groups" not in call_kwargs
+
+    async def test_recall_tags_and_tag_groups_mutually_exclusive(self, mock_memory):
+        """Passing both tags and tag_groups returns an error and does not call engine."""
+        mcp = _make_mcp_server(mock_memory, {"recall"})
+        result = await _tools(mcp)["recall"].fn(
+            query="test",
+            tags=["project:x"],
+            tag_groups=[{"tags": ["closeout"], "match": "any_strict"}],
+        )
+        assert "mutually exclusive" in result
+        mock_memory.recall_async.assert_not_called()
+
+    async def test_recall_tag_groups_single_bank(self, mock_memory):
+        """tag_groups should also work in single-bank mode."""
+        mcp = _make_mcp_server(mock_memory, {"recall"}, include_bank_id=False)
+        await _tools(mcp)["recall"].fn(
+            query="test",
+            tag_groups=[{"tags": ["scope:work"], "match": "all_strict"}],
+        )
+        call_kwargs = mock_memory.recall_async.call_args.kwargs
+        assert "tag_groups" in call_kwargs
+        assert len(call_kwargs["tag_groups"]) == 1
+
 
 @pytest.mark.asyncio
 class TestReflectNewParams:

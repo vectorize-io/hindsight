@@ -1,7 +1,0 @@
-name: hindsight-sda
-version: 0.1.0
-description: "Self-driving agents knowledge tools powered by Hindsight. Provides agent_knowledge_* tools for managing knowledge pages, recall, and ingestion."
-kind: standalone
-pip_dependencies:
-  - "httpx>=0.27"
-requires_env: []

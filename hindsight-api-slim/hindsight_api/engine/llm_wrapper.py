@@ -148,6 +148,7 @@ def create_llm_provider(
     groq_service_tier: str | None = None,
     openai_service_tier: str | None = None,
     extra_body: dict[str, Any] | None = None,
+    default_headers: dict[str, str] | None = None,
     vertexai_project_id: str | None = None,
     vertexai_region: str | None = None,
     vertexai_credentials: Any = None,
@@ -165,6 +166,9 @@ def create_llm_provider(
         groq_service_tier: Groq service tier (for Groq provider) - "on_demand", "flex", or "auto".
         openai_service_tier: OpenAI service tier (for OpenAI provider) - None (default) or "flex" (50% cheaper).
         extra_body: Extra body params merged into OpenAI-compatible API calls.
+        default_headers: Custom headers passed as ``default_headers`` to provider SDK clients
+            (used by operators routing through proxies / request-tracing middleware). Currently
+            wired into the Anthropic provider; other providers may opt in as needed.
         vertexai_project_id: Vertex AI project ID (for VertexAI provider).
         vertexai_region: Vertex AI region (for VertexAI provider).
         vertexai_credentials: Vertex AI credentials object (for VertexAI provider).
@@ -243,6 +247,7 @@ def create_llm_provider(
             base_url=base_url,
             model=model,
             reasoning_effort=reasoning_effort,
+            default_headers=default_headers,
         )
 
     elif provider_lower == "litellm":
@@ -317,6 +322,7 @@ class LLMProvider:
         openai_service_tier: str | None = None,
         gemini_safety_settings: list | None = None,
         extra_body: dict[str, Any] | None = None,
+        default_headers: dict[str, str] | None = None,
     ):
         """
         Initialize LLM provider.
@@ -331,6 +337,10 @@ class LLMProvider:
             openai_service_tier: OpenAI service tier (None or "flex") - from config.
             gemini_safety_settings: Safety settings for Gemini/VertexAI providers.
             extra_body: Extra body params merged into OpenAI-compatible API calls.
+            default_headers: Custom headers passed as ``default_headers`` to provider SDK clients.
+                Used by operators routing through proxies / request-tracing middleware. Falls
+                back to ``HindsightConfig.llm_default_headers`` (env: ``HINDSIGHT_API_LLM_DEFAULT_HEADERS``)
+                when ``None``.
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -344,6 +354,17 @@ class LLMProvider:
         self.gemini_safety_settings = gemini_safety_settings
         # Extra body params for OpenAI-compatible providers (e.g. chat_template_kwargs)
         self.extra_body = extra_body
+        # Default headers passed to provider SDK clients (e.g. proxy auth, request tracing).
+        # Same pattern as ``gemini_safety_settings``: explicit override wins; otherwise read
+        # the static server-level default from ``HindsightConfig`` via ``_get_raw_config()``.
+        self.default_headers = default_headers
+        if self.default_headers is None:
+            from ..config import _get_raw_config
+
+            try:
+                self.default_headers = _get_raw_config().llm_default_headers
+            except Exception:
+                pass  # Config may not be initialized in test environments
 
         # Validate provider
         valid_providers = [
@@ -448,6 +469,7 @@ class LLMProvider:
             groq_service_tier=self.groq_service_tier,
             openai_service_tier=self.openai_service_tier,
             extra_body=self.extra_body,
+            default_headers=self.default_headers,
             vertexai_project_id=vertexai_project_id,
             vertexai_region=vertexai_region,
             vertexai_credentials=vertexai_credentials,
@@ -763,6 +785,7 @@ class LLMProvider:
             DEFAULT_LLM_PROVIDER,
             ENV_LLM_API_KEY,
             ENV_LLM_BASE_URL,
+            ENV_LLM_DEFAULT_HEADERS,
             ENV_LLM_EXTRA_BODY,
             ENV_LLM_MODEL,
             ENV_LLM_PROVIDER,
@@ -781,6 +804,7 @@ class LLMProvider:
         base_url = os.getenv(ENV_LLM_BASE_URL, "")
         model = os.getenv(ENV_LLM_MODEL, DEFAULT_LLM_MODEL)
         extra_body = json.loads(os.getenv(ENV_LLM_EXTRA_BODY, "null"))
+        default_headers = json.loads(os.getenv(ENV_LLM_DEFAULT_HEADERS, "null"))
 
         return cls(
             provider=provider,
@@ -789,6 +813,7 @@ class LLMProvider:
             model=model,
             reasoning_effort="low",
             extra_body=extra_body,
+            default_headers=default_headers,
         )
 
 

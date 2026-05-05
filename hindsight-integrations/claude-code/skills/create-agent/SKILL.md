@@ -21,8 +21,6 @@ Write to `~/.claude/agents/<name>.md`:
 ---
 name: <agent-name>
 description: <what it does and when to delegate to it>. It has access to knowledge pages and memory search via Hindsight.
-skills:
-  - agent-knowledge
 mcpServers:
   - hindsight
 ---
@@ -68,7 +66,7 @@ When you learn something durable — a user preference, a working procedure, per
 
 ## Rules
 
-- Always include `skills: [agent-knowledge]` and `mcpServers: [hindsight]` — this wires up memory
+- Always include `mcpServers: [hindsight]` — this wires up the Hindsight memory tools
 - Keep the startup steps and tool instructions verbatim — they're the Hindsight scaffolding
 - Customize the description (used by Claude to decide when to delegate)
 - Add agent-specific sections AFTER the Hindsight scaffolding (e.g. "## What I review for", "## My approach")

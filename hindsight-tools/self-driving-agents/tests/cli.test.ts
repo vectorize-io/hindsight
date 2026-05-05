@@ -554,10 +554,15 @@ describe("claude-code config resolution", () => {
     } else if (config.dynamicBankId) {
       const granularity: string[] = config.dynamicBankGranularity || ["agent", "project"];
       const fieldMap: Record<string, string> = {
-        agent: config.agentName || agentId, project: "unknown",
-        session: "unknown", channel: "default", user: "anonymous",
+        agent: config.agentName || agentId,
+        project: "unknown",
+        session: "unknown",
+        channel: "default",
+        user: "anonymous",
       };
-      const base = granularity.map((f: string) => encodeURIComponent(fieldMap[f] || "unknown")).join("::");
+      const base = granularity
+        .map((f: string) => encodeURIComponent(fieldMap[f] || "unknown"))
+        .join("::");
       bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${base}` : base;
     } else {
       bankId = config.bankIdPrefix ? `${config.bankIdPrefix}-${agentId}` : agentId;
@@ -566,7 +571,10 @@ describe("claude-code config resolution", () => {
   }
 
   it("uses external API URL when set", () => {
-    const r = resolveFromConfig("agent", { hindsightApiUrl: "https://api.example.com", hindsightApiToken: "tok" });
+    const r = resolveFromConfig("agent", {
+      hindsightApiUrl: "https://api.example.com",
+      hindsightApiToken: "tok",
+    });
     expect(r.apiUrl).toBe("https://api.example.com");
     expect(r.apiToken).toBe("tok");
   });
@@ -587,7 +595,11 @@ describe("claude-code config resolution", () => {
   });
 
   it("computes dynamic bankId", () => {
-    const r = resolveFromConfig("seo", { dynamicBankId: true, agentName: "seo", dynamicBankGranularity: ["agent"] });
+    const r = resolveFromConfig("seo", {
+      dynamicBankId: true,
+      agentName: "seo",
+      dynamicBankGranularity: ["agent"],
+    });
     expect(r.bankId).toBe("seo");
   });
 

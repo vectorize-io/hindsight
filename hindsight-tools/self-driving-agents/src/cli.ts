@@ -1074,7 +1074,9 @@ async function main() {
       mkdirSync(agentsDir, { recursive: true });
       const agentFile = join(agentsDir, `${agentId}.md`);
       if (existsSync(agentFile)) {
-        p.cancel(`Agent '${agentId}' already exists at ${agentFile}\n  Remove it first or choose a different name with --agent`);
+        p.cancel(
+          `Agent '${agentId}' already exists at ${agentFile}\n  Remove it first or choose a different name with --agent`
+        );
         process.exit(1);
       }
       writeFileSync(
@@ -1082,8 +1084,6 @@ async function main() {
         `---
 name: ${agentId}
 description: ${agentId} agent with long-term memory. Delegate to this agent for tasks related to ${agentId.replace(/-/g, " ")}. It has access to knowledge pages and memory search via Hindsight.
-skills:
-  - agent-knowledge
 mcpServers:
   - hindsight
 ---
