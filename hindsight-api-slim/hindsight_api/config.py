@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 
+from ._vector_index import validate_extension
 from .utils import mask_network_location
 
 # Load .env file, searching current and parent directories (overrides existing env vars)
@@ -536,8 +537,8 @@ DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
-# Vector extension (pgvector, vchord, or pgvectorscale)
-DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvectorscale"
+# Vector extension (pgvector, vchord, pgvectorscale, or AlloyDB ScaNN)
+DEFAULT_VECTOR_EXTENSION = "pgvector"  # Options: "pgvector", "vchord", "pgvectorscale", "scann"
 
 # Text search extension (native PostgreSQL, vchord BM25, or Timescale pg_textsearch)
 DEFAULT_TEXT_SEARCH_EXTENSION = "native"  # Options: "native", "vchord", "pg_textsearch"
@@ -841,7 +842,7 @@ class HindsightConfig:
     read_db_pool_max_size: int
     migration_database_url: str | None
     database_schema: str
-    vector_extension: str  # "pgvector" or "vchord"
+    vector_extension: str  # "pgvector", "vchord", "pgvectorscale", or "scann"
     text_search_extension: str  # "native" or "vchord"
 
     # LLM (default, used as fallback for per-operation config)
@@ -1285,11 +1286,7 @@ class HindsightConfig:
     def validate(self) -> None:
         """Validate configuration values and raise errors for invalid combinations."""
         # Validate vector_extension
-        valid_extensions = ("pgvector", "vchord", "pgvectorscale")
-        if self.vector_extension not in valid_extensions:
-            raise ValueError(
-                f"Invalid vector_extension: {self.vector_extension}. Must be one of: {', '.join(valid_extensions)}"
-            )
+        validate_extension(self.vector_extension)
 
         # Validate text_search_extension
         valid_text_search = ("native", "vchord", "pg_textsearch")

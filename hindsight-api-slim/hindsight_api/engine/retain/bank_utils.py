@@ -10,6 +10,7 @@ from typing import TypedDict
 
 from pydantic import BaseModel, Field
 
+from ..._vector_index import index_using_clause
 from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table, get_current_schema
@@ -37,20 +38,14 @@ def _bank_index_name(ft: str, internal_id: str) -> str:
 
 def _vector_index_clause() -> str:
     """Return the USING clause for vector index creation based on the configured extension."""
-    ext = get_config().vector_extension
-    if ext == "pgvectorscale":
-        return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
-    elif ext == "vchord":
-        return "USING vchordrq (embedding vector_l2_ops)"
-    else:  # pgvector (default)
-        return "USING hnsw (embedding vector_cosine_ops)"
+    return index_using_clause(get_config().vector_extension)
 
 
 async def create_bank_vector_indexes(conn, bank_id: str, internal_id: str, ops=None) -> None:
     """Create per-(bank, fact_type) partial vector indexes for a newly created bank.
 
     Respects the HINDSIGHT_API_VECTOR_EXTENSION config to use the appropriate
-    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord).
+    index type (HNSW for pgvector, DiskANN for pgvectorscale, vchordrq for vchord, ScaNN for AlloyDB).
 
     Called immediately after the bank row is first inserted. Safe on empty banks
     (index build is instant). Idempotent via CREATE INDEX IF NOT EXISTS.

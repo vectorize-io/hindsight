@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script.revision import ResolutionError
 from sqlalchemy import Connection, create_engine, text
 
+from ._vector_index import bootstrap_extension, detect_vector_extension, index_type_keyword, index_using_clause
 from .db_url import is_oracle_url, to_libpq_url
 from .utils import mask_network_location
 
@@ -44,66 +45,8 @@ _alembic_lock = threading.Lock()
 
 
 def _detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
-    """
-    Validate vector extension: 'pgvector', 'vchord', or 'pgvectorscale'.
-
-    Args:
-        conn: SQLAlchemy connection object
-        vector_extension: Configured extension ("pgvector", "vchord", or "pgvectorscale")
-
-    Returns:
-        "pgvector", "vchord", "pgvectorscale", or "pg_diskann"
-
-    Raises:
-        RuntimeError: If configured extension is not installed
-    """
-    # Verify the configured extension is installed
-    if vector_extension == "pgvectorscale":
-        # pgvectorscale/DiskANN requires pgvector to be installed first
-        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
-        if not pgvector_check:
-            raise RuntimeError(
-                "DiskANN (pgvectorscale/pg_diskann) requires pgvector to be installed. "
-                "Install it with: CREATE EXTENSION vector; then CREATE EXTENSION vectorscale CASCADE; (or pg_diskann on Azure)"
-            )
-
-        # Check for either vectorscale (open source) or pg_diskann (Azure)
-        vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
-        pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
-
-        if vectorscale_check:
-            logger.debug("Using vector extension: pgvectorscale (DiskANN)")
-            return "pgvectorscale"
-        elif pg_diskann_check:
-            logger.debug("Using vector extension: pg_diskann (Azure DiskANN)")
-            return "pg_diskann"  # Return distinct name for parameter handling
-        else:
-            raise RuntimeError(
-                "Configured vector extension 'pgvectorscale' not found. "
-                "Install either:\n"
-                "  - pgvectorscale (open source): CREATE EXTENSION vectorscale CASCADE;\n"
-                "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
-            )
-    elif vector_extension == "vchord":
-        vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
-        if not vchord_check:
-            raise RuntimeError(
-                "Configured vector extension 'vchord' not found. Install it with: CREATE EXTENSION vchord CASCADE;"
-            )
-        logger.debug("Using configured vector extension: vchord")
-        return "vchord"
-    elif vector_extension == "pgvector":
-        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
-        if not pgvector_check:
-            raise RuntimeError(
-                "Configured vector extension 'pgvector' not found. Install it with: CREATE EXTENSION vector;"
-            )
-        logger.debug("Using configured vector extension: pgvector")
-        return "pgvector"
-    else:
-        raise ValueError(
-            f"Invalid vector_extension: {vector_extension}. Must be 'pgvector', 'vchord', or 'pgvectorscale'"
-        )
+    """Validate configured vector extension and preserve Azure DiskANN detection."""
+    return detect_vector_extension(conn, vector_extension)
 
 
 def _get_schema_lock_id(schema: str) -> int:
@@ -364,47 +307,8 @@ def run_migrations(
                                 "Please install it with: CREATE EXTENSION vector;"
                             ) from e
 
-                # If using pgvectorscale, ensure vectorscale extension is also installed
                 vector_extension = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
-                if vector_extension == "pgvectorscale":
-                    logger.debug("Checking pgvectorscale (vectorscale) extension availability...")
-
-                    vectorscale_check = conn.execute(
-                        text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")
-                    ).scalar()
-
-                    if vectorscale_check:
-                        logger.info("pgvectorscale extension already installed")
-                    else:
-                        # Extension doesn't exist - try to install
-                        logger.info("pgvectorscale extension not found, attempting to install...")
-                        try:
-                            conn.execute(text("CREATE EXTENSION vectorscale CASCADE"))
-                            conn.commit()
-                            logger.info("pgvectorscale extension installed successfully")
-                        except Exception as e:
-                            # Installation failed - check one more time in case another process installed it
-                            conn.rollback()
-                            vectorscale_recheck = conn.execute(
-                                text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")
-                            ).fetchone()
-
-                            if vectorscale_recheck:
-                                logger.warning(
-                                    "Could not install pgvectorscale extension (permission denied?), "
-                                    "but extension exists. Continuing..."
-                                )
-                            else:
-                                # Extension truly doesn't exist and we can't install it
-                                logger.error(
-                                    f"pgvectorscale extension is not installed and cannot be installed: {e}. "
-                                    f"Please ensure pgvectorscale is installed by a database administrator. "
-                                    f"See: https://github.com/timescale/pgvectorscale#installation"
-                                )
-                                raise RuntimeError(
-                                    "pgvectorscale extension is required but not installed. "
-                                    "Please install it with: CREATE EXTENSION vectorscale CASCADE;"
-                                ) from e
+                bootstrap_extension(conn, vector_extension)
 
                 # Commit any pending transaction on the advisory-lock connection
                 # before running migrations.  Some code paths above (e.g., the
@@ -545,7 +449,7 @@ def _migrate_table_embedding_dimension(
 
     logger.info(f"Altering {table_name}.embedding column dimension from {current_dim} to {required_dimension}")
 
-    # Drop existing vector index (works for both HNSW and vchordrq)
+    # Drop existing vector index (works for HNSW, DiskANN, vchordrq, and ScaNN)
     conn.execute(
         text(f"""
             DO $$
@@ -555,7 +459,7 @@ def _migrate_table_embedding_dimension(
                     SELECT indexname FROM pg_indexes
                     WHERE schemaname = '{schema_name}'
                       AND tablename = '{table_name}'
-                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%' OR indexdef LIKE '%diskann%')
+                      AND (indexdef LIKE '%hnsw%' OR indexdef LIKE '%vchordrq%' OR indexdef LIKE '%diskann%' OR indexdef LIKE '%scann%')
                       AND indexdef LIKE '%embedding%'
                 LOOP
                     EXECUTE 'DROP INDEX IF EXISTS {schema_name}.' || idx_name;
@@ -570,41 +474,22 @@ def _migrate_table_embedding_dimension(
     conn.commit()
 
     # Recreate index with appropriate type based on detected extension
-    if vector_ext == "pgvectorscale":
-        conn.execute(
-            text(f"""
-                CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_diskann
-                ON {schema_name}.{table_name}
-                USING diskann (embedding vector_cosine_ops)
-                WITH (num_neighbors = 50)
-            """)
+    if vector_ext == "pgvector" and required_dimension > 2000:
+        raise RuntimeError(
+            f"Embedding dimension {required_dimension} exceeds pgvector HNSW index limit of 2000. "
+            f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
+            f"that supports higher dimensions (e.g., pgvectorscale/DiskANN or AlloyDB ScaNN)."
         )
-        logger.info(f"Created DiskANN index on {table_name} for {required_dimension}-dimensional embeddings")
-    elif vector_ext == "vchord":
-        conn.execute(
-            text(f"""
-                CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_vchordrq
-                ON {schema_name}.{table_name}
-                USING vchordrq (embedding vector_l2_ops)
-            """)
-        )
-        logger.info(f"Created vchordrq index on {table_name} for {required_dimension}-dimensional embeddings")
-    else:  # pgvector
-        if required_dimension > 2000:
-            raise RuntimeError(
-                f"Embedding dimension {required_dimension} exceeds pgvector HNSW index limit of 2000. "
-                f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
-                f"that supports higher dimensions (e.g., pgvectorscale/DiskANN)."
-            )
-        conn.execute(
-            text(f"""
-                CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_hnsw
-                ON {schema_name}.{table_name}
-                USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64)
-            """)
-        )
-        logger.info(f"Created HNSW index on {table_name} for {required_dimension}-dimensional embeddings")
+
+    index_type = index_type_keyword(vector_ext)
+    conn.execute(
+        text(f"""
+            CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding_{index_type}
+            ON {schema_name}.{table_name}
+            {index_using_clause(vector_ext)}
+        """)
+    )
+    logger.info(f"Created {index_type} index on {table_name} for {required_dimension}-dimensional embeddings")
     conn.commit()
 
     logger.info(f"Successfully changed {table_name}.embedding dimension to {required_dimension}")
@@ -628,7 +513,7 @@ def ensure_embedding_dimension(
         database_url: SQLAlchemy database URL
         required_dimension: The embedding dimension required by the model
         schema: Target PostgreSQL schema name (None for public)
-        vector_extension: Configured vector extension ("pgvector" or "vchord")
+        vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
 
     Raises:
         RuntimeError: If dimension mismatch with existing data
@@ -676,7 +561,7 @@ def ensure_vector_extension(
 
     Args:
         database_url: SQLAlchemy database URL
-        vector_extension: Configured vector extension ("pgvector" or "vchord")
+        vector_extension: Configured vector extension ("pgvector", "vchord", "pgvectorscale", or "scann")
         schema: Target PostgreSQL schema name (None for public)
 
     Raises:
@@ -697,13 +582,7 @@ def ensure_vector_extension(
             ("pinned_reflections", "idx_pinned_reflections_embedding"),
         ]
 
-        # Determine target index type
-        if target_ext in ("pgvectorscale", "pg_diskann"):
-            target_index_type = "diskann"
-        elif target_ext == "vchord":
-            target_index_type = "vchordrq"
-        else:
-            target_index_type = "hnsw"
+        target_index_type = index_type_keyword(target_ext)
 
         mismatched_tables = []
         tables_with_data = []
@@ -737,7 +616,7 @@ def ensure_vector_extension(
             ).fetchone()
 
             if not current_index_info:
-                # Check whether per-bank partial HNSW indexes already cover this table
+                # Check whether per-bank partial vector indexes already cover this table
                 # (created by the bank_utils lifecycle — no global index needed in that case)
                 per_bank_index_count = conn.execute(
                     text("""
@@ -752,7 +631,7 @@ def ensure_vector_extension(
                 if per_bank_index_count and per_bank_index_count > 0:
                     logger.debug(
                         f"No global embedding index on {table_name}, but {per_bank_index_count} "
-                        f"per-bank partial HNSW indexes exist — skipping global index creation"
+                        f"per-bank partial vector indexes exist — skipping global index creation"
                     )
                     continue
                 logger.warning(f"No embedding index found for {table_name}, will create it")
@@ -760,7 +639,9 @@ def ensure_vector_extension(
                 continue
 
             indexdef = current_index_info[0].lower()
-            if "diskann" in indexdef:
+            if "scann" in indexdef:
+                current_index_type = "scann"
+            elif "diskann" in indexdef:
                 current_index_type = "diskann"
             elif "vchordrq" in indexdef:
                 current_index_type = "vchordrq"
@@ -783,7 +664,7 @@ def ensure_vector_extension(
                 ).scalar()
 
                 if row_count > 0:
-                    tables_with_data.append((table_name, row_count))
+                    tables_with_data.append((table_name, row_count, current_index_type))
             else:
                 logger.debug(f"Index type OK for {table_name}: {current_index_type}")
 
@@ -794,11 +675,15 @@ def ensure_vector_extension(
 
         # If there's data in any mismatched table, raise error
         if tables_with_data:
-            table_list = ", ".join([f"{table}({count} rows)" for table, count in tables_with_data])
+            table_list = ", ".join([f"{table}({count} rows)" for table, count, _ in tables_with_data])
+            current_index_type = tables_with_data[0][2]
             # Map index type back to extension name for error message
-            current_ext_name = {"diskann": "pgvectorscale", "vchordrq": "vchord", "hnsw": "pgvector"}.get(
-                current_index_type, current_index_type
-            )
+            current_ext_name = {
+                "diskann": "pgvectorscale",
+                "vchordrq": "vchord",
+                "hnsw": "pgvector",
+                "scann": "scann",
+            }.get(current_index_type, current_index_type)
 
             raise RuntimeError(
                 f"Cannot change vector extension from {current_index_type} to {target_index_type}: "
@@ -819,36 +704,7 @@ def ensure_vector_extension(
                 conn.execute(text(f"DROP INDEX IF EXISTS {schema_name}.{index_name}"))
 
             # Create new index with appropriate type
-            if target_ext == "pgvectorscale":
-                logger.info(f"Creating DiskANN index on {table_name} (pgvectorscale)")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {schema_name}.{table_name}
-                        USING diskann (embedding vector_cosine_ops)
-                        WITH (num_neighbors = 50)
-                    """)
-                )
-            elif target_ext == "pg_diskann":
-                logger.info(f"Creating DiskANN index on {table_name} (pg_diskann/Azure)")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {schema_name}.{table_name}
-                        USING diskann (embedding vector_cosine_ops)
-                        WITH (max_neighbors = 50)
-                    """)
-                )
-            elif target_ext == "vchord":
-                logger.info(f"Creating vchordrq index on {table_name}")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {schema_name}.{table_name}
-                        USING vchordrq (embedding vector_l2_ops)
-                    """)
-                )
-            else:  # pgvector
+            if target_ext == "pgvector":
                 # Check embedding dimension — pgvector HNSW indexes only support up to 2000 dims
                 embed_dim = conn.execute(
                     text("""
@@ -865,17 +721,17 @@ def ensure_vector_extension(
                     raise RuntimeError(
                         f"Embedding dimension {embed_dim} on {table_name} exceeds pgvector HNSW index limit of 2000. "
                         f"Use an embedding model with <= 2000 dimensions, or switch to a vector extension "
-                        f"that supports higher dimensions (e.g., pgvectorscale/DiskANN)."
+                        f"that supports higher dimensions (e.g., pgvectorscale/DiskANN or AlloyDB ScaNN)."
                     )
-                logger.info(f"Creating HNSW index on {table_name}")
-                conn.execute(
-                    text(f"""
-                        CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {schema_name}.{table_name}
-                        USING hnsw (embedding vector_cosine_ops)
-                        WITH (m = 16, ef_construction = 64)
-                    """)
-                )
+
+            logger.info(f"Creating {target_index_type} index on {table_name}")
+            conn.execute(
+                text(f"""
+                    CREATE INDEX IF NOT EXISTS {index_name}
+                    ON {schema_name}.{table_name}
+                    {index_using_clause(target_ext)}
+                """)
+            )
 
         conn.commit()
         logger.info(f"Successfully migrated vector indexes to {target_ext}")

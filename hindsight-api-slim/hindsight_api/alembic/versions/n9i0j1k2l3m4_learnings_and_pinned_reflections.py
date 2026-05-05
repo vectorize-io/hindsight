@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from alembic import context, op
 from sqlalchemy import text
 
+from hindsight_api._vector_index import detect_vector_extension, index_using_clause
 from hindsight_api.alembic._dialect import run_for_dialect
 
 # revision identifiers, used by Alembic.
@@ -29,56 +30,6 @@ def _get_schema_prefix() -> str:
     """Get schema prefix for table names (required for multi-tenant support)."""
     schema = context.config.get_main_option("target_schema")
     return f'"{schema}".' if schema else ""
-
-
-def _detect_vector_extension() -> str:
-    """
-    Detect or validate vector extension: 'pgvector', 'vchord', or 'pgvectorscale'.
-    Respects HINDSIGHT_API_VECTOR_EXTENSION env var if set.
-    """
-    conn = op.get_bind()
-    vector_extension = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
-
-    # Validate configured extension is installed
-    if vector_extension == "pgvectorscale":
-        # pgvectorscale/DiskANN requires pgvector
-        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
-        if not pgvector_check:
-            raise RuntimeError(
-                "DiskANN requires pgvector. Install with: CREATE EXTENSION vector; then vectorscale or pg_diskann CASCADE;"
-            )
-        # Check for either vectorscale (open source) or pg_diskann (Azure)
-        vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
-        pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
-
-        if vectorscale_check:
-            return "pgvectorscale"
-        elif pg_diskann_check:
-            return "pg_diskann"
-        else:
-            raise RuntimeError(
-                "Configured vector extension 'pgvectorscale' not found. Install either:\n"
-                "  - pgvectorscale: CREATE EXTENSION vectorscale CASCADE;\n"
-                "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
-            )
-    elif vector_extension == "vchord":
-        vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
-        if not vchord_check:
-            raise RuntimeError(
-                "Configured vector extension 'vchord' not found. Install it with: CREATE EXTENSION vchord CASCADE;"
-            )
-        return "vchord"
-    elif vector_extension == "pgvector":
-        pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
-        if not pgvector_check:
-            raise RuntimeError(
-                "Configured vector extension 'pgvector' not found. Install it with: CREATE EXTENSION vector;"
-            )
-        return "pgvector"
-    else:
-        raise ValueError(
-            f"Invalid HINDSIGHT_API_VECTOR_EXTENSION: {vector_extension}. Must be 'pgvector', 'vchord', or 'pgvectorscale'"
-        )
 
 
 def _detect_text_search_extension() -> str:
@@ -126,7 +77,7 @@ def _pg_upgrade() -> None:
     schema = _get_schema_prefix()
 
     # Detect which vector extension is available
-    vector_ext = _detect_vector_extension()
+    vector_ext = detect_vector_extension(op.get_bind(), os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector"))
 
     # Detect which text search extension to use
     text_search_ext = _detect_text_search_extension()
@@ -159,28 +110,10 @@ def _pg_upgrade() -> None:
     op.execute(f"CREATE INDEX idx_learnings_bank_id ON {schema}learnings(bank_id)")
 
     # Create vector index based on detected extension
-    if vector_ext == "pgvectorscale":
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING diskann (embedding vector_cosine_ops)
-            WITH (num_neighbors = 50)
-        """)
-    elif vector_ext == "pg_diskann":
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING diskann (embedding vector_cosine_ops)
-            WITH (max_neighbors = 50)
-        """)
-    elif vector_ext == "vchord":
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING vchordrq (embedding vector_l2_ops)
-        """)
-    else:  # pgvector
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING hnsw (embedding vector_cosine_ops)
-        """)
+    op.execute(f"""
+        CREATE INDEX idx_learnings_embedding ON {schema}learnings
+        {index_using_clause(vector_ext)}
+    """)
 
     op.execute(f"CREATE INDEX idx_learnings_tags ON {schema}learnings USING GIN(tags)")
 
@@ -238,28 +171,10 @@ def _pg_upgrade() -> None:
     op.execute(f"CREATE INDEX idx_pinned_reflections_bank_id ON {schema}pinned_reflections(bank_id)")
 
     # Create vector index based on detected extension
-    if vector_ext == "pgvectorscale":
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING diskann (embedding vector_cosine_ops)
-            WITH (num_neighbors = 50)
-        """)
-    elif vector_ext == "pg_diskann":
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING diskann (embedding vector_cosine_ops)
-            WITH (max_neighbors = 50)
-        """)
-    elif vector_ext == "vchord":
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING vchordrq (embedding vector_l2_ops)
-        """)
-    else:  # pgvector
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING hnsw (embedding vector_cosine_ops)
-        """)
+    op.execute(f"""
+        CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
+        {index_using_clause(vector_ext)}
+    """)
 
     op.execute(f"CREATE INDEX idx_pinned_reflections_tags ON {schema}pinned_reflections USING GIN(tags)")
 

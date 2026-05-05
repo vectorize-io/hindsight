@@ -9,7 +9,7 @@ This migration:
 2. Drops the global vector index (competes with per-bank partial indexes)
 3. Creates per-(bank_id, fact_type) partial vector indexes for all existing banks
    using the configured vector extension (HNSW for pgvector, DiskANN for
-   pgvectorscale, vchordrq for vchord).
+   pgvectorscale, vchordrq for vchord, ScaNN for AlloyDB).
    (new banks get indexes created at bank-creation time via bank_utils.create_bank_vector_indexes)
 
 Why per-(bank, fact_type) indexes:
@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from alembic import context, op
 from sqlalchemy import text
 
+from hindsight_api._vector_index import index_using_clause
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "d5e6f7a8b9c0"
@@ -42,17 +43,6 @@ _FACT_TYPES: dict[str, str] = {
 def _get_schema_prefix() -> str:
     schema = context.config.get_main_option("target_schema")
     return f'"{schema}".' if schema else ""
-
-
-def _vector_index_using_clause() -> str:
-    """Return the USING clause based on the configured vector extension."""
-    ext = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
-    if ext == "pgvectorscale":
-        return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
-    elif ext == "vchord":
-        return "USING vchordrq (embedding vector_l2_ops)"
-    else:
-        return "USING hnsw (embedding vector_cosine_ops)"
 
 
 def _pg_upgrade() -> None:
@@ -74,12 +64,12 @@ def _pg_upgrade() -> None:
     op.execute(f"DROP INDEX IF EXISTS {schema}idx_memory_units_embedding")
 
     # 5. Create per-(bank, fact_type) partial vector indexes for all existing banks
-    #    using the configured extension (HNSW / DiskANN / vchordrq)
+    #    using the configured extension (HNSW / DiskANN / vchordrq / ScaNN)
     bind = op.get_bind()
     schema_name = context.config.get_main_option("target_schema")
     table_ref = f'"{schema_name}".memory_units' if schema_name else "memory_units"
     banks_ref = f'"{schema_name}".banks' if schema_name else "banks"
-    using_clause = _vector_index_using_clause()
+    using_clause = index_using_clause(os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector"))
 
     rows = bind.execute(text(f"SELECT bank_id, internal_id FROM {banks_ref}")).fetchall()  # noqa: S608
     for row in rows:
@@ -109,7 +99,7 @@ def _pg_downgrade() -> None:
     rows = bind.execute(text(f"SELECT internal_id FROM {banks_ref}")).fetchall()  # noqa: S608
     for row in rows:
         internal_id = str(row[0]).replace("-", "")[:16]
-        for ft_short in _HNSW_FACT_TYPES.values():
+        for ft_short in _FACT_TYPES.values():
             idx_name = f"idx_mu_emb_{ft_short}_{internal_id}"
             bind.execute(text(f"DROP INDEX IF EXISTS {schema}{idx_name}"))
 
