@@ -1,22 +1,9 @@
 name: Performance Tests
 
-# ─────────────────────────────────────────────────────────────────────────
-# TEMP iteration mode (revert before merge):
-#   - `push` trigger on this branch so we get fast feedback while wiring
-#     the dashboard publishing logic.
-#   - default scale: small (was large)
-#   - default locomo_skip: true (was false); locomo only runs on
-#     workflow_dispatch while we iterate.
-# Search "TEMP" to find the bits to revert.
-# ─────────────────────────────────────────────────────────────────────────
-
 on:
   schedule:
     # Run daily at 06:00 UTC
     - cron: "0 6 * * *"
-  push:
-    branches:
-      - feat/perf-dashboard  # TEMP: drop before merge
   workflow_dispatch:
     inputs:
       scale:
@@ -27,7 +14,7 @@ on:
           - small
           - medium
           - large
-        default: small  # TEMP: was large
+        default: large
       suite:
         description: "Perf-test suite to run (blank = all)"
         type: choice
@@ -45,7 +32,7 @@ on:
       locomo_skip:
         description: "Skip LoComo job"
         type: boolean
-        default: true  # TEMP: was false
+        default: false
       ref:
         description: "Git ref to test (branch, tag, or SHA). Defaults to main."
         type: string
@@ -103,7 +90,7 @@ jobs:
           SUITE_ARG="--suite ${{ inputs.suite }}"
         fi
         ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'small' }} \
+          --scale ${{ inputs.scale || 'large' }} \
           $SUITE_ARG \
           --output perf-results.json
 
@@ -127,9 +114,7 @@ jobs:
       run: ./scripts/benchmarks/publish-perf-results.sh hindsight-dev/perf-results.json
 
   locomo:
-    # TEMP: only run on manual dispatch while iterating on the dashboard.
-    # Restore to: `if: inputs.locomo_skip != true` before merge.
-    if: github.event_name == 'workflow_dispatch' && inputs.locomo_skip != true
+    if: inputs.locomo_skip != true
     runs-on: ubuntu-latest
     env:
       HINDSIGHT_API_LLM_PROVIDER: vertexai
