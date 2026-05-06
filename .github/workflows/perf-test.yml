@@ -200,3 +200,10 @@ jobs:
         name: locomo-results-${{ github.sha }}
         path: hindsight-dev/benchmarks/locomo/results/
         retention-days: 90
+
+    - name: Publish LoComo to dashboard
+      if: success() && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-locomo-results.sh hindsight-dev/benchmarks/locomo/results/benchmark_results.json
