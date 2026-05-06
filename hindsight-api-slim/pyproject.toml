@@ -93,7 +93,7 @@ local-llm = [
     "huggingface-hub>=0.20.0",
 ]
 embedded-db = [
-    "pg0-embedded>=0.13.0",
+    "pg0-embedded>=0.14.0",
 ]
 oracle = [
     "oracledb>=2.5.0",
