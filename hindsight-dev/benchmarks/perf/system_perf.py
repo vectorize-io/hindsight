@@ -32,6 +32,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -755,6 +756,48 @@ async def run(scale: str, suite_names: list[str]) -> PerfTestResults:
     return results
 
 
+def _to_benchmark_entries(results: PerfTestResults) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Convert perf results into github-action-benchmark format.
+
+    Returns (latency_entries, throughput_entries):
+      - latency:    customSmallerIsBetter — durations and recall latency percentiles (seconds)
+      - throughput: customBiggerIsBetter  — items/queries/memories per second
+    """
+    latency: list[dict[str, Any]] = []
+    throughput: list[dict[str, Any]] = []
+
+    for suite in results.suites:
+        if not suite.success:
+            continue
+        if suite.retain:
+            r = suite.retain
+            latency.append({"name": f"{suite.name} duration", "unit": "s", "value": r.total_duration_seconds})
+            throughput.append(
+                {"name": f"{suite.name} throughput", "unit": "items/s", "value": r.throughput_items_per_sec}
+            )
+        if suite.recall:
+            rc = suite.recall
+            latency.extend(
+                [
+                    {"name": f"{suite.name} latency mean", "unit": "s", "value": round(rc.latency.mean, 4)},
+                    {"name": f"{suite.name} latency p50", "unit": "s", "value": round(rc.latency.p50, 4)},
+                    {"name": f"{suite.name} latency p95", "unit": "s", "value": round(rc.latency.p95, 4)},
+                    {"name": f"{suite.name} latency p99", "unit": "s", "value": round(rc.latency.p99, 4)},
+                ]
+            )
+            throughput.append(
+                {"name": f"{suite.name} throughput", "unit": "queries/s", "value": rc.throughput_queries_per_sec}
+            )
+        if suite.consolidation:
+            c = suite.consolidation
+            latency.append({"name": f"{suite.name} duration", "unit": "s", "value": c.total_duration_seconds})
+            throughput.append(
+                {"name": f"{suite.name} throughput", "unit": "memories/s", "value": c.throughput_memories_per_sec}
+            )
+
+    return latency, throughput
+
+
 def _serialize(obj: Any) -> Any:
     if obj is None:
         return None
@@ -797,6 +840,12 @@ def main() -> None:
         default=None,
         help="Write JSON results to file",
     )
+    parser.add_argument(
+        "--benchmark-output-dir",
+        type=str,
+        default=None,
+        help="Write github-action-benchmark format JSON files (latency.json + throughput.json) to this directory",
+    )
 
     args = parser.parse_args()
     suite_names = args.suites or list(SUITES)
@@ -808,6 +857,14 @@ def main() -> None:
         with open(args.output, "w") as f:
             json.dump(results_dict, f, indent=2)
         console.print(f"\n[dim]Results written to {args.output}[/dim]")
+
+    if args.benchmark_output_dir:
+        bench_dir = Path(args.benchmark_output_dir)
+        bench_dir.mkdir(parents=True, exist_ok=True)
+        latency, throughput = _to_benchmark_entries(results)
+        (bench_dir / "latency.json").write_text(json.dumps(latency, indent=2))
+        (bench_dir / "throughput.json").write_text(json.dumps(throughput, indent=2))
+        console.print(f"\n[dim]Benchmark JSON written to {bench_dir}/[/dim]")
 
     # Print unified summary table
     _print_summary(results)

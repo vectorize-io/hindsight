@@ -1,9 +1,22 @@
 name: Performance Tests
 
+# ─────────────────────────────────────────────────────────────────────────
+# TEMP iteration mode (revert before merge):
+#   - `push` trigger on this branch so we get fast feedback while wiring
+#     the dashboard publishing logic.
+#   - default scale: small (was large)
+#   - default locomo_skip: true (was false); locomo only runs on
+#     workflow_dispatch while we iterate.
+# Search "TEMP" to find the bits to revert.
+# ─────────────────────────────────────────────────────────────────────────
+
 on:
   schedule:
     # Run daily at 06:00 UTC
     - cron: "0 6 * * *"
+  push:
+    branches:
+      - feat/perf-dashboard  # TEMP: drop before merge
   workflow_dispatch:
     inputs:
       scale:
@@ -14,7 +27,7 @@ on:
           - small
           - medium
           - large
-        default: large
+        default: small  # TEMP: was large
       suite:
         description: "Perf-test suite to run (blank = all)"
         type: choice
@@ -32,7 +45,7 @@ on:
       locomo_skip:
         description: "Skip LoComo job"
         type: boolean
-        default: false
+        default: true  # TEMP: was false
       ref:
         description: "Git ref to test (branch, tag, or SHA). Defaults to main."
         type: string
@@ -83,48 +96,66 @@ jobs:
       run: |
         cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
 
-    - name: "Suite: retain"
-      if: inputs.suite == '' || inputs.suite == 'retain'
+    - name: Run perf-test
       run: |
+        SUITE_ARG=""
+        if [ -n "${{ inputs.suite }}" ]; then
+          SUITE_ARG="--suite ${{ inputs.suite }}"
+        fi
         ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite retain \
-          --output perf-results-retain.json
-
-    - name: "Suite: recall"
-      if: inputs.suite == '' || inputs.suite == 'recall'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite recall \
-          --output perf-results-recall.json
-
-    - name: "Suite: recall-with-observations"
-      if: inputs.suite == '' || inputs.suite == 'recall-with-observations'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite recall-with-observations \
-          --output perf-results-recall-with-observations.json
-
-    - name: "Suite: consolidation"
-      if: inputs.suite == '' || inputs.suite == 'consolidation'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite consolidation \
-          --output perf-results-consolidation.json
+          --scale ${{ inputs.scale || 'small' }} \
+          $SUITE_ARG \
+          --output perf-results.json \
+          --benchmark-output-dir bench
 
     - name: Upload perf results
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: perf-results-${{ github.sha }}
-        path: hindsight-dev/perf-results-*.json
+        path: |
+          hindsight-dev/perf-results.json
+          hindsight-dev/bench/
         retention-days: 90
 
+    # Publish to the external dashboard repo. Pushes to its `gh-pages` branch
+    # using a PAT with push access to vectorize-io/hindsight-continuous-performance-monitor.
+    # Dashboard URL once GitHub Pages is enabled on that repo:
+    #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/dev/bench/
+    - name: Publish latency benchmarks
+      if: github.event_name == 'schedule' || github.event_name == 'push'
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        name: Hindsight Latency
+        tool: customSmallerIsBetter
+        output-file-path: hindsight-dev/bench/latency.json
+        gh-repository: github.com/vectorize-io/hindsight-continuous-performance-monitor
+        github-token: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        auto-push: true
+        benchmark-data-dir-path: dev/bench
+        alert-threshold: "150%"
+        comment-on-alert: false
+        fail-on-alert: false
+
+    - name: Publish throughput benchmarks
+      if: github.event_name == 'schedule' || github.event_name == 'push'
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        name: Hindsight Throughput
+        tool: customBiggerIsBetter
+        output-file-path: hindsight-dev/bench/throughput.json
+        gh-repository: github.com/vectorize-io/hindsight-continuous-performance-monitor
+        github-token: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        auto-push: true
+        benchmark-data-dir-path: dev/bench
+        alert-threshold: "150%"
+        comment-on-alert: false
+        fail-on-alert: false
+
   locomo:
-    if: inputs.locomo_skip != true
+    # TEMP: only run on manual dispatch while iterating on the dashboard.
+    # Restore to: `if: inputs.locomo_skip != true` before merge.
+    if: github.event_name == 'workflow_dispatch' && inputs.locomo_skip != true
     runs-on: ubuntu-latest
     env:
       HINDSIGHT_API_LLM_PROVIDER: vertexai
