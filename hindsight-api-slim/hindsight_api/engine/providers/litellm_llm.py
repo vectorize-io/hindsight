@@ -13,6 +13,7 @@ is handled automatically by LiteLLM.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -24,6 +25,40 @@ from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
 
 logger = logging.getLogger(__name__)
+
+# Providers whose tool-use / structured-output APIs reject JSON-Schema numeric
+# constraints (`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`).
+# Bedrock's Claude tool-use API surfaces this as:
+#     BedrockException - {"message":"The model returned the following errors:
+#     For 'number' type, properties maximum, minimum are not supported"}
+# Pydantic's `Field(ge=..., le=...)` emits these constraints, so structured
+# output / tool calls fail on every retain when the underlying model is
+# bound through Bedrock. We strip them before the request; the response is
+# still validated server-side by Pydantic, so there is no loss of safety.
+_PROVIDERS_REQUIRING_NUMERIC_CONSTRAINT_STRIP = frozenset({"bedrock"})
+
+_NUMERIC_CONSTRAINT_KEYS = (
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+)
+
+
+def _strip_numeric_constraints(node: Any) -> Any:
+    """Recursively remove unsupported numeric constraint keys from a JSON-Schema node.
+
+    Mutates `node` in place AND returns it for chained-call ergonomics.
+    """
+    if isinstance(node, dict):
+        for k in _NUMERIC_CONSTRAINT_KEYS:
+            node.pop(k, None)
+        for v in node.values():
+            _strip_numeric_constraints(v)
+    elif isinstance(node, list):
+        for v in node:
+            _strip_numeric_constraints(v)
+    return node
 
 
 class LiteLLMLLM(LLMInterface):
@@ -130,6 +165,8 @@ class LiteLLMLLM(LLMInterface):
         # Add JSON schema response format if provided
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = response_format.model_json_schema()
+            if self.provider in _PROVIDERS_REQUIRING_NUMERIC_CONSTRAINT_STRIP:
+                _strip_numeric_constraints(schema)
             call_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -281,6 +318,8 @@ class LiteLLMLLM(LLMInterface):
         start_time = time.time()
 
         call_kwargs = self._build_common_kwargs(messages, max_completion_tokens, temperature)
+        if self.provider in _PROVIDERS_REQUIRING_NUMERIC_CONSTRAINT_STRIP:
+            tools = [_strip_numeric_constraints(copy.deepcopy(t)) for t in tools]
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = tool_choice
 
