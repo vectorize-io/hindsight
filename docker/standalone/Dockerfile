@@ -172,6 +172,10 @@ USER hindsight
 # "Permission denied" error when mounting a fresh root-owned volume.
 RUN mkdir -p /home/hindsight/.pg0
 
+# Make /home/hindsight traversable when running with --user UID:GID overrides
+# (default 0700 blocks traversal by non-owner UIDs needed for bind-mount ownership matching)
+RUN chmod 755 /home/hindsight
+
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
 # Pre-download tiktoken encoding (ALWAYS - required for token counting even in air-gapped envs)
@@ -327,6 +331,10 @@ USER hindsight
 # volumes with correct ownership (UID 1000) on first use, avoiding the
 # "Permission denied" error when mounting a fresh root-owned volume.
 RUN mkdir -p /home/hindsight/.pg0
+
+# Make /home/hindsight traversable when running with --user UID:GID overrides
+# (default 0700 blocks traversal by non-owner UIDs needed for bind-mount ownership matching)
+RUN chmod 755 /home/hindsight
 
 ENV PATH="/app/api/.venv/bin:${PATH}"
 
