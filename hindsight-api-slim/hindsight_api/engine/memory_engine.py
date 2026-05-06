@@ -102,6 +102,22 @@ _PROTECTED_TABLES = frozenset(
     ]
 )
 
+# Core tables that prove /health is connected to a migrated Hindsight schema,
+# not just any PostgreSQL database that accepts SELECT 1. This catches pg0
+# instance mixups where an empty default database is listening on the expected
+# port but retain/recall would fail with UndefinedTableError.
+_HEALTH_REQUIRED_TABLES = frozenset(
+    [
+        "banks",
+        "memory_units",
+        "documents",
+        "chunks",
+        "entities",
+        "unit_entities",
+        "async_operations",
+    ]
+)
+
 # Enable runtime SQL validation (can be disabled in production for performance)
 _VALIDATE_SQL_SCHEMAS = True
 
@@ -2051,10 +2067,31 @@ class MemoryEngine(MemoryEngineInterface):
             backend = await self._get_backend()
             async with backend.acquire() as conn:
                 result = await conn.fetchval("SELECT 1")
-                if result == 1:
-                    return {"status": "healthy", "database": "connected"}
-                else:
+                if result != 1:
                     return {"status": "unhealthy", "database": "unexpected response"}
+
+                schema = get_current_schema()
+                rows = await conn.fetch(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = $1 AND table_name = ANY($2::text[])
+                    """,
+                    schema,
+                    list(_HEALTH_REQUIRED_TABLES),
+                )
+                present_tables = {row["table_name"] for row in rows}
+                missing_tables = sorted(_HEALTH_REQUIRED_TABLES - present_tables)
+                if missing_tables:
+                    return {
+                        "status": "unhealthy",
+                        "database": "connected",
+                        "schema": schema,
+                        "reason": "missing_schema_tables",
+                        "missing_tables": missing_tables,
+                    }
+
+                return {"status": "healthy", "database": "connected", "schema": schema}
         except Exception as e:
             return {"status": "unhealthy", "database": "error", "error": str(e)}
 
