@@ -1,0 +1,90 @@
+name: hindsight
+# Docker Compose file for Hindsight with AlloyDB Omni and ScaNN
+# Uses Google's free AlloyDB Omni container image: https://hub.docker.com/r/google/alloydbomni
+#
+# Usage:
+# docker compose -f docker/docker-compose/alloydb/docker-compose.yaml up -d
+#
+# Make sure to set the required environment variables before running:
+# - HINDSIGHT_DB_PASSWORD: password for the AlloyDB Omni/PostgreSQL user
+# - Configure LLM provider variables as needed (see the hindsight service below)
+#
+# Optional environment variables with defaults:
+# - HINDSIGHT_VERSION: Hindsight application version (default: latest)
+# - HINDSIGHT_DB_VERSION: AlloyDB Omni image tag (default: 17)
+# - HINDSIGHT_DB_USER: database user (default: hindsight_user)
+# - HINDSIGHT_DB_NAME: database name (default: hindsight_db)
+
+services:
+  db:
+    image: google/alloydbomni:${HINDSIGHT_DB_VERSION:-17}
+    container_name: hindsight-db-alloydb
+    restart: always
+    ports:
+      - "5438:5432"
+    environment:
+      POSTGRES_USER: ${HINDSIGHT_DB_USER:-hindsight_user}
+      POSTGRES_PASSWORD: ${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+      POSTGRES_DB: ${HINDSIGHT_DB_NAME:-hindsight_db}
+    volumes:
+      - alloydb_data:/var/lib/postgresql/data
+    networks:
+      - hindsight-net
+
+  alloydb-init:
+    image: google/alloydbomni:${HINDSIGHT_DB_VERSION:-17}
+    depends_on:
+      - db
+    environment:
+      - PGPASSWORD=${HINDSIGHT_DB_PASSWORD:-hindsight_password}
+    command:
+      - bash
+      - -c
+      - |
+        echo 'Waiting for AlloyDB Omni to be ready...'
+        until pg_isready -h hindsight-db-alloydb -p 5432 -U ${HINDSIGHT_DB_USER:-hindsight_user}; do
+          echo 'AlloyDB Omni is unavailable - sleeping'
+          sleep 2
+        done
+        echo 'AlloyDB Omni is ready - creating ${HINDSIGHT_DB_NAME:-hindsight_db} database'
+        psql -h hindsight-db-alloydb -p 5432 -U ${HINDSIGHT_DB_USER:-hindsight_user} -c 'CREATE DATABASE ${HINDSIGHT_DB_NAME:-hindsight_db};' 2>/dev/null || echo 'Database already exists'
+        echo 'Creating vector and alloydb_scann extensions'
+        psql -h hindsight-db-alloydb -p 5432 -U ${HINDSIGHT_DB_USER:-hindsight_user} -d ${HINDSIGHT_DB_NAME:-hindsight_db} -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+        psql -h hindsight-db-alloydb -p 5432 -U ${HINDSIGHT_DB_USER:-hindsight_user} -d ${HINDSIGHT_DB_NAME:-hindsight_db} -c 'CREATE EXTENSION IF NOT EXISTS alloydb_scann CASCADE;'
+        echo 'Database and extensions created successfully'
+    restart: "no"
+    networks:
+      - hindsight-net
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_VERSION:-latest}
+    container_name: hindsight-app
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      # LLM Configuration
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY:-your-api-key}
+
+      # Database Configuration
+      HINDSIGHT_API_DATABASE_URL: postgresql://${HINDSIGHT_DB_USER:-hindsight_user}:${HINDSIGHT_DB_PASSWORD:-hindsight_password}@db:5432/${HINDSIGHT_DB_NAME:-hindsight_db}
+
+      # Vector and Text Search Extensions
+      HINDSIGHT_API_VECTOR_EXTENSION: scann
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION: native
+
+    depends_on:
+      db:
+        condition: service_started
+      alloydb-init:
+        condition: service_completed_successfully
+    networks:
+      - hindsight-net
+
+networks:
+  hindsight-net:
+    driver: bridge
+
+volumes:
+  alloydb_data:
