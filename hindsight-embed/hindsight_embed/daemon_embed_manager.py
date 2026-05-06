@@ -380,6 +380,23 @@ class DaemonEmbedManager(EmbedManager):
             if "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU" not in env:
                 env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
 
+            # On Apple Silicon, forcing the local SentenceTransformers
+            # cross-encoder to CPU avoids MPS startup hangs but does not avoid
+            # SIGBUS crashes seen during local reranker inference in embedded
+            # daemon mode (notably during consolidation recall/rerank). The
+            # crash is a native PyTorch/SentenceTransformers failure and cannot
+            # be caught by Python exception handling, so prefer the RRF
+            # passthrough reranker unless the user explicitly opts into another
+            # provider.
+            if platform.machine().lower() in {"arm64", "aarch64"} and "HINDSIGHT_API_RERANKER_PROVIDER" not in env:
+                env["HINDSIGHT_API_RERANKER_PROVIDER"] = "rrf"
+                logger.warning(
+                    "Apple Silicon embedded daemon detected; defaulting "
+                    "HINDSIGHT_API_RERANKER_PROVIDER=rrf to avoid local "
+                    "cross-encoder SIGBUS crashes. Set "
+                    "HINDSIGHT_API_RERANKER_PROVIDER explicitly to override."
+                )
+
         # Get idle timeout from env
         idle_timeout = int(env.get("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))
 

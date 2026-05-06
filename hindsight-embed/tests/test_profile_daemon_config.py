@@ -282,6 +282,89 @@ def test_macos_forces_cpu_for_local_embeddings_and_reranker(temp_home, monkeypat
     assert env.get("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU") == "1"
 
 
+def test_macos_arm64_defaults_reranker_to_rrf(temp_home, monkeypatch):
+    """Apple Silicon embedded daemons should avoid the local cross-encoder by default.
+
+    FORCE_CPU avoids MPS startup hangs, but local SentenceTransformers reranker
+    inference can still SIGBUS the embedded daemon on macOS ARM64. Default to
+    the RRF passthrough reranker unless the user explicitly selects a provider.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    monkeypatch.delenv("HINDSIGHT_API_RERANKER_PROVIDER", raising=False)
+
+    manager = DaemonEmbedManager()
+    captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
+        patch("hindsight_embed.daemon_embed_manager.platform.machine", return_value="arm64"),
+    ):
+        manager._start_daemon(
+            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
+            profile="",
+        )
+
+    assert captured["env"].get("HINDSIGHT_API_RERANKER_PROVIDER") == "rrf"
+
+
+def test_macos_arm64_reranker_default_respects_explicit_provider(temp_home, monkeypatch):
+    """Users can explicitly opt back into local or select a remote reranker."""
+    from unittest.mock import MagicMock, patch
+
+    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
+
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "local")
+
+    manager = DaemonEmbedManager()
+    captured: dict[str, dict[str, str]] = {}
+    popen_called = [False]
+
+    def fake_popen(cmd, env, **kwargs):
+        captured["env"] = env
+        popen_called[0] = True
+        proc = MagicMock()
+        proc.pid = 12345
+        return proc
+
+    def fake_is_running(profile=""):
+        return popen_called[0]
+
+    with (
+        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
+        patch("hindsight_embed.daemon_embed_manager.time.sleep"),
+        patch.object(manager, "_clear_port", return_value=True),
+        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
+        patch.object(manager, "is_running", side_effect=fake_is_running),
+        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
+        patch("hindsight_embed.daemon_embed_manager.platform.machine", return_value="arm64"),
+    ):
+        manager._start_daemon(
+            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
+            profile="",
+        )
+
+    assert captured["env"].get("HINDSIGHT_API_RERANKER_PROVIDER") == "local"
+
+
 def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, monkeypatch):
     """Regression test: HINDSIGHT_* keys in profile .env must reach the daemon subprocess env.
 
