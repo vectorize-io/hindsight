@@ -33,10 +33,12 @@ _raw_provider = os.getenv(
     os.getenv("HINDSIGHT_API_LLM_PROVIDER", "gemini"),
 )
 _JUDGE_PROVIDER = "gemini" if _raw_provider == "vertexai" else _raw_provider
-_JUDGE_MODEL = os.getenv(
+_raw_model = os.getenv(
     "HINDSIGHT_TEST_JUDGE_MODEL",
     os.getenv("HINDSIGHT_API_LLM_MODEL", "gemini-2.5-flash-lite"),
 )
+# Strip "google/" prefix — vertexai uses it but gemini API key auth doesn't.
+_JUDGE_MODEL = _raw_model.removeprefix("google/") if _JUDGE_PROVIDER == "gemini" else _raw_model
 # For gemini provider, prefer GEMINI_API_KEY (always set in CI for vertexai jobs).
 _JUDGE_API_KEY = os.getenv(
     "HINDSIGHT_TEST_JUDGE_API_KEY",
