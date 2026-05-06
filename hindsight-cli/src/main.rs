@@ -619,6 +619,10 @@ enum MemoryCommands {
         /// Queue for background processing
         #[arg(long)]
         r#async: bool,
+
+        /// Named retain strategy to use for these files (overrides the bank's default strategy)
+        #[arg(short = 's', long)]
+        strategy: Option<String>,
     },
 
     /// Delete a memory unit
@@ -1449,6 +1453,7 @@ fn run() -> Result<()> {
                 recursive,
                 context,
                 r#async,
+                strategy,
             } => commands::memory::retain_files(
                 &client,
                 &bank_id,
@@ -1456,6 +1461,7 @@ fn run() -> Result<()> {
                 recursive,
                 context,
                 r#async,
+                strategy,
                 verbose,
                 output_format,
             ),

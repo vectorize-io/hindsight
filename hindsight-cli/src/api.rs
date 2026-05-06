@@ -269,6 +269,7 @@ impl ApiClient {
         bank_id: &str,
         files: Vec<(String, Vec<u8>)>,
         context: Option<String>,
+        strategy: Option<String>,
         verbose: bool,
     ) -> Result<FileRetainResult> {
         self.runtime.block_on(async {
@@ -283,6 +284,9 @@ impl ApiClient {
                     let mut meta = serde_json::json!({});
                     if let Some(ctx) = &context {
                         meta["context"] = serde_json::Value::String(ctx.clone());
+                    }
+                    if let Some(strat) = &strategy {
+                        meta["strategy"] = serde_json::Value::String(strat.clone());
                     }
                     // Use filename stem as document_id for deduplication
                     if let Some(stem) = std::path::Path::new(name)
