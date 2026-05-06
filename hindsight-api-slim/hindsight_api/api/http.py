@@ -997,7 +997,7 @@ class BackgroundResponse(BaseModel):
 
 
 class BankListItem(BaseModel):
-    """Bank list item with profile summary."""
+    """Bank list item with profile summary and stats."""
 
     bank_id: str
     name: str | None = None
@@ -1005,6 +1005,8 @@ class BankListItem(BaseModel):
     mission: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    fact_count: int = 0
+    last_document_at: str | None = None
 
 
 class BankListResponse(BaseModel):
@@ -1021,6 +1023,8 @@ class BankListResponse(BaseModel):
                         "mission": "I am a software engineer helping my team ship quality code",
                         "created_at": "2024-01-15T10:30:00Z",
                         "updated_at": "2024-01-16T14:20:00Z",
+                        "fact_count": 156,
+                        "last_document_at": "2024-01-16T14:20:00Z",
                     }
                 ]
             }

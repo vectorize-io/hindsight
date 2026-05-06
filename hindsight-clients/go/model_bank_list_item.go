@@ -19,7 +19,7 @@ import (
 // checks if the BankListItem type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &BankListItem{}
 
-// BankListItem Bank list item with profile summary.
+// BankListItem Bank list item with profile summary and stats.
 type BankListItem struct {
 	BankId string `json:"bank_id"`
 	Name NullableString `json:"name,omitempty"`
@@ -27,6 +27,8 @@ type BankListItem struct {
 	Mission NullableString `json:"mission,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
+	FactCount *int32 `json:"fact_count,omitempty"`
+	LastDocumentAt NullableString `json:"last_document_at,omitempty"`
 }
 
 type _BankListItem BankListItem
@@ -39,6 +41,8 @@ func NewBankListItem(bankId string, disposition DispositionTraits) *BankListItem
 	this := BankListItem{}
 	this.BankId = bankId
 	this.Disposition = disposition
+	var factCount int32 = 0
+	this.FactCount = &factCount
 	return &this
 }
 
@@ -47,6 +51,8 @@ func NewBankListItem(bankId string, disposition DispositionTraits) *BankListItem
 // but it doesn't guarantee that properties required by API are set
 func NewBankListItemWithDefaults() *BankListItem {
 	this := BankListItem{}
+	var factCount int32 = 0
+	this.FactCount = &factCount
 	return &this
 }
 
@@ -266,6 +272,80 @@ func (o *BankListItem) UnsetUpdatedAt() {
 	o.UpdatedAt.Unset()
 }
 
+// GetFactCount returns the FactCount field value if set, zero value otherwise.
+func (o *BankListItem) GetFactCount() int32 {
+	if o == nil || IsNil(o.FactCount) {
+		var ret int32
+		return ret
+	}
+	return *o.FactCount
+}
+
+// GetFactCountOk returns a tuple with the FactCount field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *BankListItem) GetFactCountOk() (*int32, bool) {
+	if o == nil || IsNil(o.FactCount) {
+		return nil, false
+	}
+	return o.FactCount, true
+}
+
+// HasFactCount returns a boolean if a field has been set.
+func (o *BankListItem) HasFactCount() bool {
+	if o != nil && !IsNil(o.FactCount) {
+		return true
+	}
+
+	return false
+}
+
+// SetFactCount gets a reference to the given int32 and assigns it to the FactCount field.
+func (o *BankListItem) SetFactCount(v int32) {
+	o.FactCount = &v
+}
+
+// GetLastDocumentAt returns the LastDocumentAt field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankListItem) GetLastDocumentAt() string {
+	if o == nil || IsNil(o.LastDocumentAt.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.LastDocumentAt.Get()
+}
+
+// GetLastDocumentAtOk returns a tuple with the LastDocumentAt field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankListItem) GetLastDocumentAtOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.LastDocumentAt.Get(), o.LastDocumentAt.IsSet()
+}
+
+// HasLastDocumentAt returns a boolean if a field has been set.
+func (o *BankListItem) HasLastDocumentAt() bool {
+	if o != nil && o.LastDocumentAt.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetLastDocumentAt gets a reference to the given NullableString and assigns it to the LastDocumentAt field.
+func (o *BankListItem) SetLastDocumentAt(v string) {
+	o.LastDocumentAt.Set(&v)
+}
+// SetLastDocumentAtNil sets the value for LastDocumentAt to be an explicit nil
+func (o *BankListItem) SetLastDocumentAtNil() {
+	o.LastDocumentAt.Set(nil)
+}
+
+// UnsetLastDocumentAt ensures that no value is present for LastDocumentAt, not even an explicit nil
+func (o *BankListItem) UnsetLastDocumentAt() {
+	o.LastDocumentAt.Unset()
+}
+
 func (o BankListItem) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -289,6 +369,12 @@ func (o BankListItem) ToMap() (map[string]interface{}, error) {
 	}
 	if o.UpdatedAt.IsSet() {
 		toSerialize["updated_at"] = o.UpdatedAt.Get()
+	}
+	if !IsNil(o.FactCount) {
+		toSerialize["fact_count"] = o.FactCount
+	}
+	if o.LastDocumentAt.IsSet() {
+		toSerialize["last_document_at"] = o.LastDocumentAt.Get()
 	}
 	return toSerialize, nil
 }

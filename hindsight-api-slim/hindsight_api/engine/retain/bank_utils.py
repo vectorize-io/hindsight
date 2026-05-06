@@ -368,29 +368,48 @@ Merged mission:"""
 
 async def list_banks(pool) -> list:
     """
-    List all banks in the system.
+    List all banks in the system with summary stats.
 
     Args:
         pool: Database connection pool
 
     Returns:
-        List of dicts with bank_id, name, disposition, mission, created_at, updated_at
+        List of dicts with bank info and stats (document_count, fact_count, last_event_at)
     """
+    banks_table = fq_table("banks")
+    docs_table = fq_table("documents")
+    mu_table = fq_table("memory_units")
+
     async with acquire_with_retry(pool) as conn:
         rows = await conn.fetch(
             f"""
-            SELECT bank_id, name, disposition, mission, created_at, updated_at
-            FROM {fq_table("banks")}
-            ORDER BY updated_at DESC
+            SELECT
+                b.bank_id, b.name, b.disposition, b.mission,
+                b.created_at, b.updated_at,
+                COALESCE(m.fact_count, 0) AS fact_count,
+                d.last_document_at
+            FROM {banks_table} b
+            LEFT JOIN (
+                SELECT bank_id, MAX(created_at) AS last_document_at
+                FROM {docs_table}
+                GROUP BY bank_id
+            ) d ON d.bank_id = b.bank_id
+            LEFT JOIN (
+                SELECT bank_id, COUNT(*) AS fact_count
+                FROM {mu_table}
+                GROUP BY bank_id
+            ) m ON m.bank_id = b.bank_id
+            ORDER BY d.last_document_at DESC NULLS LAST, b.updated_at DESC
             """
         )
 
         result = []
         for row in rows:
-            # asyncpg returns JSONB as a string, so parse it
             disposition_data = row["disposition"]
             if isinstance(disposition_data, str):
                 disposition_data = json.loads(disposition_data)
+
+            last_doc = row["last_document_at"]
 
             result.append(
                 {
@@ -400,6 +419,8 @@ async def list_banks(pool) -> list:
                     "mission": row["mission"] or "",
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                     "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                    "fact_count": row["fact_count"],
+                    "last_document_at": last_doc.isoformat() if last_doc else None,
                 }
             )
 

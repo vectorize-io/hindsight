@@ -5333,6 +5333,22 @@
               }
             ],
             "title": "Updated At"
+          },
+          "fact_count": {
+            "type": "integer",
+            "title": "Fact Count",
+            "default": 0
+          },
+          "last_document_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Document At"
           }
         },
         "type": "object",
@@ -5341,7 +5357,7 @@
           "disposition"
         ],
         "title": "BankListItem",
-        "description": "Bank list item with profile summary."
+        "description": "Bank list item with profile summary and stats."
       },
       "BankListResponse": {
         "properties": {
@@ -5369,6 +5385,8 @@
                 "literalism": 3,
                 "skepticism": 3
               },
+              "fact_count": 156,
+              "last_document_at": "2024-01-16T14:20:00Z",
               "mission": "I am a software engineer helping my team ship quality code",
               "name": "Alice",
               "updated_at": "2024-01-16T14:20:00Z"

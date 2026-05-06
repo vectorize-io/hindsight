@@ -3666,7 +3666,7 @@ components:
       - updates
       title: BankConfigUpdate
     BankListItem:
-      description: Bank list item with profile summary.
+      description: Bank list item with profile summary and stats.
       properties:
         bank_id:
           title: Bank Id
@@ -3685,6 +3685,13 @@ components:
         updated_at:
           nullable: true
           type: string
+        fact_count:
+          default: 0
+          title: Fact Count
+          type: integer
+        last_document_at:
+          nullable: true
+          type: string
       required:
       - bank_id
       - disposition
@@ -3699,6 +3706,8 @@ components:
             empathy: 3
             literalism: 3
             skepticism: 3
+          fact_count: 156
+          last_document_at: 2024-01-16T14:20:00Z
           mission: I am a software engineer helping my team ship quality code
           name: Alice
           updated_at: 2024-01-16T14:20:00Z

@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.disposition_traits import DispositionTraits
 from typing import Optional, Set
@@ -25,7 +25,7 @@ from typing_extensions import Self
 
 class BankListItem(BaseModel):
     """
-    Bank list item with profile summary.
+    Bank list item with profile summary and stats.
     """ # noqa: E501
     bank_id: StrictStr
     name: Optional[StrictStr] = None
@@ -33,7 +33,9 @@ class BankListItem(BaseModel):
     mission: Optional[StrictStr] = None
     created_at: Optional[StrictStr] = None
     updated_at: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "mission", "created_at", "updated_at"]
+    fact_count: Optional[StrictInt] = 0
+    last_document_at: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["bank_id", "name", "disposition", "mission", "created_at", "updated_at", "fact_count", "last_document_at"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -97,6 +99,11 @@ class BankListItem(BaseModel):
         if self.updated_at is None and "updated_at" in self.model_fields_set:
             _dict['updated_at'] = None
 
+        # set to None if last_document_at (nullable) is None
+        # and model_fields_set contains the field
+        if self.last_document_at is None and "last_document_at" in self.model_fields_set:
+            _dict['last_document_at'] = None
+
         return _dict
 
     @classmethod
@@ -114,7 +121,9 @@ class BankListItem(BaseModel):
             "disposition": DispositionTraits.from_dict(obj["disposition"]) if obj.get("disposition") is not None else None,
             "mission": obj.get("mission"),
             "created_at": obj.get("created_at"),
-            "updated_at": obj.get("updated_at")
+            "updated_at": obj.get("updated_at"),
+            "fact_count": obj.get("fact_count") if obj.get("fact_count") is not None else 0,
+            "last_document_at": obj.get("last_document_at")
         })
         return _obj
 

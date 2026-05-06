@@ -4,10 +4,21 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { client } from "./api";
 
+export interface BankInfo {
+  bank_id: string;
+  name: string | null;
+  mission: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  fact_count: number;
+  last_document_at: string | null;
+}
+
 interface BankContextType {
   currentBank: string | null;
   setCurrentBank: (bank: string | null) => void;
   banks: string[];
+  bankInfos: BankInfo[];
   loadBanks: () => Promise<void>;
 }
 
@@ -16,18 +27,29 @@ const BankContext = createContext<BankContextType | undefined>(undefined);
 export function BankProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [currentBank, setCurrentBank] = useState<string | null>(null);
-  const [banks, setBanks] = useState<string[]>([]);
+  const [bankInfos, setBankInfos] = useState<BankInfo[]>([]);
 
   const loadBanks = async () => {
     try {
       const response = await client.listBanks();
-      // Extract bank_id from each bank object
-      const bankIds = response.banks?.map((bank: any) => bank.bank_id) || [];
-      setBanks(bankIds);
+      const infos: BankInfo[] =
+        response.banks?.map((bank: any) => ({
+          bank_id: bank.bank_id,
+          name: bank.name ?? null,
+          mission: bank.mission ?? null,
+          created_at: bank.created_at ?? null,
+          updated_at: bank.updated_at ?? null,
+          fact_count: bank.fact_count ?? 0,
+          last_document_at: bank.last_document_at ?? null,
+        })) || [];
+      setBankInfos(infos);
     } catch (error) {
       console.error("Error loading banks:", error);
     }
   };
+
+  // Derive bank IDs for backwards compatibility
+  const banks = bankInfos.map((b) => b.bank_id);
 
   // Initialize bank from URL on mount
   useEffect(() => {
@@ -42,7 +64,7 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <BankContext.Provider value={{ currentBank, setCurrentBank, banks, loadBanks }}>
+    <BankContext.Provider value={{ currentBank, setCurrentBank, banks, bankInfos, loadBanks }}>
       {children}
     </BankContext.Provider>
   );
