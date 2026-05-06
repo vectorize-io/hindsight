@@ -105,58 +105,26 @@ jobs:
         ./scripts/benchmarks/run-perf-test.sh \
           --scale ${{ inputs.scale || 'small' }} \
           $SUITE_ARG \
-          --output perf-results.json \
-          --benchmark-output-dir bench
+          --output perf-results.json
 
     - name: Upload perf results
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: perf-results-${{ github.sha }}
-        path: |
-          hindsight-dev/perf-results.json
-          hindsight-dev/bench/
+        path: hindsight-dev/perf-results.json
         retention-days: 90
 
-    # Publish to the external dashboard repo. Pushes to its `gh-pages` branch
-    # using a PAT with push access to vectorize-io/hindsight-continuous-performance-monitor.
-    # Dashboard URL once GitHub Pages is enabled on that repo:
-    #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/dev/bench/
-    - name: Publish latency benchmarks
+    # Publish enriched results (perf JSON + commit metadata) to the dashboard
+    # repo's gh-pages branch. The static site at
+    #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/
+    # reads data/index.json + data/<run>.json and renders charts client-side.
+    - name: Publish to dashboard
       if: github.event_name == 'schedule' || github.event_name == 'push'
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        name: Hindsight Latency
-        tool: customSmallerIsBetter
-        output-file-path: hindsight-dev/bench/latency.json
-        gh-repository: github.com/vectorize-io/hindsight-continuous-performance-monitor
-        github-token: ${{ secrets.PERF_DASHBOARD_TOKEN }}
-        auto-push: true
-        benchmark-data-dir-path: dev/bench
-        alert-threshold: "150%"
-        comment-on-alert: false
-        fail-on-alert: false
-
-    # github-action-benchmark clones the dashboard repo into a fixed
-    # ./benchmark-data-repository dir; the second invocation collides unless we wipe it.
-    - name: Reset benchmark working directory
-      if: always() && (github.event_name == 'schedule' || github.event_name == 'push')
-      run: rm -rf ./benchmark-data-repository
-
-    - name: Publish throughput benchmarks
-      if: github.event_name == 'schedule' || github.event_name == 'push'
-      uses: benchmark-action/github-action-benchmark@v1
-      with:
-        name: Hindsight Throughput
-        tool: customBiggerIsBetter
-        output-file-path: hindsight-dev/bench/throughput.json
-        gh-repository: github.com/vectorize-io/hindsight-continuous-performance-monitor
-        github-token: ${{ secrets.PERF_DASHBOARD_TOKEN }}
-        auto-push: true
-        benchmark-data-dir-path: dev/bench
-        alert-threshold: "150%"
-        comment-on-alert: false
-        fail-on-alert: false
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-perf-results.sh hindsight-dev/perf-results.json
 
   locomo:
     # TEMP: only run on manual dispatch while iterating on the dashboard.
