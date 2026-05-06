@@ -120,7 +120,7 @@ jobs:
     #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/
     # reads data/index.json + data/<run>.json and renders charts client-side.
     - name: Publish to dashboard
-      if: github.event_name == 'schedule' || github.event_name == 'push'
+      if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
       env:
         PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
