@@ -707,7 +707,12 @@ class WorkerPoller:
                         f"""
                         UPDATE {table}
                         SET status = 'pending', worker_id = NULL, claimed_at = NULL, updated_at = now()
-                        WHERE status = 'processing' AND worker_id = $1 AND result_metadata->>'batch_id' IS NULL
+                        WHERE status = 'processing'
+                          AND result_metadata->>'batch_id' IS NULL
+                          AND (
+                            worker_id = $1
+                            OR updated_at < NOW() - INTERVAL '1 hour'
+                          )
                         """,
                         self._worker_id,
                     )

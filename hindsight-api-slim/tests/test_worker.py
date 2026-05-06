@@ -3102,3 +3102,208 @@ class TestWorkerStatus:
         )
 
         assert len(rows) == 0
+
+
+class TestOrphanedProcessingRowLiveness:
+    """Regression tests for the orphaned-processing-row bug (issue #1470).
+
+    When a worker dies mid-consolidation (container restart, OOM), the
+    async_operations row can be left in status='processing' indefinitely.
+    The bank-serialization filter in claim_tasks() must treat such stale rows
+    as non-live (>1 hour since updated_at) so the bank becomes claimable again.
+    Similarly, _recover_orphaned_tasks() on startup must reset stale rows even
+    when they were owned by a different worker_id.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stale_processing_row_does_not_block_claim(self, pool, backend, clean_operations):
+        """A consolidation row stuck in processing for >1h must not block claim.
+
+        Scenario: worker_A died mid-consolidation; its row has status='processing'
+        and updated_at=2 hours ago. A new worker (worker_B) should be able to
+        claim pending consolidation tasks for the same bank.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # Simulate the orphaned row left by dead worker_A: processing, updated 2h ago.
+        orphan_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'dead-worker-A', now(), now() - INTERVAL '2 hours')
+            """,
+            orphan_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id, "operation_id": str(orphan_id)}),
+        )
+
+        # The pending task that should be claimed by worker_B.
+        pending_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            pending_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id, "operation_id": str(pending_id)}),
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="worker-B",
+            executor=lambda x: None,
+        )
+
+        claimed = await poller.claim_batch()
+        claimed_ids = {c.operation_id for c in claimed}
+
+        assert str(pending_id) in claimed_ids, (
+            "Worker should claim the pending consolidation task when the only "
+            "blocking processing row is stale (>1h). "
+            "Regression: orphaned row from dead worker must not block claim forever."
+        )
+
+    @pytest.mark.asyncio
+    async def test_fresh_processing_row_still_blocks_claim(self, pool, backend, clean_operations):
+        """A consolidation row in processing with a recent updated_at must still block claim.
+
+        Ensures the liveness gate does not break the actual bank-serialization
+        invariant: two live workers must not consolidate the same bank concurrently.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # A live processing row: updated_at = just now (active worker).
+        live_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', $3::jsonb, 'live-worker-A', now(), now())
+            """,
+            live_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id, "operation_id": str(live_id)}),
+        )
+
+        # Pending task for the same bank.
+        pending_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'consolidation', 'pending', $3::jsonb)
+            """,
+            pending_id,
+            bank_id,
+            json.dumps({"type": "consolidation", "bank_id": bank_id, "operation_id": str(pending_id)}),
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="worker-B",
+            executor=lambda x: None,
+        )
+
+        claimed = await poller.claim_batch()
+        claimed_ids = {c.operation_id for c in claimed}
+
+        assert str(pending_id) not in claimed_ids, (
+            "Worker must NOT claim a consolidation task while a live (recently updated) "
+            "processing row exists for the same bank. Bank-serialization invariant must hold."
+        )
+
+    @pytest.mark.asyncio
+    async def test_recover_orphaned_tasks_resets_cross_worker_stale_rows(self, pool, backend, clean_operations):
+        """_recover_orphaned_tasks must reset stale processing rows from other workers.
+
+        Scenario: worker_A died; its row is >1h stale. Worker_B starts up and calls
+        _recover_orphaned_tasks. The row must be reset to pending so it can be claimed.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test_worker_recovery_{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        # Orphaned row from dead worker_A, updated 2h ago.
+        orphan_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', NULL, 'dead-worker-A', now(), now() - INTERVAL '2 hours')
+            """,
+            orphan_id,
+            bank_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="worker-B",
+            executor=lambda x: None,
+        )
+
+        recovered = await poller._recover_orphaned_tasks()
+
+        row = await pool.fetchrow(
+            "SELECT status, worker_id FROM async_operations WHERE operation_id = $1",
+            orphan_id,
+        )
+
+        assert row["status"] == "pending", (
+            "_recover_orphaned_tasks must reset stale cross-worker processing rows to pending. "
+            "Regression: worker_id filter was too strict (only matched own worker_id)."
+        )
+        assert row["worker_id"] is None
+        assert recovered >= 1
+
+    @pytest.mark.asyncio
+    async def test_recover_orphaned_tasks_does_not_reset_fresh_cross_worker_rows(
+        self, pool, backend, clean_operations
+    ):
+        """_recover_orphaned_tasks must NOT reset a fresh processing row from another worker.
+
+        A row from a different worker that was updated <1h ago is assumed to be live.
+        Resetting it would cause duplicate consolidation runs.
+        """
+        from hindsight_api.worker import WorkerPoller
+
+        bank_id = f"test_worker_recovery_{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+
+        fresh_id = uuid.uuid4()
+        await pool.execute(
+            """
+            INSERT INTO async_operations
+              (operation_id, bank_id, operation_type, status, task_payload, worker_id, claimed_at, updated_at)
+            VALUES ($1, $2, 'consolidation', 'processing', NULL, 'live-worker-A', now(), now() - INTERVAL '5 minutes')
+            """,
+            fresh_id,
+            bank_id,
+        )
+
+        poller = WorkerPoller(
+            backend=backend,
+            worker_id="worker-B",
+            executor=lambda x: None,
+        )
+
+        await poller._recover_orphaned_tasks()
+
+        row = await pool.fetchrow(
+            "SELECT status FROM async_operations WHERE operation_id = $1",
+            fresh_id,
+        )
+
+        assert row["status"] == "processing", (
+            "_recover_orphaned_tasks must not disturb a recently-updated processing row "
+            "belonging to another worker (could be a live worker's task)."
+        )

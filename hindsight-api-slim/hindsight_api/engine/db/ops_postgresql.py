@@ -739,7 +739,9 @@ class PostgreSQLOps(DataAccessOps):
                 busy_banks = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
+                    WHERE operation_type = 'consolidation'
+                      AND status = 'processing'
+                      AND updated_at > NOW() - INTERVAL '1 hour'
                     """,
                 )
                 busy_bank_ids = [r["bank_id"] for r in busy_banks]
@@ -844,7 +846,9 @@ class PostgreSQLOps(DataAccessOps):
                 busy_banks_2 = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
+                    WHERE operation_type = 'consolidation'
+                      AND status = 'processing'
+                      AND updated_at > NOW() - INTERVAL '1 hour'
                     """,
                 )
                 busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
