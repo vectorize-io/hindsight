@@ -130,6 +130,23 @@ def apply_combined_scoring(
         sr.weight = sr.combined_score
 
 
+def filter_by_reranker_threshold(
+    scored_results: list[ScoredResult],
+    threshold: float | None,
+    *,
+    enabled: bool = True,
+) -> list[ScoredResult]:
+    """Filter scored results using the raw cross-encoder score."""
+    if not enabled or threshold is None:
+        return scored_results
+
+    return [
+        sr
+        for sr in scored_results
+        if not math.isnan(sr.cross_encoder_score) and sr.cross_encoder_score >= threshold
+    ]
+
+
 class CrossEncoderReranker:
     """
     Neural reranking using a cross-encoder model.

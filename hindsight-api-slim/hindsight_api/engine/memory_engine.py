@@ -203,7 +203,7 @@ from .response_models import RecallResult as RecallResultModel
 from .retain import bank_utils, embedding_utils
 from .retain.types import RetainContentDict
 from .search import think_utils
-from .search.reranking import CrossEncoderReranker, apply_combined_scoring
+from .search.reranking import CrossEncoderReranker, apply_combined_scoring, filter_by_reranker_threshold
 from .search.tags import TagGroup, TagsMatch, build_tags_where_clause
 from .task_backend import TaskBackend
 
@@ -3279,6 +3279,17 @@ class MemoryEngine(MemoryEngineInterface):
                 apply_combined_scoring(scored_results, now=utcnow(), is_passthrough_reranker=is_passthrough)
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
                 log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
+
+                threshold = get_config().reranker_threshold
+                if threshold is not None and not is_passthrough:
+                    original_count = len(scored_results)
+                    scored_results = filter_by_reranker_threshold(scored_results, threshold)
+                    filtered_count = original_count - len(scored_results)
+                    if filtered_count > 0:
+                        log_buffer.append(
+                            f"  [4.7] Threshold filtering (raw_ce >= {threshold:.2f}): "
+                            f"{original_count} -> {len(scored_results)} results"
+                        )
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             if tracer:
