@@ -10,7 +10,6 @@ Implements:
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Optional
@@ -19,21 +18,13 @@ from ...config import get_config
 from ..db_utils import acquire_with_retry
 from ..memory_engine import fq_table
 from ..sql import create_sql_dialect
+from .bm25_query import build_native_tsquery, build_native_tsquery_fallback, tokenize_query
 from .graph_retrieval import GraphRetriever
 from .link_expansion_retrieval import LinkExpansionRetriever
 from .tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause_simple
 from .types import GraphRetrievalTimings, RetrievalResult
 
 logger = logging.getLogger(__name__)
-
-
-def tokenize_query(query_text: str) -> list[str]:
-    """Normalize query text and split into BM25 tokens.
-
-    Strips punctuation, lowercases, and splits on whitespace.
-    Returns an empty list when the query contains no word characters.
-    """
-    return re.sub(r"[^\w\s]", " ", query_text.lower()).split()
 
 
 @dataclass
@@ -154,7 +145,8 @@ async def retrieve_semantic_bm25_combined(
     # inline if/else branches for each database.
     # Use getattr for backward compat: raw asyncpg connections (used in some
     # tests) lack backend_type; default to "postgresql".
-    dialect = create_sql_dialect(getattr(conn, "backend_type", "postgresql"))
+    backend_type = getattr(conn, "backend_type", "postgresql")
+    dialect = create_sql_dialect(backend_type)
 
     # --- Parameter layout ---
     # $1 = query_emb_str  (semantic arms)
@@ -211,7 +203,12 @@ async def retrieve_semantic_bm25_combined(
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
     if _include_bm25:
         text_ext = config.text_search_extension
-        bm25_text_param: str = dialect.prepare_bm25_text(tokens, query_text, text_search_extension=text_ext)
+        if backend_type == "postgresql" and text_ext == "native":
+            bm25_text_param = build_native_tsquery(query_text) or dialect.prepare_bm25_text(
+                tokens, query_text, text_search_extension=text_ext
+            )
+        else:
+            bm25_text_param = dialect.prepare_bm25_text(tokens, query_text, text_search_extension=text_ext)
         for i, ft in enumerate(fact_types):
             arms.append(
                 dialect.build_bm25_arm(
@@ -302,6 +299,56 @@ async def retrieve_semantic_bm25_combined(
                 sem_counts[ft] += 1
         else:
             result_dict[ft][1].append(RetrievalResult.from_db_row(row))
+
+    if _include_bm25 and backend_type == "postgresql" and config.text_search_extension == "native":
+        fallback_query_tsquery = build_native_tsquery_fallback(query_text)
+        empty_bm25_fact_types = [ft for ft in fact_types if not result_dict[ft][1]]
+        if fallback_query_tsquery and fallback_query_tsquery != bm25_text_param and empty_bm25_fact_types:
+            fallback_tags_param_idx = 4
+            fallback_tags_clause = build_tags_where_clause_simple(tags, fallback_tags_param_idx, match=tags_match)
+            fallback_tag_groups_param_start = fallback_tags_param_idx + (1 if tags else 0)
+            fallback_groups_clause, fallback_groups_params, _ = build_tag_groups_where_clause(
+                tag_groups, fallback_tag_groups_param_start
+            )
+            fallback_next_idx = fallback_tag_groups_param_start + len(fallback_groups_params)
+            fallback_created_clause = ""
+            fallback_created_params: list[Any] = []
+            if created_after is not None:
+                fallback_created_params.append(created_after)
+                fallback_created_clause += f" AND updated_at > ${fallback_next_idx}"
+                fallback_next_idx += 1
+            if created_before is not None:
+                fallback_created_params.append(created_before)
+                fallback_created_clause += f" AND updated_at < ${fallback_next_idx}"
+
+            fallback_arms = [
+                dialect.build_bm25_arm(
+                    table=table,
+                    cols=cols,
+                    fact_type=ft,
+                    bank_id_param="$1",
+                    limit_param="$2",
+                    text_param="$3",
+                    tags_clause=fallback_tags_clause,
+                    groups_clause=fallback_groups_clause,
+                    arm_index=i,
+                    text_search_extension="native",
+                    extra_where=fallback_created_clause,
+                )
+                for i, ft in enumerate(empty_bm25_fact_types)
+            ]
+            fallback_params: list[Any] = [bank_id, limit, fallback_query_tsquery]
+            if tags:
+                fallback_params.append(tags)
+            fallback_params.extend(fallback_groups_params)
+            fallback_params.extend(fallback_created_params)
+            fallback_rows = await conn.fetch("\nUNION ALL\n".join(fallback_arms), *fallback_params)
+            for r in fallback_rows:
+                row = dict(r)
+                row.pop("source")
+                ft = row.get("fact_type")
+                if ft in result_dict:
+                    result_dict[ft][1].append(RetrievalResult.from_db_row(row))
 
     return result_dict
 

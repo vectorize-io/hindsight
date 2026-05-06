@@ -14,7 +14,6 @@ import pytest
 
 from hindsight_api.engine.retain.bank_utils import _BANK_INDEX_FACT_TYPES, _bank_index_name
 
-
 # ---------------------------------------------------------------------------
 # Unit tests — no DB required
 # ---------------------------------------------------------------------------
@@ -188,6 +187,90 @@ async def test_retrieve_semantic_bm25_grouped_by_fact_type(memory, request_conte
             # All BM25 results must declare the correct fact_type
             for r in bm25:
                 assert r.fact_type == ft, f"BM25 result has wrong fact_type: {r.fact_type}"
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retrieve_bm25_matches_chinese_text_signals(memory, request_context):
+    """Native BM25 should match mixed English/Chinese queries via text_signals tokens."""
+    from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined
+
+    bank_id = f"test_bm25_chinese_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO memory_units (bank_id, text, context, fact_type, text_signals, event_date)
+                VALUES ($1, $2, $3, 'world', $4, $5)
+                """,
+                bank_id,
+                "Gitea SSH连接信息: ssh -p 65017",
+                "server note",
+                "gitea ssh 连接 信息 p 65017",
+                datetime(2026, 4, 21, tzinfo=timezone.utc),
+            )
+
+            query_emb = memory.embeddings.encode(["Gitea 连接信息"])
+            results = await retrieve_semantic_bm25_combined(
+                conn=conn,
+                query_emb_str=str(query_emb[0]),
+                query_text="Gitea 连接信息",
+                bank_id=bank_id,
+                fact_types=["world"],
+                limit=5,
+            )
+
+        _, bm25 = results["world"]
+        assert [result.text for result in bm25] == ["Gitea SSH连接信息: ssh -p 65017"]
+
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retrieve_bm25_fallback_for_strict_chinese_query(memory, request_context):
+    """Native BM25 falls back only after strict Chinese query returns no rows."""
+    from hindsight_api.engine.search.retrieval import retrieve_semantic_bm25_combined
+
+    bank_id = f"test_bm25_fallback_{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        async with memory._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO memory_units (bank_id, text, context, fact_type, text_signals, event_date)
+                VALUES
+                    ($1, $2, $3, 'world', $4, $5),
+                    ($1, $6, $7, 'world', $8, $5)
+                """,
+                bank_id,
+                "周奕婷就读于广州市玉泉学校。",
+                "school note",
+                "周奕婷 学校",
+                datetime(2026, 4, 21, tzinfo=timezone.utc),
+                "家庭信息记录用于提醒。",
+                "generic family note",
+                "家庭 信息",
+            )
+
+            query_emb = memory.embeddings.encode(["周奕婷的学校和家庭信息"])
+            results = await retrieve_semantic_bm25_combined(
+                conn=conn,
+                query_emb_str=str(query_emb[0]),
+                query_text="周奕婷的学校和家庭信息",
+                bank_id=bank_id,
+                fact_types=["world"],
+                limit=5,
+            )
+
+        _, bm25 = results["world"]
+        assert bm25
+        assert bm25[0].text == "周奕婷就读于广州市玉泉学校。"
 
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
