@@ -137,6 +137,12 @@ jobs:
         comment-on-alert: false
         fail-on-alert: false
 
+    # github-action-benchmark clones the dashboard repo into a fixed
+    # ./benchmark-data-repository dir; the second invocation collides unless we wipe it.
+    - name: Reset benchmark working directory
+      if: always() && (github.event_name == 'schedule' || github.event_name == 'push')
+      run: rm -rf ./benchmark-data-repository
+
     - name: Publish throughput benchmarks
       if: github.event_name == 'schedule' || github.event_name == 'push'
       uses: benchmark-action/github-action-benchmark@v1
