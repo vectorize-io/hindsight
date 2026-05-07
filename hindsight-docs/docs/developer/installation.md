@@ -29,6 +29,7 @@ Hindsight requires PostgreSQL 14+ with a vector extension for similarity search.
 - **pgvector** (default)
 - **pgvectorscale**
 - **vchord**
+- **scann** (AlloyDB)
 
 Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configuration](./configuration) for details.
 
@@ -38,6 +39,7 @@ Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configura
 - **Supabase** — Managed PostgreSQL with pgvector built-in
 - **Neon** — Serverless PostgreSQL with pgvector
 - **Azure Database for PostgreSQL** — With pgvector and pgvectorscale support
+- **Google AlloyDB** / **AlloyDB Omni** — With pgvector and ScaNN support
 - **AWS RDS** / **Cloud SQL** — With pgvector extension enabled
 - **Self-hosted** — PostgreSQL 14+ with your preferred vector extension
 

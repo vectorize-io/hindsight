@@ -68,9 +68,9 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, or `pgvectorscale` | `pgvector` |
+| `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, `pgvectorscale`, or `scann` | `pgvector` |
 
-Hindsight supports three PostgreSQL vector extensions:
+Hindsight supports four PostgreSQL vector extensions:
 
 #### **pgvector** (HNSW - default)
 - In-memory index using Hierarchical Navigable Small World algorithm
@@ -96,6 +96,13 @@ Hindsight supports three PostgreSQL vector extensions:
 - Includes integrated BM25 search capabilities
 - Requires `vchord` extension
 
+#### **scann** (AlloyDB ScaNN)
+- Google's ScaNN index, available on **AlloyDB** and **AlloyDB Omni**
+- Uses a single global vector index in `AUTO` mode (per-bank partial indexes are not used)
+- **Installation:** `CREATE EXTENSION vector; CREATE EXTENSION alloydb_scann CASCADE;`
+- **Index build is deferred** until a table reaches **10,000 populated embedding rows** — AlloyDB cannot build a ScaNN AUTO index on a near-empty table. Until that threshold is crossed, recall falls back to a sequential scan; the global index is built on the next API startup once enough rows exist.
+- A ready-to-use Docker Compose stack is provided at [`docker/docker-compose/alloydb/docker-compose.yaml`](https://github.com/vectorize-io/hindsight/blob/main/docker/docker-compose/alloydb/docker-compose.yaml) for running Hindsight against AlloyDB Omni locally.
+
 **When to use pgvectorscale (DiskANN):**
 - Large datasets (10M+ vectors) ⭐
 - Complex filtering requirements
@@ -114,11 +121,15 @@ Hindsight supports three PostgreSQL vector extensions:
 - Want integrated BM25 search
 - Already using vchord for text search
 
+**When to use scann:**
+- Running on Google **AlloyDB** or **AlloyDB Omni**
+- Want managed ScaNN with `AUTO` mode tuning
+
 **Switching extensions:**
 
 If you need to switch from one extension to another:
-1. Set `HINDSIGHT_API_VECTOR_EXTENSION` to your desired extension (`pgvector`, `vchord`, or `pgvectorscale`)
-2. If your database has existing data, you'll get an error with migration instructions
+1. Set `HINDSIGHT_API_VECTOR_EXTENSION` to your desired extension (`pgvector`, `vchord`, `pgvectorscale`, or `scann`)
+2. If your database has existing data, you'll get an error with migration instructions (note: switching **to** `scann` is allowed even with data — the existing index is dropped and rebuilt as ScaNN once the table has at least 10,000 embedding rows)
 3. For empty databases, indexes will be automatically recreated on startup
 
 **Learn more:**
