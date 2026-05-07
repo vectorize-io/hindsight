@@ -2797,6 +2797,62 @@ class TestClaimBatchRotation:
             await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", op_id)
 
     @pytest.mark.asyncio
+    async def test_scan_uses_optional_routine_when_installed(self, pool, backend, clean_operations):
+        """When ``public.schemas_with_pending_work()`` exists in pg_proc,
+        ``_scan_active_schemas`` invokes it instead of running per-schema
+        EXISTS queries from Python. Confirms the OptionalRoutines probe
+        path is wired correctly end-to-end.
+        """
+        from hindsight_api.engine.db.optional_routines import SCHEMAS_WITH_PENDING_WORK
+        from hindsight_api.engine.db.postgresql import PostgresConnection
+        from hindsight_api.worker import WorkerPoller
+
+        await pool.execute(SCHEMAS_WITH_PENDING_WORK.install_sql)
+        try:
+            poller = WorkerPoller(
+                backend=backend,
+                worker_id="test-routine",
+                executor=lambda x: None,
+            )
+
+            captured_fetch: list[str] = []
+            captured_fetchval: list[str] = []
+            original_fetch = PostgresConnection.fetch
+            original_fetchval = PostgresConnection.fetchval
+
+            async def spy_fetch(self, query, *args, timeout=None):
+                captured_fetch.append(query)
+                return await original_fetch(self, query, *args, timeout=timeout)
+
+            async def spy_fetchval(self, query, *args, column=0, timeout=None):
+                captured_fetchval.append(query)
+                return await original_fetchval(self, query, *args, column=column, timeout=timeout)
+
+            PostgresConnection.fetch = spy_fetch  # type: ignore[method-assign]
+            PostgresConnection.fetchval = spy_fetchval  # type: ignore[method-assign]
+            try:
+                await poller._scan_active_schemas([None])
+            finally:
+                PostgresConnection.fetch = original_fetch  # type: ignore[method-assign]
+                PostgresConnection.fetchval = original_fetchval  # type: ignore[method-assign]
+
+            # Routine was probed (one pg_proc lookup) and then invoked.
+            assert any("pg_proc" in q for q in captured_fetchval), (
+                f"Expected a pg_proc existence probe; fetchval queries: {captured_fetchval}"
+            )
+            assert any("schemas_with_pending_work" in q for q in captured_fetch), (
+                f"Expected schemas_with_pending_work() to be invoked; fetch queries: {captured_fetch}"
+            )
+            # Fallback per-schema EXISTS path must NOT have run.
+            assert not any("async_operations" in q and "EXISTS" in q for q in captured_fetchval), (
+                f"Fallback EXISTS path should be skipped when routine is installed; fetchval queries: {captured_fetchval}"
+            )
+            # Probe result is cached so the next scan skips the pg_proc lookup.
+            assert poller._optional_routines._cache.get("schemas_with_pending_work") is True
+        finally:
+            await pool.execute("DROP FUNCTION IF EXISTS public.schemas_with_pending_work()")
+
+    @pytest.mark.asyncio
     async def test_claim_batch_only_queries_active_schemas(self, pool, backend, clean_operations):
         """claim_batch uses _scan_active_schemas to pre-filter, then
         only calls _claim_batch_for_schema on schemas the scan found.

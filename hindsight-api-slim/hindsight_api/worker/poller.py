@@ -137,6 +137,11 @@ class WorkerPoller:
         self._slot_reservations: dict[str, int] = (
             slot_reservations if slot_reservations is not None else {"consolidation": 2}
         )
+        # Cache of which optional PG routines are installed on the server
+        # (probed once, memoised for the life of the poller).
+        from ..engine.db.optional_routines import OptionalRoutines
+
+        self._optional_routines = OptionalRoutines(self._backend)
         self._shutdown = asyncio.Event()
         self._current_tasks: set[asyncio.Task] = set()
         self._in_flight_count = 0
@@ -162,46 +167,22 @@ class WorkerPoller:
     async def _scan_active_schemas(self, schemas: list[str | None]) -> set[str | None]:
         """Find which schemas have pending work.
 
-        Tries a server-side PL/pgSQL function first (single DB round-trip,
-        ~200ms for 1400+ schemas). Falls back to per-schema Python EXISTS
-        queries if the function is not installed (~4ms each).
+        Prefers a server-side PL/pgSQL routine (single DB round-trip,
+        ~200ms for 1400+ schemas) when ``public.schemas_with_pending_work()``
+        is installed. The presence check goes through
+        ``OptionalRoutines.is_installed`` which probes ``pg_proc`` once and
+        caches the result, so we don't generate a server-side error on
+        every poll cycle when the routine isn't installed.
 
-        The server-side function should be installed in the ``public``
-        schema as::
-
-            CREATE OR REPLACE FUNCTION public.schemas_with_pending_work()
-            RETURNS SETOF text AS $$
-            DECLARE
-              r RECORD; has_work BOOLEAN;
-            BEGIN
-              FOR r IN SELECT nspname FROM pg_namespace
-                       WHERE nspname LIKE 'tenant_%' LOOP
-                BEGIN
-                  EXECUTE format(
-                    'SELECT EXISTS(SELECT 1 FROM %I.async_operations '
-                    'WHERE status = ''pending'' '
-                    'AND task_payload IS NOT NULL LIMIT 1)',
-                    r.nspname) INTO has_work;
-                  IF has_work THEN RETURN NEXT r.nspname; END IF;
-                EXCEPTION WHEN OTHERS THEN NULL;
-                END;
-              END LOOP;
-            END $$ LANGUAGE plpgsql STABLE;
-
-        In hindsight-cloud deployments this is installed by a Helm hook
-        job alongside ``total_pending_tasks()``.
+        Falls back to per-schema Python EXISTS queries (~4ms each) on
+        non-PostgreSQL backends or when the routine isn't installed. See
+        ``hindsight_api.engine.db.optional_routines`` for the canonical
+        install SQL.
         """
         async with self._backend.acquire() as conn:
-            # The schemas_with_pending_work() PL/pgSQL function is a
-            # PostgreSQL-specific optimisation installed by Helm hooks in
-            # hindsight-cloud. Skip on non-PG backends to avoid constant
-            # ORA-00904 / syntax errors on every poll cycle.
-            if self._backend.backend_type == "postgresql":
-                try:
-                    rows = await conn.fetch("SELECT * FROM schemas_with_pending_work()")
-                    return {r[0] for r in rows}
-                except Exception:
-                    pass
+            if await self._optional_routines.is_installed(conn, "schemas_with_pending_work"):
+                rows = await conn.fetch("SELECT * FROM public.schemas_with_pending_work()")
+                return {r[0] for r in rows}
 
             # Fallback: per-schema EXISTS checks from Python
             active: set[str | None] = set()
