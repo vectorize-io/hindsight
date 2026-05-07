@@ -8,6 +8,7 @@
 - [Supported clients, integrations, and LLM providers](#which-clients-and-languages-are-supported)
 - [Which model should I use?](#which-model-should-i-use-with-hindsight)
 - [Hosting and system requirements](#do-i-need-to-host-my-own-infrastructure)
+- [What are "zombie" operations and how do I recover them?](#what-are-zombie-operations-and-how-do-i-recover-them)
 - [How do I isolate user data?](#how-do-i-isolate-user-data)
 - [Retain, recall, and reflect — what's the difference?](#whats-the-difference-between-retain-recall-and-reflect)
 - [When should I use recall vs reflect?](#when-should-i-use-recall-vs-reflect)
@@ -115,6 +116,28 @@ For running the Hindsight API server locally:
 - LLM API key (OpenAI, Anthropic, etc.) or local LLM setup
 
 See [Installation](developer/installation.md) for setup instructions.
+
+---
+
+### What are "zombie" operations and how do I recover them?
+
+A **zombie operation** is a background task stuck in `processing` indefinitely because the worker that claimed it is gone — typically after a Docker container restart. The symptom is a `pending_consolidation` (or similar) counter that never decreases on `/banks/{bank_id}/stats`, even though the worker logs show plenty of free slots.
+
+The root cause is almost always an unstable `HINDSIGHT_API_WORKER_ID`. By default the worker uses the container hostname as its identity, and Docker rotates that on every restart — so the new container has a different ID and won't recognize the old worker's claims as its own.
+
+**Recover** with the admin CLI:
+
+```bash
+# If you know which worker is dead:
+hindsight-admin decommission-worker <old-worker-id>
+
+# Or, fleet-wide release across all workers:
+hindsight-admin decommission-workers
+```
+
+**Prevent it** by setting `HINDSIGHT_API_WORKER_ID` to a stable value (Docker `-e HINDSIGHT_API_WORKER_ID=...`, or `--worker-id` on bare metal). The Helm chart already handles this — its StatefulSet wires the pod name automatically.
+
+See [Admin CLI — Recovering stuck operations](developer/admin-cli.md#recovering-stuck-or-zombie-operations) for the full diagnosis and recovery flow.
 
 ---
 
