@@ -92,6 +92,24 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
 
+### Bundling Custom Models in a Custom Image
+
+The full image bakes the **default** embedder (`BAAI/bge-small-en-v1.5`) and reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) into the image at build time, so the default deployment has no runtime dependency on HuggingFace. If you use a **non-default** local model, the recommended pattern for production is to extend the slim image and pre-download the models you need at build time, rather than relying on a runtime model cache (or a `modelCache` PVC).
+
+A complete, runnable example lives in [`docker/docker-compose/custom-models/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/custom-models) — a `Dockerfile` that bakes two configurable models into the slim image, plus a `docker-compose.yaml` that runs it with `HF_HUB_OFFLINE=1` so any missed download fails loudly.
+
+```bash
+docker compose -f docker/docker-compose/custom-models/docker-compose.yaml build \
+  --build-arg EMBEDDER=your-org/your-embedder \
+  --build-arg RERANKER=your-org/your-reranker
+```
+
+This makes pod startup deterministic: the container registry caches the model layers per node, and you never depend on HuggingFace at runtime.
+
+:::tip Prefer this over a model-cache PVC
+The Helm chart exposes an optional `api.persistence.modelCache` PVC for caching downloaded models across pod restarts. For production, baking models into the image is generally preferable — image layers are pulled once per node and cached for free, while a PVC adds storage cost (one per replica with `volumeClaimTemplates`), pins pods to a node (`ReadWriteOnce`), and needs lifecycle management on `helm uninstall`/`upgrade`.
+:::
+
 ### Available Tags
 
 ```bash

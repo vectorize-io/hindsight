@@ -70,6 +70,12 @@ api:
   # Persistent volume for local model cache (reranker, embeddings)
   # Models are downloaded to /home/hindsight/.cache on first use.
   # Without persistence, models are re-downloaded on every pod restart.
+  #
+  # For production, prefer baking models into a custom image instead of
+  # enabling this PVC: image layers are pulled once per node and cached
+  # for free, while a PVC adds storage cost, pins pods to a node
+  # (ReadWriteOnce), and needs lifecycle management on uninstall/upgrade.
+  # See docs: developer/installation#bundling-custom-models-in-a-custom-image
   persistence:
     modelCache:
       enabled: false
@@ -168,7 +174,10 @@ worker:
   # affinity: {}
 
   # Persistent volume for local model cache (reranker, embeddings)
-  # Uses volumeClaimTemplates since worker is a StatefulSet.
+  # Uses volumeClaimTemplates since worker is a StatefulSet — one PVC per
+  # replica. For production, prefer baking models into a custom image; see
+  # api.persistence.modelCache above and docs:
+  # developer/installation#bundling-custom-models-in-a-custom-image
   persistence:
     modelCache:
       enabled: false
