@@ -87,6 +87,12 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 
 All published images are [signed with Cosign](#verifying-image-signatures) — verification is optional.
 
+:::tip Set a stable `HINDSIGHT_API_WORKER_ID` in production
+The worker uses the container hostname as its identity, which Docker sets to the container ID by default. That value changes on every restart, so any task that was being processed when the container went down stays parked under the old ID with no way for the new container to recognize it as its own.
+
+Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations).
+:::
+
 ### Docker Image Variants
 
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
@@ -169,6 +175,8 @@ helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
   --set worker.enabled=true \
   --set worker.replicaCount=3
 ```
+
+The chart deploys workers as a StatefulSet, so each pod gets a stable name (e.g. `hindsight-worker-0`) that the worker uses as its `HINDSIGHT_API_WORKER_ID`. Tasks claimed by a pod are recognized as its own across restarts. If you swap the chart for a plain Deployment, set `HINDSIGHT_API_WORKER_ID` explicitly per replica — otherwise hostnames are randomized and previously-claimed tasks become orphaned. See [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations) for diagnosis.
 
 See [Services - Worker Service](./services#worker-service) for configuration details and architecture.
 
