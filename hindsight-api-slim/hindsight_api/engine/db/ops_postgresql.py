@@ -736,10 +736,21 @@ class PostgreSQLOps(DataAccessOps):
                 continue
 
             if op_type == "consolidation":
+                # Liveness gate: a `processing` row whose `updated_at` is
+                # older than 1 hour is treated as dead and stops blocking
+                # the bank. Real consolidation jobs complete in seconds to
+                # a few minutes; 1 hour gives headroom for legitimate slow
+                # runs while recovering from worker-stuck cases that
+                # `_recover_orphaned_tasks` cannot (orphans owned by a
+                # worker_id that no longer exists, e.g. after OOM, scale-
+                # down, or any non-graceful exit). See vectorize-io/
+                # hindsight#1470 for two independent reproductions.
                 busy_banks = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
+                    WHERE operation_type = 'consolidation'
+                      AND status = 'processing'
+                      AND updated_at > NOW() - INTERVAL '1 hour'
                     """,
                 )
                 busy_bank_ids = [r["bank_id"] for r in busy_banks]
@@ -840,11 +851,14 @@ class PostgreSQLOps(DataAccessOps):
             remaining_shared -= len(rows)
 
             # 2b. Consolidation tasks (with bank-serialization)
+            # Same liveness gate as Phase 1 — see comment above for rationale.
             if remaining_shared > 0:
                 busy_banks_2 = await conn.fetch(
                     f"""
                     SELECT DISTINCT bank_id FROM {table}
-                    WHERE operation_type = 'consolidation' AND status = 'processing'
+                    WHERE operation_type = 'consolidation'
+                      AND status = 'processing'
+                      AND updated_at > NOW() - INTERVAL '1 hour'
                     """,
                 )
                 busy_bank_ids_2 = [r["bank_id"] for r in busy_banks_2]
