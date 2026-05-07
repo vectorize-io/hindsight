@@ -268,6 +268,10 @@ ENV_RERANKER_SILICONFLOW_API_KEY = "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY"
 ENV_RERANKER_SILICONFLOW_MODEL = "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL"
 ENV_RERANKER_SILICONFLOW_BASE_URL = "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL"
 
+# Alibaba Cloud DashScope configuration (reranker only)
+ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
+ENV_RERANKER_ALIBABA_MODEL = "HINDSIGHT_API_RERANKER_ALIBABA_MODEL"
+
 # Google Discovery Engine reranker configuration
 ENV_RERANKER_GOOGLE_MODEL = "HINDSIGHT_API_RERANKER_GOOGLE_MODEL"
 ENV_RERANKER_GOOGLE_PROJECT_ID = "HINDSIGHT_API_RERANKER_GOOGLE_PROJECT_ID"
@@ -534,6 +538,8 @@ DEFAULT_RERANKER_ZEROENTROPY_MODEL = "zerank-2"
 
 DEFAULT_RERANKER_SILICONFLOW_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
+
+DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
@@ -973,6 +979,8 @@ class HindsightConfig:
     reranker_siliconflow_api_key: str | None
     reranker_siliconflow_model: str
     reranker_siliconflow_base_url: str
+    reranker_alibaba_api_key: str | None
+    reranker_alibaba_model: str
     reranker_google_model: str
     reranker_google_project_id: str | None
     reranker_google_service_account_key: str | None
@@ -1600,6 +1608,9 @@ class HindsightConfig:
             reranker_siliconflow_base_url=os.getenv(
                 ENV_RERANKER_SILICONFLOW_BASE_URL, DEFAULT_RERANKER_SILICONFLOW_BASE_URL
             ),
+            # Alibaba Cloud DashScope reranker
+            reranker_alibaba_api_key=os.getenv(ENV_RERANKER_ALIBABA_API_KEY),
+            reranker_alibaba_model=os.getenv(ENV_RERANKER_ALIBABA_MODEL, DEFAULT_RERANKER_ALIBABA_MODEL),
             # Google Discovery Engine reranker (with fallback to LLM Vertex AI keys)
             reranker_google_model=os.getenv(ENV_RERANKER_GOOGLE_MODEL, DEFAULT_RERANKER_GOOGLE_MODEL),
             reranker_google_project_id=os.getenv(ENV_RERANKER_GOOGLE_PROJECT_ID)
