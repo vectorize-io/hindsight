@@ -75,7 +75,7 @@ def test_scann_does_not_use_per_bank_partial_indexes():
 
 
 def test_alembic_vector_migrations_freeze_vector_sql_locally():
-    migration_dir = Path("hindsight_api/alembic/versions")
+    migration_dir = Path(__file__).resolve().parent.parent / "hindsight_api/alembic/versions"
     changed_migrations = [
         "5a366d414dce_initial_schema.py",
         "a4b5c6d7e8f9_fix_per_bank_vector_index_type.py",

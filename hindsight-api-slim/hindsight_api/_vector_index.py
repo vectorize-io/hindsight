@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
 logger = logging.getLogger(__name__)
 
-VALID_EXTENSIONS = ("pgvector", "pgvectorscale", "vchord", "scann")
+# Extensions a user can set via HINDSIGHT_API_VECTOR_EXTENSION.
+CONFIGURABLE_EXTENSIONS = ("pgvector", "pgvectorscale", "vchord", "scann")
+
+# Extensions detect_vector_extension() can return. pg_diskann is a runtime-only
+# resolution from a configured "pgvectorscale" backend on Azure (uses a different
+# WITH clause), never a value the user sets directly.
+RESOLVED_EXTENSIONS = (*CONFIGURABLE_EXTENSIONS, "pg_diskann")
+
+# Backwards-compatible alias for older imports.
+VALID_EXTENSIONS = CONFIGURABLE_EXTENSIONS
 
 SCANN_MIN_ROWS_FOR_AUTO_INDEX = 10_000
 
@@ -56,11 +68,24 @@ _INSTALL_HINTS = {
 
 
 def validate_extension(name: str) -> str:
-    """Return a normalized vector extension name or raise for unsupported input."""
+    """Return a normalized configurable vector extension name or raise.
+
+    Used at the user-facing config boundary; pg_diskann is rejected here because
+    it is a detection-time alias, never a value the user sets directly.
+    """
     ext = name.lower()
-    if ext not in VALID_EXTENSIONS:
-        valid = ", ".join(VALID_EXTENSIONS)
+    if ext not in CONFIGURABLE_EXTENSIONS:
+        valid = ", ".join(CONFIGURABLE_EXTENSIONS)
         raise ValueError(f"Invalid vector_extension: {name}. Must be one of: {valid}")
+    return ext
+
+
+def _normalize_resolved(name: str) -> str:
+    """Normalize either a user-configurable or detect-time extension name."""
+    ext = name.lower()
+    if ext not in RESOLVED_EXTENSIONS:
+        valid = ", ".join(RESOLVED_EXTENSIONS)
+        raise ValueError(f"Unknown vector extension: {name}. Must be one of: {valid}")
     return ext
 
 
@@ -71,26 +96,17 @@ def pg_extension_name(ext: str) -> str:
 
 def index_using_clause(ext: str) -> str:
     """Return the CREATE INDEX USING clause for the vector backend."""
-    normalized = ext.lower()
-    if normalized == "pg_diskann":
-        return _INDEX_USING_CLAUSES[normalized]
-    return _INDEX_USING_CLAUSES[validate_extension(normalized)]
+    return _INDEX_USING_CLAUSES[_normalize_resolved(ext)]
 
 
 def index_type_keyword(ext: str) -> str:
     """Return the keyword that identifies this index type in pg_indexes.indexdef."""
-    normalized = ext.lower()
-    if normalized == "pg_diskann":
-        return _INDEX_TYPE_KEYWORDS[normalized]
-    return _INDEX_TYPE_KEYWORDS[validate_extension(normalized)]
+    return _INDEX_TYPE_KEYWORDS[_normalize_resolved(ext)]
 
 
 def minimum_rows_for_index(ext: str) -> int:
     """Return the minimum populated embedding rows before creating this index type."""
-    normalized = ext.lower()
-    if normalized == "pg_diskann":
-        return 0
-    return SCANN_MIN_ROWS_FOR_AUTO_INDEX if validate_extension(normalized) == "scann" else 0
+    return SCANN_MIN_ROWS_FOR_AUTO_INDEX if _normalize_resolved(ext) == "scann" else 0
 
 
 def should_defer_index_creation(ext: str, row_count: int) -> bool:
@@ -101,25 +117,19 @@ def should_defer_index_creation(ext: str, row_count: int) -> bool:
 
 def uses_per_bank_vector_indexes(ext: str) -> bool:
     """Return whether the backend should create per-bank partial vector indexes."""
-    normalized = ext.lower()
-    if normalized == "pg_diskann":
-        return True
-    return validate_extension(normalized) != "scann"
+    return _normalize_resolved(ext) != "scann"
 
 
-def bootstrap_extension(conn, ext: str) -> None:
+def bootstrap_extension(conn: Connection, ext: str) -> None:
     """Install the configured vector extension and any prerequisites if possible."""
-    from sqlalchemy import text
-
     normalized = validate_extension(ext)
     for statement in _EXTENSION_INSTALL_SQL[normalized]:
         conn.execute(text(statement))
 
 
-def detect_vector_extension(conn, vector_extension: str = "pgvector") -> str:
+def detect_vector_extension(conn: Connection, vector_extension: str = "pgvector") -> str:
     """Validate the configured vector extension exists and return the index backend."""
     configured_ext = validate_extension(vector_extension)
-    from sqlalchemy import text
 
     if configured_ext == "pgvectorscale":
         pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()

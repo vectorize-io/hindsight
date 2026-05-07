@@ -70,6 +70,7 @@ def _drop_per_bank_vector_indexes(conn: Connection, schema_name: str) -> None:
         """),
         {"schema_name": schema_name},
     ).fetchall()
+    # DDL identifiers cannot be passed as bound parameters, so escape inline.
     safe_schema = schema_name.replace('"', '""')
     for row in rows:
         safe_index = row[0].replace('"', '""')
