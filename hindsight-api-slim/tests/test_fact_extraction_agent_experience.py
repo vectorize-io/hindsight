@@ -63,12 +63,24 @@ I added a setup fixture that ensures the pool is warmed up, and all 47 tests pas
         )
 
         assert len(facts) > 0, "Should extract at least one fact"
-        world_facts = [f for f in facts if f.fact_type == "world"]
-        experience_facts = [f for f in facts if f.fact_type == "experience"]
-        assert len(experience_facts) > len(world_facts), (
-            f"First-person debugging should be mostly 'experience', "
-            f"got {len(experience_facts)} experience vs {len(world_facts)} world. "
-            f"Facts: {[(f.fact, f.fact_type) for f in facts]}"
+
+        # Use LLM judge to evaluate classification quality — the exact ratio
+        # of experience vs world facts is non-deterministic across providers.
+        from tests.llm_judge import assert_meets_criteria
+
+        facts_summary = "\n".join(f"- [{f.fact_type}] {f.fact}" for f in facts)
+        await assert_meets_criteria(
+            response=facts_summary,
+            criteria=(
+                "The majority of facts extracted from this first-person debugging narrative "
+                "should be classified as 'experience' (not 'world'), since the narrator is "
+                "describing their own actions: tracing the bug, adding a fixture, seeing tests pass. "
+                "At least some facts should be 'experience' type."
+            ),
+            context=(
+                "Input: First-person debugging session by coding-agent. "
+                "Tests failed with ConnectionRefusedError, agent traced it, added a setup fixture, tests pass now."
+            ),
         )
 
     @pytest.mark.asyncio

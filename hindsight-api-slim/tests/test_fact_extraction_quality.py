@@ -331,33 +331,30 @@ I prefer presenting in person rather than virtually because I can read the room 
 
         assert len(facts) > 0, "Should extract at least one fact"
 
-        all_facts_text = " ".join([f.fact.lower() for f in facts])
+        all_facts_text = " ".join([f.fact for f in facts])
 
-        # Check emotional - should capture positive/thrilled sentiment
-        has_emotional = any(term in all_facts_text for term in [
-            "thrilled", "positive feedback", "positive", "feedback", "enthusiastic"
-        ])
-
-        # Check preference - should capture the in-person vs virtual preference
-        has_preference = any(term in all_facts_text for term in [
-            "prefer", "rather than", "in person", "in-person", "virtually",
-            "read the room", "face-to-face", "face to face", "remote",
-        ])
-
-        # MAT bar: at least one of emotional or preferential must be preserved.
-        # Smaller models (e.g. nova-2-lite) may compress both sentences into a
-        # single fact that only captures one dimension — that's acceptable for
-        # a minimum-acceptance test.
-        assert has_emotional or has_preference, (
-            f"Should preserve at least one of emotional or preferential dimension. "
-            f"Extracted facts: {all_facts_text}"
-        )
-
-        # Check no vague temporal terms
+        # Check no vague temporal terms (structural check — not LLM-dependent)
         prohibited_terms = ["recently", "soon", "lately"]
-        found_prohibited = [term for term in prohibited_terms if term in all_facts_text]
+        found_prohibited = [term for term in prohibited_terms if term in all_facts_text.lower()]
         assert len(found_prohibited) == 0, \
             f"Should NOT use vague temporal terms. Found: {found_prohibited}"
+
+        # Check emotional and preferential dimensions via LLM judge
+        from tests.llm_judge import assert_meets_criteria
+
+        await assert_meets_criteria(
+            response=all_facts_text,
+            criteria=(
+                "The extracted facts preserve BOTH of these dimensions from the input: "
+                "(1) emotional — the positive/thrilled sentiment about receiving feedback, "
+                "(2) preferential — the preference for in-person over virtual presentations."
+            ),
+            context=(
+                "Input text: Was thrilled about positive feedback on presentation. "
+                "Prefers presenting in person rather than virtually to read the room better."
+            ),
+        )
+
 
 
 # =============================================================================

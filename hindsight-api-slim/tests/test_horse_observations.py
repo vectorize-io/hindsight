@@ -349,31 +349,26 @@ async def test_horse_farm_observation_history(memory_real_llm: MemoryEngine, req
                         continue
                 print(f"  - [{item.get('fact_type', '?')}] {item.get('text', '?')}")
 
-    # Verify the mental model captures key facts. The synthesis step is a
-    # real LLM call and occasionally drops one name (typically Daisy, which
-    # is only mentioned once with no follow-up events), so require coverage
-    # rather than exhaustive name presence — the assertion is about whether
-    # the pipeline synthesizes the herd story end-to-end, not about
-    # perfect recall of every horse.
-    content_lower = content.lower()
+    # Verify the mental model captures key facts via LLM judge. The synthesis
+    # step occasionally drops one name (typically Daisy, only mentioned once
+    # with no follow-up events), so accept ≥4 of 5 names rather than all 5 —
+    # the assertion is whether the pipeline synthesizes the herd story
+    # end-to-end, not perfect recall of every horse.
+    from tests.llm_judge import assert_meets_criteria
 
-    all_names = ["daisy", "buttercup", "midnight", "shadow", "twister"]
-    mentioned = [n for n in all_names if n in content_lower]
-    assert len(mentioned) >= 4, (
-        f"Mental model should mention at least 4 of 5 horse names. "
-        f"Mentioned: {mentioned}. Got:\n{content}"
-    )
-    # The two horses involved in events must be named — without them the
-    # timeline section can't function.
-    assert "buttercup" in content_lower, f"Mental model must mention Buttercup (sold). Got:\n{content}"
-    assert "shadow" in content_lower, f"Mental model must mention Shadow (died). Got:\n{content}"
-
-    assert "sold" in content_lower or "sale" in content_lower, (
-        f"Mental model should mention Buttercup was sold. Got:\n{content}"
-    )
-
-    assert "died" in content_lower or "passed" in content_lower or "death" in content_lower, (
-        f"Mental model should mention Shadow's death. Got:\n{content}"
+    await assert_meets_criteria(
+        response=content,
+        criteria=(
+            "The mental model mentions at least 4 of these 5 horse names: "
+            "Daisy, Buttercup, Midnight, Shadow, Twister. "
+            "Buttercup and Shadow MUST both be named (they are the two horses "
+            "involved in events). It also mentions that Buttercup was sold and "
+            "that Shadow died or passed away."
+        ),
+        context=(
+            "Input events: Had 2 horses (Daisy, Buttercup). Sold Buttercup. "
+            "Got more horses (Midnight, Shadow, Twister). Shadow died."
+        ),
     )
 
     # Cleanup
