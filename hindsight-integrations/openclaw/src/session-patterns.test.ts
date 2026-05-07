@@ -84,4 +84,20 @@ describe("matchesSessionPattern", () => {
     expect(matchesSessionPattern("agent:main:heartbeat:sess-abc", patterns)).toBe(true);
     expect(matchesSessionPattern("agent:main:sess-abc", patterns)).toBe(false);
   });
+
+  it("skipRetainSessionPatterns defaults match operational sessions", () => {
+    // Default bare tokens auto-wrap: "heartbeat" -> "**:heartbeat**"
+    const patterns = compileSessionPatterns(["**:heartbeat**", "**:cron:**", "**:subagent**"]);
+    expect(matchesSessionPattern("agent:main:heartbeat:abc123", patterns)).toBe(true);
+    expect(matchesSessionPattern("agent:gardener:cron:daily:xyz", patterns)).toBe(true);
+    expect(matchesSessionPattern("agent:main:subagent:worker:456", patterns)).toBe(true);
+    expect(matchesSessionPattern("agent:main:abc123", patterns)).toBe(false);
+  });
+
+  it("skipRetainSessionPatterns with single * segments", () => {
+    const patterns = compileSessionPatterns(["agent:*:heartbeat:**"]);
+    expect(matchesSessionPattern("agent:main:heartbeat:abc123", patterns)).toBe(true);
+    expect(matchesSessionPattern("agent:gardener:heartbeat:xyz", patterns)).toBe(true);
+    expect(matchesSessionPattern("agent:main:subagent:abc", patterns)).toBe(false);
+  });
 });

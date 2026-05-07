@@ -285,6 +285,12 @@
         "items": { "type": "string" },
         "description": "Session key glob patterns for read-only sessions: retain is always skipped, recall is skipped when skipStatelessSessions is true. E.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]."
       },
+      "skipRetainSessionPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Bare tokens (e.g. \"heartbeat\") auto-wrap as glob patterns \"**:token**\". Use glob syntax for custom patterns. Defaults: [\"heartbeat\", \"cron\", \"subagent\"]. Sessions matching these patterns skip retain but still allow recall.",
+        "default": ["heartbeat", "cron", "subagent"]
+      },
       "skipStatelessSessions": {
         "type": "boolean",
         "description": "When true (default), sessions matching statelessSessionPatterns also skip recall. When false, they can recall but never retain.",
@@ -494,6 +500,10 @@
     "statelessSessionPatterns": {
       "label": "Stateless Session Patterns",
       "placeholder": "e.g. [\"agent:*:subagent:**\", \"agent:*:heartbeat:**\"]"
+    },
+    "skipRetainSessionPatterns": {
+      "label": "Skip Retain Session Patterns",
+      "placeholder": "e.g. [\"heartbeat\", \"cron\", \"subagent\"]"
     },
     "skipStatelessSessions": {
       "label": "Skip Stateless Sessions",

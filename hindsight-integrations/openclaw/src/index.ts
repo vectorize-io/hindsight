@@ -1488,6 +1488,14 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     statelessSessionPatterns: Array.isArray(config.statelessSessionPatterns)
       ? config.statelessSessionPatterns
       : [],
+    skipRetainSessionPatterns: (() => {
+      const raw = Array.isArray(config.skipRetainSessionPatterns)
+        ? config.skipRetainSessionPatterns
+        : ["heartbeat", "cron", "subagent"];
+      // Convert bare tokens to glob patterns: "heartbeat" -> "**:heartbeat**"
+      // Pass through patterns that already contain glob wildcards
+      return raw.map((p: string) => (p.includes("*") ? p : `**:${p}**`));
+    })(),
     skipStatelessSessions: config.skipStatelessSessions !== false,
     debug: config.debug ?? false,
     debugPerfTiming: config.debugPerfTiming === true,
@@ -2275,6 +2283,18 @@ ${memoriesFormatted}
           ) {
             debug(
               `[Hindsight] Skipping retain: session '${agentEndSessionKey}' matches statelessSessionPatterns`
+            );
+            return;
+          }
+          const skipRetainPatterns = compileSessionPatterns(
+            pluginConfig.skipRetainSessionPatterns ?? []
+          );
+          if (
+            skipRetainPatterns.length > 0 &&
+            matchesSessionPattern(agentEndSessionKey, skipRetainPatterns)
+          ) {
+            debug(
+              `[Hindsight] Skipping retain - operational session pattern matched: ${agentEndSessionKey}`
             );
             return;
           }

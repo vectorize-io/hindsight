@@ -141,6 +141,7 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `recallRoles` - Which message roles to include when composing the contextual recall query (default: `["user", "assistant"]`).
 - `retainEveryNTurns` - Retain every Nth turn (default: `1` = every turn). Values > 1 enable chunked retention.
 - `retainOverlapTurns` - Extra prior turns included when chunked retention fires (default: `0`).
+- `skipRetainSessionPatterns` - Skip retain for sessions matching these patterns. Bare tokens (e.g. `"heartbeat"`) auto-wrap as glob patterns `"**:heartbeat**"`. Use glob syntax for custom patterns. Defaults: `["heartbeat", "cron", "subagent"]`. Sessions matching these patterns still allow recall.
 - `debug` - Enable debug logging (default: `false`).
 
 ### Memory Isolation
