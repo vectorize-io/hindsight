@@ -56,7 +56,11 @@ describe("ensurePluginConfig", () => {
   it("initializes the hindsight-openclaw entry on an empty config", () => {
     const cfg: OpenClawConfigShape = {};
     const pc = ensurePluginConfig(cfg);
-    expect(cfg.plugins?.entries?.[PLUGIN_ID]).toEqual({ enabled: true, config: {} });
+    expect(cfg.plugins?.entries?.[PLUGIN_ID]).toEqual({
+      enabled: true,
+      hooks: { allowConversationAccess: true },
+      config: {},
+    });
     expect(pc).toBe(cfg.plugins?.entries?.[PLUGIN_ID]?.config);
   });
 
@@ -74,6 +78,68 @@ describe("ensurePluginConfig", () => {
     const pc = ensurePluginConfig(cfg);
     expect(cfg.plugins?.entries?.[PLUGIN_ID]?.enabled).toBe(true);
     expect(pc.llmProvider).toBe("openai");
+  });
+
+  // Regression: openclaw 2026.4.24+ silently drops conversation hooks
+  // (e.g. agent_end → retain) for non-bundled plugins unless this flag is set.
+  describe("hooks.allowConversationAccess", () => {
+    it("sets allowConversationAccess=true on a fresh config", () => {
+      const cfg: OpenClawConfigShape = {};
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(true);
+    });
+
+    it("backfills the flag on an existing entry that was configured before the gate landed", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              config: { hindsightApiUrl: "https://api.hindsight.vectorize.io" },
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(true);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.config?.hindsightApiUrl).toBe(
+        "https://api.hindsight.vectorize.io"
+      );
+    });
+
+    it("never overrides an explicit allowConversationAccess=false", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              hooks: { allowConversationAccess: false },
+              config: {},
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(false);
+    });
+
+    it("preserves other fields under hooks", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              hooks: { someOtherFutureFlag: "value" },
+              config: {},
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      const hooks = cfg.plugins?.entries?.[PLUGIN_ID]?.hooks as Record<string, unknown>;
+      expect(hooks.allowConversationAccess).toBe(true);
+      expect(hooks.someOtherFutureFlag).toBe("value");
+    });
   });
 });
 

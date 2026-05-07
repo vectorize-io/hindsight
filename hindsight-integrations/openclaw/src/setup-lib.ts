@@ -29,6 +29,10 @@ export interface SecretRef {
 
 export interface PluginEntry {
   enabled?: boolean;
+  hooks?: {
+    allowConversationAccess?: boolean;
+    [key: string]: unknown;
+  };
   config?: Record<string, unknown>;
 }
 
@@ -70,12 +74,25 @@ export async function saveConfig(path: string, cfg: OpenClawConfigShape): Promis
  * Ensure a `plugins.entries["hindsight-openclaw"].config` object exists, set
  * `enabled: true`, and return the mutable config record. Idempotent — safe to
  * call against a fresh or already-configured OpenClaw config.
+ *
+ * Also writes `hooks.allowConversationAccess: true` when the field is unset.
+ * OpenClaw 2026.4.24+ blocks "conversation hooks" (e.g. `agent_end`, which
+ * triggers retain) for non-bundled plugins unless this flag is explicitly
+ * present in user config — silent failure: the plugin appears to load but the
+ * hook is dropped, so memories are never retained. Setting it on every wizard
+ * run unblocks both fresh installs and existing users who pre-date the gate.
+ * We never override an explicit `false` — that's a deliberate user choice to
+ * disable conversation access. See openclaw#71221 (released 2026.4.24).
  */
 export function ensurePluginConfig(cfg: OpenClawConfigShape): Record<string, unknown> {
   const plugins = (cfg.plugins ??= {});
   const entries = (plugins.entries ??= {});
   const entry = (entries[PLUGIN_ID] ??= { enabled: true });
   entry.enabled = true;
+  const hooks = (entry.hooks ??= {});
+  if (hooks.allowConversationAccess === undefined) {
+    hooks.allowConversationAccess = true;
+  }
   return (entry.config ??= {});
 }
 
