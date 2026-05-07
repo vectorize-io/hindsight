@@ -2802,12 +2802,21 @@ class TestClaimBatchRotation:
         ``_scan_active_schemas`` invokes it instead of running per-schema
         EXISTS queries from Python. Confirms the OptionalRoutines probe
         path is wired correctly end-to-end.
+
+        The routine body installed here is a minimal stand-in that
+        satisfies the contract documented on
+        ``optional_routines.SCHEMAS_WITH_PENDING_WORK`` — Hindsight does
+        not own the canonical implementation.
         """
-        from hindsight_api.engine.db.optional_routines import SCHEMAS_WITH_PENDING_WORK
         from hindsight_api.engine.db.postgresql import PostgresConnection
         from hindsight_api.worker import WorkerPoller
 
-        await pool.execute(SCHEMAS_WITH_PENDING_WORK.install_sql)
+        # Minimal contract-satisfying implementation: returns the empty
+        # set. Enough to prove the poller follows the server-side path.
+        await pool.execute(
+            "CREATE OR REPLACE FUNCTION public.schemas_with_pending_work() "
+            "RETURNS SETOF text AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql STABLE"
+        )
         try:
             poller = WorkerPoller(
                 backend=backend,

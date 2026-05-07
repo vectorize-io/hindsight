@@ -11,8 +11,13 @@ This module centralises that pattern so we don't sprinkle ad-hoc
 call) around the codebase. Each registered entry carries:
 
 * a ``schema`` and ``name`` (used to probe ``pg_proc``)
-* the install SQL, kept next to the registration so anyone who greps for
-  the routine name finds the canonical definition
+* a ``contract`` describing the expected signature and return shape
+
+Bodies are deliberately not stored here. Hindsight never installs these
+routines, so a body checked into this repo would (a) drift from whatever
+operators actually deploy and (b) imply ownership we don't have. The
+contract is the entire API surface: any operator-supplied implementation
+that satisfies it is interchangeable.
 
 Probe behaviour:
 
@@ -48,48 +53,63 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class OptionalRoutine:
-    """One optional server-side routine.
+    """One optional server-side routine Hindsight may call when present.
+
+    Hindsight never installs these — operators do, out-of-band. The fields
+    here describe the contract the API expects; any implementation that
+    matches is interchangeable.
 
     Attributes:
         name: Unqualified routine name as it appears in ``pg_proc.proname``.
         schema: Schema the routine lives in (matched against
-            ``pg_namespace.nspname``). Defaults to ``"public"``.
-        install_sql: Canonical ``CREATE OR REPLACE`` statement, kept here
-            so operators / Helm hooks have a single source of truth.
+            ``pg_namespace.nspname``).
+        contract: Free-form description of the expected signature,
+            arguments, return type, and any semantic constraints. Read
+            this before installing a custom implementation.
     """
 
     name: str
     schema: str
-    install_sql: str
+    contract: str
 
 
 # Registry of known optional routines.
 #
 # Add new entries here when a hot path grows a server-side optimisation.
-# Keep the install SQL inline — duplicating it elsewhere is how it goes
-# stale.
+# Document the *contract* — not the implementation — so operator-supplied
+# variants stay interchangeable and we don't pretend to own SQL we never
+# install.
 SCHEMAS_WITH_PENDING_WORK = OptionalRoutine(
     name="schemas_with_pending_work",
     schema="public",
-    install_sql="""
-        CREATE OR REPLACE FUNCTION public.schemas_with_pending_work()
-        RETURNS SETOF text AS $$
-        DECLARE
-          r RECORD; has_work BOOLEAN;
-        BEGIN
-          FOR r IN SELECT nspname FROM pg_namespace
-                   WHERE nspname LIKE 'tenant_%' LOOP
-            BEGIN
-              EXECUTE format(
-                'SELECT EXISTS(SELECT 1 FROM %I.async_operations '
-                'WHERE status = ''pending'' '
-                'AND task_payload IS NOT NULL LIMIT 1)',
-                r.nspname) INTO has_work;
-              IF has_work THEN RETURN NEXT r.nspname; END IF;
-            EXCEPTION WHEN OTHERS THEN NULL;
-            END;
-          END LOOP;
-        END $$ LANGUAGE plpgsql STABLE;
+    contract="""
+    Signature:  public.schemas_with_pending_work() RETURNS SETOF text
+
+    Called by the worker poller on every cycle to find schemas with
+    claimable async_operations rows. The poller then runs FOR UPDATE
+    SKIP LOCKED only against the returned schemas, so an empty set means
+    "nothing to do, skip the expensive claim query".
+
+    A schema is "claimable" iff at least one row matches:
+        status = 'pending' AND task_payload IS NOT NULL
+    in that schema's ``async_operations`` table.
+
+    Required semantics:
+      * No arguments.
+      * Returns a set of schema names (``text``); each must match a real
+        ``pg_namespace.nspname``. The poller passes them straight into
+        the claim query — anything that isn't a valid schema will fail.
+      * Operators choose the search scope (e.g. ``tenant_%`` only, or
+        include ``public``). A schema omitted from the scan will *never*
+        be serviced by the poller, so the implementation must cover
+        every schema that holds an ``async_operations`` table in that
+        deployment.
+      * Should be cheap and idempotent — called every poll cycle (~30s).
+
+    Fallback when the routine is absent: per-schema ``EXISTS`` queries
+    from Python (~4ms per schema). The server-side path is a single-
+    round-trip optimisation worth ~200ms in deployments with thousands
+    of tenant schemas; everything else works correctly without it.
     """,
 )
 
