@@ -39,6 +39,7 @@ export interface PluginEntry {
 export interface OpenClawConfigShape {
   plugins?: {
     entries?: Record<string, PluginEntry>;
+    allow?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -92,6 +93,18 @@ export function ensurePluginConfig(cfg: OpenClawConfigShape): Record<string, unk
   const hooks = (entry.hooks ??= {});
   if (hooks.allowConversationAccess === undefined) {
     hooks.allowConversationAccess = true;
+  }
+  // OpenClaw 2026.2.19+ warns at startup when `plugins.allow` is empty and
+  // non-bundled plugins are discovered: "plugins.allow is empty; discovered
+  // non-bundled plugins may auto-load: hindsight-openclaw". Cosmetic only — the
+  // plugin still loads — but noisy on every gateway start. Add ourselves to the
+  // allowlist so the warning goes away. Never clobber a user-curated allowlist:
+  // if `plugins.allow` is already an array, just append our id when missing.
+  // If it's set to something non-array (deliberate strange value), leave it.
+  if (plugins.allow === undefined) {
+    plugins.allow = [PLUGIN_ID];
+  } else if (Array.isArray(plugins.allow) && !plugins.allow.includes(PLUGIN_ID)) {
+    plugins.allow = [...plugins.allow, PLUGIN_ID];
   }
   return (entry.config ??= {});
 }

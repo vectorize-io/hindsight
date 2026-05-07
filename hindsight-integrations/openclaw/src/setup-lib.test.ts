@@ -167,6 +167,42 @@ describe("ensurePluginConfig", () => {
       expect(hooks.someOtherFutureFlag).toBe("value");
     });
   });
+
+  // openclaw 2026.2.19+ logs a startup WARN when plugins.allow is empty and
+  // non-bundled plugins are discovered. The plugin still loads, but the warning
+  // is noisy on every gateway start. We add ourselves to the allowlist to
+  // silence it — without clobbering a user-curated list.
+  describe("plugins.allow trust list", () => {
+    it("creates plugins.allow with our id when undefined", () => {
+      const cfg: OpenClawConfigShape = {};
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual([PLUGIN_ID]);
+    });
+
+    it("appends our id to an existing user-curated allow list", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: ["some-other-plugin"], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual(["some-other-plugin", PLUGIN_ID]);
+    });
+
+    it("is idempotent when our id is already in the list", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: ["some-other-plugin", PLUGIN_ID], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual(["some-other-plugin", PLUGIN_ID]);
+    });
+
+    it("leaves a non-array allow value alone (don't second-guess deliberate weirdness)", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: "weird-string-value" as unknown as string[], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual("weird-string-value");
+    });
+  });
 });
 
 describe("applyCloudMode — direct token value", () => {
