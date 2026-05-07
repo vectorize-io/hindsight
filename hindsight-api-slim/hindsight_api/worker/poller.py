@@ -14,7 +14,8 @@ import json
 import logging
 import time
 import traceback
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,36 @@ PROGRESS_LOG_INTERVAL = 30
 # per threshold it crosses (5min, 10min, 20min, 40min, 80min...).
 STUCK_STACK_INITIAL_THRESHOLD_S = 300
 STUCK_STACK_MAX_THRESHOLD_S = 3600 * 6  # cap doubling at 6h
+
+
+def _summarise_child_error_messages(siblings: "Iterable[Any]") -> str:
+    """Pick a representative error message for a parent whose children failed.
+
+    Used when a batch_retain parent transitions to 'failed' because at least
+    one child sub-batch failed. Without this, the parent gets a generic
+    "One or more sub-batches failed" string and any consumer that reasons
+    about errors via error_message (dashboards, alert filters, log
+    aggregators) loses the actual cause -- a class of failures that all
+    share the same root reason at the child level becomes indistinguishable
+    at the parent level.
+
+    Strategy: pick the most common non-empty error_message among failed
+    siblings. If they all failed for the same reason (the common case), the
+    parent inherits that reason verbatim. If they vary, the most-common one
+    is still a useful representative. Falls back to the legacy generic
+    string when no failed sibling carries an error_message at all.
+    """
+    failed_errors: list[str] = []
+    for s in siblings:
+        if s["status"] != "failed":
+            continue
+        msg = (s["error_message"] or "").strip()
+        if msg:
+            failed_errors.append(msg)
+    if not failed_errors:
+        return "One or more sub-batches failed"
+    most_common, _count = Counter(failed_errors).most_common(1)[0]
+    return most_common
 
 
 @dataclass
@@ -495,10 +526,14 @@ class WorkerPoller:
             if not parent_row:
                 return
 
-            # Check whether all siblings are done
+            # Check whether all siblings are done. Pull error_message too so a
+            # parent that fails can inherit a representative child reason --
+            # otherwise the parent's error_message is generic ("One or more
+            # sub-batches failed") and downstream consumers (dashboards, alerts,
+            # filters) lose the actual cause once a batch has children.
             siblings = await conn.fetch(
                 f"""
-                SELECT status FROM {table}
+                SELECT status, error_message FROM {table}
                 WHERE bank_id = $1
                   AND result_metadata::jsonb @> $2::jsonb
                 """,
@@ -517,7 +552,7 @@ class WorkerPoller:
                     WHERE operation_id = $1
                     """,
                     uuid.UUID(parent_operation_id),
-                    "One or more sub-batches failed",
+                    _summarise_child_error_messages(siblings),
                 )
             else:
                 await conn.execute(

@@ -1654,11 +1654,16 @@ class MemoryEngine(MemoryEngineInterface):
                 # Parent doesn't exist (shouldn't happen)
                 return
 
-            # Get all sibling operations (including this one)
-            # This query runs in the same transaction, so it sees the current child's updated status
+            # Get all sibling operations (including this one).
+            # This query runs in the same transaction, so it sees the current
+            # child's updated status. Pull error_message too so a parent that
+            # fails can inherit a representative child reason -- otherwise
+            # downstream consumers (dashboards, alert filters) lose the actual
+            # cause once a batch has children. See the worker poller's
+            # _summarise_child_error_messages for the propagation rationale.
             siblings = await conn.fetch(
                 f"""
-                SELECT status
+                SELECT status, error_message
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 AND result_metadata::jsonb @> $2::jsonb
@@ -1682,7 +1687,12 @@ class MemoryEngine(MemoryEngineInterface):
             # All siblings are done - update parent status
             if any_failed:
                 new_status = "failed"
-                # Set parent error message to indicate child failure
+                # Set parent error message to indicate child failure. Inherit
+                # the most-common failed-child error_message rather than a
+                # generic string so downstream filters can attribute the
+                # cause correctly.
+                from hindsight_api.worker.poller import _summarise_child_error_messages
+
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
@@ -1691,7 +1701,7 @@ class MemoryEngine(MemoryEngineInterface):
                     """,
                     uuid.UUID(parent_operation_id),
                     new_status,
-                    "One or more sub-batches failed",
+                    _summarise_child_error_messages(siblings),
                 )
             elif all_completed:
                 new_status = "completed"
