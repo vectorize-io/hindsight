@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/n8n-nodes-hindsight",
-  "version": "0.1.3",
+  "version": "0.1.2",
   "description": "n8n community nodes for Hindsight - persistent memory for any n8n workflow",
   "license": "MIT",
   "homepage": "https://hindsight.vectorize.io",
