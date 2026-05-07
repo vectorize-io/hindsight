@@ -11,8 +11,12 @@ FROM ghcr.io/vectorize-io/hindsight:latest-slim
 
 # Install the local-ml deps required to load sentence-transformers /
 # cross-encoder models at runtime. Pinned ranges mirror hindsight-api-slim's
-# `local-ml` extra in hindsight-api-slim/pyproject.toml.
-RUN pip install --no-cache-dir \
+# `local-ml` extra in hindsight-api-slim/pyproject.toml. Use `uv pip
+# install` against the image's venv explicitly: the slim image's venv was
+# created by `uv sync` and does not ship its own `pip`, so a bare
+# `pip install` would fall back to user site-packages and not be visible
+# to the runtime python.
+RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
     'sentence-transformers>=3.3.0' \
     'transformers>=4.53.0' \
     'torch>=2.6.0'
