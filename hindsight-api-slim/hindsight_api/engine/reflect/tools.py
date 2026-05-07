@@ -7,6 +7,7 @@ Implements hierarchical retrieval:
 3. recall - Raw facts as ground truth
 """
 
+import json
 import logging
 import uuid
 from dataclasses import replace
@@ -20,6 +21,21 @@ if TYPE_CHECKING:
     from ..memory_engine import MemoryEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _document_metadata_from_retain_params(retain_params: Any) -> dict[str, Any] | None:
+    """Return document metadata stored under retain_params.metadata."""
+    if isinstance(retain_params, str):
+        try:
+            retain_params = json.loads(retain_params)
+        except json.JSONDecodeError:
+            return None
+
+    if not isinstance(retain_params, dict):
+        return None
+
+    metadata = retain_params.get("metadata")
+    return metadata if isinstance(metadata, dict) else None
 
 
 async def tool_search_mental_models(
@@ -350,7 +366,7 @@ async def tool_expand(
     if all_doc_ids:
         docs = await conn.fetch(
             f"""
-            SELECT id, original_text, metadata, retain_params
+            SELECT id, original_text, retain_params
             FROM {fq_table("documents")}
             WHERE id = ANY($1) AND bank_id = $2
             """,
@@ -396,7 +412,7 @@ async def tool_expand(
                 item["document"] = {
                     "id": doc["id"],
                     "full_text": doc["original_text"],
-                    "metadata": doc["metadata"],
+                    "metadata": _document_metadata_from_retain_params(doc["retain_params"]),
                     "retain_params": doc["retain_params"],
                 }
         elif memory["document_id"] and depth == "document" and memory["document_id"] in doc_map:
@@ -405,7 +421,7 @@ async def tool_expand(
             item["document"] = {
                 "id": doc["id"],
                 "full_text": doc["original_text"],
-                "metadata": doc["metadata"],
+                "metadata": _document_metadata_from_retain_params(doc["retain_params"]),
                 "retain_params": doc["retain_params"],
             }
 
