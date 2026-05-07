@@ -35,8 +35,9 @@ function createMockExecuteFunctions(
 }
 
 function getRequestMock(fns: IExecuteFunctions): ReturnType<typeof vi.fn> {
-  return (fns as unknown as { helpers: { httpRequestWithAuthentication: ReturnType<typeof vi.fn> } })
-    .helpers.httpRequestWithAuthentication;
+  return (
+    fns as unknown as { helpers: { httpRequestWithAuthentication: ReturnType<typeof vi.fn> } }
+  ).helpers.httpRequestWithAuthentication;
 }
 
 describe("Hindsight node execute()", () => {
