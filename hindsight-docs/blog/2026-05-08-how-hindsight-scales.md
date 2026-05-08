@@ -8,6 +8,8 @@ image: /img/blog/how-hindsight-scales.png
 hide_table_of_contents: true
 ---
 
+![How Hindsight Scales](/img/blog/how-hindsight-scales.png)
+
 Agent memory systems face a scaling problem that traditional databases don't. It's not just "can we store more data" — it's "does the system stay fast, accurate, and affordable as memories pile up over weeks, months, and years."
 
 The challenge is that agent memory involves LLM calls, semantic search, graph traversal, and synthesis. Each has its own scaling curve. Some scale with input size. Some scale with the total number of stored memories. Some scale with query complexity. Understanding which axis each operation scales on is enough to predict the shape of costs and latency, even before you have exact numbers.
