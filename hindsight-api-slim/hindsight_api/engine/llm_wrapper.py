@@ -288,7 +288,7 @@ def create_llm_provider(
             extra_args=config.llamacpp_extra_args,
         )
 
-    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "deepseek", "volcano", "openrouter"):
+    elif provider_lower in ("openai", "groq", "ollama", "lmstudio", "minimax", "deepseek", "volcano", "openrouter", "zai"):
         return OpenAICompatibleLLM(
             provider=provider,
             api_key=api_key,
@@ -386,6 +386,7 @@ class LLMProvider:
             "bedrock",
             "volcano",
             "openrouter",
+            "zai",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
@@ -404,6 +405,8 @@ class LLMProvider:
                 self.base_url = "https://api.deepseek.com"
             elif self.provider == "openrouter":
                 self.base_url = "https://openrouter.ai/api/v1"
+            elif self.provider == "zai":
+                self.base_url = "https://api.z.ai/api/coding/paas/v4"
 
         # Prepare Vertex AI config (if applicable)
         vertexai_project_id = None
