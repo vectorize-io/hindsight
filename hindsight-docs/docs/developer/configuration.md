@@ -480,6 +480,30 @@ export HINDSIGHT_API_RETAIN_LLM_MAX_BACKOFF=120.0    # Cap at 2min instead of 1m
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_REGION` | Vertex AI region for embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_REGION`) | - |
 | `HINDSIGHT_API_EMBEDDINGS_VERTEXAI_SERVICE_ACCOUNT_KEY` | Service account key for Vertex AI embeddings (falls back to `HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY`) | - |
 
+#### Common Pitfall: Provider-Specific Embedding Env Var Names
+
+Embedding environment variables include a provider segment in the key name:
+
+`HINDSIGHT_API_EMBEDDINGS_{PROVIDER}_{PARAMETER}`
+
+For example, when `HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai`:
+
+| Wrong | Correct |
+|---|---|
+| `HINDSIGHT_API_EMBEDDINGS_BASE_URL` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` |
+| `HINDSIGHT_API_EMBEDDINGS_MODEL` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL` |
+| `HINDSIGHT_API_EMBEDDINGS_API_KEY` | `HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY` |
+
+This differs from LLM variables, which follow `HINDSIGHT_API_LLM_{PARAMETER}` without a provider segment.
+
+:::warning
+If embedding keys are misnamed, Hindsight may fall back to default OpenAI embedding settings (for example, `text-embedding-3-small`) and fail with auth errors against the wrong endpoint.
+:::
+
+#### DeepSeek and Embeddings
+
+DeepSeek is supported as an **LLM** provider, but it does **not** expose an embeddings endpoint. If your LLM is DeepSeek, use a different embedding provider (for example `local`, `openai`, `cohere`, or `google`).
+
 ```bash
 # Local (default) - uses SentenceTransformers
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
