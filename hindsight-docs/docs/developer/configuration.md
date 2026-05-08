@@ -176,7 +176,7 @@ To switch between backends:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `volcano`, `openrouter`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -316,6 +316,63 @@ export HINDSIGHT_API_LLM_PROVIDER=none
 :::tip OpenAI Codex, Claude Code & Vertex AI Setup
 For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claude Code** (Claude Pro/Max), and **Vertex AI** (Google Cloud), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
 :::
+
+### LLM Router (Fallback Chain)
+
+The `litellmrouter` provider runs the default LLM through LiteLLM's [Router](https://docs.litellm.ai/docs/routing) with ordered fallback (see the [fallbacks reference](https://docs.litellm.ai/docs/routing#fallbacks) for the underlying mechanism). Requests go to the first deployment; on transient errors (rate limit, timeout, 5xx) the Router falls back to the next deployment in declared order. Auth errors (401/403) are not retried — a misconfigured key won't silently cascade through your chain.
+
+Activate it the same way as any other provider — set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` and supply the chain via the provider-specific env var.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_LLM_LITELLMROUTER_CHAIN` | JSON list of `{provider, model, api_key?, base_url?}` deployments. Required when `HINDSIGHT_API_LLM_PROVIDER=litellmrouter`. | unset |
+| `HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CHAIN` | Per-operation override for retain. Used when `HINDSIGHT_API_RETAIN_LLM_PROVIDER=litellmrouter`; falls back to the default chain. | unset |
+| `HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_CHAIN` | Per-operation override for reflect. | unset |
+| `HINDSIGHT_API_CONSOLIDATION_LLM_LITELLMROUTER_CHAIN` | Per-operation override for consolidation. | unset |
+
+#### Chain format
+
+A chain is a non-empty JSON array of deployment objects. Each deployment accepts:
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `provider` | yes | Hindsight provider name: `openai`, `anthropic`, `gemini`, `groq`, `deepseek`, `bedrock`, `ollama`, `openrouter`, `vertexai`, or any OpenAI-compatible endpoint (use `openai` + `base_url`). |
+| `model` | yes | Model name. If you pass a fully-qualified LiteLLM model string (e.g. `bedrock/anthropic.claude-3-5-sonnet`), it's used verbatim. |
+| `api_key` | no | Credential for that deployment. |
+| `base_url` | no | Endpoint override (for OpenAI-compatible providers like LM Studio, Ollama, MiniMax, custom proxies). |
+
+Minimal 2-step chain:
+
+```json
+[
+  {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-..."},
+  {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "sk-ant-..."}
+]
+```
+
+#### Examples
+
+```bash
+# Default LLM uses a 3-deployment chain.
+export HINDSIGHT_API_LLM_PROVIDER=litellmrouter
+export HINDSIGHT_API_LLM_LITELLMROUTER_CHAIN='[
+  {"provider": "openai", "model": "MiniMax-M2.7-highspeed", "base_url": "https://api.minimax.io/v1", "api_key": "sk-minimax-..."},
+  {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-openai-..."},
+  {"provider": "ollama", "model": "llama3.1:8b", "base_url": "http://localhost:11434"}
+]'
+
+# Optional: give retain its own chain (a stronger model + cheap fallback).
+export HINDSIGHT_API_RETAIN_LLM_PROVIDER=litellmrouter
+export HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CHAIN='[
+  {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "sk-ant-..."},
+  {"provider": "openai", "model": "gpt-4o", "api_key": "sk-openai-..."}
+]'
+```
+
+Notes:
+- The chain is a credential field — its contents are never returned by the bank-config API.
+- `HINDSIGHT_API_LLM_MAX_RETRIES` / `..._INITIAL_BACKOFF` / `..._MAX_BACKOFF` control retries against the primary group. Cross-deployment fallback is delegated to the Router and triggered by transient errors.
+- Batch APIs are not supported in `litellmrouter` mode — fall back to a single-provider config for batch retain.
 
 ### Built-in llama.cpp
 
