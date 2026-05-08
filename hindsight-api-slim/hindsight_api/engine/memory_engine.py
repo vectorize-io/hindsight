@@ -546,7 +546,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=memory_llm_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
-            litellmrouter_chain=config.llm_litellmrouter_chain,
+            litellmrouter_config=config.llm_litellmrouter_config,
         )
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead)
@@ -575,7 +575,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=retain_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
-            litellmrouter_chain=config.retain_llm_litellmrouter_chain or config.llm_litellmrouter_chain,
+            litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
@@ -599,7 +599,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=reflect_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
-            litellmrouter_chain=config.reflect_llm_litellmrouter_chain or config.llm_litellmrouter_chain,
+            litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
@@ -623,7 +623,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=consolidation_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
-            litellmrouter_chain=config.consolidation_llm_litellmrouter_chain or config.llm_litellmrouter_chain,
+            litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Initialize cross-encoder reranker (cached for performance)

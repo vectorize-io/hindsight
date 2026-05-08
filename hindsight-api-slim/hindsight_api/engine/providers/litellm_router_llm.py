@@ -1,37 +1,32 @@
 """
-LiteLLM Router LLM provider — ordered fallback across multiple deployments.
+LiteLLM Router LLM provider — pure pass-through to ``litellm.Router``.
 
-Wraps ``litellm.Router`` with a chain of deployments. Requests are tried against
-the primary deployment first; on transient errors (rate-limit, timeout, 5xx) the
-Router falls back to subsequent deployments in declared order. Chain entries are
-modelled as distinct LiteLLM ``model_name`` groups so that the ``fallbacks`` map
-expresses the linear chain explicitly — this gives deterministic fallback order
-rather than the load-balancing behaviour you get from same-group deployments.
+The full configuration object is forwarded verbatim. We do not translate model
+names, infer fallbacks, or impose defaults: whatever the user puts in the
+``HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG`` env var becomes ``Router(**config)``.
+The only Hindsight-imposed convention is that requests are issued against the
+``model_name`` of the first entry in ``model_list``; chain ordering, fallbacks,
+load-balancing, retries and cooldowns are LiteLLM Router's responsibility.
 
-Auth-style errors (401/403) are not retried across deployments, since fallback
-on a misconfigured key would just propagate the failure.
+See https://docs.litellm.ai/docs/routing for the supported keys (``model_list``,
+``fallbacks``, ``context_window_fallbacks``, ``num_retries``, ``cooldown_time``,
+``routing_strategy``, ``allowed_fails``, …).
 
 The retry/parse/metrics loop is shared with ``LiteLLMLLM`` via inheritance: this
 class only overrides the small surface that differs (the completion fn, the
 deployment kwargs, and the deployment-name resolution for metrics).
 
-References:
-    - LiteLLM Router: https://docs.litellm.ai/docs/routing
-    - Router fallbacks: https://docs.litellm.ai/docs/routing#fallbacks
+Example ``HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG``::
 
-Chain entry shape (matches ``HINDSIGHT_API_LLM_LITELLMROUTER_CHAIN``)::
-
-    [
-      {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-..."},
-      {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "sk-ant-..."}
-    ]
-
-Entries support arbitrary extra keys: anything not in
-``{provider, model, api_key, base_url, litellm_params}`` is forwarded to the
-LiteLLM Router deployment top-level (e.g. ``rpm``, ``tpm``, ``weight``,
-``model_info``). Anything inside a ``litellm_params`` sub-object is merged into
-the inner ``litellm_params`` dict (e.g. per-deployment ``temperature``,
-``extra_headers``).
+    {
+      "model_list": [
+        {"model_name": "primary",  "litellm_params": {"model": "openai/gpt-4o-mini",       "api_key": "sk-..."}},
+        {"model_name": "fallback", "litellm_params": {"model": "anthropic/claude-sonnet-4", "api_key": "sk-ant-..."}}
+      ],
+      "fallbacks": [{"primary": ["fallback"]}],
+      "num_retries": 0,
+      "cooldown_time": 60
+    }
 """
 
 import logging
@@ -42,94 +37,14 @@ from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 logger = logging.getLogger(__name__)
 
 
-# Hindsight provider name → LiteLLM model prefix.
-# Providers not listed are treated as OpenAI-compatible: the configured base_url
-# carries the routing and the model is sent under the "openai/" prefix.
-_LITELLM_PROVIDER_PREFIX = {
-    "openai": "openai",
-    "anthropic": "anthropic",
-    "gemini": "gemini",
-    "vertexai": "vertex_ai",
-    "groq": "groq",
-    "deepseek": "deepseek",
-    "openrouter": "openrouter",
-    "bedrock": "bedrock",
-    "ollama": "ollama_chat",
-    "litellm": None,  # caller already provided a fully-qualified model string
-}
-
-# Primary group name. All chain entries fall back to subsequent indices.
-_PRIMARY_GROUP = "hindsight-chain-0"
-
-
-def _build_litellm_model(provider: str, model: str) -> str:
-    """Translate a Hindsight (provider, model) pair into a LiteLLM model string."""
-    if "/" in model:
-        return model  # caller pre-qualified the model, respect it
-    prefix = _LITELLM_PROVIDER_PREFIX.get(provider.lower(), "openai")
-    if prefix is None:
-        return model
-    return f"{prefix}/{model}"
-
-
-def _build_model_list(chain: list[dict[str, Any]], timeout: float) -> list[dict[str, Any]]:
-    """
-    Translate a Hindsight chain into a LiteLLM Router ``model_list``.
-
-    Known Hindsight keys (``provider``, ``model``, ``api_key``, ``base_url``) are
-    mapped onto LiteLLM's ``litellm_params``. Anything inside a ``litellm_params``
-    sub-object is merged into the inner dict (later wins). Any other top-level
-    key is forwarded verbatim to the deployment record (``rpm``, ``tpm``,
-    ``weight``, ``model_info`` …).
-    """
-    model_list: list[dict[str, Any]] = []
-    for i, raw_entry in enumerate(chain):
-        entry = dict(raw_entry)  # don't mutate caller data
-        provider = entry.pop("provider")
-        model = entry.pop("model")
-        api_key = entry.pop("api_key", None)
-        base_url = entry.pop("base_url", None)
-        nested_params = dict(entry.pop("litellm_params", {}) or {})
-
-        litellm_params: dict[str, Any] = {
-            "model": _build_litellm_model(provider, model),
-            "timeout": timeout,
-        }
-        if api_key:
-            litellm_params["api_key"] = api_key
-        if base_url:
-            litellm_params["api_base"] = base_url
-        # Caller-supplied litellm_params win over our defaults.
-        litellm_params.update(nested_params)
-
-        deployment: dict[str, Any] = {
-            "model_name": f"hindsight-chain-{i}",
-            "litellm_params": litellm_params,
-        }
-        # Any remaining keys are Router-level deployment fields (rpm, tpm, weight, ...).
-        deployment.update(entry)
-        model_list.append(deployment)
-    return model_list
-
-
-def _build_fallbacks(chain_length: int) -> list[dict[str, list[str]]]:
-    """Map the primary group to every subsequent chain index in declared order."""
-    if chain_length <= 1:
-        return []
-    return [{_PRIMARY_GROUP: [f"hindsight-chain-{i}" for i in range(1, chain_length)]}]
-
-
 class LiteLLMRouterLLM(LiteLLMLLM):
     """
-    LLM provider backed by ``litellm.Router`` with ordered fallback.
+    LLM provider backed by ``litellm.Router``.
 
-    Each entry in the chain becomes a distinct LiteLLM model_group; the primary
-    group is wired to fall back through the remaining groups in declared order.
-    Requests are always issued against the primary group — Router internally
-    re-issues against the fallback groups when the primary fails.
-
-    Inherits the retry/parse/metrics loop from ``LiteLLMLLM`` and only overrides
-    the small surface that differs.
+    The full Router config is supplied by the caller. We pass it verbatim to
+    ``Router(**config)`` and route requests against the first ``model_list``
+    entry's ``model_name``. Inherits the retry/parse/metrics loop from
+    ``LiteLLMLLM``; only the completion fn and the call kwargs differ.
     """
 
     def __init__(
@@ -138,7 +53,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         api_key: str,
         base_url: str,
         model: str,
-        chain: list[dict[str, Any]],
+        config: dict[str, Any],
         reasoning_effort: str = "low",
         timeout: float = 300.0,
         **kwargs: Any,
@@ -152,26 +67,25 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             timeout=timeout,
             **kwargs,
         )
-        if not chain:
-            raise ValueError("LiteLLMRouterLLM requires a non-empty chain")
-        self.chain = chain
+        if not isinstance(config, dict) or not config.get("model_list"):
+            raise ValueError("LiteLLMRouterLLM requires a config dict with a non-empty 'model_list'")
+        first = config["model_list"][0]
+        primary_model_name = first.get("model_name") if isinstance(first, dict) else None
+        if not primary_model_name:
+            raise ValueError("LiteLLMRouterLLM: model_list[0] must have a 'model_name'")
+
+        self.config = config
+        self._primary_model_name = primary_model_name
 
         from litellm import Router
 
         logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+        self._router = Router(**config)
 
-        model_list = _build_model_list(chain, timeout=timeout)
-        fallbacks = _build_fallbacks(len(chain))
-        self._router = Router(
-            model_list=model_list,
-            fallbacks=fallbacks,
-            num_retries=0,  # outer loop in call()/call_with_tools() owns retries
-            allowed_fails=1,  # cooldown a deployment after a single failure within a window
-            cooldown_time=60,
+        logger.info(
+            f"LiteLLM Router initialized: {len(config['model_list'])} deployment(s), "
+            f"primary model_name={primary_model_name!r}"
         )
-
-        chain_summary = ", ".join(f"{e['provider']}/{e['model']}" for e in chain)
-        logger.info(f"LiteLLM Router initialized with {len(chain)} deployment(s): [{chain_summary}]")
 
     # ── overrides for the shared retry/parse loop ───────────────────────────
 
@@ -184,7 +98,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
 
     def _resolve_completion_model(self, response: Any) -> str:
         hidden = getattr(response, "_hidden_params", None) or {}
-        return hidden.get("model") or self.model
+        return hidden.get("model") or self._primary_model_name
 
     def _build_common_kwargs(
         self,
@@ -192,9 +106,10 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         max_completion_tokens: int | None = None,
         temperature: float | None = None,
     ) -> dict[str, Any]:
-        # Always issue against the primary group; Router handles deployment selection.
+        # Always issue against the primary group; Router handles deployment selection,
+        # cross-group fallbacks, retries, cooldowns — whatever the user configured.
         kwargs: dict[str, Any] = {
-            "model": _PRIMARY_GROUP,
+            "model": self._primary_model_name,
             "messages": messages,
         }
         if max_completion_tokens is not None:

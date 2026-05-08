@@ -1191,18 +1191,18 @@ jobs:
         CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
         "
 
-    - name: Build litellmrouter chain
+    - name: Build litellmrouter config
       if: matrix.provider == 'litellmrouter'
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         ROUTER_MODEL: ${{ matrix.model }}
       run: |
-        chain=$(jq -nc \
-          --arg model "$ROUTER_MODEL" \
+        cfg=$(jq -nc \
+          --arg model "openai/$ROUTER_MODEL" \
           --arg key "$OPENAI_API_KEY" \
-          '[{provider:"openai", model:$model, api_key:$key}]')
-        echo "::add-mask::$chain"
-        echo "HINDSIGHT_API_LLM_LITELLMROUTER_CHAIN=$chain" >> "$GITHUB_ENV"
+          '{model_list: [{model_name: "default", litellm_params: {model: $model, api_key: $key}}]}')
+        echo "::add-mask::$cfg"
+        echo "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG=$cfg" >> "$GITHUB_ENV"
 
     - name: Run LLM acceptance tests
       working-directory: ./hindsight-api-slim

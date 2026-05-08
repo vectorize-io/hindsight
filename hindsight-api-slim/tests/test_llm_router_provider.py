@@ -1,7 +1,11 @@
 """
-Tests for the LiteLLM Router LLM provider — chain config parsing, factory
-dispatch, and the Router-backed call paths (plain text, structured output,
-tool calls, retry on transient failure).
+Tests for the LiteLLM Router LLM provider — config parsing, factory dispatch,
+and the Router-backed call paths (plain text, structured output, tool calls,
+retry on transient failure).
+
+The provider is a thin pass-through to ``litellm.Router``. The chain config
+shape mirrors LiteLLM's API; we don't translate model names or impose
+fallbacks. See https://docs.litellm.ai/docs/routing.
 """
 
 import json
@@ -12,34 +16,39 @@ import pytest
 from pydantic import BaseModel
 
 from hindsight_api.config import (
-    ENV_CONSOLIDATION_LLM_LITELLMROUTER_CHAIN,
-    ENV_LLM_LITELLMROUTER_CHAIN,
+    ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG,
+    ENV_LLM_LITELLMROUTER_CONFIG,
     ENV_LLM_PROVIDER,
-    ENV_REFLECT_LLM_LITELLMROUTER_CHAIN,
-    ENV_RETAIN_LLM_LITELLMROUTER_CHAIN,
+    ENV_REFLECT_LLM_LITELLMROUTER_CONFIG,
+    ENV_RETAIN_LLM_LITELLMROUTER_CONFIG,
     HindsightConfig,
-    _parse_llm_router_chain,
+    _parse_llm_router_config,
 )
 from hindsight_api.engine.llm_wrapper import create_llm_provider
-from hindsight_api.engine.providers.litellm_router_llm import (
-    LiteLLMRouterLLM,
-    _build_fallbacks,
-    _build_litellm_model,
-    _build_model_list,
-)
+from hindsight_api.engine.providers.litellm_router_llm import LiteLLMRouterLLM
 
 
 @pytest.fixture
-def two_step_chain() -> list[dict[str, Any]]:
-    return [
-        {
-            "provider": "openai",
-            "model": "MiniMax-M2.7",
-            "api_key": "sk-primary",
-            "base_url": "https://api.minimax.io/v1",
-        },
-        {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-fallback", "base_url": None},
-    ]
+def two_step_config() -> dict[str, Any]:
+    """Raw LiteLLM Router config: two deployments wired for ordered fallback."""
+    return {
+        "model_list": [
+            {
+                "model_name": "primary",
+                "litellm_params": {
+                    "model": "openai/MiniMax-M2.7",
+                    "api_key": "sk-primary",
+                    "api_base": "https://api.minimax.io/v1",
+                },
+            },
+            {
+                "model_name": "fallback",
+                "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-fallback"},
+            },
+        ],
+        "fallbacks": [{"primary": ["fallback"]}],
+        "num_retries": 0,
+    }
 
 
 @pytest.fixture
@@ -56,209 +65,108 @@ def mock_router_response() -> MagicMock:
     return response
 
 
-# --- chain parsing -----------------------------------------------------------
+# --- config parsing ----------------------------------------------------------
 
 
-class TestParseLLMRouterChain:
+class TestParseRouterConfig:
     def test_unset_returns_none(self, monkeypatch):
-        monkeypatch.delenv(ENV_LLM_LITELLMROUTER_CHAIN, raising=False)
-        assert _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN) is None
+        monkeypatch.delenv(ENV_LLM_LITELLMROUTER_CONFIG, raising=False)
+        assert _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG) is None
 
     def test_empty_string_returns_none(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, "  ")
-        assert _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN) is None
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, "  ")
+        assert _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG) is None
 
-    def test_valid_chain(self, monkeypatch):
-        chain = [
-            {"provider": "openai", "model": "gpt-4o-mini", "api_key": "k1"},
-            {"provider": "anthropic", "model": "claude-sonnet-4-5", "api_key": "k2"},
-        ]
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, json.dumps(chain))
-        assert _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN) == chain
+    def test_valid_config_passes_through(self, monkeypatch, two_step_config):
+        """Whatever the user provides round-trips verbatim — no translation."""
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps(two_step_config))
+        assert _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG) == two_step_config
 
     def test_invalid_json(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, "{not json")
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, "{not json")
         with pytest.raises(ValueError, match="invalid JSON"):
-            _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
+            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
 
-    def test_not_a_list(self, monkeypatch):
+    def test_must_be_object(self, monkeypatch):
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps([{"model_name": "x"}]))
+        with pytest.raises(ValueError, match="JSON object"):
+            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
+
+    def test_model_list_required(self, monkeypatch):
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps({"fallbacks": []}))
+        with pytest.raises(ValueError, match="'model_list' must be a non-empty list"):
+            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
+
+    def test_model_list_empty(self, monkeypatch):
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps({"model_list": []}))
+        with pytest.raises(ValueError, match="'model_list' must be a non-empty list"):
+            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
+
+    def test_entry_must_have_model_name(self, monkeypatch):
         monkeypatch.setenv(
-            ENV_LLM_LITELLMROUTER_CHAIN,
-            json.dumps({"provider": "openai", "model": "x"}),
+            ENV_LLM_LITELLMROUTER_CONFIG,
+            json.dumps({"model_list": [{"litellm_params": {"model": "openai/gpt-4o"}}]}),
         )
-        with pytest.raises(ValueError, match="non-empty JSON list"):
-            _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
-
-    def test_empty_list(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, "[]")
-        with pytest.raises(ValueError, match="non-empty JSON list"):
-            _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
-
-    def test_missing_required_keys(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, json.dumps([{"provider": "openai"}]))
-        with pytest.raises(ValueError, match="'provider' and 'model' are required"):
-            _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
-
-    def test_extra_keys_pass_through(self, monkeypatch):
-        """Unknown keys are forwarded to LiteLLM verbatim — the parser only requires provider+model."""
-        chain = [
-            {
-                "provider": "openai",
-                "model": "gpt-4o",
-                "api_key": "k",
-                "rpm": 1000,
-                "tpm": 100000,
-                "weight": 5,
-                "litellm_params": {"temperature": 0.7},
-            }
-        ]
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, json.dumps(chain))
-        assert _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN) == chain
+        with pytest.raises(ValueError, match="'model_name' is required"):
+            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
 
 
-class TestFromEnvLoadsChains:
-    def test_chain_loaded_when_provider_is_litellmrouter(self, monkeypatch):
+class TestFromEnvLoadsConfig:
+    def test_loaded_when_provider_is_litellmrouter(self, monkeypatch, two_step_config):
         monkeypatch.setenv(ENV_LLM_PROVIDER, "litellmrouter")
-        monkeypatch.setenv(
-            ENV_LLM_LITELLMROUTER_CHAIN,
-            json.dumps(
-                [
-                    {"provider": "openai", "model": "gpt-4o-mini", "api_key": "k1"},
-                    {"provider": "openai", "model": "gpt-4o", "api_key": "k2"},
-                ]
-            ),
-        )
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps(two_step_config))
         cfg = HindsightConfig.from_env()
-        # Provider name is whatever the user set — no auto-promotion.
         assert cfg.llm_provider == "litellmrouter"
-        assert cfg.llm_litellmrouter_chain is not None
-        assert len(cfg.llm_litellmrouter_chain) == 2
+        assert cfg.llm_litellmrouter_config == two_step_config
 
-    def test_chain_unset_keeps_default_provider(self, monkeypatch):
+    def test_unset_keeps_default_provider(self, monkeypatch):
         monkeypatch.setenv(ENV_LLM_PROVIDER, "openai")
         monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-primary")
-        monkeypatch.delenv(ENV_LLM_LITELLMROUTER_CHAIN, raising=False)
+        monkeypatch.delenv(ENV_LLM_LITELLMROUTER_CONFIG, raising=False)
         cfg = HindsightConfig.from_env()
         assert cfg.llm_provider == "openai"
-        assert cfg.llm_litellmrouter_chain is None
+        assert cfg.llm_litellmrouter_config is None
 
-    def test_per_op_chains_independent(self, monkeypatch):
-        """Per-op chain env vars populate per-op fields without affecting the default."""
+    def test_per_op_configs_independent(self, monkeypatch):
+        """Per-op env vars populate per-op fields without touching the default."""
+        retain_config = {
+            "model_list": [{"model_name": "r", "litellm_params": {"model": "openai/retain", "api_key": "rk"}}]
+        }
+        reflect_config = {
+            "model_list": [{"model_name": "f", "litellm_params": {"model": "anthropic/claude", "api_key": "ak"}}]
+        }
+        consol_config = {
+            "model_list": [{"model_name": "c", "litellm_params": {"model": "openai/consol", "api_key": "ck"}}]
+        }
         monkeypatch.setenv(ENV_LLM_PROVIDER, "openai")
         monkeypatch.setenv("HINDSIGHT_API_LLM_API_KEY", "sk-primary")
-        monkeypatch.setenv(
-            ENV_RETAIN_LLM_LITELLMROUTER_CHAIN,
-            json.dumps([{"provider": "openai", "model": "retain-1", "api_key": "rk"}]),
-        )
-        monkeypatch.setenv(
-            ENV_REFLECT_LLM_LITELLMROUTER_CHAIN,
-            json.dumps([{"provider": "anthropic", "model": "claude", "api_key": "ak"}]),
-        )
-        monkeypatch.setenv(
-            ENV_CONSOLIDATION_LLM_LITELLMROUTER_CHAIN,
-            json.dumps([{"provider": "openai", "model": "consol-1", "api_key": "ck"}]),
-        )
+        monkeypatch.setenv(ENV_RETAIN_LLM_LITELLMROUTER_CONFIG, json.dumps(retain_config))
+        monkeypatch.setenv(ENV_REFLECT_LLM_LITELLMROUTER_CONFIG, json.dumps(reflect_config))
+        monkeypatch.setenv(ENV_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG, json.dumps(consol_config))
         cfg = HindsightConfig.from_env()
-        assert cfg.llm_litellmrouter_chain is None
-        assert cfg.retain_llm_litellmrouter_chain == [{"provider": "openai", "model": "retain-1", "api_key": "rk"}]
-        assert cfg.reflect_llm_litellmrouter_chain == [{"provider": "anthropic", "model": "claude", "api_key": "ak"}]
-        assert cfg.consolidation_llm_litellmrouter_chain == [
-            {"provider": "openai", "model": "consol-1", "api_key": "ck"}
-        ]
-
-
-# --- helper translation ------------------------------------------------------
-
-
-class TestModelTranslation:
-    def test_known_provider_prefixes(self):
-        assert _build_litellm_model("openai", "gpt-4o-mini") == "openai/gpt-4o-mini"
-        assert _build_litellm_model("anthropic", "claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
-        assert _build_litellm_model("gemini", "gemini-2.5-flash") == "gemini/gemini-2.5-flash"
-        assert _build_litellm_model("vertexai", "gemini-2.5-flash") == "vertex_ai/gemini-2.5-flash"
-
-    def test_unknown_provider_falls_back_to_openai(self):
-        # OpenAI-compatible providers (lmstudio, custom, etc.) route via openai/ + base_url
-        assert _build_litellm_model("lmstudio", "qwen3") == "openai/qwen3"
-        assert _build_litellm_model("minimax", "MiniMax-M2.7") == "openai/MiniMax-M2.7"
-
-    def test_pre_qualified_model_passes_through(self):
-        assert _build_litellm_model("openai", "anthropic/claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
-
-    def test_litellm_provider_uses_raw_model(self):
-        assert _build_litellm_model("litellm", "bedrock/anthropic.claude-3-5-sonnet") == (
-            "bedrock/anthropic.claude-3-5-sonnet"
-        )
-
-
-class TestModelListBuilder:
-    def test_builds_one_group_per_chain_entry(self, two_step_chain):
-        ml = _build_model_list(two_step_chain, timeout=30.0)
-        assert [d["model_name"] for d in ml] == ["hindsight-chain-0", "hindsight-chain-1"]
-        assert ml[0]["litellm_params"]["model"] == "openai/MiniMax-M2.7"
-        assert ml[0]["litellm_params"]["api_key"] == "sk-primary"
-        assert ml[0]["litellm_params"]["api_base"] == "https://api.minimax.io/v1"
-        assert ml[1]["litellm_params"]["model"] == "openai/gpt-4o-mini"
-        assert "api_base" not in ml[1]["litellm_params"]  # base_url=None should be omitted
-
-    def test_fallbacks_wired_in_order(self):
-        assert _build_fallbacks(1) == []
-        assert _build_fallbacks(2) == [{"hindsight-chain-0": ["hindsight-chain-1"]}]
-        assert _build_fallbacks(3) == [{"hindsight-chain-0": ["hindsight-chain-1", "hindsight-chain-2"]}]
-
-    def test_extra_keys_flow_through(self):
-        """Top-level extra keys go to deployment top-level; ``litellm_params`` nests merge into litellm_params."""
-        chain = [
-            {
-                "provider": "openai",
-                "model": "gpt-4o",
-                "api_key": "k",
-                "rpm": 1000,
-                "tpm": 50000,
-                "weight": 7,
-                "model_info": {"id": "abc"},
-                "litellm_params": {"temperature": 0.5, "extra_headers": {"X-Trace": "1"}},
-            }
-        ]
-        ml = _build_model_list(chain, timeout=10.0)
-        deployment = ml[0]
-        # Top-level Router fields
-        assert deployment["rpm"] == 1000
-        assert deployment["tpm"] == 50000
-        assert deployment["weight"] == 7
-        assert deployment["model_info"] == {"id": "abc"}
-        # Nested litellm_params merged on top of our defaults
-        params = deployment["litellm_params"]
-        assert params["model"] == "openai/gpt-4o"
-        assert params["api_key"] == "k"
-        assert params["temperature"] == 0.5
-        assert params["extra_headers"] == {"X-Trace": "1"}
-
-    def test_caller_data_not_mutated(self):
-        """The builder must not mutate the user-supplied chain."""
-        chain = [{"provider": "openai", "model": "gpt-4o", "rpm": 100}]
-        snapshot = json.dumps(chain)
-        _build_model_list(chain, timeout=10.0)
-        assert json.dumps(chain) == snapshot
+        assert cfg.llm_litellmrouter_config is None
+        assert cfg.retain_llm_litellmrouter_config == retain_config
+        assert cfg.reflect_llm_litellmrouter_config == reflect_config
+        assert cfg.consolidation_llm_litellmrouter_config == consol_config
 
 
 # --- factory dispatch --------------------------------------------------------
 
 
 class TestFactoryDispatch:
-    def test_router_provider_requires_chain(self):
-        with pytest.raises(ValueError, match="non-empty chain"):
+    def test_router_provider_requires_config(self):
+        with pytest.raises(ValueError, match="config object"):
             create_llm_provider(
                 provider="litellmrouter",
                 api_key="",
                 base_url="",
                 model="unused",
                 reasoning_effort="low",
-                chain=None,
+                litellmrouter_config=None,
             )
 
-    def test_router_provider_returns_router_impl(self, two_step_chain):
-        with patch.dict("sys.modules", {"litellm": MagicMock(), "litellm.Router": MagicMock()}):
+    def test_router_provider_returns_router_impl(self, two_step_config):
+        with patch.dict("sys.modules", {"litellm": MagicMock()}):
             with patch(
                 "hindsight_api.engine.providers.litellm_router_llm.LiteLLMRouterLLM.__init__",
                 return_value=None,
@@ -269,49 +177,42 @@ class TestFactoryDispatch:
                     base_url="",
                     model="unused",
                     reasoning_effort="low",
-                    chain=two_step_chain,
+                    litellmrouter_config=two_step_config,
                 )
                 assert isinstance(impl, LiteLLMRouterLLM)
-                mock_init.assert_called_once()
                 _, kwargs = mock_init.call_args
-                assert kwargs["chain"] == two_step_chain
+                assert kwargs["config"] == two_step_config
 
 
 # --- Router-backed call paths ------------------------------------------------
 
 
-def _make_router_provider(chain: list[dict[str, Any]], mock_router: Any) -> LiteLLMRouterLLM:
+def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRouterLLM:
     """Construct a LiteLLMRouterLLM with the inner Router replaced by a mock."""
     fake_litellm = MagicMock()
-    fake_router_cls = MagicMock(return_value=mock_router)
-    fake_litellm.Router = fake_router_cls
+    fake_litellm.Router = MagicMock(return_value=mock_router)
     with patch.dict("sys.modules", {"litellm": fake_litellm}):
-        with patch(
-            "hindsight_api.engine.providers.litellm_router_llm.Router",
-            fake_router_cls,
-            create=True,
-        ):
-            # Bypass the import inside __init__ by injecting directly via attribute swap.
-            provider = LiteLLMRouterLLM.__new__(LiteLLMRouterLLM)
-            # Initialise the LLMInterface base attrs without invoking the heavy ctor.
-            provider.provider = "litellmrouter"
-            provider.api_key = ""
-            provider.base_url = ""
-            provider.model = "unused"
-            provider.reasoning_effort = "low"
-            provider.timeout = 300.0
-            provider.chain = chain
-            provider._litellm = fake_litellm
-            provider._router = mock_router
-            return provider
+        # Bypass the heavy ctor chain by injecting state directly.
+        provider = LiteLLMRouterLLM.__new__(LiteLLMRouterLLM)
+        provider.provider = "litellmrouter"
+        provider.api_key = ""
+        provider.base_url = ""
+        provider.model = "unused"
+        provider.reasoning_effort = "low"
+        provider.timeout = 300.0
+        provider.config = config
+        provider._litellm = fake_litellm
+        provider._router = mock_router
+        provider._primary_model_name = config["model_list"][0]["model_name"]
+        return provider
 
 
 class TestRouterCall:
     @pytest.mark.asyncio
-    async def test_plain_text_call(self, two_step_chain, mock_router_response):
+    async def test_plain_text_call_targets_first_model_name(self, two_step_config, mock_router_response):
         mock_router = MagicMock()
         mock_router.acompletion = AsyncMock(return_value=mock_router_response)
-        provider = _make_router_provider(two_step_chain, mock_router)
+        provider = _make_router_provider(two_step_config, mock_router)
 
         result = await provider.call(
             messages=[{"role": "user", "content": "hi"}],
@@ -319,12 +220,12 @@ class TestRouterCall:
             max_retries=0,
         )
         assert result == "ok"
-        # Always invoked against the primary group; Router handles fallback internally.
+        # First entry's model_name is what we route against; Router handles fallback.
         kwargs = mock_router.acompletion.await_args.kwargs
-        assert kwargs["model"] == "hindsight-chain-0"
+        assert kwargs["model"] == "primary"
 
     @pytest.mark.asyncio
-    async def test_structured_output(self, two_step_chain):
+    async def test_structured_output(self, two_step_config):
         class MySchema(BaseModel):
             answer: str
 
@@ -340,7 +241,7 @@ class TestRouterCall:
 
         mock_router = MagicMock()
         mock_router.acompletion = AsyncMock(return_value=response)
-        provider = _make_router_provider(two_step_chain, mock_router)
+        provider = _make_router_provider(two_step_config, mock_router)
 
         result = await provider.call(
             messages=[{"role": "user", "content": "q"}],
@@ -351,26 +252,26 @@ class TestRouterCall:
         assert result.answer == "42"
 
     @pytest.mark.asyncio
-    async def test_retry_on_transient_then_success(self, two_step_chain, mock_router_response):
+    async def test_retry_on_transient_then_success(self, two_step_config, mock_router_response):
         mock_router = MagicMock()
         # First call raises a 503-style error, second call returns ok.
         mock_router.acompletion = AsyncMock(side_effect=[Exception("503 Service Unavailable"), mock_router_response])
-        provider = _make_router_provider(two_step_chain, mock_router)
+        provider = _make_router_provider(two_step_config, mock_router)
 
         result = await provider.call(
             messages=[{"role": "user", "content": "hi"}],
             max_retries=2,
-            initial_backoff=0.0,  # no real sleep in tests
+            initial_backoff=0.0,
             max_backoff=0.0,
         )
         assert result == "ok"
         assert mock_router.acompletion.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_auth_error_does_not_retry(self, two_step_chain):
+    async def test_auth_error_does_not_retry(self, two_step_config):
         mock_router = MagicMock()
         mock_router.acompletion = AsyncMock(side_effect=Exception("401 Unauthorized: bad key"))
-        provider = _make_router_provider(two_step_chain, mock_router)
+        provider = _make_router_provider(two_step_config, mock_router)
 
         with pytest.raises(Exception, match="401"):
             await provider.call(
@@ -381,7 +282,7 @@ class TestRouterCall:
         assert mock_router.acompletion.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_call_with_tools(self, two_step_chain):
+    async def test_call_with_tools(self, two_step_config):
         response = MagicMock()
         choice = MagicMock()
         choice.message.content = None
@@ -398,7 +299,7 @@ class TestRouterCall:
 
         mock_router = MagicMock()
         mock_router.acompletion = AsyncMock(return_value=response)
-        provider = _make_router_provider(two_step_chain, mock_router)
+        provider = _make_router_provider(two_step_config, mock_router)
 
         result = await provider.call_with_tools(
             messages=[{"role": "user", "content": "use tool"}],
