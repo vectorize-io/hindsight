@@ -1193,11 +1193,22 @@ html.docs-wrapper article blockquote p {
   line-height: 1.85;
 }
 
-/* Blog only: monospace body font — Supermemory-style */
+/* Blog only: sans-serif body font */
 html.blog-post-page article p,
 html.blog-post-page article li,
 html.blog-post-page article blockquote p {
-  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Monaco, Consolas, monospace;
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* Blog only: make bold text stand out more */
+html.blog-post-page article strong {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--ifm-color-primary);
 }
 
 /* Shared: bump heading sizes */

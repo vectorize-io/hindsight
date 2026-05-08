@@ -1,6 +1,6 @@
 ---
 title: "How Hindsight Scales"
-description: "A deep dive into how Hindsight's memory operations scale with data volume — performance, quality, and cost across retain, recall, consolidation, and reflect."
+description: "A design analysis of how Hindsight's memory operations scale with data volume — what costs grow, what stays bounded, and why."
 authors: [nicoloboschi]
 date: 2026-05-08T12:00
 tags: [scaling, performance, architecture, engineering]
@@ -10,228 +10,141 @@ hide_table_of_contents: true
 
 Agent memory systems face a scaling problem that traditional databases don't. It's not just "can we store more data" — it's "does the system stay fast, accurate, and affordable as memories pile up over weeks, months, and years."
 
-The challenge is that agent memory involves LLM calls, semantic search, graph traversal, and synthesis. Each has its own scaling curve. Some scale with input size. Some scale with the total number of stored memories. Some scale with query complexity. If you don't understand which is which, you can't predict costs, and you can't tune the system.
+The challenge is that agent memory involves LLM calls, semantic search, graph traversal, and synthesis. Each has its own scaling curve. Some scale with input size. Some scale with the total number of stored memories. Some scale with query complexity. Understanding which axis each operation scales on is enough to predict the shape of costs and latency, even before you have exact numbers.
 
-This post walks through how each of Hindsight's four core operations — **retain**, **recall**, **consolidation**, and **reflect** — scales across three dimensions: performance, quality, and cost.
+This post is a design analysis, not a benchmark report — performance curves are a future post. What we can explain here is why each operation has the scaling profile it does, what the worst-case bounds are, and which knobs control what tradeoffs. Failure modes and recovery behavior (queue backpressure, rate-limit degradation) are also out of scope — we'll cover those separately.
+
+Five architectural decisions shape the scaling story:
+
+- **Read-write asymmetry**: we pay the LLM cost at write time so reads are LLM-free.
+- **Hierarchical knowledge compression**: raw facts → observations → mental models, where each tier compresses the one below it.
+- **Parallel everything**: four-way recall, 32-way extraction, async consolidation.
+- **Bounded traversal**: every operation has a hard worst-case ceiling controlled by configuration.
+- **Local models where possible**: embeddings and reranking run locally by default, so recall has zero LLM API cost.
+
+The rest of this post shows how these decisions play out in each operation.
 
 <!-- truncate -->
 
-## Retain — Ingesting Memories at Scale
+## Retain — Cost Scales with Input, Not with What's Already Stored
 
 Retain is the write path. Content comes in, gets chunked, facts are extracted by an LLM, embeddings are generated, and everything gets stored with entity, temporal, semantic, and causal links.
 
-### Performance
+**The scaling thesis: retain cost is proportional to what you're ingesting, not to what's already stored.** A retain call that processes 10 chunks costs the same whether the bank has 100 or 1,000,000 existing facts.
 
-The retain pipeline is a streaming producer-consumer system. Content is split into chunks of ~3,000 characters, grouped into mini-batches of 100, and processed through three phases:
+Here's why. The pipeline is a streaming producer-consumer system. Content is split into chunks of ~3,000 characters, grouped into mini-batches, and processed through three phases:
 
 1. **Phase 1 (read-heavy, outside transaction):** Entity resolution via trigram GIN scan, semantic ANN search to find similar existing facts. Runs on a separate connection to avoid holding row locks during slow reads.
 2. **Phase 2 (write transaction):** Insert facts, create entity links, build temporal links (within 24-hour windows), semantic links (within-batch + pre-computed ANN), and causal links. Atomic per batch.
 3. **Phase 3 (post-transaction, best-effort):** Final ANN pass across the full bank — finds semantic neighbors for newly inserted facts against the entire existing corpus.
 
-LLM fact extraction — the slowest step — runs up to 32 chunks concurrently. This means retain latency scales as `max(chunk_count / 32, single_chunk_latency)`, not as the sum of all chunks.
+LLM fact extraction — the dominant cost — is one call per chunk (`retain_chunk_size`, default ~3,000 chars), parallelized up to 32 concurrent extractions. Chunks are grouped into mini-batches (`retain_chunk_batch_size`, default 100) that bound memory usage regardless of input size. Embeddings are one per extracted fact. DB writes are linear with the number of facts. All of these scale with input volume, not bank size. Each fact creates at most 20 temporal links — a hard cap that prevents link storage from growing unboundedly.
 
-The critical scaling distinction: **retain performance scales with input size, not with bank size.** The number of LLM calls, embeddings, and DB writes are all proportional to how much content you're ingesting. The exception is Phase 3's ANN pass, which queries the full bank — but HNSW gives us O(log N) per query, so even at millions of facts this stays fast.
+The one exception is Phase 3's ANN pass, which queries the full bank to find semantic neighbors for new facts. But HNSW gives O(log N) per query, so this grows slowly even at large bank sizes.
 
-**Delta retain** makes repeated ingestion cheap. If a document's content hash matches a previous version, unchanged chunks are skipped entirely. Only new or modified chunks trigger LLM extraction. For an integration that periodically re-syncs a document, this means the second sync costs nearly nothing.
+**Delta retain** makes repeated ingestion cheaper still. If a document's content hash matches a previous version, unchanged chunks are skipped entirely — no LLM extraction, no embedding, no writes. For integrations that periodically re-sync documents, the cost after the first sync drops to only the changed chunks.
 
-### Quality
+Fact extraction quality is independent of bank size — each chunk is processed in isolation. What does improve with scale is **link density**: more facts in the bank means more temporal neighbors, more semantic neighbors, and richer entity co-occurrence graphs. The graph gets more connected over time, which benefits graph-based retrieval downstream.
 
-Fact extraction quality is independent of bank size. Each chunk is processed in isolation — the LLM sees only its ~3,000 characters and extracts structured facts from them. Whether the bank has 100 or 100,000 existing facts doesn't change extraction quality.
+## Recall — Zero LLM Calls, O(log N) Retrieval
 
-What does improve with scale is **link density**. More facts in the bank means more temporal neighbors within 24-hour windows, more semantic neighbors above the similarity threshold, and richer entity co-occurrence graphs. This is a quality flywheel: the more memories you store, the more connected the graph becomes, and the better graph-based retrieval works downstream.
+Recall is the read path. It runs four retrieval strategies in parallel, fuses them with Reciprocal Rank Fusion, and reranks with a cross-encoder. We covered the [full architecture in a previous post](/blog/2026/03/27/parallel-hybrid-search). Here we focus on what scales with what.
 
-Entity resolution also improves with scale. More co-occurrence data means better disambiguation — "John" in a bank with extensive context about "John Smith" and "John Doe" resolves more accurately than in a near-empty bank.
+**The scaling thesis: recall makes zero LLM calls.** It's purely retrieval plus cross-encoder reranking. This is a deliberate architectural choice — we pay the LLM cost at retain time (fact extraction) so that recall is free of LLM API costs at any scale.
 
-### Cost
+Here's what costs nothing, what costs O(log N), and what's bounded by configuration:
 
-| Cost factor | Scales with | Typical magnitude |
-|---|---|---|
-| LLM extraction | Input chunk count | 1 call per ~3,000 chars (~80% of retain time) |
-| Embeddings | Extracted fact count | 1 embedding per fact (free with local model) |
-| DB writes | Extracted fact count | Linear — facts, entities, links |
-| ANN link creation | Bank size × new fact count | O(N log N) for Phase 3 final pass |
+**Costs nothing (structurally zero):** LLM calls. There are none. The cross-encoder reranker runs locally by default (a small model on CPU), though it can also be configured to use external providers. Either way, the recall path itself never calls an LLM.
 
-The key insight: **retain cost is proportional to what you're ingesting, not to what's already stored.** A retain call that processes 10 chunks costs the same whether the bank has 100 or 1,000,000 existing facts. The LLM is the dominant cost (80% of wall-clock time), and LLM calls are a function of input volume.
+**Costs O(log N):** Semantic search. HNSW indexes give logarithmic query time. We use per-bank, per-fact-type partial indexes so the query planner hits exactly the right index for each query arm. BM25 via PostgreSQL GIN indexes also scales sub-linearly with corpus size.
 
-## Recall — Retrieval That Doesn't Degrade
+**Bounded by configuration:** Graph traversal is capped by `budget` (LOW=100, MID=300, HIGH=1000 nodes explored). Temporal search is bounded to 5 BFS iterations with at most 10 neighbors expanded per source unit. These are hard ceilings — graph and temporal retrieval time is effectively constant regardless of how dense the link graph gets. `ef_search` (default 200) controls HNSW search thoroughness, trading recall quality for query speed.
 
-Recall is the read path. It runs four retrieval strategies in parallel — semantic, BM25, graph, and temporal — fuses them with Reciprocal Rank Fusion, and reranks with a cross-encoder. We covered the [full architecture in a previous post](/blog/2026/03/27/parallel-hybrid-search). Here we focus on how it scales.
+The four strategies run in parallel — semantic + BM25 + temporal share a connection; graph runs independently per fact type. Total recall latency is the max of the slowest branch, not the sum. Cross-encoder inference and connection pool acquisition don't benefit from indexing, so they set the latency floor.
 
-### Performance
+On the quality side, graph retrieval has more material to work with as the bank grows — denser entity co-occurrence and more semantic kNN paths give it more traversal options. Semantic search is the only strategy that can degrade slightly at very large scale (HNSW is approximate), mitigated by over-fetching and tunable `ef_search`. BM25 is lexical and stable. The ensemble effect means even if one strategy gets noisier, the other three compensate — RRF fusion is rank-based, so it handles mixed-quality inputs naturally.
 
-The headline number: **recall makes zero LLM calls.** It's purely retrieval plus a local cross-encoder reranker. This is a deliberate architectural choice — we pay the LLM cost at retain time (fact extraction) so that recall can be fast and free.
-
-Each of the four retrieval strategies has its own scaling profile:
-
-- **Semantic search:** HNSW index gives O(log N) query time. We use per-bank, per-fact-type partial indexes, so the planner hits exactly the right index for each query arm. At 1M facts, a semantic query still completes in single-digit milliseconds.
-- **BM25:** PostgreSQL GIN indexes scale well with corpus size. Full-text search latency grows sub-linearly — doubling the corpus doesn't double query time.
-- **Graph traversal:** Bounded by a configurable `thinking_budget` (LOW=100, MID=300, HIGH=600 nodes). The budget caps traversal regardless of how dense the link graph gets, so graph retrieval time is effectively constant.
-- **Temporal search:** Bounded spreading with a maximum of 5 iterations and 10 neighbors per source unit. BRIN indexes on temporal columns keep range queries fast.
-
-The four strategies run in parallel (semantic + BM25 + temporal share a connection; graph runs independently per fact type). Total recall latency is the max of the slowest branch, not the sum. In practice: **100–600ms regardless of bank size**, with the cross-encoder reranker and connection pool acquisition as the typical bottlenecks, not query speed.
-
-### Quality
-
-This is the most important scaling dimension for recall. As banks grow from hundreds to hundreds of thousands of facts, does retrieval precision degrade?
-
-**Semantic search** uses HNSW, which is approximate. At very large scale, HNSW can miss relevant results. We mitigate this two ways: over-fetching by 5x (request 100 candidates to return 20) and setting `ef_search=200` globally for better recall on sparse graphs. The approximation error is small and bounded — HNSW doesn't suddenly collapse at scale, it just gets slightly less precise.
-
-**BM25** is lexical and doesn't degrade with volume. If the query tokens match the document tokens, BM25 finds it. More documents means more noise in the result set, but RRF fusion and reranking filter that out.
-
-**Graph retrieval actually improves with more data.** A richer link graph means more traversal paths between semantically related facts. Entity co-occurrence, semantic kNN links, and causal chains all become denser over time. This is the opposite of degradation — graph retrieval gets better as the bank grows.
-
-**Temporal retrieval** is bounded by design (5 iterations, 10 neighbors/source), so it doesn't degrade. It also doesn't improve — it's stable regardless of bank size.
-
-The ensemble effect matters here. Even if one strategy gets slightly noisier at scale, the other three compensate. RRF fusion is rank-based (no score normalization needed), so it handles mixed-quality inputs naturally. The cross-encoder reranker then makes the final relevance judgment — and it operates on the merged candidate set, not on any single strategy's output.
-
-The net result: **recall quality is stable or improving as banks grow**, with semantic search as the only strategy that degrades slightly (and even that is well-mitigated).
-
-### Cost
-
-| Cost factor | Scales with | Typical magnitude |
-|---|---|---|
-| LLM calls | Nothing — always 0 | $0 per recall |
-| Cross-encoder reranking | Candidate count (20–100) | ~1–5ms per pair on GPU, local model |
-| DB queries | Bank size (O(log N) for semantic) | 3–12 queries per recall |
-| Connection pool | Concurrent recall requests | 1 shared + N graph connections |
-
-Recall is "free" in terms of API costs. The cross-encoder is a local 6M-parameter model that runs on CPU. The only cost is compute time and database queries. This is the payoff of the read-write asymmetry: we invested at retain time so recall can be cheap at any scale.
-
-## Consolidation — Background Knowledge Synthesis
+## Consolidation — LLM-Bound Background Work
 
 Consolidation runs after retain completes. It takes raw experience and world facts and synthesizes them into **observations** — consolidated knowledge that represents higher-level patterns and insights. Think of it as the system "thinking about" what it learned.
 
-### Performance
+**The scaling thesis: consolidation cost scales linearly with the number of new memories, and it's LLM-bound** — roughly 80%+ of wall-clock time in our profiling. DB and embedding work is comparatively negligible.
 
-Consolidation runs asynchronously as a background worker. It never blocks user-facing operations. The pipeline:
+The pipeline:
 
-1. Fetch unconsolidated memories (batch of 50)
-2. For each memory, run a recall to find related existing observations (N parallel recalls)
-3. Group memories into sub-batches of 8 and make one LLM call per sub-batch
-4. Execute the LLM's instructions: create new observations, update existing ones, or delete stale ones
+1. Fetch unconsolidated memories in batches
+2. For each memory, run a recall to find related existing observations (parallel, DB-only recalls)
+3. Group memories into sub-batches and make one LLM call per sub-batch
+4. Execute the LLM's instructions: create, update, or delete observations
 5. Generate embeddings for new/updated observations
 6. Checkpoint: mark memories as consolidated
 
-Throughput is ~0.7–1.0 operations per second, with the LLM accounting for 80–87% of wall-clock time. This is from real consolidation benchmark data — the breakdown is consistently LLM-dominated regardless of bank size or observation density.
+This runs asynchronously as a background worker — it never blocks user-facing operations. The batch architecture has built-in backpressure: `consolidation_max_memories_per_round` (default 100) caps how many memories a single round processes, and `consolidation_llm_batch_size` (default 8) controls how many memories go into each LLM call. Together these give a hard ceiling: a consolidation round will never make more than `max_memories_per_round ÷ llm_batch_size` LLM calls. Adaptive error handling bisects failed sub-batches (8→4→2→1) and retries, so one bad memory doesn't block the rest.
 
-The batch architecture has built-in backpressure: `consolidation_max_memories_per_round` (default 100) caps how much work a single round does. If more memories are waiting, the round completes and the next one picks up where it left off. This prevents a large retain from monopolizing the worker pool.
+Consolidation quality **improves with scale** — more raw facts mean richer source material for observation synthesis. Scope isolation (tag-based) prevents cross-context contamination, and source fact tracking preserves provenance so every observation can be traced back to the facts it was synthesized from.
 
-Adaptive error handling keeps things moving: if an LLM call fails for a sub-batch of 8, the system bisects (8→4→2→1) and retries. One bad memory doesn't block the other 99.
+Over time, consolidation becomes sub-linear in a different sense: as the bank matures, more memories update existing observations rather than creating new ones. The LLM call count per batch stays constant, but the observation count grows slower than the memory count.
 
-### Quality
+## Reflect — Bounded Reasoning Over Hierarchical Knowledge
 
-Consolidation quality **improves with scale**. More raw facts mean richer source material for observation synthesis. An observation about "user prefers functional programming" becomes more confident and nuanced when it's synthesized from 50 relevant facts rather than 3.
+Reflect is the synthesis operation. Given a question, it searches through a three-tier knowledge hierarchy — mental models, then observations, then raw facts — using an agentic LLM loop.
 
-Scope isolation (tag-based) prevents cross-context contamination. Memories tagged for different contexts never get consolidated together — a strict security boundary that also helps quality by keeping observations focused.
+**The scaling thesis: reflect quality is decoupled from total memory count.** The hierarchical retrieval means reflect reasons over observations and mental models (which compress the raw corpus), not over all memories directly. The raw fact search is a targeted fallback, not a full-corpus scan.
 
-`max_observations_per_scope` prevents runaway growth. Without it, a bank with 100,000 facts could generate thousands of observations, most of them redundant. The cap forces the LLM to update existing observations rather than creating duplicates.
+The agent follows a forced tool-call sequence before entering free-form reasoning. Each iteration — including forced ones — is an LLM call where the model is constrained to use a specific tool:
 
-Source fact tracking preserves provenance. Every observation records which raw facts it was synthesized from. This means you can always trace an observation back to its source material — useful for debugging and for reflect (which can show the user why it believes something).
+1. **Search observations** (forced): LLM call with tool choice constrained to search observations. Calls recall internally, filtered to observation-type facts.
+2. **Search raw facts** (forced): LLM call with tool choice constrained to recall experience and world facts.
+3. **Search mental models** (forced, only when mental models exist in the bank): LLM call with tool choice constrained to search mental model embeddings.
+4. **Reasoning iterations** (auto): The LLM decides whether to expand results, run additional searches, or synthesize a final answer.
+5. **Final synthesis**: Forced text-only response with no tools.
 
-### Cost
+Every iteration is an LLM call. The forced sequence is typically 2 steps (observations + raw facts), extending to 3 when the bank has mental models. After the forced sequence, the agent enters auto mode where the LLM chooses freely.
 
-| Cost factor | Scales with | Typical magnitude |
-|---|---|---|
-| LLM calls | New memory count ÷ 8 | 100 memories → ~13 LLM calls |
-| Recalls (finding related observations) | New memory count | 1 recall per memory (DB-only, no LLM) |
-| Embeddings | Observations created/updated | 1 per observation (free with local model) |
-| DB writes | Observation mutations | Linear with create/update/delete count |
+Hard ceilings prevent runaway cost: `reflect_max_iterations` (default 10) caps the total number of iterations, `reflect_max_context_tokens` (default 100,000) forces final synthesis if accumulated context grows too large, and `reflect_wall_timeout` (default 300s) is a wall-clock cutoff. With defaults, a reflect call will never make more than 12 LLM calls (2 forced + 10 auto iterations), never accumulate more than 100K tokens, and never run longer than 5 minutes.
 
-Consolidation is the most LLM-intensive operation per unit of work. But two factors keep costs manageable:
+As banks grow, observations absorb complexity. Instead of reflect needing to reason over thousands of raw facts, it reasons over the observations that summarize them. Mental models provide an even higher-level cache — pre-computed answers to common questions that reflect can reference without re-deriving.
 
-1. **It runs asynchronously.** You can use batch APIs (50% cost reduction) since latency doesn't matter for background work.
-2. **It's sub-linear in the long run.** Early on, most memories create new observations. As the bank matures, more memories update existing observations rather than creating new ones. The LLM call count stays at N/8, but the observation count grows slower than the memory count.
+## Mental Models — Refresh Cost Scales with New Information, Not Total Knowledge
 
-## Reflect — Agentic Reasoning at Scale
+Mental models sit at the top of the knowledge hierarchy. They're user-defined questions with pre-computed answers — pinned reflections that the system keeps up to date.
 
-Reflect is the synthesis operation. Given a question, it searches through a three-tier knowledge hierarchy — mental models, then observations, then raw facts — using an agentic LLM loop that decides what to search for and when it has enough context to answer.
+**The scaling thesis: delta refresh processes only new facts since the last refresh, so a mental model backed by 10,000 facts that sees 5 new ones costs the same to refresh as one backed by 100.** Refresh cost scales with the rate of new information, not the stock of existing knowledge. And reading a mental model is a direct database lookup by ID — no LLM, no vector search. The expensive work happens at refresh time, not at read time.
 
-### Performance
+A mental model is defined by a **source query**, **tags** (scope filter), and a **trigger configuration**. The key trigger flag is `refresh_after_consolidation` — when enabled, the chain is automatic: retain → consolidation creates observations → mental models with matching tags refresh in the background.
 
-The reflect agent follows a forced search sequence before entering free-form reasoning:
+Refresh runs in two modes. **Full refresh** runs a complete reflect cycle internally (forced searches + reasoning + synthesis), rewriting the entire document from scratch — simple and reliable, but it regenerates sections that haven't changed. **Delta refresh** narrows recall to facts created *after* the last refresh timestamp. Instead of synthesizing a new document, the LLM emits structured patch operations (append/insert/replace/remove blocks and sections) applied to the existing document structure. Sections not mentioned are untouched — zero prose drift on stable content, manually curated sections survive refreshes intact. Delta costs one extra LLM call for operation generation but processes a much smaller context. It falls back to full refresh automatically when the source query has changed, the document structure is malformed, or no new facts exist since the last refresh.
 
-1. **Search mental models** (forced, no LLM): Vector search on pre-computed mental model embeddings. Returns cached synthesis results with staleness metadata.
-2. **Search observations** (forced, no LLM): Calls recall internally, filtered to observation-type facts. Returns consolidated knowledge.
-3. **Search raw facts** (forced, no LLM): Calls recall for experience and world facts. Returns the source material.
-4. **Reasoning iterations** (1–7 LLM calls): The agent decides whether to expand results, run additional searches, or synthesize a final answer.
-5. **Final synthesis** (1 LLM call): Produces the answer.
+The background cost chain matters: N new memories → M observation updates → K mental model refreshes → K × multiple LLM calls each. For a bank with many mental models and frequent retains, this adds up. But consolidation-triggered refreshes are asynchronous — they run as background tasks, never blocking user-facing operations.
 
-Typical reflect latency: 800ms–3s, dominated by LLM generation time. The three forced searches add 100–600ms total (they're just recall operations). The context accumulation is capped at 100K tokens — if the agent accumulates more than that, it's forced into final synthesis.
+## Knobs and What They Trade Off
 
-A wall-clock timeout of 300 seconds (configurable) prevents runaway reflect operations.
+These are the configuration parameters that control scaling behavior, organized by what they trade off:
 
-### Quality
+**Recall quality vs. latency:**
+- `budget` — higher budget explores more graph nodes, finding more connections at the cost of traversal time
+- `ef_search` — higher values make HNSW search more thorough, reducing approximation error at the cost of query time
+- Semantic over-fetch multiplier — fetching more candidates from HNSW improves recall precision but increases the reranking workload
 
-The three-tier hierarchy is the key quality-at-scale mechanism:
+**Consolidation throughput vs. resource usage:**
+- `consolidation_llm_batch_size` — larger batches mean fewer LLM calls but bigger prompts. Constrained by your provider's context window and rate limits
+- `consolidation_max_memories_per_round` — higher limits process more memories per round but hold the worker slot longer
 
-**Mental models** are the top tier. They're user-defined questions with pre-computed, periodically refreshed answers. A well-maintained mental model answers a common question instantly from cache, with no degradation as the bank grows. The freshness is maintained by consolidation triggers — when new observations are created that match a mental model's tags, the model gets refreshed asynchronously.
+**Reflect depth vs. cost:**
+- `reflect_max_iterations` — fewer iterations mean faster, cheaper reflects at the cost of less thorough reasoning
+- `reflect_max_context_tokens` — lower ceiling forces earlier synthesis, trading depth for predictability
 
-**Observations** are the middle tier. They represent consolidated knowledge — more stable and concise than raw facts, less curated than mental models. As the bank grows, observations absorb complexity. Instead of reflect needing to reason over 10,000 raw facts, it reasons over 200 observations that summarize them.
+**Mental model freshness vs. background cost:**
+- `refresh_after_consolidation` — enables automatic refresh but adds LLM calls after every consolidation round
+- Full vs. delta refresh mode — delta is cheaper per refresh (only processes new facts) but can't restructure the document
 
-**Raw facts** are the fallback. If mental models and observations don't cover the question, the agent searches raw facts. This is where bank size matters most — but by the time the agent reaches this tier, it already has context from the higher tiers to focus its search.
+**Horizontal scaling:**
 
-The hierarchical approach means **reflect quality is decoupled from total memory count**. What matters is the quality of observations and mental models, which improve with consolidation over time. The raw fact search is a targeted fallback, not a full-corpus scan.
+Hindsight uses a broker-based architecture with two distinct process types that scale independently:
 
-Mental model **delta refresh** is an additional quality mechanism. Instead of regenerating a mental model from scratch, delta mode identifies which sections are stale and updates only those. This preserves manually curated sections while keeping data-driven sections fresh. It costs one extra LLM call but produces more consistent results than full regeneration.
+- **API processes** (`hindsight-api`) handle HTTP/MCP requests and write background tasks to a shared PostgreSQL `async_operations` table. Run as many instances as you need behind a load balancer — they share no state except the database.
+- **Worker processes** (`hindsight-worker`) poll PostgreSQL for pending tasks and execute background operations (consolidation, mental model refresh). Multiple workers compete to claim tasks from the queue — no process-to-process communication required.
 
-### Cost
+For single-instance development, `HINDSIGHT_API_WORKER_ENABLED=true` (the default) embeds the worker inside the API process. In production, disable it and run dedicated worker instances to separate background work from user-facing traffic.
 
-| Cost factor | Scales with | Typical magnitude |
-|---|---|---|
-| LLM calls (reasoning) | Query complexity | 2–7 per reflect |
-| Internal recalls | Fixed at 1–3 | DB-only, no LLM cost |
-| Mental model refresh | Triggered by consolidation | 5–8 LLM calls each (async, background) |
-| Delta ops (if enabled) | +1 LLM call per refresh | Only for delta-mode mental models |
-
-The cost multiplication chain matters: N new memories → consolidation creates/updates M observations → K mental models with matching tags get refreshed → K × 5 LLM calls. For a bank with 10 mental models and frequent retains, this background cost adds up. But it's all asynchronous — the user-facing reflect operation is just 2–7 LLM calls.
-
-Mental models amortize reflect cost. A question that's answered by a mental model costs one vector search (milliseconds, no LLM). The same question without a mental model costs 2–7 LLM calls. If the question gets asked frequently, the mental model pays for itself quickly.
-
-## The Big Picture
-
-Here's how the four operations compare:
-
-| Operation | LLM Calls | Primary Scaling Dimension | Typical Latency | Cost Driver |
-|---|---|---|---|---|
-| **Retain** | 1 per chunk | Input size (linear) | 500ms–2s per batch | LLM extraction |
-| **Recall** | 0 | Bank size (O(log N)) | 100–600ms | DB + CPU only |
-| **Consolidation** | N ÷ 8 | New memory count (linear) | Background | LLM synthesis |
-| **Reflect** | 2–7 | Query complexity | 800ms–3s | LLM reasoning |
-
-Five architectural decisions make this work:
-
-**Read-write asymmetry.** We pay the LLM cost at write time (retain extracts structured facts) so that read time (recall) is LLM-free. This is the single biggest scaling lever — recall is the hot path in any agent memory system, and making it free means usage scales without API cost scaling.
-
-**Hierarchical knowledge compression.** Raw facts → observations → mental models. Each tier compresses the one below it. As the bank grows, the higher tiers absorb complexity so that downstream operations (reflect, recall) don't need to touch the full corpus. This is biomimetic — it mirrors how human memory consolidates detailed experiences into general knowledge over time.
-
-**Parallel everything.** Four-way recall, 32-way extraction, async consolidation. Parallelism converts scaling problems from "everything slows down" to "the slowest branch sets the pace." Connection sharing and bounded budgets keep parallelism from creating resource contention.
-
-**Bounded traversal.** Thinking budgets, link caps (20 temporal links per unit), iteration limits (5 for temporal spreading, 10 for reflect), and token ceilings (100K context for reflect). Every operation has a worst-case bound. Nothing can run away, regardless of bank size or query complexity.
-
-**Local models where possible.** Embeddings (sentence-transformers) and reranking (cross-encoder, 6M params) run locally. This means recall — the most frequent operation — has zero API cost. Consolidation and reflect are the only operations that need external LLM calls, and consolidation runs in the background where batch APIs cut costs by 50%.
-
-## Practical Recommendations
-
-**For cost-sensitive deployments:**
-- Use batch APIs for consolidation (50% savings on the most LLM-intensive operation)
-- Keep `consolidation_llm_batch_size` high (16–32) if your LLM provider has generous rate limits
-- Invest in mental models for frequently asked questions — they amortize reflect costs
-- Use local embedding and reranking models (default) to keep recall free
-
-**For latency-sensitive deployments:**
-- Tune `ef_search` for your HNSW indexes (higher = better recall, slower queries)
-- Use `thinking_budget: low` for graph retrieval if you can tolerate less exploration
-- Set `reflect_max_iterations` to 5–7 (from default 10) for faster synthesis
-- Consider external reranker APIs if CPU is the bottleneck
-
-**For quality-sensitive deployments:**
-- Enable consolidation with a reasonable `max_observations_per_scope` to prevent observation bloat
-- Use delta refresh for mental models to preserve curated content while keeping data-driven sections fresh
-- Increase `thinking_budget` to HIGH for graph retrieval — the richer traversal improves recall quality at the cost of latency
-- Over-fetch aggressively in semantic search (the 5x default is a good starting point)
-
-**For horizontal scaling:**
-- Multiple API instances behind a load balancer work out of the box — all state is in PostgreSQL
-- Connection pooling (PgBouncer or equivalent) is critical once you're past a handful of instances
-- Consolidation workers can run on dedicated instances to separate background work from user-facing traffic
-- HNSW index builds are the most expensive migration operation — plan for them during low-traffic periods
+Connection pooling (PgBouncer or equivalent) becomes important once you're past a handful of API instances. Workers are LLM-bound, so scaling workers past your LLM provider's rate limit won't help — add more workers only if you have rate limit headroom.
