@@ -319,70 +319,25 @@ For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claud
 
 ### LLM Router (LiteLLM Router)
 
-The `litellmrouter` provider is a thin pass-through to [LiteLLM's `Router`](https://docs.litellm.ai/docs/routing). The configuration JSON is forwarded verbatim to `litellm.Router(**config)` — Hindsight does not translate model names, infer fallback ordering, or impose defaults. Whatever `Router` supports (ordered fallback chains, load-balanced model groups, rate-limit-aware routing, weighted shuffle, latency-based routing, cooldowns, retries, model-info metadata) is available by writing the corresponding key in your config.
+`HINDSIGHT_API_LLM_PROVIDER=litellmrouter` runs the default LLM through [LiteLLM's `Router`](https://docs.litellm.ai/docs/routing). The config JSON is forwarded verbatim — for fallback chains, load-balancing, rate limits, routing strategies, and the rest of the supported keys, see the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing). Hindsight always issues completions against `model_name: "default"`, so include at least one entry with that name.
 
-Activate it like any other provider — set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` and point the provider-specific config env var at a JSON object.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` | JSON object passed verbatim to `litellm.Router(**config)`. Required when `HINDSIGHT_API_LLM_PROVIDER=litellmrouter`. | unset |
-| `HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG` | Per-operation override for retain. Used when `HINDSIGHT_API_RETAIN_LLM_PROVIDER=litellmrouter`; falls back to the default config. | unset |
-| `HINDSIGHT_API_REFLECT_LLM_LITELLMROUTER_CONFIG` | Per-operation override for reflect. | unset |
-| `HINDSIGHT_API_CONSOLIDATION_LLM_LITELLMROUTER_CONFIG` | Per-operation override for consolidation. | unset |
-
-#### Config shape
-
-Hindsight forwards your config verbatim to `litellm.Router(**config)` and does not validate the shape. The single Hindsight-imposed convention: **at least one entry in `model_list` must have `model_name: "default"`** — that's the entrypoint Hindsight issues completions against. Any additional entries become fallback / load-balance / weighted-pool members per your `fallbacks`, `routing_strategy`, `rpm`, `tpm`, `weight`, etc.
-
-If your config is malformed, LiteLLM Router will raise its own error at startup. Refer to the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing) for the complete surface (model_list, fallbacks, context_window_fallbacks, num_retries, cooldown_time, routing_strategy, allowed_fails, model_info, …).
-
-#### Examples
-
-Ordered fallback (entrypoint first, fallbacks only on failure):
+| Variable | Description |
+|----------|-------------|
+| `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` | JSON object passed to `litellm.Router(**config)`. Required when provider is `litellmrouter`. |
+| `HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION}_LLM_LITELLMROUTER_CONFIG` | Per-operation overrides. Fall back to the default config when unset. |
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=litellmrouter
 export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
   "model_list": [
-    {"model_name": "default",  "litellm_params": {"model": "openai/MiniMax-M2.7-highspeed", "api_base": "https://api.minimax.io/v1", "api_key": "sk-minimax-..."}},
-    {"model_name": "fallback", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-openai-..."}},
-    {"model_name": "local",    "litellm_params": {"model": "ollama_chat/llama3.1:8b", "api_base": "http://localhost:11434"}}
-  ],
-  "fallbacks": [{"default": ["fallback", "local"]}],
-  "num_retries": 0,
-  "cooldown_time": 60
-}'
-```
-
-Load-balanced with rate limits (multiple keys under the same entrypoint):
-
-```bash
-export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
-  "model_list": [
-    {"model_name": "default", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-key-1"}, "rpm": 1000, "tpm": 100000},
-    {"model_name": "default", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-key-2"}, "rpm": 1000, "tpm": 100000}
-  ],
-  "routing_strategy": "usage-based-routing-v2"
-}'
-```
-
-Per-operation override (retain uses a stronger entrypoint):
-
-```bash
-export HINDSIGHT_API_RETAIN_LLM_PROVIDER=litellmrouter
-export HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG='{
-  "model_list": [
-    {"model_name": "default",  "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}},
-    {"model_name": "fallback", "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-openai-..."}}
+    {"model_name": "default",  "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-..."}},
+    {"model_name": "fallback", "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}}
   ],
   "fallbacks": [{"default": ["fallback"]}]
 }'
 ```
 
-Notes:
-- The config is a credential field — its contents are never returned by the bank-config API.
-- Hindsight wraps every call in its own retry loop (`HINDSIGHT_API_LLM_MAX_RETRIES` / `..._INITIAL_BACKOFF` / `..._MAX_BACKOFF`). If you also set `num_retries` on Router, retries multiply — set `num_retries: 0` to delegate retry policy entirely to Hindsight.
-- Batch APIs are not supported in `litellmrouter` mode — fall back to a single-provider config for batch retain.
+The config is a credential field — never returned by the bank-config API. Hindsight already retries calls; set `"num_retries": 0` in the Router config to avoid double-retries. Batch APIs aren't supported in router mode.
 
 ### Built-in llama.cpp
 
