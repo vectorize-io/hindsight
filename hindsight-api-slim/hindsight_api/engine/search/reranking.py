@@ -217,7 +217,7 @@ class CrossEncoderReranker:
         # External API rerankers (SiliconFlow, Cohere, etc.) return pre-normalized
         # relevance_score in [0, 1] with very small absolute values. Applying
         # sigmoid to these compresses everything to ~0.5, destroying the ranking
-        # signal and making recency the sole排序 factor. We detect the score range
+        # signal and making recency the sole sorting factor. We detect the score range
         # and choose the appropriate normalization.
         import numpy as np
 
