@@ -109,6 +109,30 @@ class LiteLLMLLM(LLMInterface):
 
         return kwargs
 
+    # ── hooks for Router-style subclasses ────────────────────────────────────
+    # The retry+parse loop in call() / call_with_tools() is shared by every
+    # LiteLLM-backed provider. Subclasses override the small surface below to
+    # swap the completion fn (direct vs Router) and rename the deployment that
+    # actually answered the request.
+
+    @property
+    def _stage_label(self) -> str:
+        """Stage breadcrumb label — overridden by subclasses (e.g. ``litellmrouter``)."""
+        return "litellm"
+
+    async def _acompletion(self, **kwargs: Any) -> Any:
+        """Issue a chat completion. Subclasses override to route via ``litellm.Router``."""
+        return await self._litellm.acompletion(**kwargs)
+
+    def _resolve_completion_model(self, response: Any) -> str:
+        """
+        Return the model name to record in metrics/tracing.
+
+        For Router-backed providers this can differ from ``self.model`` — the Router
+        may pick a different deployment than the primary. Default: ``self.model``.
+        """
+        return self.model
+
     async def call(
         self,
         messages: list[dict[str, str]],
@@ -143,12 +167,13 @@ class LiteLLMLLM(LLMInterface):
 
         for attempt in range(max_retries + 1):
             if attempt > 0:
-                set_stage(f"llm.litellm.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._litellm.acompletion(**call_kwargs)
+                response = await self._acompletion(**call_kwargs)
 
                 content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
+                model_name = self._resolve_completion_model(response)
 
                 # Check for length-limited output
                 if finish_reason == "length":
@@ -184,7 +209,7 @@ class LiteLLMLLM(LLMInterface):
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     duration=duration,
                     input_tokens=input_tokens,
@@ -198,7 +223,7 @@ class LiteLLMLLM(LLMInterface):
                 span_recorder = get_span_recorder()
                 span_recorder.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     messages=messages,
                     response_content=_serialize_for_span(result),
@@ -211,7 +236,7 @@ class LiteLLMLLM(LLMInterface):
 
                 if duration > 10.0:
                     logger.info(
-                        f"slow llm call: scope={scope}, model={self.provider}/{self.model}, "
+                        f"slow llm call: scope={scope}, model={self.provider}/{model_name}, "
                         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
                         f"time={duration:.3f}s"
                     )
@@ -287,13 +312,14 @@ class LiteLLMLLM(LLMInterface):
         last_exception = None
         for attempt in range(max_retries + 1):
             if attempt > 0:
-                set_stage(f"llm.litellm.tools.attempt={attempt + 1}/{max_retries + 1}")
+                set_stage(f"llm.{self._stage_label}.tools.attempt={attempt + 1}/{max_retries + 1}")
             try:
-                response = await self._litellm.acompletion(**call_kwargs)
+                response = await self._acompletion(**call_kwargs)
 
                 message = response.choices[0].message
                 content = message.content
                 finish_reason = response.choices[0].finish_reason
+                model_name = self._resolve_completion_model(response)
 
                 # Extract tool calls
                 tool_calls: list[LLMToolCall] = []
@@ -319,7 +345,7 @@ class LiteLLMLLM(LLMInterface):
                 metrics = get_metrics_collector()
                 metrics.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     duration=duration,
                     input_tokens=input_tokens,
@@ -338,7 +364,7 @@ class LiteLLMLLM(LLMInterface):
                 )
                 span_recorder.record_llm_call(
                     provider=self.provider,
-                    model=self.model,
+                    model=model_name,
                     scope=scope,
                     messages=messages,
                     response_content=content,

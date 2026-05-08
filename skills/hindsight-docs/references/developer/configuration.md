@@ -341,6 +341,8 @@ A chain is a non-empty JSON array of deployment objects. Each deployment accepts
 | `api_key` | no | Credential for that deployment. |
 | `base_url` | no | Endpoint override (for OpenAI-compatible providers like LM Studio, Ollama, MiniMax, custom proxies). |
 
+Any other top-level key is forwarded verbatim to the LiteLLM Router deployment record (`rpm`, `tpm`, `weight`, `model_info`, …). Anything inside an optional `litellm_params` sub-object is merged into the inner `litellm_params` dict (per-deployment `temperature`, `extra_headers`, etc.). We don't validate the extras — typos go straight to LiteLLM. See the [LiteLLM Router deployment reference](https://docs.litellm.ai/docs/routing) for the full set.
+
 Minimal 2-step chain:
 
 ```json

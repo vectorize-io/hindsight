@@ -1130,6 +1130,10 @@ jobs:
             api_key_secret: GROQ_API_KEY
           - provider: bedrock
             model: us.amazon.nova-2-lite-v1:0
+          - provider: litellmrouter
+            model: gpt-4.1-nano
+            # Single-deployment chain over OpenAI — verifies the Router-backed
+            # call path works end-to-end. Built from secrets in the step below.
     name: LLM acceptance (${{ matrix.provider }}/${{ matrix.model }})
     env:
       HINDSIGHT_API_LLM_PROVIDER: ${{ matrix.provider }}
@@ -1186,6 +1190,19 @@ jobs:
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
         "
+
+    - name: Build litellmrouter chain
+      if: matrix.provider == 'litellmrouter'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ROUTER_MODEL: ${{ matrix.model }}
+      run: |
+        chain=$(jq -nc \
+          --arg model "$ROUTER_MODEL" \
+          --arg key "$OPENAI_API_KEY" \
+          '[{provider:"openai", model:$model, api_key:$key}]')
+        echo "::add-mask::$chain"
+        echo "HINDSIGHT_API_LLM_LITELLMROUTER_CHAIN=$chain" >> "$GITHUB_ENV"
 
     - name: Run LLM acceptance tests
       working-directory: ./hindsight-api-slim

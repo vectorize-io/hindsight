@@ -99,13 +99,21 @@ class TestParseLLMRouterChain:
         with pytest.raises(ValueError, match="'provider' and 'model' are required"):
             _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
 
-    def test_unknown_keys_rejected(self, monkeypatch):
-        monkeypatch.setenv(
-            ENV_LLM_LITELLMROUTER_CHAIN,
-            json.dumps([{"provider": "openai", "model": "gpt-4o", "weight": 5}]),
-        )
-        with pytest.raises(ValueError, match="unknown keys"):
-            _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN)
+    def test_extra_keys_pass_through(self, monkeypatch):
+        """Unknown keys are forwarded to LiteLLM verbatim — the parser only requires provider+model."""
+        chain = [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "api_key": "k",
+                "rpm": 1000,
+                "tpm": 100000,
+                "weight": 5,
+                "litellm_params": {"temperature": 0.7},
+            }
+        ]
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CHAIN, json.dumps(chain))
+        assert _parse_llm_router_chain(ENV_LLM_LITELLMROUTER_CHAIN) == chain
 
 
 class TestFromEnvLoadsChains:
@@ -197,6 +205,41 @@ class TestModelListBuilder:
         assert _build_fallbacks(1) == []
         assert _build_fallbacks(2) == [{"hindsight-chain-0": ["hindsight-chain-1"]}]
         assert _build_fallbacks(3) == [{"hindsight-chain-0": ["hindsight-chain-1", "hindsight-chain-2"]}]
+
+    def test_extra_keys_flow_through(self):
+        """Top-level extra keys go to deployment top-level; ``litellm_params`` nests merge into litellm_params."""
+        chain = [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "api_key": "k",
+                "rpm": 1000,
+                "tpm": 50000,
+                "weight": 7,
+                "model_info": {"id": "abc"},
+                "litellm_params": {"temperature": 0.5, "extra_headers": {"X-Trace": "1"}},
+            }
+        ]
+        ml = _build_model_list(chain, timeout=10.0)
+        deployment = ml[0]
+        # Top-level Router fields
+        assert deployment["rpm"] == 1000
+        assert deployment["tpm"] == 50000
+        assert deployment["weight"] == 7
+        assert deployment["model_info"] == {"id": "abc"}
+        # Nested litellm_params merged on top of our defaults
+        params = deployment["litellm_params"]
+        assert params["model"] == "openai/gpt-4o"
+        assert params["api_key"] == "k"
+        assert params["temperature"] == 0.5
+        assert params["extra_headers"] == {"X-Trace": "1"}
+
+    def test_caller_data_not_mutated(self):
+        """The builder must not mutate the user-supplied chain."""
+        chain = [{"provider": "openai", "model": "gpt-4o", "rpm": 100}]
+        snapshot = json.dumps(chain)
+        _build_model_list(chain, timeout=10.0)
+        assert json.dumps(chain) == snapshot
 
 
 # --- factory dispatch --------------------------------------------------------

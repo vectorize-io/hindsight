@@ -820,15 +820,14 @@ def _get_default_model_for_provider(provider: str) -> str:
     return PROVIDER_DEFAULT_MODELS.get(provider.lower(), DEFAULT_LLM_MODEL)
 
 
-_LLM_CHAIN_ENTRY_KEYS = {"provider", "model", "api_key", "base_url"}
-
-
 def _parse_llm_router_chain(env_var: str) -> list[dict] | None:
     """
     Parse a LiteLLM Router chain from a JSON list env var.
 
-    Each entry must contain ``provider`` and ``model``; ``api_key`` and ``base_url``
-    are optional. Returns None when the env var is unset or empty.
+    Each entry must contain ``provider`` and ``model``; everything else is
+    forwarded to LiteLLM unchanged (``api_key``, ``base_url``, plus any
+    Router/SDK knobs like ``rpm``, ``tpm``, ``weight``, ``model_info``, or a
+    nested ``litellm_params`` dict). Returns None when the env var is unset.
     """
     raw = os.getenv(env_var, "").strip()
     if not raw:
@@ -844,9 +843,6 @@ def _parse_llm_router_chain(env_var: str) -> list[dict] | None:
             raise ValueError(f"Invalid {env_var}[{i}]: expected an object, got {type(entry).__name__}")
         if not entry.get("provider") or not entry.get("model"):
             raise ValueError(f"Invalid {env_var}[{i}]: 'provider' and 'model' are required")
-        unknown = set(entry.keys()) - _LLM_CHAIN_ENTRY_KEYS
-        if unknown:
-            raise ValueError(f"Invalid {env_var}[{i}]: unknown keys {sorted(unknown)}")
     return parsed
 
 
