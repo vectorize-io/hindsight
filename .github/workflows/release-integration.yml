@@ -117,7 +117,7 @@ jobs:
       working-directory: ./hindsight-integrations/${{ steps.info.outputs.integration }}
       run: |
         set +e
-        OUTPUT=$(npm publish --access public 2>&1)
+        OUTPUT=$(npm publish --access public --provenance 2>&1)
         EXIT_CODE=$?
         echo "$OUTPUT"
         if [ $EXIT_CODE -ne 0 ]; then

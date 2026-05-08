@@ -12,7 +12,7 @@ print_info() { echo -e "${YELLOW}$1${NC}"; }
 print_success() { echo -e "${GREEN}$1${NC}"; }
 print_error() { echo -e "${RED}$1${NC}" >&2; }
 
-VALID_TOOLS=("self-driving-agents" "hindsight-agent-sdk")
+VALID_TOOLS=("hindsight-agent-sdk")
 
 usage() {
     echo "Usage: $0 <tool> <version>"

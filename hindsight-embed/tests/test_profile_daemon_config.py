@@ -229,59 +229,6 @@ def test_get_config_respects_profile(temp_home, monkeypatch):
     assert config["bank_id"] == "production-bank", "Should use profile's bank_id"
 
 
-def test_macos_forces_cpu_for_local_embeddings_and_reranker(temp_home, monkeypatch):
-    """Regression test for issue #962.
-
-    On macOS, the daemon must force CPU for local embeddings/reranker by default to
-    avoid sentence-transformers selecting MPS and hanging during startup. PR #933
-    removed this default when adding the llamacpp provider; this test guards against
-    that regression.
-    """
-    from unittest.mock import MagicMock, patch
-
-    from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-
-    # Clear any caller-supplied force-cpu env so we test the default behavior.
-    monkeypatch.delenv("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU", raising=False)
-    monkeypatch.delenv("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU", raising=False)
-
-    manager = DaemonEmbedManager()
-
-    captured: dict[str, dict[str, str]] = {}
-    popen_called = [False]
-
-    def fake_popen(cmd, env, **kwargs):
-        captured["env"] = env
-        popen_called[0] = True
-        proc = MagicMock()
-        proc.pid = 12345
-        return proc
-
-    # is_running must return False before Popen (so _start_daemon and
-    # _start_daemon_locked don't short-circuit on the pre-Popen checks added
-    # in #1016) and True after Popen (so the readiness wait loop breaks
-    # immediately). Tying it to popen_called gives us both for free.
-    def fake_is_running(profile=""):
-        return popen_called[0]
-
-    with (
-        patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
-        patch("hindsight_embed.daemon_embed_manager.time.sleep"),  # skip 2s stability wait
-        patch.object(manager, "_clear_port", return_value=True),
-        patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
-        patch.object(manager, "is_running", side_effect=fake_is_running),
-        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
-    ):
-        manager._start_daemon(
-            config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
-            profile="",
-        )
-
-    env = captured["env"]
-    assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "1"
-    assert env.get("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU") == "1"
-
-
 def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, monkeypatch):
     """Regression test: HINDSIGHT_* keys in profile .env must reach the daemon subprocess env.
 
@@ -361,14 +308,12 @@ def test_profile_env_propagates_arbitrary_hindsight_keys_to_daemon(temp_home, mo
     assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "1"
 
 
-def test_macos_force_cpu_respects_explicit_override(temp_home, monkeypatch):
-    """Users who explicitly disable FORCE_CPU (e.g. to use MPS) must not be overridden."""
+def test_daemon_child_env_var_set_in_daemon_env(temp_home, monkeypatch):
+    """hindsight-embed must set _HINDSIGHT_DAEMON_CHILD=1 so the daemon child
+    skips the redundant re-exec in daemonize()."""
     from unittest.mock import MagicMock, patch
 
     from hindsight_embed.daemon_embed_manager import DaemonEmbedManager
-
-    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU", "0")
-    monkeypatch.setenv("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU", "0")
 
     manager = DaemonEmbedManager()
     captured: dict[str, dict[str, str]] = {}
@@ -390,7 +335,6 @@ def test_macos_force_cpu_respects_explicit_override(temp_home, monkeypatch):
         patch.object(manager, "_clear_port", return_value=True),
         patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
         patch.object(manager, "is_running", side_effect=fake_is_running),
-        patch("hindsight_embed.daemon_embed_manager.platform.system", return_value="Darwin"),
     ):
         manager._start_daemon(
             config={"llm_provider": "openai", "llm_api_key": "sk-x", "llm_model": "gpt-4o-mini"},
@@ -398,8 +342,7 @@ def test_macos_force_cpu_respects_explicit_override(temp_home, monkeypatch):
         )
 
     env = captured["env"]
-    assert env.get("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU") == "0"
-    assert env.get("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU") == "0"
+    assert env.get("_HINDSIGHT_DAEMON_CHILD") == "1"
 
 
 def test_windows_popen_uses_detached_process_flags(temp_home, monkeypatch):

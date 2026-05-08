@@ -52,11 +52,41 @@ describe("envSecretRef", () => {
   });
 });
 
+describe("maskSecret", () => {
+  // Used by the wizard's reuse-existing-token prompt — show enough of the secret
+  // to hint identity without leaking it onto the user's terminal scrollback.
+  // We grab maskSecret out of setup-lib so the test doesn't need a TTY.
+  it("masks all but the last 4 chars for a typical token", async () => {
+    const { maskSecret } = await import("./setup-lib.js");
+    const token = "mypwd-1234";
+    const masked = maskSecret(token);
+    expect(masked).toHaveLength(token.length);
+    expect(masked.endsWith("1234")).toBe(true);
+    expect(masked.slice(0, -4)).toMatch(/^\*+$/);
+  });
+
+  it("returns all stars for very short values (≤ 4 chars)", async () => {
+    const { maskSecret } = await import("./setup-lib.js");
+    expect(maskSecret("abcd")).toEqual("****");
+    expect(maskSecret("ab")).toEqual("**");
+    expect(maskSecret("")).toEqual("");
+  });
+
+  it("trims surrounding whitespace before masking", async () => {
+    const { maskSecret } = await import("./setup-lib.js");
+    expect(maskSecret("  abc12345  ")).toEqual("****2345");
+  });
+});
+
 describe("ensurePluginConfig", () => {
   it("initializes the hindsight-openclaw entry on an empty config", () => {
     const cfg: OpenClawConfigShape = {};
     const pc = ensurePluginConfig(cfg);
-    expect(cfg.plugins?.entries?.[PLUGIN_ID]).toEqual({ enabled: true, config: {} });
+    expect(cfg.plugins?.entries?.[PLUGIN_ID]).toEqual({
+      enabled: true,
+      hooks: { allowConversationAccess: true },
+      config: {},
+    });
     expect(pc).toBe(cfg.plugins?.entries?.[PLUGIN_ID]?.config);
   });
 
@@ -74,6 +104,104 @@ describe("ensurePluginConfig", () => {
     const pc = ensurePluginConfig(cfg);
     expect(cfg.plugins?.entries?.[PLUGIN_ID]?.enabled).toBe(true);
     expect(pc.llmProvider).toBe("openai");
+  });
+
+  // Regression: openclaw 2026.4.24+ silently drops conversation hooks
+  // (e.g. agent_end → retain) for non-bundled plugins unless this flag is set.
+  describe("hooks.allowConversationAccess", () => {
+    it("sets allowConversationAccess=true on a fresh config", () => {
+      const cfg: OpenClawConfigShape = {};
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(true);
+    });
+
+    it("backfills the flag on an existing entry that was configured before the gate landed", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              config: { hindsightApiUrl: "https://api.hindsight.vectorize.io" },
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(true);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.config?.hindsightApiUrl).toBe(
+        "https://api.hindsight.vectorize.io"
+      );
+    });
+
+    it("never overrides an explicit allowConversationAccess=false", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              hooks: { allowConversationAccess: false },
+              config: {},
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.entries?.[PLUGIN_ID]?.hooks?.allowConversationAccess).toBe(false);
+    });
+
+    it("preserves other fields under hooks", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: {
+          entries: {
+            [PLUGIN_ID]: {
+              enabled: true,
+              hooks: { someOtherFutureFlag: "value" },
+              config: {},
+            },
+          },
+        },
+      };
+      ensurePluginConfig(cfg);
+      const hooks = cfg.plugins?.entries?.[PLUGIN_ID]?.hooks as Record<string, unknown>;
+      expect(hooks.allowConversationAccess).toBe(true);
+      expect(hooks.someOtherFutureFlag).toBe("value");
+    });
+  });
+
+  // openclaw 2026.2.19+ logs a startup WARN when plugins.allow is empty and
+  // non-bundled plugins are discovered. The plugin still loads, but the warning
+  // is noisy on every gateway start. We add ourselves to the allowlist to
+  // silence it — without clobbering a user-curated list.
+  describe("plugins.allow trust list", () => {
+    it("creates plugins.allow with our id when undefined", () => {
+      const cfg: OpenClawConfigShape = {};
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual([PLUGIN_ID]);
+    });
+
+    it("appends our id to an existing user-curated allow list", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: ["some-other-plugin"], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual(["some-other-plugin", PLUGIN_ID]);
+    });
+
+    it("is idempotent when our id is already in the list", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: ["some-other-plugin", PLUGIN_ID], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual(["some-other-plugin", PLUGIN_ID]);
+    });
+
+    it("leaves a non-array allow value alone (don't second-guess deliberate weirdness)", () => {
+      const cfg: OpenClawConfigShape = {
+        plugins: { allow: "weird-string-value" as unknown as string[], entries: {} },
+      };
+      ensurePluginConfig(cfg);
+      expect(cfg.plugins?.allow).toEqual("weird-string-value");
+    });
   });
 });
 

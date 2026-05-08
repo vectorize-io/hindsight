@@ -242,7 +242,7 @@ export type BankConfigUpdate = {
 /**
  * BankListItem
  *
- * Bank list item with profile summary.
+ * Bank list item with profile summary and stats.
  */
 export type BankListItem = {
   /**
@@ -266,6 +266,14 @@ export type BankListItem = {
    * Updated At
    */
   updated_at?: string | null;
+  /**
+   * Fact Count
+   */
+  fact_count?: number;
+  /**
+   * Last Document At
+   */
+  last_document_at?: string | null;
 };
 
 /**

@@ -28,7 +28,7 @@ DEFAULTS = {
     "retainRoles": ["user", "assistant"],
     "retainEveryNTurns": 10,
     "retainOverlapTurns": 2,
-    "retainToolCalls": True,
+    "retainToolCalls": False,
     "retainContext": "claude-code",
     "retainTags": [],
     "retainMetadata": {},
@@ -48,6 +48,8 @@ DEFAULTS = {
     "bankMission": "",
     "retainMission": None,
     "agentName": "claude-code",
+    "resolveWorktrees": True,
+    "directoryBankMap": {},
     # LLM (for daemon mode)
     "llmProvider": None,
     "llmModel": None,

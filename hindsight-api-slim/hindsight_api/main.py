@@ -28,6 +28,7 @@ from .config import DEFAULT_WORKERS, ENV_HOST, ENV_WORKERS, HindsightConfig, _ge
 from .daemon import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_IDLE_TIMEOUT,
+    ENV_DAEMON_CHILD,
     IdleTimeoutMiddleware,
     daemonize,
 )
@@ -150,8 +151,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Daemon mode handling
-    if args.daemon:
+    # Daemon mode handling.
+    # is_daemon_child is True when we are the re-exec'd child spawned by
+    # daemonize() or by hindsight-embed's DaemonEmbedManager.  The child
+    # does not have --daemon in its argv, but must still behave as a daemon
+    # (resolve host/port, enable idle timeout, suppress banner, etc.).
+    is_daemon_child = os.environ.get(ENV_DAEMON_CHILD) == "1"
+    is_daemon = args.daemon or is_daemon_child
+
+    if is_daemon:
         args.host, args.port = resolve_daemon_host_port(
             args_host=args.host,
             args_port=args.port,
@@ -159,12 +167,13 @@ def main():
             config_port=config.port,
         )
 
-        # Fork into background
-        # No lockfile needed - port binding prevents duplicate daemons
+        # Detach into background (parent re-execs and exits; child redirects
+        # stdio to log file).  No lockfile needed — port binding prevents
+        # duplicate daemons.
         daemonize()
 
     # Print banner (not in daemon mode)
-    if not args.daemon:
+    if not is_daemon:
         print()
         print_banner()
 
@@ -173,7 +182,7 @@ def main():
     if args.log_level != config.log_level:
         config = dataclasses.replace(config, host=args.host, port=args.port, log_level=args.log_level)
     config.configure_logging()
-    if not args.daemon:
+    if not is_daemon:
         config.log_config()
 
     # Register cleanup handlers
@@ -222,7 +231,7 @@ def main():
 
     # Wrap with idle timeout middleware in daemon mode
     idle_middleware = None
-    if args.daemon:
+    if is_daemon:
         idle_middleware = IdleTimeoutMiddleware(app, idle_timeout=args.idle_timeout)
         app = idle_middleware
 
@@ -277,7 +286,7 @@ def main():
         uvicorn_config["ssl_certfile"] = args.ssl_certfile
 
     # Print startup info (not in daemon mode)
-    if not args.daemon:
+    if not is_daemon:
         from .banner import print_startup_info
 
         print_startup_info(

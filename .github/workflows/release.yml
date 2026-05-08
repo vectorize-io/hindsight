@@ -314,6 +314,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     strategy:
       matrix:
         include:
@@ -410,6 +411,7 @@ jobs:
 
     # Build multi-platform and push to release tags
     - name: Build and push release images
+      id: build
       uses: docker/build-push-action@v7
       with:
         context: .
@@ -420,6 +422,31 @@ jobs:
         platforms: linux/amd64,linux/arm64
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Sign published images
+      env:
+        TAGS: ${{ steps.meta.outputs.tags }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        set -euo pipefail
+        refs=()
+        while IFS= read -r tag; do
+          [[ -z "${tag}" ]] && continue
+          refs+=("${tag}@${DIGEST}")
+        done <<< "${TAGS}"
+        cosign sign --yes "${refs[@]}"
+
+    - name: Verify signature on primary tag
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        cosign verify "${IMAGE}@${DIGEST}" \
+          --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@.*" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
   release-helm-chart:
     runs-on: ubuntu-latest

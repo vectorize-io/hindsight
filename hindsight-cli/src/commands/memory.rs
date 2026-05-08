@@ -498,6 +498,7 @@ pub fn retain(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn retain_files(
     client: &ApiClient,
     agent_id: &str,
@@ -505,6 +506,7 @@ pub fn retain_files(
     recursive: bool,
     context: Option<String>,
     r#async: bool,
+    strategy: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -567,7 +569,8 @@ pub fn retain_files(
             pb.inc(1);
         }
 
-        let result = client.file_retain(agent_id, file_data, context.clone(), verbose)?;
+        let result =
+            client.file_retain(agent_id, file_data, context.clone(), strategy.clone(), verbose)?;
         all_operation_ids.extend(result.operation_ids);
     }
 

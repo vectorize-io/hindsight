@@ -104,6 +104,9 @@ hindsight memory retain-files <bank_id> ./documents/
 # With context
 hindsight memory retain-files <bank_id> meeting-notes.txt --context "team meeting"
 
+# With a named retain strategy (see retain_strategies in bank config)
+hindsight memory retain-files <bank_id> ./documents/ --strategy conversations
+
 # Background processing
 hindsight memory retain-files <bank_id> ./data/ --async
 ```

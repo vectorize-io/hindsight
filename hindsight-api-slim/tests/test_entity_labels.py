@@ -17,7 +17,10 @@ from hindsight_api.engine.retain.entity_labels import (
     EntityLabelsConfig,
     LabelGroup,
     LabelValue,
+    MapField,
     build_labels_lookup,
+    build_labels_model,
+    is_label_entity,
     parse_entity_labels,
 )
 
@@ -1118,3 +1121,776 @@ async def test_retain_extracts_free_values_label(memory, request_context):
         )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_retain_extracts_map_type_entities(memory, request_context):
+    """
+    End-to-end: retain content with a map-type entity_labels group.
+    Verify that structured entity fields are extracted as key:field:value entity strings.
+    """
+    from hindsight_api.engine.memory_engine import fq_table
+
+    bank_id = f"test-labels-map-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.get_bank_profile(bank_id=bank_id, request_context=request_context)
+
+        # Configure a map-type entity label
+        await memory._config_resolver.update_bank_config(
+            bank_id=bank_id,
+            updates={
+                "entity_labels": [
+                    {
+                        "key": "person",
+                        "type": "map",
+                        "description": "A person mentioned in the text",
+                        "fields": {
+                            "name": {"type": "text", "description": "Full name of the person"},
+                            "role": {"type": "text", "description": "Job title or role"},
+                            "organization": {"type": "text", "description": "Company or organization"},
+                        },
+                    }
+                ],
+                "entities_allow_free_form": False,  # map entities only
+            },
+            context=request_context,
+        )
+
+        unit_ids = await memory.retain_async(
+            bank_id=bank_id,
+            content=(
+                "Alice Johnson is a Senior Software Engineer at Google. "
+                "She leads the search infrastructure team and has been with the company for 5 years."
+            ),
+            request_context=request_context,
+        )
+
+        assert len(unit_ids) > 0, "Should have extracted at least one fact"
+
+        async with memory._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT e.canonical_name
+                FROM {fq_table("unit_entities")} ue
+                JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+                WHERE ue.unit_id = ANY($1::uuid[])
+                """,
+                [u for u in unit_ids],
+            )
+
+        entity_names = {r["canonical_name"].lower() for r in rows}
+        # Should have person:name:* entity
+        name_entities = {n for n in entity_names if n.startswith("person:name:")}
+        assert len(name_entities) > 0, (
+            f"Expected at least one person:name:* entity. Got: {entity_names}"
+        )
+        # Name should contain "alice" somewhere
+        assert any("alice" in n for n in name_entities), (
+            f"Expected person:name entity containing 'alice'. Got: {name_entities}"
+        )
+        # Should have person:organization:* entity mentioning google
+        org_entities = {n for n in entity_names if n.startswith("person:organization:")}
+        assert len(org_entities) > 0, (
+            f"Expected at least one person:organization:* entity. Got: {entity_names}"
+        )
+        assert any("google" in n for n in org_entities), (
+            f"Expected person:organization entity containing 'google'. Got: {org_entities}"
+        )
+        # In labels-only mode, free-form entities should be absent
+        non_person_entities = {n for n in entity_names if not n.startswith("person:")}
+        assert len(non_person_entities) == 0, (
+            f"Free-form entities should not appear in labels-only mode. Got: {non_person_entities}"
+        )
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# ─── map-type entity labels ──────────────────────────────────────────────────
+
+
+def test_parse_entity_labels_map_type():
+    """Map-type label group with fields is parsed correctly."""
+    raw = [
+        {
+            "key": "person",
+            "type": "map",
+            "description": "A person entity",
+            "fields": {
+                "name": {"type": "text", "description": "Full name"},
+                "role": {"type": "text", "description": "Job title"},
+                "organization": {"type": "text", "description": "Company"},
+            },
+        }
+    ]
+    result = parse_entity_labels(raw)
+    assert result is not None
+    assert len(result.attributes) == 1
+    group = result.attributes[0]
+    assert group.key == "person"
+    assert group.type == "map"
+    assert len(group.fields) == 3
+    assert "name" in group.fields
+    assert group.fields["name"].description == "Full name"
+
+
+def test_parse_entity_labels_map_type_dict_format():
+    """Map-type label group via dict format."""
+    raw = {
+        "attributes": [
+            {
+                "key": "company",
+                "type": "map",
+                "fields": {
+                    "name": {"type": "text"},
+                    "industry": {"type": "text"},
+                },
+            }
+        ]
+    }
+    result = parse_entity_labels(raw)
+    assert result is not None
+    assert result.attributes[0].type == "map"
+    assert len(result.attributes[0].fields) == 2
+
+
+def test_build_labels_model_map_type():
+    """Map-type groups produce list[MapModel] fields in the Labels model."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person",
+                fields={
+                    "name": MapField(description="Full name"),
+                    "role": MapField(description="Job title"),
+                },
+            ),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is not None
+    schema = model.model_json_schema()
+    assert "person" in schema["properties"]
+    # Should be an array of objects
+    person_prop = schema["properties"]["person"]
+    assert person_prop["type"] == "array"
+
+
+def test_build_labels_model_mixed_map_and_value():
+    """Both map-type and value-type groups coexist in the same Labels model."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person",
+                fields={
+                    "name": MapField(description="Full name"),
+                },
+            ),
+            LabelGroup(
+                key="topic",
+                type="value",
+                values=[LabelValue(value="math"), LabelValue(value="science")],
+            ),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is not None
+    schema = model.model_json_schema()
+    assert "person" in schema["properties"]
+    assert "topic" in schema["properties"]
+
+
+def test_build_labels_model_map_type_no_fields():
+    """Map-type group with no fields produces no field in the model."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(key="empty", type="map", fields={}),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is None
+
+
+def test_build_labels_lookup_skips_map_type():
+    """Map-type groups should not contribute to the two-level lookup set."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={"name": MapField()},
+            ),
+            LabelGroup(
+                key="topic",
+                type="value",
+                values=[LabelValue(value="math")],
+            ),
+        ]
+    )
+    lookup = build_labels_lookup(labels_cfg)
+    assert "topic:math" in lookup
+    # No map-type entries in the lookup
+    assert not any("person" in v for v in lookup)
+
+
+def test_is_label_entity_map_type():
+    """Three-level key:field:value strings are recognized as label entities."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(),
+                    "role": MapField(),
+                },
+            ),
+        ]
+    )
+    lookup = build_labels_lookup(labels_cfg)
+    assert is_label_entity("person:name:Alice", labels_cfg, lookup)
+    assert is_label_entity("person:role:Engineer", labels_cfg, lookup)
+    assert is_label_entity("Person:Name:Alice", labels_cfg, lookup)  # case insensitive
+    assert not is_label_entity("person:unknown_field:value", labels_cfg, lookup)
+    assert not is_label_entity("person:Alice", labels_cfg, lookup)  # two-level, not map
+    assert not is_label_entity("Alice", labels_cfg, lookup)
+
+
+def test_build_labels_prompt_section_map_type():
+    """Map-type groups appear in the STRUCTURED ENTITY TYPES prompt section."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person entity",
+                fields={
+                    "name": MapField(description="Full name"),
+                    "role": MapField(description="Job title"),
+                },
+            ),
+        ]
+    )
+    result = _build_labels_prompt_section(labels_cfg)
+    assert "STRUCTURED ENTITY TYPES" in result
+    assert "person" in result
+    assert "name" in result
+    assert "role" in result
+    assert "Full name" in result
+
+
+def test_build_labels_prompt_section_mixed():
+    """Mixed map-type and value-type groups both appear in the prompt."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="topic",
+                type="value",
+                description="Subject area",
+                values=[LabelValue(value="math")],
+            ),
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person",
+                fields={"name": MapField(description="Full name")},
+            ),
+        ]
+    )
+    result = _build_labels_prompt_section(labels_cfg)
+    assert "CLASSIFICATION ATTRIBUTES" in result
+    assert "topic" in result
+    assert "STRUCTURED ENTITY TYPES" in result
+    assert "person" in result
+
+
+def test_map_entity_post_processing():
+    """Map-type labels are converted to key:field:value entity strings."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "role": MapField(type="text"),
+        "organization": MapField(type="text"),
+    }
+    entity_obj = {"name": "Alice", "role": "Senior Engineer", "organization": "Acme Corp"}
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Alice" in texts
+    assert "person:role:Senior Engineer" in texts
+    assert "person:organization:Acme Corp" in texts
+
+
+def test_map_entity_post_processing_null_fields_skipped():
+    """Null/empty fields in map entities are skipped."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "role": MapField(type="text"),
+    }
+    entity_obj = {"name": "Bob", "role": None}
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Bob" in texts
+    assert len(texts) == 1  # role was null, so only name
+
+
+def test_map_entity_post_processing_multiple_entities():
+    """Multiple map entities in a single fact produce separate entity strings."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "role": MapField(type="text"),
+    }
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities({"name": "Alice", "role": "Engineer"}, fields, "person:", validated, existing)
+    _extract_map_entities({"name": "Bob", "role": "Manager"}, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Alice" in texts
+    assert "person:role:Engineer" in texts
+    assert "person:name:Bob" in texts
+    assert "person:role:Manager" in texts
+    assert len(texts) == 4
+
+
+# ─── recursive map-type entity labels ────────────────────────────────────────
+
+
+def test_parse_entity_labels_recursive_map():
+    """Nested map fields parse correctly."""
+    raw = [
+        {
+            "key": "person",
+            "type": "map",
+            "fields": {
+                "name": {"type": "text"},
+                "address": {
+                    "type": "map",
+                    "fields": {
+                        "city": {"type": "text", "description": "City name"},
+                        "country": {"type": "text"},
+                    },
+                },
+            },
+        }
+    ]
+    result = parse_entity_labels(raw)
+    assert result is not None
+    group = result.attributes[0]
+    assert group.fields["address"].type == "map"
+    assert "city" in group.fields["address"].fields
+    assert group.fields["address"].fields["city"].description == "City name"
+
+
+def test_build_labels_model_recursive_map():
+    """Nested map fields produce nested list[Model] in the schema."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(type="text"),
+                    "address": MapField(
+                        type="map",
+                        fields={
+                            "city": MapField(type="text"),
+                            "country": MapField(type="text"),
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is not None
+    schema = model.model_json_schema()
+    person_prop = schema["properties"]["person"]
+    assert person_prop["type"] == "array"
+
+
+def test_is_label_entity_recursive_map():
+    """Deeply nested key:field:subfield:value strings are recognized."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(type="text"),
+                    "address": MapField(
+                        type="map",
+                        fields={
+                            "city": MapField(type="text"),
+                            "country": MapField(type="text"),
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+    lookup = build_labels_lookup(labels_cfg)
+    assert is_label_entity("person:name:Alice", labels_cfg, lookup)
+    assert is_label_entity("person:address:city:New York", labels_cfg, lookup)
+    assert is_label_entity("person:address:country:US", labels_cfg, lookup)
+    assert not is_label_entity("person:address:zip:12345", labels_cfg, lookup)
+    assert not is_label_entity("person:address:New York", labels_cfg, lookup)
+
+
+def test_recursive_map_post_processing():
+    """Nested map entities produce deeply-joined key:field:subfield:value strings."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "address": MapField(
+            type="map",
+            fields={
+                "city": MapField(type="text"),
+                "country": MapField(type="text"),
+            },
+        ),
+    }
+
+    entity_obj = {
+        "name": "Alice",
+        "address": [{"city": "New York", "country": "US"}],
+    }
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Alice" in texts
+    assert "person:address:city:New York" in texts
+    assert "person:address:country:US" in texts
+    assert len(texts) == 3
+
+
+def test_map_field_with_enum_values():
+    """Map fields with value/multi-values types constrain extraction."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(type="text"),
+                    "department": MapField(
+                        type="value",
+                        values=[LabelValue(value="engineering"), LabelValue(value="sales")],
+                    ),
+                },
+            ),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is not None
+    schema = model.model_json_schema()
+    # The model should exist and have the person field
+    assert "person" in schema["properties"]
+
+
+def test_build_labels_prompt_section_recursive_map():
+    """Nested map fields appear indented in the prompt."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person",
+                fields={
+                    "name": MapField(type="text", description="Full name"),
+                    "address": MapField(
+                        type="map",
+                        description="Home address",
+                        fields={
+                            "city": MapField(type="text", description="City name"),
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+    result = _build_labels_prompt_section(labels_cfg)
+    assert "name (text)" in result
+    assert "address (object)" in result
+    assert "city (text)" in result
+
+
+# ─── map fields with value/multi-values types ────────────────────────────────
+
+
+def test_map_field_value_post_processing():
+    """Map field with type='value' extracts a single enum entity string."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "department": MapField(
+            type="value",
+            values=[LabelValue(value="engineering"), LabelValue(value="sales")],
+        ),
+    }
+    entity_obj = {"name": "Alice", "department": "engineering"}
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Alice" in texts
+    assert "person:department:engineering" in texts
+    assert len(texts) == 2
+
+
+def test_map_field_multi_values_post_processing():
+    """Map field with type='multi-values' extracts one entity per value."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "skills": MapField(
+            type="multi-values",
+            values=[LabelValue(value="python"), LabelValue(value="go"), LabelValue(value="rust")],
+        ),
+    }
+    entity_obj = {"name": "Alice", "skills": ["python", "rust"]}
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Alice" in texts
+    assert "person:skills:python" in texts
+    assert "person:skills:rust" in texts
+    assert "person:skills:go" not in texts
+    assert len(texts) == 3
+
+
+def test_map_field_multi_values_null_skipped():
+    """Null/sentinel values in multi-values are skipped."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "tags": MapField(type="multi-values"),
+    }
+    entity_obj = {"tags": ["valid", "none", "null", "", "  ", "n/a", "also_valid"]}
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "item:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "item:tags:valid" in texts
+    assert "item:tags:also_valid" in texts
+    assert len(texts) == 2
+
+
+def test_nested_map_with_enum_fields_post_processing():
+    """Nested map containing value/multi-values fields produces correct paths."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+        "job": MapField(
+            type="map",
+            fields={
+                "title": MapField(type="text"),
+                "level": MapField(
+                    type="value",
+                    values=[LabelValue(value="junior"), LabelValue(value="senior")],
+                ),
+                "languages": MapField(
+                    type="multi-values",
+                    values=[LabelValue(value="python"), LabelValue(value="java")],
+                ),
+            },
+        ),
+    }
+    entity_obj = {
+        "name": "Bob",
+        "job": [{"title": "Engineer", "level": "senior", "languages": ["python", "java"]}],
+    }
+
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities(entity_obj, fields, "person:", validated, existing)
+
+    texts = {e.text for e in validated}
+    assert "person:name:Bob" in texts
+    assert "person:job:title:Engineer" in texts
+    assert "person:job:level:senior" in texts
+    assert "person:job:languages:python" in texts
+    assert "person:job:languages:java" in texts
+    assert len(texts) == 5
+
+
+def test_is_label_entity_map_with_enum_fields():
+    """Entity strings from map fields with value/multi-values types are recognized."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(type="text"),
+                    "department": MapField(
+                        type="value",
+                        values=[LabelValue(value="engineering")],
+                    ),
+                    "skills": MapField(type="multi-values"),
+                },
+            ),
+        ]
+    )
+    lookup = build_labels_lookup(labels_cfg)
+    assert is_label_entity("person:name:Alice", labels_cfg, lookup)
+    assert is_label_entity("person:department:engineering", labels_cfg, lookup)
+    assert is_label_entity("person:skills:python", labels_cfg, lookup)
+    assert not is_label_entity("person:unknown:value", labels_cfg, lookup)
+
+
+def test_is_label_entity_nested_map_with_enum():
+    """Deeply nested paths with value/multi-values fields are recognized."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "job": MapField(
+                        type="map",
+                        fields={
+                            "level": MapField(type="value"),
+                            "languages": MapField(type="multi-values"),
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+    lookup = build_labels_lookup(labels_cfg)
+    assert is_label_entity("person:job:level:senior", labels_cfg, lookup)
+    assert is_label_entity("person:job:languages:python", labels_cfg, lookup)
+    assert not is_label_entity("person:job:salary:100k", labels_cfg, lookup)
+
+
+def test_map_field_enum_schema_generation():
+    """Map fields with value/multi-values generate correct JSON schema constraints."""
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                fields={
+                    "name": MapField(type="text"),
+                    "department": MapField(
+                        type="value",
+                        values=[LabelValue(value="engineering"), LabelValue(value="sales")],
+                    ),
+                    "skills": MapField(
+                        type="multi-values",
+                        values=[LabelValue(value="python"), LabelValue(value="go")],
+                    ),
+                },
+            ),
+        ]
+    )
+    model = build_labels_model(labels_cfg)
+    assert model is not None
+    schema = model.model_json_schema()
+    # Resolve $defs to find the person entity schema
+    person_ref = schema["properties"]["person"]["items"]
+    if "$ref" in person_ref:
+        ref_name = person_ref["$ref"].split("/")[-1]
+        person_schema = schema["$defs"][ref_name]
+    else:
+        person_schema = person_ref
+    props = person_schema["properties"]
+    # department should be an enum
+    assert "department" in props
+    assert "enum" in props["department"] or "anyOf" in props["department"]
+    # skills should be an array
+    assert "skills" in props
+    assert props["skills"]["type"] == "array"
+
+
+def test_prompt_section_map_with_all_field_types():
+    """Prompt includes correct type hints for value/multi-values/map fields."""
+    from hindsight_api.engine.retain.fact_extraction import _build_labels_prompt_section
+
+    labels_cfg = EntityLabelsConfig(
+        attributes=[
+            LabelGroup(
+                key="person",
+                type="map",
+                description="A person",
+                fields={
+                    "name": MapField(type="text", description="Full name"),
+                    "department": MapField(
+                        type="value",
+                        description="Department",
+                        values=[LabelValue(value="eng"), LabelValue(value="sales")],
+                    ),
+                    "skills": MapField(
+                        type="multi-values",
+                        description="Skills list",
+                        values=[LabelValue(value="python"), LabelValue(value="go")],
+                    ),
+                    "address": MapField(
+                        type="map",
+                        description="Home address",
+                        fields={"city": MapField(type="text")},
+                    ),
+                },
+            ),
+        ]
+    )
+    result = _build_labels_prompt_section(labels_cfg)
+    assert "name (text)" in result
+    assert "one of: eng, sales" in result
+    assert "multi-values: python, go" in result
+    assert "address (object)" in result
+    assert "city (text)" in result
+
+
+def test_duplicate_entity_strings_deduplicated():
+    """Same entity string from multiple nested objects is only added once."""
+    from hindsight_api.engine.retain.fact_extraction import Entity, _extract_map_entities
+
+    fields = {
+        "name": MapField(type="text"),
+    }
+    # Two entities with the same name
+    validated: list[Entity] = []
+    existing: set[str] = set()
+    _extract_map_entities({"name": "Alice"}, fields, "person:", validated, existing)
+    _extract_map_entities({"name": "Alice"}, fields, "person:", validated, existing)
+
+    texts = [e.text for e in validated]
+    assert texts == ["person:name:Alice"]  # only once

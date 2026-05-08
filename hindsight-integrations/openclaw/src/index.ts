@@ -99,7 +99,13 @@ export interface BankScopedClient {
     },
     timeoutMs?: number
   ): Promise<RecallResponse>;
-  setMission(mission: string): Promise<void>;
+  setMissions(opts: BankMissionsUpdate): Promise<void>;
+}
+
+export interface BankMissionsUpdate {
+  reflectMission?: string;
+  retainMission?: string;
+  observationsMission?: string;
 }
 
 function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
@@ -135,13 +141,76 @@ function scopeClient(c: HindsightClient, bankId: string): BankScopedClient {
         ),
       ]);
     },
-    async setMission(mission) {
-      // createBank upserts the reflect mission. openclaw's old setBankMission
-      // went through a dedicated PUT endpoint; this call lands on the same
-      // server-side handler via the non-deprecated path.
-      await c.createBank(bankId, { reflectMission: mission });
+    async setMissions(opts) {
+      // createBank upserts each mission column the request explicitly sets;
+      // unset fields are left untouched (server's get_config_updates() skips
+      // None values). This means a per-bank mission previously written via
+      // PATCH /banks/{id} survives unless the plugin is configured with the
+      // matching bank* / retain* / observations* mission.
+      await c.createBank(bankId, {
+        reflectMission: opts.reflectMission,
+        retainMission: opts.retainMission,
+        observationsMission: opts.observationsMission,
+      });
     },
   };
+}
+
+/**
+ * Stamp configured missions onto a bank exactly once per process lifetime.
+ * No-op if no mission fields are set in plugin config — this is what lets
+ * users manage per-bank missions out-of-band without the plugin clobbering
+ * them on every gateway restart.
+ */
+async function applyConfiguredMissions(
+  scoped: BankScopedClient,
+  config: PluginConfig
+): Promise<void> {
+  const missions: BankMissionsUpdate = {};
+  if (typeof config.bankMission === "string" && config.bankMission.length > 0) {
+    missions.reflectMission = config.bankMission;
+  }
+  if (typeof config.retainMission === "string" && config.retainMission.length > 0) {
+    missions.retainMission = config.retainMission;
+  }
+  if (typeof config.observationsMission === "string" && config.observationsMission.length > 0) {
+    missions.observationsMission = config.observationsMission;
+  }
+  if (
+    missions.reflectMission === undefined &&
+    missions.retainMission === undefined &&
+    missions.observationsMission === undefined
+  ) {
+    return;
+  }
+  await scoped.setMissions(missions);
+}
+
+/**
+ * Format a single perf line for the `debugPerfTiming` flag. Pure function so
+ * the formatting can be unit-tested without standing up the full hook pipeline.
+ * Caller is responsible for stringifying durations with the `ms` suffix —
+ * counts and identifiers are rendered as-is.
+ */
+export function formatHookPerf(
+  hook: string,
+  hookTotalMs: number,
+  fields: Record<string, string | number | undefined>
+): string {
+  const parts = [`hook_total=${hookTotalMs}ms`];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === undefined) continue;
+    parts.push(`${k}=${v}`);
+  }
+  return `perf: ${hook} ${parts.join(" ")}`;
+}
+
+function hasConfiguredMissions(config: PluginConfig): boolean {
+  return (
+    (typeof config.bankMission === "string" && config.bankMission.length > 0) ||
+    (typeof config.retainMission === "string" && config.retainMission.length > 0) ||
+    (typeof config.observationsMission === "string" && config.observationsMission.length > 0)
+  );
 }
 
 /**
@@ -295,14 +364,14 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
     banksWithMissionSet.clear();
     client = new HindsightClient(clientOptions);
 
-    if (config.bankMission && usesStaticBank(config)) {
+    if (hasConfiguredMissions(config) && usesStaticBank(config)) {
       const bankId = getStaticBankId(config);
       try {
-        await scopeClient(client, bankId).setMission(config.bankMission);
+        await applyConfiguredMissions(scopeClient(client, bankId), config);
         banksWithMissionSet.add(bankId);
       } catch (err) {
         log.warn(
-          `could not set bank mission for ${bankId}: ${err instanceof Error ? err.message : err}`
+          `could not set bank missions for ${bankId}: ${err instanceof Error ? err.message : err}`
         );
       }
     }
@@ -368,15 +437,15 @@ if (typeof global !== "undefined") {
       const bankId = usesStaticBank(config) ? getStaticBankId(config) : deriveBankId(ctx, config);
       const scoped = scopeClient(client, bankId);
 
-      // Set bank mission on first use of this bank (if configured).
-      if (config.bankMission && !banksWithMissionSet.has(bankId)) {
+      // Stamp configured missions onto this bank on first use.
+      if (hasConfiguredMissions(config) && !banksWithMissionSet.has(bankId)) {
         try {
-          await scoped.setMission(config.bankMission);
+          await applyConfiguredMissions(scoped, config);
           banksWithMissionSet.add(bankId);
-          debug(`[Hindsight] Set mission for new bank: ${bankId}`);
+          debug(`[Hindsight] Set missions for new bank: ${bankId}`);
         } catch (error) {
-          // Log but don't fail - bank mission is not critical
-          log.warn(`could not set bank mission for ${bankId}: ${error}`);
+          // Log but don't fail - bank missions are not critical
+          log.warn(`could not set bank missions for ${bankId}: ${error}`);
         }
       }
 
@@ -435,7 +504,7 @@ function getStaticBankId(pluginConfig: PluginConfig): string {
 /**
  * Strip plugin-injected memory tags from content to prevent retain feedback loop.
  * Removes <hindsight_memories> and <relevant_memories> blocks that were injected
- * during before_agent_start so they don't get re-stored into the memory bank.
+ * during before_prompt_build so they don't get re-stored into the memory bank.
  */
 export function stripMemoryTags(content: string): string {
   content = content.replace(/<hindsight_memories>[\s\S]*?<\/hindsight_memories>/g, "");
@@ -817,7 +886,7 @@ function isRetryableIdentitySkipReason(reason: IdentitySkipReason | undefined): 
  * flooding the log on every turn.
  */
 function logSkipOnce(
-  operation: "recall" | "retain" | "dispatch" | "agent_start",
+  operation: "recall" | "retain" | "dispatch",
   sessionKey: string | undefined,
   reason: IdentitySkipReason
 ): void {
@@ -1318,13 +1387,25 @@ export function normalizeRetainTags(value: unknown): string[] {
   return normalized;
 }
 
-function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
+export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
   const config = api.config.plugins?.entries?.["hindsight-openclaw"]?.config || {};
-  const defaultMission =
-    "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance.";
 
+  // No default fallback for missions: if the user doesn't set one, the plugin
+  // does not stamp anything. This lets per-bank missions written via the API
+  // (PATCH /banks/{id}) survive gateway restarts. (#1270)
   return {
-    bankMission: config.bankMission || defaultMission,
+    bankMission:
+      typeof config.bankMission === "string" && config.bankMission.length > 0
+        ? config.bankMission
+        : undefined,
+    retainMission:
+      typeof config.retainMission === "string" && config.retainMission.length > 0
+        ? config.retainMission
+        : undefined,
+    observationsMission:
+      typeof config.observationsMission === "string" && config.observationsMission.length > 0
+        ? config.observationsMission
+        : undefined,
     embedPort: config.embedPort || 0,
     daemonIdleTimeout: config.daemonIdleTimeout !== undefined ? config.daemonIdleTimeout : 0,
     embedVersion: config.embedVersion || "latest",
@@ -1409,6 +1490,20 @@ function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       : [],
     skipStatelessSessions: config.skipStatelessSessions !== false,
     debug: config.debug ?? false,
+    debugPerfTiming: config.debugPerfTiming === true,
+    // Retain queue: kept off the strict whitelist before — user values were
+    // silently dropped before queue init read them. (#1443)
+    retainQueuePath:
+      typeof config.retainQueuePath === "string" && config.retainQueuePath.trim().length > 0
+        ? config.retainQueuePath
+        : undefined,
+    retainQueueMaxAgeMs:
+      typeof config.retainQueueMaxAgeMs === "number" ? config.retainQueueMaxAgeMs : undefined,
+    retainQueueFlushIntervalMs:
+      typeof config.retainQueueFlushIntervalMs === "number" && config.retainQueueFlushIntervalMs > 0
+        ? config.retainQueueFlushIntervalMs
+        : undefined,
+    enableKnowledgeTools: config.enableKnowledgeTools === true,
   };
 }
 
@@ -1563,16 +1658,16 @@ export default function (api: MoltbotPluginAPI) {
               const defaultBankId = deriveBankId(undefined, pluginConfig);
               debug(`[Hindsight] Default bank: ${defaultBankId}`);
 
-              // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
-              // For now, set it on the static default bank only.
-              if (pluginConfig.bankMission && usesStaticBank(pluginConfig)) {
-                debug(`[Hindsight] Setting bank mission...`);
+              // Note: Missions are stamped per-bank when dynamic bank IDs are
+              // enabled. For static banks, stamp once here on init.
+              if (hasConfiguredMissions(pluginConfig) && usesStaticBank(pluginConfig)) {
+                debug(`[Hindsight] Setting bank missions...`);
                 try {
-                  await scopeClient(client, defaultBankId).setMission(pluginConfig.bankMission);
+                  await applyConfiguredMissions(scopeClient(client, defaultBankId), pluginConfig);
                   banksWithMissionSet.add(defaultBankId);
                 } catch (err) {
                   log.warn(
-                    `could not set bank mission for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
+                    `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
                   );
                 }
               }
@@ -1618,16 +1713,16 @@ export default function (api: MoltbotPluginAPI) {
               const defaultBankId = deriveBankId(undefined, pluginConfig);
               debug(`[Hindsight] Default bank: ${defaultBankId}`);
 
-              // Note: Bank mission will be set per-bank when dynamic bank IDs are enabled
-              // For now, set it on the static default bank only.
-              if (pluginConfig.bankMission && usesStaticBank(pluginConfig)) {
-                debug(`[Hindsight] Setting bank mission...`);
+              // Note: Missions are stamped per-bank when dynamic bank IDs are
+              // enabled. For static banks, stamp once here on init.
+              if (hasConfiguredMissions(pluginConfig) && usesStaticBank(pluginConfig)) {
+                debug(`[Hindsight] Setting bank missions...`);
                 try {
-                  await scopeClient(client, defaultBankId).setMission(pluginConfig.bankMission);
+                  await applyConfiguredMissions(scopeClient(client, defaultBankId), pluginConfig);
                   banksWithMissionSet.add(defaultBankId);
                 } catch (err) {
                   log.warn(
-                    `could not set bank mission for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
+                    `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
                   );
                 }
               }
@@ -1715,13 +1810,16 @@ export default function (api: MoltbotPluginAPI) {
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
 
-            if (reinitPluginConfig.bankMission && usesStaticBank(reinitPluginConfig)) {
+            if (hasConfiguredMissions(reinitPluginConfig) && usesStaticBank(reinitPluginConfig)) {
               try {
-                await scopeClient(client, defaultBankId).setMission(reinitPluginConfig.bankMission);
+                await applyConfiguredMissions(
+                  scopeClient(client, defaultBankId),
+                  reinitPluginConfig
+                );
                 banksWithMissionSet.add(defaultBankId);
               } catch (err) {
                 log.warn(
-                  `could not set bank mission for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
+                  `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
                 );
               }
             }
@@ -1754,13 +1852,16 @@ export default function (api: MoltbotPluginAPI) {
             client = new HindsightClient(clientOptions);
             const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
 
-            if (reinitPluginConfig.bankMission && usesStaticBank(reinitPluginConfig)) {
+            if (hasConfiguredMissions(reinitPluginConfig) && usesStaticBank(reinitPluginConfig)) {
               try {
-                await scopeClient(client, defaultBankId).setMission(reinitPluginConfig.bankMission);
+                await applyConfiguredMissions(
+                  scopeClient(client, defaultBankId),
+                  reinitPluginConfig
+                );
                 banksWithMissionSet.add(defaultBankId);
               } catch (err) {
                 log.warn(
-                  `could not set bank mission for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
+                  `could not set bank missions for ${defaultBankId}: ${err instanceof Error ? err.message : err}`
                 );
               }
             }
@@ -1868,37 +1969,21 @@ export default function (api: MoltbotPluginAPI) {
       }
     });
 
-    api.on("before_agent_start", async (event: any, ctx?: PluginHookAgentContext) => {
-      try {
-        const sessionKey =
-          ctx?.sessionKey ?? (typeof event?.sessionKey === "string" ? event.sessionKey : undefined);
-        const { resolvedCtx, skipReason } = resolveAndCacheIdentity({
-          sessionKey,
-          ctx,
-          pluginConfig,
-        });
+    // No `before_agent_start` registration: the callback used to call
+    // `resolveAndCacheIdentity()` and emit a debug log, but `before_dispatch`
+    // already populates the identity cache earlier in the inbound path,
+    // `before_prompt_build` re-resolves before recall (and can infer
+    // `senderId` from prompt content when ctx is missing it), and `agent_end`
+    // re-resolves before retain. Subscribing here was duplicate work on the
+    // hot path. (#1354)
 
-        if (sessionKey && skipReason) {
-          debug(
-            `[Hindsight] before_agent_start skipping session ${sessionKey}: ${formatIdentitySkipReason(skipReason)}`
-          );
-          logSkipOnce("agent_start", sessionKey, skipReason);
-          return;
-        }
-        if (!resolvedCtx) {
-          return;
-        }
-        const bankId = deriveBankId(resolvedCtx, pluginConfig);
-        debug(
-          `[Hindsight] before_agent_start - bank: ${bankId}, channel: ${resolvedCtx.messageProvider}/${resolvedCtx.channelId}`
-        );
-      } catch (error) {
-        log.warn(`before_agent_start identity resolution error: ${error}`);
-      }
-    });
     // Auto-recall: Inject relevant memories before agent processes the message
     // Hook signature: (event, ctx) where event has {prompt, messages?} and ctx has agent context
     api.on("before_prompt_build", async (event: any, ctx?: PluginHookAgentContext) => {
+      // Optional perf instrumentation (#1406). Captured here at hook entry so
+      // the early-return paths below don't influence the measurement of slow
+      // recall calls — perf lines are only emitted on the recall path.
+      const perfHookStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
       try {
         // Check if this provider is excluded
         if (ctx?.messageProvider && pluginConfig.excludeProviders?.includes(ctx.messageProvider)) {
@@ -2060,9 +2145,20 @@ export default function (api: MoltbotPluginAPI) {
           void recallPromise.catch(() => {}).finally(() => inflightRecalls.delete(recallKey));
         }
 
+        const recallStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
         const response = await recallPromise;
+        const recallElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - recallStart : 0;
 
         if (!response.results || response.results.length === 0) {
+          if (pluginConfig.debugPerfTiming) {
+            log.info(
+              formatHookPerf("before_prompt_build", Date.now() - perfHookStart, {
+                recall_main: `${recallElapsedMs}ms`,
+                source: existing ? "reused" : "fresh",
+                results: 0,
+              })
+            );
+          }
           debug("[Hindsight] No memories found for auto-recall");
           return;
         }
@@ -2092,6 +2188,16 @@ ${memoriesFormatted}
         debug(`[Hindsight] Auto-recall: Injecting ${results.length} memories from bank ${bankId}`);
         log.info(`injecting ${results.length} memories into context (bank: ${bankId})`);
         log.trackRecall(bankId, results.length);
+
+        if (pluginConfig.debugPerfTiming) {
+          log.info(
+            formatHookPerf("before_prompt_build", Date.now() - perfHookStart, {
+              recall_main: `${recallElapsedMs}ms`,
+              source: existing ? "reused" : "fresh",
+              results: results.length,
+            })
+          );
+        }
 
         // Inject recalled memories. Position is configurable to preserve prompt caching
         // when agents have large static system prompts.
@@ -2123,6 +2229,9 @@ ${memoriesFormatted}
 
     // Hook signature: (event, ctx) where event has {messages, success, error?, durationMs?}
     api.on("agent_end", async (event: any, ctx?: PluginHookAgentContext) => {
+      // Optional perf instrumentation (#1406). Only emitted when an actual
+      // retain RPC fires; the many early-return skip paths are not measured.
+      const perfHookStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
       try {
         // Avoid cross-session contamination: only use context carried by this event.
         const eventSessionKey =
@@ -2287,7 +2396,12 @@ ${memoriesFormatted}
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
-          retainFullWindow
+          retainFullWindow,
+          {
+            senderId: resolvedCtxForRetain?.senderId,
+            channelId: effectiveCtxForRetain?.channelId,
+            provider: effectiveCtxForRetain?.messageProvider,
+          }
         );
         if (!retention) {
           debug("[Hindsight Hook] No messages to retain (filtered/short/no-user)");
@@ -2338,8 +2452,13 @@ ${memoriesFormatted}
           `[Hindsight] Retaining to bank ${bankId}, document: ${retainRequest.documentId}, chars: ${transcript.length}\n---\n${transcript.substring(0, 500)}${transcript.length > 500 ? "\n...(truncated)" : ""}\n---`
         );
 
+        const retainStart = pluginConfig.debugPerfTiming ? Date.now() : 0;
+        let retainElapsedMs = 0;
+        let retainOutcome: "ok" | "queued" | "error" = "error";
         try {
           await client.retain(retainRequest);
+          retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
+          retainOutcome = "ok";
           log.trackRetain(bankId, messageCount);
           debug(
             `[Hindsight] Retained ${messageCount} messages to bank ${bankId} for session ${retainRequest.documentId}`
@@ -2350,9 +2469,11 @@ ${memoriesFormatted}
             flushRetainQueue().catch(() => {});
           }
         } catch (retainError) {
+          retainElapsedMs = pluginConfig.debugPerfTiming ? Date.now() - retainStart : 0;
           // Queue the failed retain for later delivery (external API mode only)
           if (retainQueue) {
             retainQueue.enqueue(bankId, retainRequest, retainRequest.metadata);
+            retainOutcome = "queued";
             const pending = retainQueue.size();
             log.warn(
               `API unreachable — retain queued (${pending} pending, bank: ${bankId}): ${retainError instanceof Error ? retainError.message : retainError}`
@@ -2360,6 +2481,17 @@ ${memoriesFormatted}
           } else {
             log.error("error retaining messages", retainError);
           }
+        }
+
+        if (pluginConfig.debugPerfTiming) {
+          log.info(
+            formatHookPerf("agent_end", Date.now() - perfHookStart, {
+              retain: `${retainElapsedMs}ms`,
+              outcome: retainOutcome,
+              bank: bankId,
+              messages: messageCount,
+            })
+          );
         }
       } catch (error) {
         log.error("error retaining messages", error);
@@ -2509,10 +2641,36 @@ export function buildRetainRequest(
   };
 }
 
+export interface RetentionSessionContext {
+  senderId?: string;
+  channelId?: string;
+  provider?: string;
+}
+
+/**
+ * Build a session-context block describing who is speaking, on which channel,
+ * via which provider. Prepending this to retained transcripts lets similarity
+ * search distinguish memories by speaker without requiring per-user banks
+ * (`dynamicBankGranularity: ["agent", "user"]`). Returns null when no usable
+ * fields are available.
+ */
+export function formatRetentionSessionContext(
+  ctx: RetentionSessionContext | null | undefined
+): string | null {
+  if (!ctx) return null;
+  const lines: string[] = [];
+  if (ctx.senderId) lines.push(`sender: ${ctx.senderId}`);
+  if (ctx.channelId) lines.push(`channel: ${ctx.channelId}`);
+  if (ctx.provider) lines.push(`provider: ${ctx.provider}`);
+  if (lines.length === 0) return null;
+  return ["[context]", ...lines, "[/context]"].join("\n");
+}
+
 export function prepareRetentionTranscript(
   messages: any[],
   pluginConfig: PluginConfig,
-  retainFullWindow = false
+  retainFullWindow = false,
+  sessionContext?: RetentionSessionContext | null
 ): { transcript: string; messageCount: number } | null {
   if (!messages || messages.length === 0) {
     return null;
@@ -2539,13 +2697,22 @@ export function prepareRetentionTranscript(
 
   const format = pluginConfig.retainFormat ?? "json";
   const includeToolCalls = format === "json" && pluginConfig.retainToolCalls !== false;
+  const contextHeader =
+    pluginConfig.includeSenderContext === false
+      ? null
+      : formatRetentionSessionContext(sessionContext);
 
   if (includeToolCalls) {
     const structured = buildAnthropicStructuredMessages(targetMessages, pluginConfig);
     if (structured.length === 0) return null;
-    const transcript = JSON.stringify(structured);
+    // Prepend session context as a system-role message so similarity search
+    // and downstream LLM consumers can attribute the conversation to a speaker.
+    const withContext = contextHeader
+      ? [{ role: "system", content: contextHeader }, ...structured]
+      : structured;
+    const transcript = JSON.stringify(withContext);
     if (!transcript.trim() || transcript.length < 10) return null;
-    return { transcript, messageCount: structured.length };
+    return { transcript, messageCount: withContext.length };
   }
 
   // Role filtering (text-only path)
@@ -2583,16 +2750,25 @@ export function prepareRetentionTranscript(
 
   if (normalized.length === 0) return null;
 
-  const transcript =
-    format === "text"
-      ? normalized
-          .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
-          .join("\n\n")
-      : JSON.stringify(normalized);
+  let transcript: string;
+  let messageCount: number;
+  if (format === "text") {
+    const body = normalized
+      .map(({ role, content }) => `[role: ${role}]\n${content}\n[${role}:end]`)
+      .join("\n\n");
+    transcript = contextHeader ? `${contextHeader}\n\n${body}` : body;
+    messageCount = normalized.length;
+  } else {
+    const withContext = contextHeader
+      ? [{ role: "system", content: contextHeader }, ...normalized]
+      : normalized;
+    transcript = JSON.stringify(withContext);
+    messageCount = withContext.length;
+  }
 
   if (!transcript.trim() || transcript.length < 10) return null;
 
-  return { transcript, messageCount: normalized.length };
+  return { transcript, messageCount };
 }
 
 // MCP tool name suffixes that are operational (recall/retain/search/CRUD) and

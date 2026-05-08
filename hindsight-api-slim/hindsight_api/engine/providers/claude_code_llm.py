@@ -12,6 +12,8 @@ import logging
 import time
 from typing import Any
 
+from pydantic import ValidationError
+
 from hindsight_api.engine.llm_interface import LLMInterface, OutputTooLongError
 from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult, TokenUsage
 from hindsight_api.metrics import get_metrics_collector
@@ -277,6 +279,12 @@ class ClaudeCodeLLM(LLMInterface):
                     return result, token_usage
 
                 return result
+
+            except ValidationError:
+                # Pydantic schema validation failure — retrying with the same
+                # input won't produce a different schema.  Raise immediately
+                # instead of burning quota on identical calls (#1412).
+                raise
 
             except Exception as e:
                 last_exception = e

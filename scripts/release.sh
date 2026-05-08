@@ -77,6 +77,27 @@ for package in "${PYTHON_PACKAGES[@]}"; do
     fi
 done
 
+# Re-pin meta-package -> slim/api dependencies. The meta packages are pure
+# shims and must pull the matching slim/api version; otherwise `pip install -U`
+# leaves an older slim in place and the server reports the stale __version__.
+META_PIN_FILES=("hindsight-api/pyproject.toml" "hindsight-all/pyproject.toml" "hindsight-all-slim/pyproject.toml")
+for pin_file in "${META_PIN_FILES[@]}"; do
+    if [ -f "$pin_file" ]; then
+        print_info "Repinning hindsight-api-slim in $pin_file"
+        sed -i.bak -E "s/(\"hindsight-api-slim(\[[^]]+\])?)==[0-9]+\.[0-9]+\.[0-9]+\"/\1==$VERSION\"/g" "$pin_file"
+        rm "${pin_file}.bak"
+    else
+        print_warn "File $pin_file not found, skipping"
+    fi
+done
+
+DEV_PYPROJECT="hindsight-dev/pyproject.toml"
+if [ -f "$DEV_PYPROJECT" ]; then
+    print_info "Repinning hindsight-api in $DEV_PYPROJECT"
+    sed -i.bak -E "s/\"hindsight-api==[0-9]+\.[0-9]+\.[0-9]+\"/\"hindsight-api==$VERSION\"/" "$DEV_PYPROJECT"
+    rm "${DEV_PYPROJECT}.bak"
+fi
+
 # Update __version__ in Python __init__.py files
 PYTHON_INIT_FILES=(
     "hindsight-api-slim/hindsight_api/__init__.py"

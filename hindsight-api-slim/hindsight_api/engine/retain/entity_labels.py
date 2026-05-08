@@ -6,7 +6,7 @@ Defines a controlled vocabulary of key:value classification labels
 at retain time and stored as entities.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
@@ -18,15 +18,28 @@ class LabelValue(BaseModel):
     description: str = ""
 
 
+class MapField(BaseModel):
+    """A field within a map-type entity label group. Supports recursion via type='map'."""
+
+    type: Literal["text", "value", "multi-values", "map"] = "text"
+    description: str = ""
+    values: list[LabelValue] = []
+    fields: dict[str, "MapField"] = {}
+
+
+MapField.model_rebuild()
+
+
 class LabelGroup(BaseModel):
     """A label group (dimension) with its type and allowed values."""
 
     key: str
     description: str = ""
-    type: Literal["value", "multi-values", "text"] = "value"
+    type: Literal["value", "multi-values", "text", "map"] = "value"
     optional: bool = True
     tag: bool = False
     values: list[LabelValue] = []
+    fields: dict[str, MapField] = {}
 
 
 class EntityLabelsConfig(BaseModel):
@@ -91,6 +104,71 @@ def _migrate_label_group(raw: dict) -> dict:
     return patched
 
 
+def _build_map_fields_model(fields: dict[str, MapField], model_name: str) -> type[BaseModel] | None:
+    """
+    Build a dynamic Pydantic model for a set of map fields (recursive).
+
+    Each field becomes a typed Pydantic field based on its type:
+    - text         → str | None
+    - value        → Literal[...] | None
+    - multi-values → list[Literal[...]]
+    - map          → list[NestedModel] (recursive)
+
+    Returns:
+        Dynamic Pydantic model class, or None if no fields defined
+    """
+    if not fields:
+        return None
+    model_fields: dict[str, Any] = {}
+    for field_name, map_field in fields.items():
+        description = map_field.description or field_name
+
+        if map_field.type == "map":
+            nested = _build_map_fields_model(map_field.fields, model_name + field_name.capitalize())
+            if nested is not None:
+                model_fields[field_name] = (
+                    list[nested],  # type: ignore[valid-type]
+                    Field(default_factory=list, description=description),
+                )
+        elif map_field.type == "text":
+            model_fields[field_name] = (str | None, Field(default=None, description=description))
+        else:
+            # value / multi-values — enum-constrained
+            if not map_field.values:
+                model_fields[field_name] = (str | None, Field(default=None, description=description))
+                continue
+            values = tuple(v.value for v in map_field.values if v.value)
+            if not values:
+                model_fields[field_name] = (str | None, Field(default=None, description=description))
+                continue
+            literal_type = Literal[values]  # type: ignore[valid-type]
+            if map_field.type == "multi-values":
+                model_fields[field_name] = (
+                    list[literal_type],  # type: ignore[valid-type]
+                    Field(default_factory=list, description=description),
+                )
+            else:
+                model_fields[field_name] = (
+                    literal_type | None,  # type: ignore[valid-type]
+                    Field(default=None, description=description),
+                )
+
+    if not model_fields:
+        return None
+    return create_model(model_name, **model_fields)
+
+
+def _build_map_entity_model(group: LabelGroup) -> type[BaseModel] | None:
+    """
+    Build a dynamic Pydantic model for a map-type entity label group.
+
+    Delegates to ``_build_map_fields_model`` which handles recursion.
+    """
+    # Capitalize group key for the model name (e.g., "person" → "Person")
+    model_name = group.key.capitalize() + "Entity"
+    return _build_map_fields_model(group.fields, model_name)
+
+
 def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None:
     """
     Build a dynamic Pydantic model for structured label extraction.
@@ -100,6 +178,7 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
     - type="value",   optional=True      → Literal["v1","v2"] | None
     - type="value",   optional=False     → Literal["v1","v2"]  (required)
     - type="multi-values"                → list[Literal["v1","v2"]]
+    - type="map"                         → list[MapModel]  (structured entity)
 
     Args:
         labels_cfg: Parsed EntityLabelsConfig
@@ -113,7 +192,14 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
             continue
         description = group.description or group.key
 
-        if group.type == "text":
+        if group.type == "map":
+            map_model = _build_map_entity_model(group)
+            if map_model is not None:
+                fields[group.key] = (
+                    list[map_model],  # type: ignore[valid-type]
+                    Field(default_factory=list, description=description),
+                )
+        elif group.type == "text":
             # Free-form: any string value accepted, always optional
             fields[group.key] = (str | None, Field(default=None, description=description))
         else:
@@ -147,18 +233,35 @@ def build_labels_model(labels_cfg: EntityLabelsConfig) -> type[BaseModel] | None
     return create_model("Labels", **fields)
 
 
+def _is_map_label_entity(text_lower: str, prefix: str, fields: dict[str, MapField]) -> bool:
+    """Recursively check if text matches a map field path (e.g. 'person:address:city:...')."""
+    for field_name, map_field in fields.items():
+        field_prefix = f"{prefix}{field_name.lower()}:"
+        if map_field.type == "map" and map_field.fields:
+            if _is_map_label_entity(text_lower, field_prefix, map_field.fields):
+                return True
+        elif text_lower.startswith(field_prefix):
+            return True
+    return False
+
+
 def is_label_entity(text: str, labels_cfg: EntityLabelsConfig, labels_lookup: set[str]) -> bool:
     """
     Return True if entity text belongs to any configured label group.
 
     For enum groups: checks the pre-built lookup set.
     For text groups: checks that the text starts with a known key prefix.
+    For map groups: recursively checks ``key:field:...:value`` patterns.
     """
     if text.lower() in labels_lookup:
         return True
     for group in labels_cfg.attributes:
         if group.type == "text" and group.key and text.lower().startswith(f"{group.key.lower()}:"):
             return True
+        if group.type == "map" and group.key and group.fields:
+            prefix = f"{group.key.lower()}:"
+            if _is_map_label_entity(text.lower(), prefix, group.fields):
+                return True
     return False
 
 
@@ -186,8 +289,8 @@ def build_labels_lookup(labels_cfg: EntityLabelsConfig | list | None) -> set[str
 
     valid = set()
     for group in labels_cfg.attributes:
-        if group.type == "text":
-            continue  # No fixed vocabulary — all values accepted in post-processing
+        if group.type in ("text", "map"):
+            continue  # text: no fixed vocabulary; map: uses three-level key:field:value strings
         for v in group.values:
             if group.key and v.value:
                 valid.add(f"{group.key}:{v.value}".lower())

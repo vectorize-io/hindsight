@@ -682,6 +682,14 @@ async def retain_batch(
         all_pre_chunks.extend(content_chunks)
         chunk_to_content.extend([content_idx] * len(content_chunks))
 
+    # Memory: after chunking, the original content bodies in RetainContent are
+    # no longer needed (all_pre_chunks holds the working set). Clear them so
+    # Python can reclaim the (potentially multi-MB) strings.
+    # Note: contents_dicts["content"] is still needed briefly for hash computation
+    # inside _streaming_retain_batch, but gets cleared there after use.
+    for content in contents:
+        content.content = ""
+
     total_pre_chunks = len(all_pre_chunks)
     num_batches = (total_pre_chunks + chunk_batch_size - 1) // chunk_batch_size if total_pre_chunks > 0 else 1
     log_buffer.append(
@@ -884,9 +892,15 @@ async def _streaming_retain_batch(
     # the producer can skip already-extracted chunks to avoid duplicate work.
     existing_chunk_hashes: set[str] = set()
     combined_content = "\n".join([c.get("content", "") for c in contents_dicts])
+    # Memory: contents_dicts content strings are now captured in combined_content.
+    # Clear them from the dicts to release the per-item copies (can be multi-MB each).
+    for d in contents_dicts:
+        d.pop("content", None)
     # Sanitize before hashing to match what handle_document_tracking stores
     sanitized_content = fact_extraction._sanitize_text(combined_content) or ""
     new_content_hash = hashlib.sha256(sanitized_content.encode()).hexdigest()
+    # Memory: sanitized_content is only needed for the hash; free it immediately.
+    sanitized_content = ""
     is_recovery = False
 
     try:
@@ -971,12 +985,17 @@ async def _streaming_retain_batch(
                 schema,
             )
             await chunk_queue.put((global_idx, content, extracted, processed, chunk_meta, usage))
+            # Memory: release the chunk text from the shared list now that it's
+            # been extracted and queued. The queued RetainContent holds its own copy.
+            all_pre_chunks[global_idx] = ""
 
         tasks: list[asyncio.Task] = []
         skipped_total = 0
         for i, chunk_text in enumerate(all_pre_chunks):
             chunk_hash = chunk_storage.compute_chunk_hash(chunk_text)
             if chunk_hash in existing_chunk_hashes:
+                # Memory: skipped chunks aren't needed either.
+                all_pre_chunks[i] = ""
                 skipped_total += 1
                 continue
             tasks.append(asyncio.create_task(_extract_one(i, chunk_text)))
@@ -1037,6 +1056,9 @@ async def _streaming_retain_batch(
         is_last: bool,
     ) -> None:
         """Run Phase 1 + Phase 2 + Phase 3 for a batch of pre-extracted chunks."""
+        # Allow clearing combined_content after the no-facts skip path runs
+        # doc tracking — see the assignment further below.
+        nonlocal combined_content
         # Combine results from individual chunk extractions
         batch_contents: list[RetainContent] = []
         batch_extracted: list = []
@@ -1108,6 +1130,10 @@ async def _streaming_retain_batch(
                                 ops=pool.ops,
                             )
                         doc_tracking_done[0] = True
+                        # Memory: combined_content has been persisted; release
+                        # it now so the rest of the consumer loop doesn't pin
+                        # a multi-MB string. Nothing reads it after tracking.
+                        combined_content = ""
                         log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (0 facts in first batch)")
             log_buffer.append(
                 f"[streaming] Consumer batch {consumer_batch_idx + 1}: "
@@ -1121,6 +1147,9 @@ async def _streaming_retain_batch(
         )
 
         async def _run_mini_batch_db_work() -> None:
+            # Allow clearing combined_content after the doc-tracking call so
+            # subsequent batches don't carry the per-document text in memory.
+            nonlocal combined_content
             entity_resolver.discard_pending_stats()
             mb_start = time.time()
 
@@ -1212,6 +1241,10 @@ async def _streaming_retain_batch(
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
                         doc_tracking_done[0] = True
+                        # Memory: combined_content is no longer needed after
+                        # this first-batch tracking call. Release it so the
+                        # remaining consumer batches don't pin the string.
+                        combined_content = ""
                     else:
                         # --- Later batches: verify we still own the document ---
                         # If another request took over (cascade-deleted our doc and
@@ -1292,6 +1325,14 @@ async def _streaming_retain_batch(
                 await _run_mini_batch_db_work()
         else:
             await _run_mini_batch_db_work()
+
+        # Memory: after DB write, clear the batch-local lists that hold extracted
+        # facts and embedding vectors. These can be large (384 floats per fact ×
+        # thousands of facts) and are no longer needed after commit.
+        batch_contents.clear()
+        batch_extracted.clear()
+        batch_processed.clear()
+        batch_chunk_meta.clear()
 
     # ---------------------------------------------------------------------------
     # Check if facts are already committed (recovery from previous crash).
@@ -1378,6 +1419,9 @@ async def _streaming_retain_batch(
                             ops=pool.ops,
                         )
                     doc_tracking_done[0] = True
+                    # Memory: combined_content has been persisted and won't be
+                    # read again — release the per-document text now.
+                    combined_content = ""
                     log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (no facts extracted)")
 
         # Mark facts as committed in operation metadata (crash recovery checkpoint)

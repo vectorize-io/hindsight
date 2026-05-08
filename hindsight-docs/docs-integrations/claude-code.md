@@ -6,7 +6,7 @@ description: "Add long-term memory to Claude Code with Hindsight. Automatically 
 
 # Claude Code
 
-Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations and intelligently recalls relevant context — a complete port of [`hindsight-openclaw`](./openclaw) adapted to Claude Code's hook-based plugin architecture.
+Biomimetic long-term memory for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [Hindsight](https://vectorize.io/hindsight). Automatically captures conversations, recalls relevant context, and exposes knowledge tools and a subagent-creation skill so Claude can read and write its own memory.
 
 [View Changelog →](/changelog/integrations/claude-code)
 
@@ -41,21 +41,26 @@ That's it! The plugin will automatically start capturing and recalling memories.
 
 - **Auto-recall** — on every user prompt, queries Hindsight for relevant memories and injects them as context (invisible to the chat transcript, visible to Claude)
 - **Auto-retain** — after every response (or every N turns), extracts and retains conversation content to Hindsight for long-term storage
+- **Knowledge tools** — Claude can read, write, and search its own memory via MCP tools (knowledge pages, recall, ingest)
+- **Subagent skill** — `/hindsight-memory:create-agent` scaffolds a subagent backed by an isolated memory bank
+- **Dynamic bank IDs** — per-agent, per-project, or per-session memory isolation (so each subagent gets its own brain)
 - **Daemon management** — can auto-start/stop `hindsight-embed` locally or connect to an external Hindsight server
-- **Dynamic bank IDs** — supports per-agent, per-project, or per-session memory isolation
 - **Channel-agnostic** — works with Claude Code Channels (Telegram, Discord, Slack) or interactive sessions
-- **Zero dependencies** — pure Python stdlib, no pip install required
 
 ## Architecture
 
-The plugin uses all four Claude Code hook events:
+The plugin combines hooks (for automatic recall/retain) with an MCP server (for explicit knowledge tools) and a skill (for subagent creation):
 
-| Hook | Event | Purpose |
-|------|-------|---------|
-| `session_start.py` | `SessionStart` | Health check — verify Hindsight is reachable |
-| `recall.py` | `UserPromptSubmit` | **Auto-recall** — query memories, inject as `additionalContext` |
-| `retain.py` | `Stop` | **Auto-retain** — extract transcript, POST to Hindsight (async) |
-| `session_end.py` | `SessionEnd` | Cleanup — stop auto-managed daemon if started |
+| Component | Trigger | Purpose |
+|-----------|---------|---------|
+| `session_start.py` | `SessionStart` hook | Health check — verify Hindsight is reachable |
+| `recall.py` | `UserPromptSubmit` hook | **Auto-recall** — query memories, inject as `additionalContext` |
+| `retain.py` | `Stop` hook | **Auto-retain** — extract transcript, POST to Hindsight (async) |
+| `session_end.py` | `SessionEnd` hook | Cleanup — stop auto-managed daemon if started |
+| `mcp_server.py` | MCP server | Exposes `agent_knowledge_*` tools — list/get/create/update/delete pages, recall, ingest |
+| `create-agent` | Skill | Scaffolds a subagent file under `~/.claude/agents/` and seeds its bank |
+
+Python dependencies (`mcp`) are bootstrapped on first run into a private venv under `${CLAUDE_PLUGIN_DATA}/venv` — no global pip install, isolated to the plugin, survives plugin updates.
 
 ## Connection Modes
 
@@ -141,6 +146,27 @@ A **bank** is an isolated memory store — like a separate "brain." These settin
 | `dynamicBankGranularity` | — | `["agent", "project"]` | Which context fields to combine when building a dynamic bank ID. Available fields: `agent` (agent name), `project` (working directory), `session` (session ID), `channel` (channel ID), `user` (user ID). |
 | `bankIdPrefix` | — | `""` | A string prepended to all bank IDs — both static and dynamic. Useful for namespacing (e.g. `"prod"` or `"staging"`). |
 | `agentName` | `HINDSIGHT_AGENT_NAME` | `"claude-code"` | Name used for the `agent` field in dynamic bank ID derivation. |
+| `resolveWorktrees` | — | `true` | When deriving the `project` field, resolve git worktrees to the **main repository's basename** so that all worktrees of the same repo share one bank. Set to `false` to use the literal working directory basename instead (each worktree gets its own bank). |
+| `directoryBankMap` | — | `{}` | Explicit `{ "/path/to/dir": "bank-id" }` mapping. When the current working directory matches an entry, that bank is used directly — overrides both static and dynamic resolution. `bankIdPrefix` still applies on top. |
+
+#### Worktrees and explicit mapping
+
+By default, all git worktrees of the same repository share one bank. For example, if you keep a main checkout at `/home/me/myproject` and a worktree at `/home/me/myproject-wt1`, both resolve to `project = "myproject"` — so dynamic bank IDs like `claude-code::myproject` are stable across all worktrees. This avoids fragmenting memory across short-lived branches.
+
+If you want each worktree to have its own bank, set `"resolveWorktrees": false`.
+
+For full control, use `directoryBankMap` to pin specific directories to specific bank IDs:
+
+```json
+{
+  "directoryBankMap": {
+    "/home/me/work/client-a": "client-a-memories",
+    "/home/me/personal/blog": "blog"
+  }
+}
+```
+
+When `cwd` matches one of the keys, that bank is used immediately — no static or dynamic resolution runs. Directories not listed fall through to the normal logic.
 
 ---
 
@@ -179,6 +205,51 @@ Auto-retain runs after Claude responds. It extracts the conversation transcript 
 
 ---
 
+### Knowledge Tools
+
+The plugin runs an MCP server that exposes `agent_knowledge_*` tools, letting Claude explicitly read, write, and search its memory bank — as opposed to the hook-driven recall/retain which is fully automatic. None of the tools accept a `bank_id` parameter; the server resolves the active bank from the same config as the hooks, so tools and hooks always agree on which bank they touch.
+
+| Tool | Purpose |
+|------|---------|
+| `agent_knowledge_get_current_bank` | Reports the bank ID the current session is bound to. |
+| `agent_knowledge_list_pages` | Lists all knowledge pages (mental models) with IDs and names. |
+| `agent_knowledge_get_page` | Reads the full synthesized content of a specific page. |
+| `agent_knowledge_create_page` | Creates a new knowledge page with a `source_query` that re-synthesizes content after each consolidation. |
+| `agent_knowledge_update_page` | Updates a page's name or `source_query`. |
+| `agent_knowledge_delete_page` | Permanently deletes a knowledge page. |
+| `agent_knowledge_recall` | Searches across retained conversations and documents for specific facts. |
+| `agent_knowledge_ingest` | Uploads raw text content into the bank as a document. |
+| `agent_knowledge_ingest_file` | Reads a file from disk and ingests its full content. |
+
+| Setting | Env Var | Default | Description |
+|---------|---------|---------|-------------|
+| `enableKnowledgeTools` | `HINDSIGHT_ENABLE_KNOWLEDGE_TOOLS` | `false` | Master switch for the MCP knowledge tools. When `false`, the MCP server exits at startup and none of the `agent_knowledge_*` tools are exposed. |
+
+---
+
+### Subagents with Memory
+
+The `/hindsight-memory:create-agent` skill creates a Claude Code subagent backed by its own Hindsight bank. Each subagent's prompt instructs it to use the knowledge tools above for recall and ingestion, so Claude treats persistent memory as a first-class capability of that agent.
+
+Two modes:
+
+- **From a directory** — `/hindsight-memory:create-agent <name> from <path>` ingests every text file under `<path>` (`.md`, `.txt`, `.html`, `.json`, `.csv`, `.xml`), creates a starter set of knowledge pages, and writes the subagent file to `~/.claude/agents/<name>.md`. If the directory contains a `bank-template.json` listing exact `mental_models`, those are used verbatim instead of auto-generated.
+- **Interactive** — `/hindsight-memory:create-agent` (no arguments) prompts for the agent name and purpose, then writes the subagent file with no ingestion.
+
+For per-subagent memory isolation, enable dynamic bank IDs:
+
+```json
+{
+  "dynamicBankId": true,
+  "dynamicBankGranularity": ["agent", "project"],
+  "enableKnowledgeTools": true
+}
+```
+
+With `["agent", "project"]`, each subagent gets a unique bank per repository — `<agent-name>::<project-basename>`. Switch to `["agent"]` for a single bank per subagent across all projects, or `["agent", "session"]` for ephemeral per-session banks.
+
+---
+
 ### Debug
 
 | Setting | Env Var | Default | Description |
@@ -214,3 +285,5 @@ export HINDSIGHT_USER_ID="user-67890"
 **Daemon not starting**: Ensure an LLM API key is set (or use `HINDSIGHT_LLM_PROVIDER=claude-code`). Review daemon logs at `~/.hindsight/profiles/claude-code.log`.
 
 **High latency on recall**: The recall hook has a 12-second timeout. Use `recallBudget: "low"` or reduce `recallMaxTokens` for faster responses.
+
+**Knowledge tools missing from Claude**: Make sure `enableKnowledgeTools` is `true` in `~/.hindsight/claude-code.json` and restart Claude Code. The first launch after enabling them takes ~20–30 seconds to bootstrap the Python venv at `${CLAUDE_PLUGIN_DATA}/venv`; subsequent launches are instant.

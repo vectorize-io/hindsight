@@ -133,7 +133,7 @@ class LocalSTCrossEncoder(CrossEncoderModel):
                        Default: cross-encoder/ms-marco-MiniLM-L-6-v2
             max_concurrent: Maximum concurrent reranking calls (default: 2).
                            Higher values may cause CPU thrashing under load.
-            force_cpu: Force CPU mode (avoids MPS/XPC issues on macOS in daemon mode).
+            force_cpu: Force CPU mode for local inference.
                       Default: False
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models like jina-reranker-v2-base-multilingual.

@@ -34,6 +34,7 @@ import {
   ensurePluginConfig,
   isValidEnvVarName,
   loadConfig,
+  maskSecret,
   saveConfig,
   summarizeApi,
   summarizeCloud,
@@ -289,15 +290,44 @@ function assertNotCancelled<T>(value: T | symbol): asserts value is T {
   }
 }
 
+// When an inline secret is already in pluginConfig, offer to reuse it instead
+// of forcing the user to paste it again on every wizard rerun. Skipped when
+// the existing value is a SecretRef object (env-var reference) or absent —
+// SecretRefs aren't pasteable here so the regular prompt path handles them.
+async function promptInlineSecretWithReuse(message: string, existing: unknown): Promise<string> {
+  if (typeof existing === "string" && existing.trim().length > 0) {
+    const reuse = await p.confirm({
+      message: `Reuse the existing token (ends in …${maskSecret(existing).slice(-8)})?`,
+      initialValue: true,
+    });
+    assertNotCancelled(reuse);
+    if (reuse) return existing.trim();
+  }
+  const value = await p.password({
+    message,
+    validate: validateRequired("Token is required"),
+  });
+  assertNotCancelled(value);
+  return value as string;
+}
+
 async function promptCloud(pluginConfig: Record<string, unknown>): Promise<string> {
-  const useDefaultUrl = await p.confirm({
-    message: `Use the default Hindsight Cloud URL (${HINDSIGHT_CLOUD_URL})?`,
+  const existingUrl =
+    typeof pluginConfig.hindsightApiUrl === "string"
+      ? (pluginConfig.hindsightApiUrl as string).trim()
+      : "";
+  const currentUrl = existingUrl || HINDSIGHT_CLOUD_URL;
+  const useCurrentUrl = await p.confirm({
+    message:
+      existingUrl && existingUrl !== HINDSIGHT_CLOUD_URL
+        ? `Reuse the configured Cloud URL (${currentUrl})?`
+        : `Use the default Hindsight Cloud URL (${HINDSIGHT_CLOUD_URL})?`,
     initialValue: true,
   });
-  assertNotCancelled(useDefaultUrl);
+  assertNotCancelled(useCurrentUrl);
 
   let apiUrl: string | undefined;
-  if (!useDefaultUrl) {
+  if (!useCurrentUrl) {
     const custom = await p.text({
       message: "Hindsight Cloud URL",
       placeholder: HINDSIGHT_CLOUD_URL,
@@ -305,13 +335,14 @@ async function promptCloud(pluginConfig: Record<string, unknown>): Promise<strin
     });
     assertNotCancelled(custom);
     apiUrl = custom;
+  } else if (existingUrl) {
+    apiUrl = existingUrl;
   }
 
-  const token = await p.password({
-    message: "Hindsight Cloud API token (paste the value, it will be masked)",
-    validate: validateRequired("Token is required"),
-  });
-  assertNotCancelled(token);
+  const token = await promptInlineSecretWithReuse(
+    "Hindsight Cloud API token (paste the value, it will be masked)",
+    pluginConfig.hindsightApiToken
+  );
 
   const input = { apiUrl, token };
   applyCloudMode(pluginConfig, input);
@@ -319,30 +350,36 @@ async function promptCloud(pluginConfig: Record<string, unknown>): Promise<strin
 }
 
 async function promptApi(pluginConfig: Record<string, unknown>): Promise<string> {
+  const existingUrl =
+    typeof pluginConfig.hindsightApiUrl === "string"
+      ? (pluginConfig.hindsightApiUrl as string).trim()
+      : "";
   const apiUrl = await p.text({
     message: "Hindsight API URL",
     placeholder: "https://mcp.hindsight.example.com",
+    initialValue: existingUrl || undefined,
     validate: validateRequired("URL is required"),
   });
   assertNotCancelled(apiUrl);
 
+  const hasExistingToken =
+    typeof pluginConfig.hindsightApiToken === "string" &&
+    (pluginConfig.hindsightApiToken as string).trim().length > 0;
   const needsToken = await p.confirm({
     message: "Does this API require an auth token?",
-    initialValue: false,
+    initialValue: hasExistingToken,
   });
   assertNotCancelled(needsToken);
 
   let token: string | undefined;
   if (needsToken) {
-    const value = await p.password({
-      message: "API token (paste the value, it will be masked)",
-      validate: validateRequired("Token is required"),
-    });
-    assertNotCancelled(value);
-    token = value;
+    token = await promptInlineSecretWithReuse(
+      "API token (paste the value, it will be masked)",
+      pluginConfig.hindsightApiToken
+    );
   }
 
-  const input = { apiUrl, token };
+  const input = { apiUrl: apiUrl as string, token };
   applyApiMode(pluginConfig, input);
   return summarizeApi(input);
 }
@@ -373,12 +410,10 @@ async function promptEmbedded(pluginConfig: Record<string, unknown>): Promise<st
 
   let apiKey: string | undefined;
   if (!NO_KEY_PROVIDERS.has(llmProvider)) {
-    const value = await p.password({
-      message: `${llmProvider} API key (paste the value, it will be masked)`,
-      validate: validateRequired("API key is required"),
-    });
-    assertNotCancelled(value);
-    apiKey = value;
+    apiKey = await promptInlineSecretWithReuse(
+      `${llmProvider} API key (paste the value, it will be masked)`,
+      pluginConfig.llmApiKey
+    );
   }
 
   const overrideModel = await p.confirm({

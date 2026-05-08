@@ -24,7 +24,7 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pydantic
 from hindsight_api import MemoryEngine
@@ -983,7 +983,7 @@ class BenchmarkRunner:
         max_concurrent_questions: int = 1,  # Default to 1 for sequential processing
         eval_semaphore_size: int = 8,
         clear_agent_per_item: bool = False,
-        specific_item: Optional[str] = None,
+        specific_item: Optional[Union[str, Iterable[str]]] = None,
         separate_ingestion_phase: bool = False,
         filln: bool = False,
         max_concurrent_items: int = 1,  # Max concurrent items (conversations) to process in parallel
@@ -1024,13 +1024,14 @@ class BenchmarkRunner:
         console.print(f"\n[1] Loading dataset from {dataset_path}...")
         items = self.dataset.load(dataset_path, max_items)
 
-        # Filter for specific item if requested
+        # Filter for specific item(s) if requested
         if specific_item is not None:
-            items = [item for item in items if self.dataset.get_item_id(item) == specific_item]
+            target_ids = {specific_item} if isinstance(specific_item, str) else set(specific_item)
+            items = [item for item in items if self.dataset.get_item_id(item) in target_ids]
             if not items:
-                console.print(f"    [red]✗[/red] No item found with ID: {specific_item}")
-                raise ValueError(f"Item with ID '{specific_item}' not found in dataset")
-            console.print(f"    [green]✓[/green] Filtering to specific item: {specific_item}")
+                console.print(f"    [red]✗[/red] No item found with ID(s): {sorted(target_ids)}")
+                raise ValueError(f"No items matching ID(s) {sorted(target_ids)} found in dataset")
+            console.print(f"    [green]✓[/green] Filtering to {len(items)} item(s): {sorted(target_ids)}")
 
         console.print(f"    [green]✓[/green] Loaded {len(items)} items")
 

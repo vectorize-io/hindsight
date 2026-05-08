@@ -371,14 +371,9 @@ class DaemonEmbedManager(EmbedManager):
         if "HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT" not in env:
             env["HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT"] = str(DEFAULT_DAEMON_IDLE_TIMEOUT)
 
-        # On macOS, force CPU for local embeddings/reranker to avoid MPS/XPC
-        # hangs during sentence-transformers init in daemon mode (issue #962).
-        # Users can opt back into MPS by explicitly setting these to "0".
-        if platform.system() == "Darwin":
-            if "HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU" not in env:
-                env["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
-            if "HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU" not in env:
-                env["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
+        # Tell the daemon child it was already launched in a detached session
+        # (via our Popen below) so daemonize() skips the redundant re-exec.
+        env["_HINDSIGHT_DAEMON_CHILD"] = "1"
 
         # Get idle timeout from env
         idle_timeout = int(env.get("HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT", str(DEFAULT_DAEMON_IDLE_TIMEOUT)))

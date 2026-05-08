@@ -50,7 +50,6 @@ jobs:
       integrations-smolagents: ${{ steps.filter.outputs.integrations-smolagents }}
       integrations-dify: ${{ steps.filter.outputs.integrations-dify }}
       tools-agent-sdk: ${{ steps.filter.outputs.tools-agent-sdk }}
-      tools-self-driving-agents: ${{ steps.filter.outputs.tools-self-driving-agents }}
       dev: ${{ steps.filter.outputs.dev }}
       ci: ${{ steps.filter.outputs.ci }}
       # Secrets are available for internal PRs and workflow_dispatch.
@@ -146,8 +145,6 @@ jobs:
             - 'hindsight-integrations/dify/**'
           tools-agent-sdk:
             - 'hindsight-tools/hindsight-agent-sdk/**'
-          tools-self-driving-agents:
-            - 'hindsight-tools/self-driving-agents/**'
           dev:
             - 'hindsight-dev/**'
           ci:
@@ -574,38 +571,6 @@ jobs:
 
     - name: Build
       run: npm run build --workspace=hindsight-tools/hindsight-agent-sdk
-
-  test-self-driving-agents:
-    needs: [detect-changes]
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      needs.detect-changes.outputs.tools-self-driving-agents == 'true' ||
-      needs.detect-changes.outputs.ci == 'true')
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha || '' }}
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '22'
-        cache: 'npm'
-        cache-dependency-path: package-lock.json
-
-    - name: Install root workspace dependencies
-      run: npm ci
-
-    - name: Build hindsight-client (self-driving-agents dep)
-      run: npm run build --workspace=hindsight-clients/typescript
-
-    - name: Run tests
-      run: npm test --workspace=hindsight-tools/self-driving-agents
-
-    - name: Build
-      run: npm run build --workspace=hindsight-tools/self-driving-agents
 
   test-cloudflare-oauth-proxy-integration:
     needs: [detect-changes]
@@ -1165,6 +1130,10 @@ jobs:
             api_key_secret: GROQ_API_KEY
           - provider: bedrock
             model: us.amazon.nova-2-lite-v1:0
+          - provider: litellmrouter
+            model: gpt-4.1-nano
+            # Single-deployment chain over OpenAI — verifies the Router-backed
+            # call path works end-to-end. Built from secrets in the step below.
     name: LLM acceptance (${{ matrix.provider }}/${{ matrix.model }})
     env:
       HINDSIGHT_API_LLM_PROVIDER: ${{ matrix.provider }}
@@ -1221,6 +1190,19 @@ jobs:
         SentenceTransformer('BAAI/bge-small-en-v1.5')
         CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
         "
+
+    - name: Build litellmrouter config
+      if: matrix.provider == 'litellmrouter'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ROUTER_MODEL: ${{ matrix.model }}
+      run: |
+        cfg=$(jq -nc \
+          --arg model "openai/$ROUTER_MODEL" \
+          --arg key "$OPENAI_API_KEY" \
+          '{model_list: [{model_name: "default", litellm_params: {model: $model, api_key: $key}}]}')
+        echo "::add-mask::$cfg"
+        echo "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG=$cfg" >> "$GITHUB_ENV"
 
     - name: Run LLM acceptance tests
       working-directory: ./hindsight-api-slim
@@ -3693,7 +3675,6 @@ jobs:
       - test-embed-windows
       - test-hindsight-all
       - test-hindsight-agent-sdk
-      - test-self-driving-agents
       - test-doc-examples
       - test-upgrade
       - verify-generated-files

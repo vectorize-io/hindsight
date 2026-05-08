@@ -18,6 +18,7 @@ their environment to achieve equivalent behavior.
 """
 
 import os
+import subprocess
 import sys
 
 from .state import read_state, write_state
@@ -28,19 +29,70 @@ DEFAULT_BANK_NAME = "claude-code"
 VALID_FIELDS = {"agent", "project", "session", "channel", "user"}
 
 
+def _resolve_project_name(cwd: str, config: dict) -> str:
+    """Resolve the project name from the working directory.
+
+    When resolveWorktrees is enabled (default), detects git worktrees and
+    resolves to the main repository basename so that all worktrees of the
+    same repo share the same bank.
+
+    For a regular repo at /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
+
+    For a worktree at /home/user/myproject-wt1 linked to /home/user/myproject:
+        git-common-dir → /home/user/myproject/.git → basename "myproject"
+    """
+    if not cwd:
+        return "unknown"
+
+    if not config.get("resolveWorktrees", True):
+        return os.path.basename(cwd)
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            git_common_dir = result.stdout.strip()
+            # git-common-dir returns the .git directory of the main repo
+            # e.g. /home/user/myproject/.git → parent is /home/user/myproject
+            main_repo_path = os.path.dirname(git_common_dir)
+            return os.path.basename(main_repo_path)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: not a git repo or git not available
+    return os.path.basename(cwd)
+
+
 def derive_bank_id(hook_input: dict, config: dict) -> str:
     """Derive a bank ID from hook context and config.
 
     Port of: deriveBankId() in index.js
 
-    When dynamicBankId is false, returns the static bank.
-    When true, composes from granularity fields joined by '::'.
+    Resolution order:
+      1. directoryBankMap — explicit directory→bank mapping (highest priority)
+      2. Static mode (dynamicBankId=false) — single bank for everything
+      3. Dynamic mode (dynamicBankId=true) — composed from granularity fields
 
     Args:
         hook_input: The hook's stdin JSON (has session_id, cwd).
         config: Plugin configuration dict.
     """
     prefix = config.get("bankIdPrefix", "")
+
+    # Check explicit directory-to-bank mapping first
+    cwd = hook_input.get("cwd", "")
+    dir_map = config.get("directoryBankMap") or {}
+    if cwd and dir_map:
+        # Normalize cwd for matching (resolve symlinks, trailing slashes)
+        normalized_cwd = os.path.normpath(cwd)
+        for dir_path, bank_id in dir_map.items():
+            if os.path.normpath(dir_path) == normalized_cwd:
+                return f"{prefix}-{bank_id}" if prefix else bank_id
 
     if not config.get("dynamicBankId", False):
         # Static mode — single bank for everything
@@ -62,7 +114,6 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
             )
 
     # Build field values from hook context + env vars
-    cwd = hook_input.get("cwd", "")
     session_id = hook_input.get("session_id", "")
     agent_name = config.get("agentName", "claude-code")
 
@@ -73,7 +124,7 @@ def derive_bank_id(hook_input: dict, config: dict) -> str:
 
     field_map = {
         "agent": agent_name,
-        "project": os.path.basename(cwd) if cwd else "unknown",
+        "project": _resolve_project_name(cwd, config),
         "session": session_id or "unknown",
         "channel": channel_id or "default",
         "user": user_id or "anonymous",

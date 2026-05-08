@@ -299,7 +299,7 @@ async def run_benchmark(
     max_questions_per_conv: int = None,
     skip_ingestion: bool = False,
     use_reflect: bool = False,
-    conversation: str = None,
+    conversation: list[str] | None = None,
     api_url: str = None,
     max_concurrent_questions_override: int = None,
     only_failed: bool = False,
@@ -316,7 +316,7 @@ async def run_benchmark(
         max_questions_per_conv: Maximum questions per conversation (None for all)
         skip_ingestion: Whether to skip ingestion and use existing data
         use_reflect: Whether to use the reflect API instead of search + LLM
-        conversation: Specific conversation ID to run (e.g., "conv-26")
+        conversation: One or more conversation IDs to run (e.g., ["conv-26", "conv-30"])
         api_url: Optional API URL to connect to (default: use local memory)
         only_failed: If True, only run conversations that have failed questions (is_correct=False)
         only_invalid: If True, only run conversations that have invalid questions (is_invalid=True)
@@ -575,7 +575,11 @@ if __name__ == "__main__":
     parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion and use existing data")
     parser.add_argument("--use-reflect", action="store_true", help="Use reflect API instead of search + LLM")
     parser.add_argument(
-        "--conversation", type=str, default=None, help='Run only specific conversation (e.g., "conv-26")'
+        "--conversation",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Run only the listed conversations (e.g., --conversation conv-26 conv-30)",
     )
     parser.add_argument(
         "--api-url",

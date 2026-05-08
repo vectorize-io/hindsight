@@ -37,8 +37,10 @@ import {
   Lock,
   ChevronDown,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
+import { useFeatures } from "@/lib/features-context";
 import Image from "next/image";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,12 +54,35 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import type { BankInfo } from "@/lib/bank-context";
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return n.toString();
+}
+
+function formatTimeAgo(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
 
 function BankSelectorInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentBank, setCurrentBank, banks, loadBanks } = useBank();
+  const { currentBank, setCurrentBank, banks, bankInfos, banksLoading, loadBanks } = useBank();
   const { theme, toggleTheme } = useTheme();
+  const { features } = useFeatures();
   const [open, setOpen] = React.useState(false);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newBankId, setNewBankId] = React.useState("");
@@ -134,8 +159,18 @@ function BankSelectorInner() {
   }, []);
 
   const sortedBanks = React.useMemo(() => {
-    return [...banks].sort((a, b) => a.localeCompare(b));
-  }, [banks]);
+    // Sort by last document inserted descending, then by created_at
+    return [...bankInfos].sort((a, b) => {
+      const aTime = a.last_document_at || a.created_at || "";
+      const bTime = b.last_document_at || b.created_at || "";
+      return bTime.localeCompare(aTime);
+    });
+  }, [bankInfos]);
+
+  const maxFactCount = React.useMemo(
+    () => Math.max(1, ...sortedBanks.map((b) => b.fact_count)),
+    [sortedBanks]
+  );
 
   const handleCreateBank = async () => {
     if (!newBankId.trim()) return;
@@ -446,37 +481,73 @@ function BankSelectorInner() {
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[250px] p-0">
+          <PopoverContent className="w-[420px] p-0" align="start">
             <Command>
               {sortedBanks.length > 0 && <CommandInput placeholder="Search memory banks..." />}
               <CommandList>
-                <CommandEmpty>No memory banks yet.</CommandEmpty>
+                <CommandEmpty>
+                  {banksLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                      <span>Loading banks...</span>
+                    </div>
+                  ) : (
+                    "No memory banks yet."
+                  )}
+                </CommandEmpty>
                 <CommandGroup>
-                  {sortedBanks.map((bank) => (
-                    <CommandItem
-                      key={bank}
-                      value={bank}
-                      onSelect={(value) => {
-                        setCurrentBank(value);
-                        setOpen(false);
-                        // Preserve current view and subTab when switching banks
-                        const view = searchParams.get("view") || "data";
-                        const subTab = searchParams.get("subTab");
-                        const queryString = subTab
-                          ? `?view=${view}&subTab=${subTab}`
-                          : `?view=${view}`;
-                        router.push(bankRoute(value, queryString));
-                      }}
-                    >
-                      <Check
-                        className={cn(
-                          "mr-2 h-4 w-4",
-                          currentBank === bank ? "opacity-100" : "opacity-0"
-                        )}
-                      />
-                      {bank}
-                    </CommandItem>
-                  ))}
+                  {sortedBanks.map((bank) => {
+                    const barPct = (bank.fact_count / maxFactCount) * 100;
+                    const isSelected = currentBank === bank.bank_id;
+                    return (
+                      <CommandItem
+                        key={bank.bank_id}
+                        value={bank.bank_id}
+                        onSelect={(value) => {
+                          setCurrentBank(value);
+                          setOpen(false);
+                          const view = searchParams.get("view") || "data";
+                          const subTab = searchParams.get("subTab");
+                          const queryString = subTab
+                            ? `?view=${view}&subTab=${subTab}`
+                            : `?view=${view}`;
+                          router.push(bankRoute(value, queryString));
+                        }}
+                        className="relative overflow-hidden py-2.5 mb-0.5"
+                      >
+                        {/* Background bar — proportional to memory count */}
+                        <div
+                          className="absolute inset-y-0 left-0 bg-primary/15 dark:bg-primary/20 rounded-[inherit] transition-all"
+                          style={{ width: `${barPct}%` }}
+                        />
+                        <div className="relative flex items-center w-full gap-2">
+                          <Check
+                            className={cn(
+                              "h-4 w-4 shrink-0",
+                              isSelected ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <span className="truncate flex-1 font-medium" title={bank.bank_id}>
+                            {bank.bank_id}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/70">
+                            {bank.fact_count > 0 ? (
+                              <>
+                                {formatCompact(bank.fact_count)}
+                                <span className="ml-1.5 text-muted-foreground/40">
+                                  {bank.last_document_at
+                                    ? formatTimeAgo(bank.last_document_at)
+                                    : ""}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="italic text-muted-foreground/40">empty</span>
+                            )}
+                          </span>
+                        </div>
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               </CommandList>
               {/* Footer: Create new bank */}
@@ -542,6 +613,27 @@ function BankSelectorInner() {
         >
           {theme === "light" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
         </Button>
+
+        {features?.access_key_auth && (
+          <>
+            <div className="h-8 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              title="Logout"
+              onClick={async () => {
+                try {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                } finally {
+                  window.location.href = "/login";
+                }
+              }}
+            >
+              <LogOut className="h-5 w-5" />
+            </Button>
+          </>
+        )}
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogContent className="sm:max-w-[550px]">

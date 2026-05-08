@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-all",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Node.js programmatic lifecycle manager for Hindsight — embeds a local hindsight daemon in a Node application. Pair with @vectorize-io/hindsight-client for memory operations.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

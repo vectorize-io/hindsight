@@ -1,0 +1,44 @@
+name: hindsight-custom-models
+# Example: run a custom Hindsight image with non-default local models baked
+# in at build time, so pod startup does not depend on HuggingFace at runtime.
+#
+# Quick start:
+#   export OPENAI_API_KEY=sk-xxx
+#   docker compose -f docker/docker-compose/custom-models/docker-compose.yaml up --build
+#
+# Required environment variables:
+# - OPENAI_API_KEY (or configure another LLM provider via HINDSIGHT_API_LLM_*)
+
+services:
+  hindsight:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Override at build time to bake different models:
+      #   docker compose build --build-arg EMBEDDER=your-org/your-embedder
+      args:
+        EMBEDDER: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+        RERANKER: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+    container_name: hindsight-custom-models
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_API_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_API_KEY: ${OPENAI_API_KEY:-your-api-key}
+
+      # Point Hindsight at the models baked into the image above.
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: local
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      HINDSIGHT_API_RERANKER_PROVIDER: local
+      HINDSIGHT_API_RERANKER_LOCAL_MODEL: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+
+      # Fail fast if a model is missing from the image instead of silently
+      # falling back to a HuggingFace download at runtime.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - pg_data:/home/hindsight/.pg0
+
+volumes:
+  pg_data:

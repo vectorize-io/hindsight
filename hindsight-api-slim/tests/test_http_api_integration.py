@@ -158,6 +158,14 @@ async def test_full_api_workflow(api_client, test_bank_id):
     assert "total_nodes" in stats
     assert stats["total_nodes"] > 0
 
+    # Verify bank list returns stats (fact_count, last_document_at)
+    response = await api_client.get("/v1/default/banks")
+    assert response.status_code == 200
+    banks_after = response.json()["banks"]
+    our_bank = next(b for b in banks_after if b["bank_id"] == test_bank_id)
+    assert our_bank["fact_count"] > 0, "fact_count should reflect retained memories"
+    assert our_bank["last_document_at"] is not None, "last_document_at should be set after retain"
+
     # List memory units
     response = await api_client.get(
         f"/v1/default/banks/{test_bank_id}/memories/list",

@@ -32,53 +32,65 @@ def _get_schema_prefix() -> str:
 
 
 def _detect_vector_extension() -> str:
-    """
-    Detect or validate vector extension: 'pgvector', 'vchord', or 'pgvectorscale'.
-    Respects HINDSIGHT_API_VECTOR_EXTENSION env var if set.
-    """
+    """Detect or validate vector extension for this immutable migration revision."""
     conn = op.get_bind()
     vector_extension = os.getenv("HINDSIGHT_API_VECTOR_EXTENSION", "pgvector").lower()
 
-    # Validate configured extension is installed
     if vector_extension == "pgvectorscale":
-        # pgvectorscale/DiskANN requires pgvector
         pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
         if not pgvector_check:
             raise RuntimeError(
                 "DiskANN requires pgvector. Install with: CREATE EXTENSION vector; then vectorscale or pg_diskann CASCADE;"
             )
-        # Check for either vectorscale (open source) or pg_diskann (Azure)
         vectorscale_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vectorscale'")).scalar()
         pg_diskann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'pg_diskann'")).scalar()
 
         if vectorscale_check:
             return "pgvectorscale"
-        elif pg_diskann_check:
+        if pg_diskann_check:
             return "pg_diskann"
-        else:
-            raise RuntimeError(
-                "Configured vector extension 'pgvectorscale' not found. Install either:\n"
-                "  - pgvectorscale: CREATE EXTENSION vectorscale CASCADE;\n"
-                "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
-            )
-    elif vector_extension == "vchord":
+        raise RuntimeError(
+            "Configured vector extension 'pgvectorscale' not found. Install either:\n"
+            "  - pgvectorscale: CREATE EXTENSION vectorscale CASCADE;\n"
+            "  - pg_diskann (Azure): CREATE EXTENSION pg_diskann CASCADE;"
+        )
+    if vector_extension == "vchord":
         vchord_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vchord'")).scalar()
         if not vchord_check:
             raise RuntimeError(
                 "Configured vector extension 'vchord' not found. Install it with: CREATE EXTENSION vchord CASCADE;"
             )
         return "vchord"
-    elif vector_extension == "pgvector":
+    if vector_extension == "scann":
+        scann_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'alloydb_scann'")).scalar()
+        if not scann_check:
+            raise RuntimeError(
+                "Configured vector extension 'scann' not found. Install it with: CREATE EXTENSION alloydb_scann CASCADE;"
+            )
+        return "scann"
+    if vector_extension == "pgvector":
         pgvector_check = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
         if not pgvector_check:
             raise RuntimeError(
                 "Configured vector extension 'pgvector' not found. Install it with: CREATE EXTENSION vector;"
             )
         return "pgvector"
-    else:
-        raise ValueError(
-            f"Invalid HINDSIGHT_API_VECTOR_EXTENSION: {vector_extension}. Must be 'pgvector', 'vchord', or 'pgvectorscale'"
-        )
+    raise ValueError(
+        "Invalid HINDSIGHT_API_VECTOR_EXTENSION: "
+        f"{vector_extension}. Must be 'pgvector', 'vchord', 'pgvectorscale', or 'scann'"
+    )
+
+
+def _vector_index_using_clause(ext: str) -> str:
+    if ext == "pgvectorscale":
+        return "USING diskann (embedding vector_cosine_ops) WITH (num_neighbors = 50)"
+    if ext == "pg_diskann":
+        return "USING diskann (embedding vector_cosine_ops) WITH (max_neighbors = 50)"
+    if ext == "vchord":
+        return "USING vchordrq (embedding vector_l2_ops)"
+    if ext == "scann":
+        return "USING scann (embedding cosine) WITH (mode = 'AUTO')"
+    return "USING hnsw (embedding vector_cosine_ops)"
 
 
 def _detect_text_search_extension() -> str:
@@ -158,28 +170,12 @@ def _pg_upgrade() -> None:
     # Indexes for learnings
     op.execute(f"CREATE INDEX idx_learnings_bank_id ON {schema}learnings(bank_id)")
 
-    # Create vector index based on detected extension
-    if vector_ext == "pgvectorscale":
+    # Create vector index based on detected extension. ScaNN is deferred because
+    # this table is empty during migration and AlloyDB rejects empty ScaNN builds.
+    if vector_ext != "scann":
         op.execute(f"""
             CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING diskann (embedding vector_cosine_ops)
-            WITH (num_neighbors = 50)
-        """)
-    elif vector_ext == "pg_diskann":
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING diskann (embedding vector_cosine_ops)
-            WITH (max_neighbors = 50)
-        """)
-    elif vector_ext == "vchord":
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING vchordrq (embedding vector_l2_ops)
-        """)
-    else:  # pgvector
-        op.execute(f"""
-            CREATE INDEX idx_learnings_embedding ON {schema}learnings
-            USING hnsw (embedding vector_cosine_ops)
+            {_vector_index_using_clause(vector_ext)}
         """)
 
     op.execute(f"CREATE INDEX idx_learnings_tags ON {schema}learnings USING GIN(tags)")
@@ -237,28 +233,12 @@ def _pg_upgrade() -> None:
     # Indexes for pinned_reflections
     op.execute(f"CREATE INDEX idx_pinned_reflections_bank_id ON {schema}pinned_reflections(bank_id)")
 
-    # Create vector index based on detected extension
-    if vector_ext == "pgvectorscale":
+    # Create vector index based on detected extension. ScaNN is deferred because
+    # this table is empty during migration and AlloyDB rejects empty ScaNN builds.
+    if vector_ext != "scann":
         op.execute(f"""
             CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING diskann (embedding vector_cosine_ops)
-            WITH (num_neighbors = 50)
-        """)
-    elif vector_ext == "pg_diskann":
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING diskann (embedding vector_cosine_ops)
-            WITH (max_neighbors = 50)
-        """)
-    elif vector_ext == "vchord":
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING vchordrq (embedding vector_l2_ops)
-        """)
-    else:  # pgvector
-        op.execute(f"""
-            CREATE INDEX idx_pinned_reflections_embedding ON {schema}pinned_reflections
-            USING hnsw (embedding vector_cosine_ops)
+            {_vector_index_using_clause(vector_ext)}
         """)
 
     op.execute(f"CREATE INDEX idx_pinned_reflections_tags ON {schema}pinned_reflections USING GIN(tags)")

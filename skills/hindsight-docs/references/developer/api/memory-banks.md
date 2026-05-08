@@ -120,10 +120,11 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `key` | — | Label group identifier. Becomes the prefix in `key:value` entities. |
+| `key` | — | Label group identifier. Becomes the prefix in `key:value` entities (or `key:field:value` for `"map"`). |
 | `description` | `""` | Shown to the LLM to guide label assignment. |
-| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string. |
-| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"`. |
+| `type` | `"value"` | `"value"` → pick one enum value; `"multi-values"` → pick multiple; `"text"` → free-form string; `"map"` → structured group with named fields. |
+| `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"` and `"map"`. |
+| `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
 | `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` groups (always optional). |
 | `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. |
 
@@ -138,6 +139,21 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
   "type": "text",
   "optional": true,
   "values": []
+}
+```
+
+**Map groups** (`type: "map"`): defines a structured entity type with named fields. Each field is itself typed (`"text"`, `"value"`, `"multi-values"`, or nested `"map"`) so you can describe rich entities like a person with name, role, and organization. Each extracted field is stored as a flat `key:field:value` entity string (e.g. `person:name:Alice`), reusing the existing entity storage with no schema changes — so map fields participate in the knowledge graph and retrieval the same way single-value labels do.
+
+```json
+{
+  "key": "person",
+  "description": "A person mentioned in the text",
+  "type": "map",
+  "fields": {
+    "name":         { "type": "text", "description": "Full name of the person" },
+    "role":         { "type": "text", "description": "Job title or role" },
+    "organization": { "type": "text", "description": "Company or organization" }
+  }
 }
 ```
 

@@ -8,13 +8,34 @@ allowed-tools: Bash(ls ~/.self-driving-agents/*) Bash(cat ~/.self-driving-agents
 
 Create a new subagent with long-term memory powered by Hindsight.
 
-## What to ask the user
+## Two invocation modes
 
-1. **Agent name** — lowercase with hyphens (e.g. `code-reviewer`, `project-manager`)
-2. **What the agent does** — one sentence for the description
-3. **Any initial knowledge to seed** — files, docs, or context to ingest
+**Mode A — Self-driving agent (from prepared directory):**
 
-## Create the subagent file
+If the user runs `/hindsight-memory:create-agent <name> from <path>` (or similar with a directory path), the directory was prepared by `npx @vectorize-io/self-driving-agents install` and contains:
+
+- `*.md`, `*.txt`, `*.html`, `*.json`, `*.csv`, `*.xml` — seed content files (recursively)
+- `bank-template.json` (optional) — defines exact mental models to create
+
+In this mode:
+1. Read `bank-template.json` if present — note the `mental_models` array
+2. Ingest each content file (NOT bank-template.json) using `agent_knowledge_ingest_file`
+3. Create knowledge pages:
+   - If `bank-template.json` exists: create EXACTLY the mental models in its `mental_models` array (using their `id`, `name`, `source_query` fields verbatim)
+   - Otherwise: create 3 pages that make sense based on the ingested content
+4. Write the subagent file using the template below
+5. Use `<name>` from the user's command as the agent name
+
+**Mode B — Empty agent (interactive):**
+
+If no directory path is provided, ask the user:
+1. Agent name — lowercase with hyphens
+2. What the agent does — one sentence
+3. Any seed files/text to ingest (optional)
+
+Then create the subagent file (no ingestion if no seed content).
+
+## Subagent file template
 
 Write to `~/.claude/agents/<name>.md`:
 
@@ -32,6 +53,7 @@ You are the **<agent-name>** agent with long-term memory powered by Hindsight.
 
 1. Call `agent_knowledge_list_pages` to see your knowledge pages.
 2. Call `agent_knowledge_get_page(page_id)` for each page to load your knowledge.
+   - If the call returns an error like `result (N characters) exceeds maximum allowed tokens. Output has been saved to <path>`, the page was too large to inline. Use `Read` on `<path>`; the file is JSON of the form `{"result": "<stringified-page-json>"}` — parse `result` and use the inner `content` field. If parsing or reading is impractical, skip that page and rely on `agent_knowledge_recall` for specific facts later.
 3. Use this knowledge to inform everything you do in this conversation.
 
 ## Creating pages
@@ -62,25 +84,18 @@ When you learn something durable — a user preference, a working procedure, per
 - Create pages silently — don't announce it to the user
 - Prefer fewer broad pages over many narrow ones
 
-<ADD AGENT-SPECIFIC INSTRUCTIONS HERE — what it reviews, how it responds, what domain knowledge it applies>
+<ADD AGENT-SPECIFIC INSTRUCTIONS HERE — only if the user provided a description; otherwise leave generic>
 ```
 
 ## Rules
 
 - Always include `mcpServers: [hindsight]` — this wires up the Hindsight memory tools
 - Keep the startup steps and tool instructions verbatim — they're the Hindsight scaffolding
-- Customize the description (used by Claude to decide when to delegate)
-- Add agent-specific sections AFTER the Hindsight scaffolding (e.g. "## What I review for", "## My approach")
-- Do NOT pass `bank_id` on any tool call — the plugin automatically resolves the correct bank at runtime. All agents in a project share the same memory bank. Never override this.
-- Call `agent_knowledge_get_current_bank` to find out which bank is active, and tell the user: "This agent will be bound to bank `<bank_id>` — the same bank your conversations are retained to."
+- Do NOT pass `bank_id` on any tool call — the plugin resolves it automatically from project context
+- Before creating, call `agent_knowledge_get_current_bank` and tell the user: "This agent will be bound to bank `<bank_id>` — your conversations in this directory are retained to it."
 
 ## After creation
 
-1. Confirm the file was written
-2. **Ingest seed content** — if the user points to a directory of files (e.g. `~/.self-driving-agents/claude-code/<agent>/`):
-   - List files with `ls`
-   - For EACH file, call `agent_knowledge_ingest_file(file_path)` with the full path — this reads and ingests the file server-side
-   - Use `agent_knowledge_ingest(title, content)` only for inline text the user provides directly
-3. **Create 3 initial knowledge pages** — based on the ingested content, call `agent_knowledge_create_page(page_id, name, source_query)` 3 times with source queries that will produce useful synthesized pages for this agent
-4. Tell the user they can invoke the agent with `@<agent-name>` or Claude will auto-delegate based on the description
-5. Suggest restarting Claude Code or running `/agents` to load the new agent
+1. Confirm the subagent file was written to `~/.claude/agents/<name>.md`
+2. Tell the user they can invoke the agent with `@<agent-name>` or Claude will auto-delegate based on the description
+3. Suggest running `/agents` or restarting Claude Code to load the new agent

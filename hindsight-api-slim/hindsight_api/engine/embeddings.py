@@ -104,7 +104,7 @@ class LocalSTEmbeddings(Embeddings):
         Args:
             model_name: Name of the SentenceTransformer model to use.
                        Default: BAAI/bge-small-en-v1.5
-            force_cpu: Force CPU mode (avoids MPS/XPC issues on macOS in daemon mode).
+            force_cpu: Force CPU mode for local inference.
                       Default: False
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models with custom architectures.

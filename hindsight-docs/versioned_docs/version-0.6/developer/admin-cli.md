@@ -245,6 +245,44 @@ hindsight-admin worker-status --schema tenant_acme
 
 ---
 
+## Recovering stuck or zombie operations
+
+A "zombie" operation is one stuck in `processing` indefinitely because the worker that claimed it is gone. The most common cause is an unstable `HINDSIGHT_API_WORKER_ID`: when it defaults to the container hostname, a Docker restart produces a new container ID, the new worker doesn't recognize the old worker's claims as its own, and those tasks are stranded.
+
+**How to spot them:**
+
+```bash
+# List processing tasks grouped by worker — workers with a growing last_update_ago are dead
+hindsight-admin worker-status
+
+# Bank-level counters; pending_consolidation that never decreases is the usual symptom
+curl -s http://localhost:8888/v1/default/banks/<bank_id>/stats
+```
+
+**How to recover:**
+
+```bash
+# You know which worker is dead (e.g. from worker-status):
+hindsight-admin decommission-worker <old-worker-id>
+
+# You don't know — release every processing task across the fleet:
+hindsight-admin decommission-workers
+```
+
+Both commands reset `processing` rows back to `pending` so a live worker can claim them on the next poll.
+
+**How to prevent it:**
+
+Set `HINDSIGHT_API_WORKER_ID` to a stable value so worker identity survives restarts:
+
+- **Docker**: pass `-e HINDSIGHT_API_WORKER_ID=hindsight-prod` (or per-replica names if running multiple containers)
+- **Kubernetes (Helm)**: the chart's StatefulSet uses the pod name automatically — no extra config needed
+- **Bare metal / pip**: pass `--worker-id <name>` or set the env var per process
+
+See [Installation - Docker](./installation#docker) and [Configuration - Distributed Workers](./configuration#distributed-workers).
+
+---
+
 ## Environment Variables
 
 The admin CLI uses the same environment variables as the API service. The most important one is:

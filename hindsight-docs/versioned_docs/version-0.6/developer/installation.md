@@ -29,6 +29,7 @@ Hindsight requires PostgreSQL 14+ with a vector extension for similarity search.
 - **pgvector** (default)
 - **pgvectorscale**
 - **vchord**
+- **scann** (AlloyDB)
 
 Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configuration](./configuration) for details.
 
@@ -38,6 +39,7 @@ Configure which one to use with `HINDSIGHT_API_VECTOR_EXTENSION`. See [Configura
 - **Supabase** — Managed PostgreSQL with pgvector built-in
 - **Neon** — Serverless PostgreSQL with pgvector
 - **Azure Database for PostgreSQL** — With pgvector and pgvectorscale support
+- **Google AlloyDB** / **AlloyDB Omni** — With pgvector and ScaNN support
 - **AWS RDS** / **Cloud SQL** — With pgvector extension enabled
 - **Self-hosted** — PostgreSQL 14+ with your preferred vector extension
 
@@ -83,6 +85,14 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 - **API Server**: http://localhost:8888
 - **Control Plane** (Web UI): http://localhost:9999
 
+All published images are [signed with Cosign](#verifying-image-signatures) — verification is optional.
+
+:::tip Set a stable `HINDSIGHT_API_WORKER_ID` in production
+The worker uses the container hostname as its identity, which Docker sets to the container ID by default. That value changes on every restart, so any task that was being processed when the container went down stays parked under the old ID with no way for the new container to recognize it as its own.
+
+Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_ID=hindsight-prod`) so the worker keeps the same identity across restarts. This is recommended even for single-container deployments. For diagnosis and recovery commands, see [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations).
+:::
+
 ### Docker Image Variants
 
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
@@ -91,6 +101,12 @@ docker run --rm -it --pull always -p 8888:8888 -p 9999:9999 \
 | **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
 
 The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
+
+### Bundling Custom Models in a Custom Image
+
+:::tip Production deployments with non-default local models
+If you use a non-default local embedder or reranker, bake the models into a custom image at build time rather than enabling the Helm `modelCache` PVC. See [`docker/docker-compose/custom-models/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/custom-models) for a runnable example.
+:::
 
 ### Available Tags
 
@@ -107,6 +123,16 @@ ghcr.io/vectorize-io/hindsight-api:latest-slim
 
 # Control Plane only
 ghcr.io/vectorize-io/hindsight-control-plane:latest
+```
+
+### Verifying image signatures
+
+Images are signed with [Cosign](https://docs.sigstore.dev/cosign/signing/overview/) keyless OIDC. To verify any tag:
+
+```bash
+cosign verify ghcr.io/vectorize-io/hindsight:<tag> \
+  --certificate-identity-regexp '^https://github\.com/vectorize-io/hindsight/\.github/workflows/(sign-images|release)\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 ---
@@ -149,6 +175,8 @@ helm install hindsight oci://ghcr.io/vectorize-io/charts/hindsight \
   --set worker.enabled=true \
   --set worker.replicaCount=3
 ```
+
+The chart deploys workers as a StatefulSet, so each pod gets a stable name (e.g. `hindsight-worker-0`) that the worker uses as its `HINDSIGHT_API_WORKER_ID`. Tasks claimed by a pod are recognized as its own across restarts. If you swap the chart for a plain Deployment, set `HINDSIGHT_API_WORKER_ID` explicitly per replica — otherwise hostnames are randomized and previously-claimed tasks become orphaned. See [Admin CLI - Recovering stuck operations](./admin-cli#recovering-stuck-or-zombie-operations) for diagnosis.
 
 See [Services - Worker Service](./services#worker-service) for configuration details and architecture.
 
@@ -222,6 +250,7 @@ This connects to your running API server and provides a visual interface for man
 | `-p, --port` | `PORT` | 9999 | Port to listen on |
 | `-H, --hostname` | `HOSTNAME` | 0.0.0.0 | Hostname to bind to |
 | `-a, --api-url` | `HINDSIGHT_CP_DATAPLANE_API_URL` | http://localhost:8888 | Hindsight API URL |
+| | `HINDSIGHT_CP_ACCESS_KEY` | *(none)* | Access key to protect the Control Plane UI. When set, users must enter this key to log in. |
 
 #### Examples
 

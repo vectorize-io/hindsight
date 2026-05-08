@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import asyncpg
 import httpx
@@ -502,9 +502,15 @@ class MemoryEngine(MemoryEngineInterface):
         self._dialect: SQLDialect | None = None
         # Connection pool — set from backend.get_pool() for backward compatibility
         self._pool = None
+        self._read_backend: DatabaseBackend | None = None
+        self._read_database_url: str | None = (
+            config.read_database_url if self._database_backend_type == "postgresql" else None
+        )
         self._initialized = False
         self._pool_min_size = pool_min_size if pool_min_size is not None else config.db_pool_min_size
         self._pool_max_size = pool_max_size if pool_max_size is not None else config.db_pool_max_size
+        self._read_pool_min_size = config.read_db_pool_min_size
+        self._read_pool_max_size = config.read_db_pool_max_size
         self._db_command_timeout = db_command_timeout if db_command_timeout is not None else config.db_command_timeout
         self._db_acquire_timeout = db_acquire_timeout if db_acquire_timeout is not None else config.db_acquire_timeout
         self._db_statement_timeout = config.db_statement_timeout
@@ -540,6 +546,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=memory_llm_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            litellmrouter_config=config.llm_litellmrouter_config,
         )
 
         # Store client and model for convenience (deprecated: use _llm_config.call() instead)
@@ -568,6 +575,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=retain_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            litellmrouter_config=config.retain_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Reflect LLM config - for think/observe operations (can use lighter models)
@@ -591,6 +599,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=reflect_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            litellmrouter_config=config.reflect_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Consolidation LLM config - for mental model consolidation (can use efficient models)
@@ -614,6 +623,7 @@ class MemoryEngine(MemoryEngineInterface):
             model=consolidation_model,
             extra_body=config.llm_extra_body,
             default_headers=config.llm_default_headers,
+            litellmrouter_config=config.consolidation_llm_litellmrouter_config or config.llm_litellmrouter_config,
         )
 
         # Initialize cross-encoder reranker (cached for performance)
@@ -1648,11 +1658,16 @@ class MemoryEngine(MemoryEngineInterface):
                 # Parent doesn't exist (shouldn't happen)
                 return
 
-            # Get all sibling operations (including this one)
-            # This query runs in the same transaction, so it sees the current child's updated status
+            # Get all sibling operations (including this one).
+            # This query runs in the same transaction, so it sees the current
+            # child's updated status. Pull error_message too so a parent that
+            # fails can inherit a representative child reason -- otherwise
+            # downstream consumers (dashboards, alert filters) lose the actual
+            # cause once a batch has children. See the worker poller's
+            # _summarise_child_error_messages for the propagation rationale.
             siblings = await conn.fetch(
                 f"""
-                SELECT status
+                SELECT status, error_message
                 FROM {fq_table("async_operations")}
                 WHERE bank_id = $1
                 AND result_metadata::jsonb @> $2::jsonb
@@ -1676,7 +1691,12 @@ class MemoryEngine(MemoryEngineInterface):
             # All siblings are done - update parent status
             if any_failed:
                 new_status = "failed"
-                # Set parent error message to indicate child failure
+                # Set parent error message to indicate child failure. Inherit
+                # the most-common failed-child error_message rather than a
+                # generic string so downstream filters can attribute the
+                # cause correctly.
+                from hindsight_api.worker.poller import _summarise_child_error_messages
+
                 await conn.execute(
                     f"""
                     UPDATE {fq_table("async_operations")}
@@ -1685,7 +1705,7 @@ class MemoryEngine(MemoryEngineInterface):
                     """,
                     uuid.UUID(parent_operation_id),
                     new_status,
-                    "One or more sub-batches failed",
+                    _summarise_child_error_messages(siblings),
                 )
             elif all_completed:
                 new_status = "completed"
@@ -1929,6 +1949,23 @@ class MemoryEngine(MemoryEngineInterface):
         # These will be migrated to use self._backend.acquire() over time.
         self._pool = self._backend.get_pool()
 
+        if self._read_database_url:
+            logger.info(
+                f"Opening read backend against {mask_network_location(self._read_database_url)} for recall queries"
+            )
+            self._read_backend = create_database_backend(self._database_backend_type)
+            await self._read_backend.initialize(
+                self._read_database_url,
+                min_size=self._read_pool_min_size,
+                max_size=self._read_pool_max_size,
+                command_timeout=self._db_command_timeout,
+                acquire_timeout=self._db_acquire_timeout,
+                statement_cache_size=0,
+                init_callback=_init_connection,
+            )
+        else:
+            self._read_backend = self._backend
+
         # Initialize entity resolver with pool and configured lookup strategy
         self.entity_resolver = EntityResolver(
             self._backend,
@@ -2017,6 +2054,15 @@ class MemoryEngine(MemoryEngineInterface):
             await self.initialize()
         return self._pool
 
+    async def _get_read_backend(self) -> DatabaseBackend:
+        """Get the read-only backend (replica when configured, otherwise primary).
+
+        Writes MUST NOT be issued through this backend.
+        """
+        if not self._initialized:
+            await self.initialize()
+        return self._read_backend
+
     async def _get_backend(self) -> DatabaseBackend:
         """Get the database backend, auto-initializing if needed."""
         if not self._initialized:
@@ -2073,7 +2119,11 @@ class MemoryEngine(MemoryEngineInterface):
             await self._http_client.aclose()
             self._http_client = None
 
-        # Close database backend (shuts down pool)
+        if self._read_backend is not None and self._read_backend is not self._backend:
+            await self._read_backend.shutdown()
+        self._read_backend = None
+
+        # Close primary database backend (shuts down pool)
         if self._backend is not None:
             await self._backend.shutdown()
             self._backend = None
@@ -2297,6 +2347,12 @@ class MemoryEngine(MemoryEngineInterface):
             result = await self._validate_operation(self._operation_validator.validate_retain(ctx))
             if result and result.contents is not None:
                 contents = result.contents
+
+        # Engine-owned copy: the orchestrator clears per-item "content" strings
+        # after building the document's combined text (memory pressure
+        # optimization, see retain/orchestrator.py). Without an internal copy
+        # those mutations leak back to the caller's dicts.
+        contents = cast(list[RetainContentDict], [dict(c) for c in contents])
 
         # Apply batch-level document_id to contents that don't have their own (backwards compatibility)
         if document_id:
@@ -2918,7 +2974,7 @@ class MemoryEngine(MemoryEngineInterface):
         if tracer:
             tracer.start()
 
-        backend = await self._get_backend()
+        backend = await self._get_read_backend()
         recall_start = time.time()
 
         # Buffer logs for clean output in concurrent scenarios.
@@ -2987,7 +3043,7 @@ class MemoryEngine(MemoryEngineInterface):
                     max_connections=effective_connection_budget,
                     operation_id=f"recall-{recall_id}",
                 ) as op:
-                    budgeted_pool = op.wrap_pool(self._backend)
+                    budgeted_pool = op.wrap_pool(backend)
                     parallel_start = time.time()
                     multi_result = await retrieve_all_fact_types_parallel(
                         budgeted_pool,

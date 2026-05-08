@@ -251,15 +251,6 @@ def _do_configure_from_env():
         if api_key:
             f.write(f"HINDSIGHT_API_LLM_API_KEY={api_key}\n")
 
-        # Force CPU mode for embeddings/reranker on macOS to avoid MPS/XPC crashes in daemon mode
-        # On Linux, users can set these to 0 to use CUDA if available
-        import platform
-
-        if platform.system() == "Darwin":  # macOS
-            f.write("\n# Daemon settings (macOS: force CPU to avoid MPS/XPC issues)\n")
-            f.write("HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=1\n")
-            f.write("HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU=1\n")
-
     CONFIG_FILE.chmod(0o600)
 
     print()
@@ -436,13 +427,6 @@ def _do_configure_interactive(profile_name: str | None = None, port: int | None 
         config_dict["HINDSIGHT_API_LLM_MODEL"] = model
     if api_key:
         config_dict["HINDSIGHT_API_LLM_API_KEY"] = api_key
-
-    # Force CPU mode for embeddings/reranker on macOS to avoid MPS/XPC crashes in daemon mode
-    import platform
-
-    if platform.system() == "Darwin":  # macOS
-        config_dict["HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU"] = "1"
-        config_dict["HINDSIGHT_API_RERANKER_LOCAL_FORCE_CPU"] = "1"
 
     if profile_name:
         # Create named profile

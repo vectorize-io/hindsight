@@ -273,6 +273,7 @@ class OpenAICompatibleLLM(LLMInterface):
             "deepseek",
             "volcano",
             "openrouter",
+            "zai",
         ]
         if self.provider not in valid_providers:
             raise ValueError(f"OpenAICompatibleLLM only supports: {', '.join(valid_providers)}. Got: {self.provider}")
@@ -291,13 +292,15 @@ class OpenAICompatibleLLM(LLMInterface):
                 self.base_url = "https://api.deepseek.com"
             elif self.provider == "openrouter":
                 self.base_url = "https://openrouter.ai/api/v1"
+            elif self.provider == "zai":
+                self.base_url = "https://api.z.ai/api/coding/paas/v4"
 
         # For ollama/lmstudio, use dummy key if not provided
         if self.provider in ("ollama", "lmstudio") and not self.api_key:
             self.api_key = "local"
 
         # Validate API key for cloud providers
-        if self.provider in ("openai", "groq", "minimax", "deepseek", "openrouter") and not self.api_key:
+        if self.provider in ("openai", "groq", "minimax", "deepseek", "openrouter", "zai") and not self.api_key:
             raise ValueError(f"API key is required for {self.provider}")
 
         # Service tier configuration (from config, not env vars)

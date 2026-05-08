@@ -7,7 +7,7 @@ import type {
 } from "n8n-workflow";
 import { NodeConnectionTypes, NodeOperationError } from "n8n-workflow";
 
-import { HindsightClient, type Budget } from "@vectorize-io/hindsight-client";
+type Budget = "low" | "mid" | "high";
 
 interface HindsightCredentials {
   apiUrl: string;
@@ -22,6 +22,11 @@ interface HindsightCredentials {
  *  - Retain: Store a piece of content in a memory bank
  *  - Recall: Search a bank for memories relevant to a query
  *  - Reflect: Get an LLM-synthesized answer using the bank's memories
+ *
+ * HTTP calls go through n8n's built-in `httpRequestWithAuthentication` helper
+ * so the package ships with zero runtime dependencies (required for n8n
+ * Cloud verified-node distribution). The Bearer header is applied
+ * automatically from the configured Hindsight API credential.
  */
 export class Hindsight implements INodeType {
   description: INodeTypeDescription = {
@@ -213,10 +218,7 @@ export class Hindsight implements INodeType {
     const credentials = (await this.getCredentials(
       "hindsightApi"
     )) as unknown as HindsightCredentials;
-    const client = new HindsightClient({
-      baseUrl: credentials.apiUrl,
-      apiKey: credentials.apiKey || undefined,
-    });
+    const baseUrl = (credentials.apiUrl || "").replace(/\/$/, "");
 
     for (let i = 0; i < items.length; i++) {
       try {
@@ -234,29 +236,75 @@ export class Hindsight implements INodeType {
           const tagsRaw = this.getNodeParameter("retainTags", i, "") as string;
           const tags = parseTags(tagsRaw);
 
-          const response = await client.retain(bankId, content, tags.length ? { tags } : undefined);
-          result = response as unknown as IDataObject;
+          // Retain: POST /v1/default/banks/{bank_id}/memories
+          // Body matches HindsightClient.retain() shape: { items: [{ content, tags? }] }
+          const item: IDataObject = { content };
+          if (tags.length) {
+            item.tags = tags;
+          }
+
+          const response = (await this.helpers.httpRequestWithAuthentication.call(
+            this,
+            "hindsightApi",
+            {
+              method: "POST",
+              url: `${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/memories`,
+              body: { items: [item] },
+              json: true,
+            }
+          )) as IDataObject;
+          result = response;
         } else if (operation === "recall") {
           const query = this.getNodeParameter("recallQuery", i) as string;
-          const budget = this.getNodeParameter("recallBudget", i, "mid") as string;
+          const budget = this.getNodeParameter("recallBudget", i, "mid") as Budget;
           const maxTokens = this.getNodeParameter("recallMaxTokens", i, 4096) as number;
           const tagsRaw = this.getNodeParameter("recallTags", i, "") as string;
           const tags = parseTags(tagsRaw);
 
-          const response = await client.recall(bankId, query, {
-            budget: budget as Budget,
-            maxTokens,
-            ...(tags.length ? { tags } : {}),
-          });
-          result = response as unknown as IDataObject;
+          // Recall: POST /v1/default/banks/{bank_id}/memories/recall
+          // Body matches HindsightClient.recall() shape
+          const body: IDataObject = {
+            query,
+            max_tokens: maxTokens,
+            budget,
+          };
+          if (tags.length) {
+            body.tags = tags;
+          }
+
+          const response = (await this.helpers.httpRequestWithAuthentication.call(
+            this,
+            "hindsightApi",
+            {
+              method: "POST",
+              url: `${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/memories/recall`,
+              body,
+              json: true,
+            }
+          )) as IDataObject;
+          result = response;
         } else if (operation === "reflect") {
           const query = this.getNodeParameter("reflectQuery", i) as string;
-          const budget = this.getNodeParameter("reflectBudget", i, "mid") as string;
+          const budget = this.getNodeParameter("reflectBudget", i, "mid") as Budget;
 
-          const response = await client.reflect(bankId, query, {
-            budget: budget as Budget,
-          });
-          result = response as unknown as IDataObject;
+          // Reflect: POST /v1/default/banks/{bank_id}/reflect
+          // Body matches HindsightClient.reflect() shape
+          const body: IDataObject = {
+            query,
+            budget,
+          };
+
+          const response = (await this.helpers.httpRequestWithAuthentication.call(
+            this,
+            "hindsightApi",
+            {
+              method: "POST",
+              url: `${baseUrl}/v1/default/banks/${encodeURIComponent(bankId)}/reflect`,
+              body,
+              json: true,
+            }
+          )) as IDataObject;
+          result = response;
         } else {
           throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`, {
             itemIndex: i,

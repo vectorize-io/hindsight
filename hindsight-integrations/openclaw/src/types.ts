@@ -64,7 +64,22 @@ export interface PluginHookAgentContext {
 }
 
 export interface PluginConfig {
+  /**
+   * Mission for the Reflect operation. Stamped onto the bank's `reflect_mission`
+   * field via createBank() on first use. Has no effect on retain or recall.
+   * Leave unset (or empty) to manage missions out-of-band via the API.
+   */
   bankMission?: string;
+  /**
+   * Mission for the Retain operation. Steers what gets extracted as facts.
+   * Stamped onto the bank's `retain_mission` field on first use.
+   */
+  retainMission?: string;
+  /**
+   * Mission for observation consolidation. Stamped onto the bank's
+   * `observations_mission` field on first use.
+   */
+  observationsMission?: string;
   embedPort?: number;
   daemonIdleTimeout?: number; // Seconds before daemon shuts down (0 = never)
   embedVersion?: string; // hindsight-embed version (default: "latest")
@@ -92,6 +107,7 @@ export interface PluginConfig {
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
   recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['world', 'experience']
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
+  includeSenderContext?: boolean; // When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.
   retainDocumentScope?: "session" | "turn"; // Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session (`openclaw:{sessionKey}`). 'turn' produces a new document per retain (`openclaw:{sessionKey}:turn:NNNNNN` / `:window:NNNNNN`).
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.
   retainOverlapTurns?: number; // Extra prior turns included when chunked retention fires (default: 0). Window = retainEveryNTurns + retainOverlapTurns.
@@ -111,6 +127,12 @@ export interface PluginConfig {
   retainQueueMaxAgeMs?: number; // Max age in ms for queued items. -1 = keep forever (default: -1)
   retainQueueFlushIntervalMs?: number; // How often to attempt flushing the queue in ms. Default: 60000 (1 min)
   enableKnowledgeTools?: boolean; // Register agent_knowledge_* tools. Default: false. Set to true by the self-driving-agents CLI.
+  /**
+   * Emit per-hook latency lines (`before_prompt_build` recall RPC time,
+   * `agent_end` retain RPC time, total hook time) at info level so users can
+   * diagnose latency without patching the dist. Default: false.
+   */
+  debugPerfTiming?: boolean;
 }
 
 export interface ServiceConfig {

@@ -129,6 +129,12 @@ export class ControlPlaneClient {
       });
 
       if (!response.ok) {
+        // Redirect to login on 401 (session expired or not authenticated)
+        if (response.status === 401 && !window.location.pathname.startsWith("/login")) {
+          window.location.href = `/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+          throw new Error("Unauthorized");
+        }
+
         // Try to parse error response
         let errorMessage = `HTTP ${response.status}`;
         let errorDetails: string | undefined;

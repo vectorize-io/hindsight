@@ -9,6 +9,7 @@
   {"id": "llamacpp",      "label": "llama.cpp",         "iconKey": "terminal",           "defaultModel": "gemma-4-e2b-it", "defaultModelNote": "auto-downloaded GGUF"},
   {"id": "minimax",       "label": "MiniMax",           "iconKey": "sparkles",           "defaultModel": "MiniMax-M2.7"},
   {"id": "deepseek",      "label": "DeepSeek",          "iconKey": "brain",              "defaultModel": "deepseek-v4-flash"},
+  {"id": "zai",           "label": "z.ai",              "iconKey": "sparkles",           "defaultModel": "glm-4.5-flash"},
   {"id": "volcano",       "label": "Volcano Engine",    "iconKey": "zap",                "defaultModel": "doubao-pro-32k"},
   {"id": "openrouter",    "label": "OpenRouter",        "iconKey": "globe",              "defaultModel": "qwen/qwen3.5-9b"},
   {"id": "openai-codex",  "label": "OpenAI Codex",      "iconKey": "openai",             "defaultModel": "gpt-5.4-mini"},

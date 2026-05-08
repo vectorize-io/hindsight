@@ -19,11 +19,55 @@ from ..llm_wrapper import LLMConfig, OutputTooLongError, sanitize_llm_output
 from ..response_models import TokenUsage
 from .entity_labels import (
     EntityLabelsConfig,
+    MapField,
     build_labels_lookup,
     build_labels_model,
     is_label_entity,
     parse_entity_labels,
 )
+
+
+def _extract_map_entities(
+    entity_obj: dict,
+    fields: dict[str, MapField],
+    prefix: str,
+    validated_entities: "list[Entity]",
+    existing_texts_lower: set[str],
+) -> None:
+    """Recursively extract key:field:value entity strings from a map entity dict."""
+    for field_name, map_field in fields.items():
+        field_val = entity_obj.get(field_name)
+        if field_val is None or field_val == "":
+            continue
+        if map_field.type == "map" and map_field.fields:
+            # Nested map: recurse into each sub-entity
+            sub_list = field_val if isinstance(field_val, list) else [field_val]
+            for sub_obj in sub_list:
+                if isinstance(sub_obj, dict):
+                    _extract_map_entities(
+                        sub_obj,
+                        map_field.fields,
+                        f"{prefix}{field_name}:",
+                        validated_entities,
+                        existing_texts_lower,
+                    )
+        elif map_field.type == "multi-values":
+            vals = field_val if isinstance(field_val, list) else [field_val]
+            for v in vals:
+                if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
+                    continue
+                label_str = f"{prefix}{field_name}:{v.strip()}"
+                if label_str.lower() not in existing_texts_lower:
+                    validated_entities.append(Entity(text=label_str))
+                    existing_texts_lower.add(label_str.lower())
+        else:
+            # text or value — single string
+            if not isinstance(field_val, str) or not field_val.strip() or field_val.lower() in ("none", "null", "n/a"):
+                continue
+            label_str = f"{prefix}{field_name}:{field_val.strip()}"
+            if label_str.lower() not in existing_texts_lower:
+                validated_entities.append(Entity(text=label_str))
+                existing_texts_lower.add(label_str.lower())
 
 
 def _infer_temporal_date(fact_text: str, event_date: datetime | None) -> str | None:
@@ -731,6 +775,25 @@ Example: "Lost job → couldn't pay rent → moved apartment"
 - Fact 2: Moved apartment, causal_relations: [{target_index: 1, relation_type: "caused_by"}]"""
 
 
+def _append_map_fields_prompt(fields: dict[str, "MapField"], lines: list[str], indent: int = 4) -> None:
+    """Recursively append map field descriptions to the prompt lines."""
+    pad = " " * indent
+    for field_name, map_field in fields.items():
+        field_desc = f": {map_field.description}" if map_field.description else ""
+        if map_field.type == "map" and map_field.fields:
+            lines.append(f"{pad}• {field_name} (object){field_desc}")
+            _append_map_fields_prompt(map_field.fields, lines, indent + 4)
+        elif map_field.type == "multi-values":
+            vals = ", ".join(v.value for v in map_field.values if v.value)
+            type_hint = f"multi-values: {vals}" if vals else "multi-values"
+            lines.append(f"{pad}• {field_name} ({type_hint}){field_desc}")
+        elif map_field.type == "value" and map_field.values:
+            vals = ", ".join(v.value for v in map_field.values if v.value)
+            lines.append(f"{pad}• {field_name} (one of: {vals}){field_desc}")
+        else:
+            lines.append(f"{pad}• {field_name} (text){field_desc}")
+
+
 def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, free_form_entities: bool = True) -> str:
     """Build the entity labels classification section for the extraction prompt."""
     if labels_cfg is None:
@@ -763,7 +826,14 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
         "",
     ]
 
+    has_classification_attrs = False
+    has_map_attrs = False
+
     for attr in labels_cfg.attributes:
+        if attr.type == "map":
+            has_map_attrs = True
+            continue
+        has_classification_attrs = True
         if attr.type == "text":
             # Free-text: no predefined values — LLM writes any relevant string or null
             lines.append(f"- {attr.key} (free text or null): {attr.description}")
@@ -775,7 +845,31 @@ def _build_labels_prompt_section(labels_cfg: EntityLabelsConfig | list | None, f
                 lines.append(f'    • "{v.value}"{desc}')
         lines.append("")
 
-    lines.append("Only assign labels when clearly applicable. Leave null/empty if the fact does not match.")
+    if has_classification_attrs:
+        lines.append("Only assign labels when clearly applicable. Leave null/empty if the fact does not match.")
+        lines.append("")
+
+    # Add structured entity types (map groups)
+    if has_map_attrs:
+        lines.append("")
+        lines.append("══════════════════════════════════════════════════════════════════════════")
+        lines.append("STRUCTURED ENTITY TYPES")
+        lines.append("══════════════════════════════════════════════════════════════════════════")
+        lines.append("")
+        lines.append("For each fact, extract structured entities into the corresponding list field in 'labels'.")
+        lines.append("Each structured entity type has defined fields. Return a list of objects, one per entity found.")
+        lines.append("")
+        for attr in labels_cfg.attributes:
+            if attr.type != "map" or not attr.fields:
+                continue
+            desc = f": {attr.description}" if attr.description else ""
+            lines.append(f"- {attr.key}{desc}")
+            _append_map_fields_prompt(attr.fields, lines, indent=4)
+            lines.append("")
+        lines.append(
+            "Only extract structured entities when clearly present in the text. Leave the list empty if none found."
+        )
+
     return "\n".join(lines)
 
 
@@ -1164,6 +1258,19 @@ async def _extract_facts_from_chunk(
                             value = labels_data.get(group.key)
                             if not value:
                                 continue
+                            # Map-type groups: recursively extract key:field:value strings
+                            if group.type == "map" and group.fields:
+                                entities_list = value if isinstance(value, list) else [value]
+                                for entity_obj in entities_list:
+                                    if isinstance(entity_obj, dict):
+                                        _extract_map_entities(
+                                            entity_obj,
+                                            group.fields,
+                                            f"{group.key}:",
+                                            validated_entities,
+                                            existing_texts_lower,
+                                        )
+                                continue
                             values_list = value if isinstance(value, list) else [value]
                             for v in values_list:
                                 if not isinstance(v, str) or not v.strip() or v.lower() in ("none", "null", "n/a"):
@@ -1275,14 +1382,9 @@ async def _extract_facts_from_chunk(
                     f"     (current value: {config.retain_max_completion_tokens}, must be > RETAIN_CHUNK_SIZE={config.retain_chunk_size})"
                 ) from e
 
-            if "json_validate_failed" in str(e):
-                logger.warning(
-                    f"          [1.3.{chunk_index + 1}] Attempt {attempt + 1}/{llm_max_retries} failed with JSON validation error: {e}"
-                )
-                if attempt < llm_max_retries - 1:
-                    logger.info(f"          [1.3.{chunk_index + 1}] Retrying...")
-                    continue
-            # If it's not a JSON validation error or we're out of retries, re-raise
+            # Don't retry json_validate_failed here — the inner provider
+            # loop already retried the 400 error.  Re-entering the LLM call
+            # with the same input just multiplies wasted calls.
             raise
 
     # If we exhausted all retries, raise the last error or a descriptive fallback
@@ -1455,47 +1557,25 @@ async def extract_facts_from_text(
             f"chunk_size={config.retain_chunk_size:,}) - starting parallel LLM extraction"
         )
 
-    # Per-chunk retry wrapper: each chunk gets up to MAX_CHUNK_RETRIES attempts.
-    # This handles transient LLM failures (timeouts, rate limits, malformed responses)
-    # without discarding the entire batch. If a chunk still fails after all retries,
-    # the ENTIRE retain fails — we do not accept partial extraction.
-    MAX_CHUNK_RETRIES = 3
-    CHUNK_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
-
-    async def _extract_chunk_with_retry(chunk: str, chunk_index: int) -> tuple:
-        """Extract facts from a single chunk with retries on failure."""
-        last_exception = None
-        for attempt in range(MAX_CHUNK_RETRIES):
-            try:
-                return await _extract_facts_with_auto_split(
-                    chunk=chunk,
-                    chunk_index=chunk_index,
-                    total_chunks=len(chunks),
-                    event_date=event_date,
-                    context=context,
-                    llm_config=llm_config,
-                    config=config,
-                    agent_name=agent_name,
-                    metadata=metadata,
-                )
-            except Exception as e:
-                last_exception = e
-                if attempt < MAX_CHUNK_RETRIES - 1:
-                    delay = CHUNK_RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        f"Chunk {chunk_index}/{len(chunks)} extraction failed "
-                        f"(attempt {attempt + 1}/{MAX_CHUNK_RETRIES}): "
-                        f"{type(e).__name__}. Retrying in {delay:.0f}s..."
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(
-                        f"Chunk {chunk_index}/{len(chunks)} extraction failed after "
-                        f"{MAX_CHUNK_RETRIES} attempts: {type(e).__name__}: {e}"
-                    )
-        raise last_exception
-
-    tasks = [_extract_chunk_with_retry(chunk, i) for i, chunk in enumerate(chunks)]
+    # Transient LLM failures (timeouts, rate limits) are already retried inside
+    # the provider's inner loop.  Content-quality retries (malformed facts) are
+    # handled by the middle loop in _extract_facts_from_chunk.  Adding a third
+    # retry layer here would multiply wasted calls on deterministic failures
+    # (see https://github.com/vectorize-io/hindsight/issues/1412).
+    tasks = [
+        _extract_facts_with_auto_split(
+            chunk=chunk,
+            chunk_index=i,
+            total_chunks=len(chunks),
+            event_date=event_date,
+            context=context,
+            llm_config=llm_config,
+            config=config,
+            agent_name=agent_name,
+            metadata=metadata,
+        )
+        for i, chunk in enumerate(chunks)
+    ]
 
     # return_exceptions=True so we can collect all results even if some chunks
     # exhausted their retries. We check for failures below and fail the retain
@@ -1521,8 +1601,8 @@ async def extract_facts_from_text(
         # hasn't committed yet. The worker poller will retry the entire task.
         failed_summary = ", ".join(f"chunk {idx}: {type(err).__name__}" for idx, err in failed_chunks[:5])
         raise RuntimeError(
-            f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed "
-            f"after {MAX_CHUNK_RETRIES} retries each. First failures: {failed_summary}"
+            f"Fact extraction failed: {len(failed_chunks)}/{len(chunks)} chunks failed. "
+            f"First failures: {failed_summary}"
         )
 
     return all_facts, chunk_metadata, total_usage
@@ -1867,6 +1947,19 @@ async def extract_facts_from_contents_batch_api(
                     for group in labels_cfg_batch.attributes:
                         value = labels_data.get(group.key)
                         if not value:
+                            continue
+                        # Map-type groups: recursively extract key:field:value strings
+                        if group.type == "map" and group.fields:
+                            entities_list = value if isinstance(value, list) else [value]
+                            for entity_obj in entities_list:
+                                if isinstance(entity_obj, dict):
+                                    _extract_map_entities(
+                                        entity_obj,
+                                        group.fields,
+                                        f"{group.key}:",
+                                        validated_entities,
+                                        existing_texts_lower,
+                                    )
                             continue
                         values_list = value if isinstance(value, list) else [value]
                         for v in values_list:

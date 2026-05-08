@@ -1,11 +1,12 @@
 """Tests for lib/bank.py — bank ID derivation and mission management."""
 
 import json
-from unittest.mock import MagicMock
+import subprocess
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lib.bank import derive_bank_id, ensure_bank_mission
+from lib.bank import _resolve_project_name, derive_bank_id, ensure_bank_mission
 
 
 def _cfg(**overrides):
@@ -17,6 +18,8 @@ def _cfg(**overrides):
         "dynamicBankGranularity": ["agent", "project"],
         "bankMission": "",
         "retainMission": None,
+        "resolveWorktrees": True,
+        "directoryBankMap": {},
     }
     base.update(overrides)
     return base
@@ -95,6 +98,136 @@ class TestDeriveBankIdDynamic:
         cfg = _cfg(dynamicBankId=True, dynamicBankGranularity=["project"])
         result = derive_bank_id({"session_id": "s", "cwd": ""}, cfg)
         assert "unknown" in result
+
+    @patch("lib.bank.subprocess.run")
+    def test_dynamic_worktree_resolves_to_main_repo(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "/home/user/myproject/.git\n"
+        mock_run.return_value = mock_result
+
+        cfg = _cfg(dynamicBankId=True, agentName="bot", dynamicBankGranularity=["agent", "project"])
+        # Working in a worktree, but should resolve to the main repo name
+        result = derive_bank_id(_hook(cwd="/home/user/myproject-wt1"), cfg)
+        assert result == "bot::myproject"
+
+
+class TestResolveProjectName:
+    """Tests for git worktree resolution in project name derivation."""
+
+    def _mock_git(self, stdout, returncode=0):
+        """Create a mock for subprocess.run that simulates git output."""
+        result = MagicMock()
+        result.returncode = returncode
+        result.stdout = stdout
+        return result
+
+    @patch("lib.bank.subprocess.run")
+    def test_regular_repo(self, mock_run):
+        mock_run.return_value = self._mock_git("/home/user/myproject/.git\n")
+        assert _resolve_project_name("/home/user/myproject", _cfg()) == "myproject"
+
+    @patch("lib.bank.subprocess.run")
+    def test_worktree_resolves_to_main_repo(self, mock_run):
+        # Worktree at /home/user/myproject-wt1, main repo at /home/user/myproject
+        mock_run.return_value = self._mock_git("/home/user/myproject/.git\n")
+        assert _resolve_project_name("/home/user/myproject-wt1", _cfg()) == "myproject"
+
+    @patch("lib.bank.subprocess.run")
+    def test_worktree_different_location(self, mock_run):
+        # Worktree at /tmp/worktrees/feature-x, main repo at /home/user/hindsight
+        mock_run.return_value = self._mock_git("/home/user/hindsight/.git\n")
+        assert _resolve_project_name("/tmp/worktrees/feature-x", _cfg()) == "hindsight"
+
+    @patch("lib.bank.subprocess.run")
+    def test_disabled_falls_back_to_basename(self, mock_run):
+        cfg = _cfg(resolveWorktrees=False)
+        assert _resolve_project_name("/home/user/myproject-wt1", cfg) == "myproject-wt1"
+        mock_run.assert_not_called()
+
+    @patch("lib.bank.subprocess.run")
+    def test_git_not_available(self, mock_run):
+        mock_run.side_effect = OSError("git not found")
+        assert _resolve_project_name("/home/user/myproject", _cfg()) == "myproject"
+
+    @patch("lib.bank.subprocess.run")
+    def test_not_a_git_repo(self, mock_run):
+        mock_run.return_value = self._mock_git("", returncode=128)
+        assert _resolve_project_name("/home/user/plaindir", _cfg()) == "plaindir"
+
+    @patch("lib.bank.subprocess.run")
+    def test_git_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
+        assert _resolve_project_name("/home/user/myproject", _cfg()) == "myproject"
+
+    def test_empty_cwd(self):
+        assert _resolve_project_name("", _cfg()) == "unknown"
+
+
+class TestDirectoryBankMap:
+    """Tests for explicit directory-to-bank mapping."""
+
+    def test_exact_match(self):
+        cfg = _cfg(directoryBankMap={"/home/user/myproject": "custom-bank"})
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "custom-bank"
+
+    def test_match_with_trailing_slash(self):
+        cfg = _cfg(directoryBankMap={"/home/user/myproject/": "custom-bank"})
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "custom-bank"
+
+    def test_no_match_falls_through_to_static(self):
+        cfg = _cfg(directoryBankMap={"/home/user/other": "other-bank"}, bankId="default-bank")
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "default-bank"
+
+    def test_no_match_falls_through_to_dynamic(self):
+        cfg = _cfg(
+            directoryBankMap={"/home/user/other": "other-bank"},
+            dynamicBankId=True,
+            agentName="bot",
+            dynamicBankGranularity=["agent"],
+            resolveWorktrees=False,
+        )
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "bot"
+
+    def test_with_prefix(self):
+        cfg = _cfg(
+            directoryBankMap={"/home/user/myproject": "custom-bank"},
+            bankIdPrefix="prod",
+        )
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "prod-custom-bank"
+
+    def test_overrides_dynamic_mode(self):
+        cfg = _cfg(
+            directoryBankMap={"/home/user/myproject": "explicit-bank"},
+            dynamicBankId=True,
+            agentName="bot",
+            dynamicBankGranularity=["agent", "project"],
+        )
+        result = derive_bank_id(_hook(cwd="/home/user/myproject"), cfg)
+        assert result == "explicit-bank"
+
+    def test_empty_map_ignored(self):
+        cfg = _cfg(directoryBankMap={}, bankId="default-bank")
+        result = derive_bank_id(_hook(), cfg)
+        assert result == "default-bank"
+
+    def test_empty_cwd_skips_map(self):
+        cfg = _cfg(directoryBankMap={"/some/path": "mapped-bank"}, bankId="fallback")
+        result = derive_bank_id({"session_id": "s", "cwd": ""}, cfg)
+        assert result == "fallback"
+
+    def test_multiple_entries(self):
+        cfg = _cfg(directoryBankMap={
+            "/home/user/project-a": "bank-a",
+            "/home/user/project-b": "bank-b",
+        })
+        assert derive_bank_id(_hook(cwd="/home/user/project-a"), cfg) == "bank-a"
+        assert derive_bank_id(_hook(cwd="/home/user/project-b"), cfg) == "bank-b"
 
 
 class TestEnsureBankMission:

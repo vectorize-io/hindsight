@@ -10,6 +10,17 @@
       ]
     }
   },
+  "contracts": {
+    "tools": [
+      "agent_knowledge_list_pages",
+      "agent_knowledge_get_page",
+      "agent_knowledge_create_page",
+      "agent_knowledge_update_page",
+      "agent_knowledge_delete_page",
+      "agent_knowledge_recall",
+      "agent_knowledge_ingest"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "properties": {
@@ -25,8 +36,16 @@
       },
       "bankMission": {
         "type": "string",
-        "description": "Agent identity/purpose stored on the memory bank. Helps the memory engine understand context for better fact extraction during retain. Set once per bank on first use — this is not a recall prompt.",
+        "description": "Mission stamped onto the bank's reflect_mission column on first use. Only affects the /reflect operation — does not steer retain or recall. Leave unset (or empty) to manage missions out-of-band via PATCH /banks/{id}.",
         "default": "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
+      },
+      "retainMission": {
+        "type": "string",
+        "description": "Mission stamped onto the bank's retain_mission column on first use. Steers what gets extracted as facts during retain. Leave unset to use built-in extraction rules."
+      },
+      "observationsMission": {
+        "type": "string",
+        "description": "Mission stamped onto the bank's observations_mission column on first use. Controls what gets synthesised into observations during consolidation."
       },
       "embedVersion": {
         "type": "string",
@@ -139,6 +158,11 @@
         "description": "When true (default) and retainFormat is 'json', each message's content is an Anthropic-shaped array of typed blocks including tool_use (agent tool calls) and tool_result (truncated at 2000 chars). Operational MCP tools — Hindsight's own recall/retain/search — are filtered out to avoid feedback loops. Set to false to retain text-only content, one string per message.",
         "default": true
       },
+      "includeSenderContext": {
+        "type": "boolean",
+        "description": "When true (default), prepend a session context block (sender, channel, provider) to retained transcripts so similarity search can distinguish memories by speaker even when dynamicBankGranularity does not include 'user'. Set false to omit.",
+        "default": true
+      },
       "retainEveryNTurns": {
         "type": "integer",
         "description": "Retain every Nth turn instead of every turn. 1 = every turn (default). Values > 1 enable chunked retention with a sliding window.",
@@ -150,6 +174,12 @@
         "description": "Extra prior turns to include when chunked retention fires. Window = retainEveryNTurns + retainOverlapTurns. Only applies when retainEveryNTurns > 1.",
         "minimum": 0,
         "default": 0
+      },
+      "retainDocumentScope": {
+        "type": "string",
+        "description": "Granularity of the retained document_id. 'session' (default) groups all retains under a single document per OpenClaw session. 'turn' produces a new document per retain.",
+        "enum": ["session", "turn"],
+        "default": "session"
       },
       "recallBudget": {
         "type": "string",
@@ -231,6 +261,11 @@
         "description": "Interval in ms to batch retain/recall log summaries. 0 = log every event individually. Default: 300000 (5 min).",
         "default": 300000
       },
+      "debugPerfTiming": {
+        "type": "boolean",
+        "description": "Emit one info-level perf line per before_prompt_build (recall path) and agent_end (retain path) so you can spot whether latency is in the plugin or upstream. Format: 'perf: <hook> hook_total=Xms <hook-specific fields>'.",
+        "default": false
+      },
       "retainQueuePath": {
         "type": "string",
         "description": "Path to JSONL file for buffering failed retains (external API mode only). Default: ~/.openclaw/data/hindsight-retain-queue.jsonl"
@@ -278,8 +313,16 @@
       "placeholder": "0 (auto-assign)"
     },
     "bankMission": {
-      "label": "Bank Mission",
+      "label": "Bank Mission (reflect)",
       "placeholder": "Custom context for what this agent does..."
+    },
+    "retainMission": {
+      "label": "Retain Mission",
+      "placeholder": "Steers what gets extracted as facts during retain..."
+    },
+    "observationsMission": {
+      "label": "Observations Mission",
+      "placeholder": "Controls what gets synthesised into observations..."
     },
     "embedVersion": {
       "label": "Hindsight Embed Version",
@@ -367,6 +410,10 @@
       "label": "Retain Tool Calls",
       "placeholder": "true (default) — include tool_use / tool_result blocks in retained JSON"
     },
+    "includeSenderContext": {
+      "label": "Include Sender Context",
+      "placeholder": "true (default) — prepend sender/channel/provider context to retained content"
+    },
     "retainEveryNTurns": {
       "label": "Retain Every N Turns",
       "placeholder": "1 (every turn, default)"
@@ -374,6 +421,10 @@
     "retainOverlapTurns": {
       "label": "Retain Overlap Turns",
       "placeholder": "0 (no overlap, default)"
+    },
+    "retainDocumentScope": {
+      "label": "Retain Document Scope",
+      "placeholder": "session (default) or turn"
     },
     "recallBudget": {
       "label": "Recall Budget",
@@ -424,6 +475,14 @@
     "logSummaryIntervalMs": {
       "label": "Log Summary Interval (ms)",
       "placeholder": "300000"
+    },
+    "debugPerfTiming": {
+      "label": "Debug Perf Timing",
+      "placeholder": "false (default) — enable to log per-hook latency"
+    },
+    "enableKnowledgeTools": {
+      "label": "Enable Knowledge Tools",
+      "placeholder": "false (default) — enable agent_knowledge_* tools"
     },
     "retainQueuePath": {
       "label": "Retain Queue File Path",

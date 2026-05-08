@@ -20,6 +20,7 @@ The API service handles all memory operations (retain, recall, reflect).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_DATABASE_URL` | PostgreSQL connection string | `pg0` (embedded) |
+| `HINDSIGHT_API_READ_DATABASE_URL` | Optional read-replica PostgreSQL URL. When set, recall queries (semantic, BM25, graph, temporal) are routed through a separate connection pool against this URL, offloading the primary. Typically points to a read-only endpoint (e.g., CNPG's `<cluster>-ro` service or Aurora reader endpoint). | Unset (uses primary) |
 | `HINDSIGHT_API_MIGRATION_DATABASE_URL` | Direct PostgreSQL URL for running migrations, bypassing connection poolers (e.g. PgBouncer). When set, advisory locks and Alembic migrations use this URL instead of `DATABASE_URL`. | Falls back to `DATABASE_URL` |
 | `HINDSIGHT_API_DATABASE_SCHEMA` | PostgreSQL schema name for tables | `public` |
 | `HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP` | Run database migrations on API startup | `true` |
@@ -43,8 +44,10 @@ Migrations will automatically create the schema if it doesn't exist and create a
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_DB_POOL_MIN_SIZE` | Minimum connections in the pool | `5` |
-| `HINDSIGHT_API_DB_POOL_MAX_SIZE` | Maximum connections in the pool | `100` |
+| `HINDSIGHT_API_DB_POOL_MIN_SIZE` | Minimum connections in the primary pool | `5` |
+| `HINDSIGHT_API_DB_POOL_MAX_SIZE` | Maximum connections in the primary pool | `100` |
+| `HINDSIGHT_API_READ_DB_POOL_MIN_SIZE` | Minimum connections in the read-replica pool (only used when `READ_DATABASE_URL` is set) | Falls back to `DB_POOL_MIN_SIZE` |
+| `HINDSIGHT_API_READ_DB_POOL_MAX_SIZE` | Maximum connections in the read-replica pool (only used when `READ_DATABASE_URL` is set) | Falls back to `DB_POOL_MAX_SIZE` |
 | `HINDSIGHT_API_DB_COMMAND_TIMEOUT` | PostgreSQL command timeout in seconds (asyncpg client-side) | `60` |
 | `HINDSIGHT_API_DB_ACQUIRE_TIMEOUT` | Connection acquisition timeout in seconds | `30` |
 | `HINDSIGHT_API_DB_STATEMENT_TIMEOUT` | Postgres `statement_timeout` applied to every pool connection, in seconds. Server-side safety net for runaway queries. Does **not** apply to Alembic migrations (which run on a separate psycopg2 engine). Set to `0` to disable. | `600` |
@@ -65,9 +68,9 @@ hindsight-admin run-db-migration --schema tenant_acme
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, or `pgvectorscale` | `pgvector` |
+| `HINDSIGHT_API_VECTOR_EXTENSION` | Vector index algorithm: `pgvector`, `vchord`, `pgvectorscale`, or `scann` | `pgvector` |
 
-Hindsight supports three PostgreSQL vector extensions:
+Hindsight supports four PostgreSQL vector extensions:
 
 #### **pgvector** (HNSW - default)
 - In-memory index using Hierarchical Navigable Small World algorithm
@@ -93,6 +96,13 @@ Hindsight supports three PostgreSQL vector extensions:
 - Includes integrated BM25 search capabilities
 - Requires `vchord` extension
 
+#### **scann** (AlloyDB ScaNN)
+- Google's ScaNN index, available on **AlloyDB** and **AlloyDB Omni**
+- Uses a single global vector index in `AUTO` mode (per-bank partial indexes are not used)
+- **Installation:** `CREATE EXTENSION vector; CREATE EXTENSION alloydb_scann CASCADE;`
+- **Index build is deferred** until a table reaches **10,000 populated embedding rows** — AlloyDB cannot build a ScaNN AUTO index on a near-empty table. Until that threshold is crossed, recall falls back to a sequential scan; the global index is built on the next API startup once enough rows exist.
+- A ready-to-use Docker Compose stack is provided at [`docker/docker-compose/alloydb/docker-compose.yaml`](https://github.com/vectorize-io/hindsight/blob/main/docker/docker-compose/alloydb/docker-compose.yaml) for running Hindsight against AlloyDB Omni locally.
+
 **When to use pgvectorscale (DiskANN):**
 - Large datasets (10M+ vectors) ⭐
 - Complex filtering requirements
@@ -111,11 +121,15 @@ Hindsight supports three PostgreSQL vector extensions:
 - Want integrated BM25 search
 - Already using vchord for text search
 
+**When to use scann:**
+- Running on Google **AlloyDB** or **AlloyDB Omni**
+- Want managed ScaNN with `AUTO` mode tuning
+
 **Switching extensions:**
 
 If you need to switch from one extension to another:
-1. Set `HINDSIGHT_API_VECTOR_EXTENSION` to your desired extension (`pgvector`, `vchord`, or `pgvectorscale`)
-2. If your database has existing data, you'll get an error with migration instructions
+1. Set `HINDSIGHT_API_VECTOR_EXTENSION` to your desired extension (`pgvector`, `vchord`, `pgvectorscale`, or `scann`)
+2. If your database has existing data, you'll get an error with migration instructions (note: switching **to** `scann` is allowed even with data — the existing index is dropped and rebuilt as ScaNN once the table has at least 10,000 embedding rows)
 3. For empty databases, indexes will be automatically recreated on startup
 
 **Learn more:**
@@ -162,7 +176,7 @@ To switch between backends:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `volcano`, `openrouter`, `none` | `openai` |
+| `HINDSIGHT_API_LLM_PROVIDER` | Provider: `openai`, `openai-codex`, `claude-code`, `anthropic`, `gemini`, `groq`, `minimax`, `deepseek`, `zai`, `ollama`, `lmstudio`, `llamacpp`, `vertexai`, `bedrock`, `litellm`, `litellmrouter`, `volcano`, `openrouter`, `none` | `openai` |
 | `HINDSIGHT_API_LLM_API_KEY` | API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-mini` |
 | `HINDSIGHT_API_LLM_BASE_URL` | Custom LLM endpoint | Provider default |
@@ -267,6 +281,12 @@ export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash
 # - Use `deepseek-v4-pro` for the higher-quality reasoning route.
 # - Use `deepseek-chat` for the non-thinking alias (faster, cheaper).
 
+# z.ai (Zhipu GLM series, OpenAI-compatible, https://z.ai)
+export HINDSIGHT_API_LLM_PROVIDER=zai
+export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
+export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
+# Default base_url: https://api.z.ai/api/coding/paas/v4 (override with HINDSIGHT_API_LLM_BASE_URL if needed)
+
 # AWS Bedrock (native support - no API key needed, uses AWS credentials)
 export HINDSIGHT_API_LLM_PROVIDER=bedrock
 export HINDSIGHT_API_LLM_MODEL=us.amazon.nova-2-lite-v1:0
@@ -296,6 +316,28 @@ export HINDSIGHT_API_LLM_PROVIDER=none
 :::tip OpenAI Codex, Claude Code & Vertex AI Setup
 For detailed setup instructions for **OpenAI Codex** (ChatGPT Plus/Pro), **Claude Code** (Claude Pro/Max), and **Vertex AI** (Google Cloud), see the [Models documentation](./models#openai-codex-setup-chatgpt-pluspro).
 :::
+
+### LLM Router (LiteLLM Router)
+
+`HINDSIGHT_API_LLM_PROVIDER=litellmrouter` runs the default LLM through [LiteLLM's `Router`](https://docs.litellm.ai/docs/routing). The config JSON is forwarded verbatim — for fallback chains, load-balancing, rate limits, routing strategies, and the rest of the supported keys, see the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing). Hindsight always issues completions against `model_name: "default"`, so include at least one entry with that name.
+
+| Variable | Description |
+|----------|-------------|
+| `HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG` | JSON object passed to `litellm.Router(**config)`. Required when provider is `litellmrouter`. |
+| `HINDSIGHT_API_{RETAIN,REFLECT,CONSOLIDATION}_LLM_LITELLMROUTER_CONFIG` | Per-operation overrides. Fall back to the default config when unset. |
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=litellmrouter
+export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
+  "model_list": [
+    {"model_name": "default",  "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-..."}},
+    {"model_name": "fallback", "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}}
+  ],
+  "fallbacks": [{"default": ["fallback"]}]
+}'
+```
+
+The config is a credential field — never returned by the bank-config API. Hindsight already retries calls; set `"num_retries": 0` in the Router config to avoid double-retries. Batch APIs aren't supported in router mode.
 
 ### Built-in llama.cpp
 
@@ -1331,11 +1373,15 @@ The Control Plane is the web UI for managing memory banks.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_CP_DATAPLANE_API_URL` | URL of the API service | `http://localhost:8888` |
+| `HINDSIGHT_CP_ACCESS_KEY` | Access key to protect the Control Plane UI. When set, users must enter this key to log in. | *(none — auth disabled)* |
 | `NEXT_PUBLIC_BASE_PATH` | Base path for Control Plane UI when behind reverse proxy (e.g., `/hindsight`) | `""` (root) |
 
 ```bash
 # Point Control Plane to a remote API service
 export HINDSIGHT_CP_DATAPLANE_API_URL=http://api.example.com:8888
+
+# Protect the Control Plane with an access key
+export HINDSIGHT_CP_ACCESS_KEY=my-secret-key
 ```
 
 ### Hierarchical Configuration

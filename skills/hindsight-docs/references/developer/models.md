@@ -29,6 +29,7 @@ Used for fact extraction, entity resolution, mental model consolidation, and ans
 - llama.cpp
 - MiniMax
 - DeepSeek
+- z.ai
 - Volcano Engine
 - OpenRouter
 - OpenAI Codex
@@ -59,6 +60,11 @@ See [Configuration](./configuration#built-in-llamacpp) for all options.
 Set `HINDSIGHT_API_LLM_PROVIDER=litellm` to use any model supported by [LiteLLM](https://docs.litellm.ai/docs/providers), including **Azure OpenAI**, **Together AI**, **Fireworks AI**, and many more. Model names use LiteLLM's provider prefix format (e.g., `azure/gpt-4o`).
 
 See [Configuration](./configuration#llm-provider) for setup examples.
+> **💡 LiteLLM Router (fallback chains, load-balancing, per-deployment limits)**
+> 
+Set `HINDSIGHT_API_LLM_PROVIDER=litellmrouter` to run the default LLM through [LiteLLM's Router](https://docs.litellm.ai/docs/routing) — ordered fallback across deployments, load-balanced same-tier routing, weighted picks, per-deployment `rpm`/`tpm` limits, and cooldowns are all available via the [`Router` config](https://docs.litellm.ai/docs/routing#fallbacks). Hindsight passes the JSON config through verbatim.
+
+See [Configuration](./configuration#llm-router-litellm-router) for setup.
 ### Benchmarks
 
 Not sure which model to use? The **[Model Leaderboard](https://benchmarks.hindsight.vectorize.io/)** benchmarks models across accuracy, speed, cost, and reliability for retain, reflect, and observation consolidation so you can pick the right trade-off for your use case.
@@ -102,6 +108,7 @@ Each provider has a recommended default model that's used when `HINDSIGHT_API_LL
 | `llamacpp` | `gemma-4-e2b-it` (auto-downloaded GGUF) |
 | `minimax` | `MiniMax-M2.7` |
 | `deepseek` | `deepseek-v4-flash` |
+| `zai` | `glm-4.5-flash` |
 | `volcano` | `doubao-pro-32k` |
 | `openrouter` | `qwen/qwen3.5-9b` |
 | `openai-codex` | `gpt-5.4-mini` |
@@ -192,6 +199,11 @@ export HINDSIGHT_API_LLM_MODEL=MiniMax-M2.7
 export HINDSIGHT_API_LLM_PROVIDER=deepseek
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
 export HINDSIGHT_API_LLM_MODEL=deepseek-v4-flash  # or deepseek-v4-pro / deepseek-chat / deepseek-reasoner
+
+# z.ai (Zhipu GLM series, OpenAI-compatible, https://z.ai)
+export HINDSIGHT_API_LLM_PROVIDER=zai
+export HINDSIGHT_API_LLM_API_KEY=your-zai-api-key
+export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash  # or glm-4.5-air for the paid tier
 
 # Vertex AI (Google Cloud)
 export HINDSIGHT_API_LLM_PROVIDER=vertexai

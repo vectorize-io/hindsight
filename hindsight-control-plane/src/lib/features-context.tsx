@@ -8,6 +8,7 @@ interface Features {
   mcp: boolean;
   worker: boolean;
   bank_config_api: boolean;
+  access_key_auth: boolean;
 }
 
 interface FeaturesContextType {
@@ -21,6 +22,7 @@ const defaultFeatures: Features = {
   mcp: false,
   worker: false,
   bank_config_api: false,
+  access_key_auth: false,
 };
 
 const FeaturesContext = createContext<FeaturesContextType | undefined>(undefined);
@@ -34,7 +36,7 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
     const loadFeatures = async () => {
       try {
         const response = await client.getVersion();
-        setFeatures(response.features);
+        setFeatures({ ...defaultFeatures, ...response.features });
         setError(null);
       } catch (err) {
         console.error("Error loading features:", err);

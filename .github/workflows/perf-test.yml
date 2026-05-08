@@ -25,10 +25,10 @@ on:
           - recall-with-observations
           - consolidation
         default: ""
-      locomo_max_conversations:
-        description: "LoComo max conversations (0 = skip, blank = all)"
-        type: number
-        default: 0
+      locomo_conversations:
+        description: "LoComo conversation IDs (space-separated). Blank = curated set (conv-26 conv-30 conv-43)."
+        type: string
+        default: ""
       locomo_skip:
         description: "Skip LoComo job"
         type: boolean
@@ -83,45 +83,35 @@ jobs:
       run: |
         cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
 
-    - name: "Suite: retain"
-      if: inputs.suite == '' || inputs.suite == 'retain'
+    - name: Run perf-test
       run: |
+        SUITE_ARG=""
+        if [ -n "${{ inputs.suite }}" ]; then
+          SUITE_ARG="--suite ${{ inputs.suite }}"
+        fi
         ./scripts/benchmarks/run-perf-test.sh \
           --scale ${{ inputs.scale || 'large' }} \
-          --suite retain \
-          --output perf-results-retain.json
-
-    - name: "Suite: recall"
-      if: inputs.suite == '' || inputs.suite == 'recall'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite recall \
-          --output perf-results-recall.json
-
-    - name: "Suite: recall-with-observations"
-      if: inputs.suite == '' || inputs.suite == 'recall-with-observations'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite recall-with-observations \
-          --output perf-results-recall-with-observations.json
-
-    - name: "Suite: consolidation"
-      if: inputs.suite == '' || inputs.suite == 'consolidation'
-      run: |
-        ./scripts/benchmarks/run-perf-test.sh \
-          --scale ${{ inputs.scale || 'large' }} \
-          --suite consolidation \
-          --output perf-results-consolidation.json
+          $SUITE_ARG \
+          --output perf-results.json
 
     - name: Upload perf results
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: perf-results-${{ github.sha }}
-        path: hindsight-dev/perf-results-*.json
+        path: hindsight-dev/perf-results.json
         retention-days: 90
+
+    # Publish enriched results (perf JSON + commit metadata) to the dashboard
+    # repo's gh-pages branch. The static site at
+    #   https://vectorize-io.github.io/hindsight-continuous-performance-monitor/
+    # reads data/index.json + data/<run>.json and renders charts client-side.
+    - name: Publish to dashboard
+      if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-perf-results.sh hindsight-dev/perf-results.json
 
   locomo:
     if: inputs.locomo_skip != true
@@ -179,14 +169,20 @@ jobs:
         cd hindsight-dev && uv sync --frozen --all-extras --index-strategy unsafe-best-match
 
     - name: Run LoComo benchmark
+      # Curated 3-conversation subset (best/middle/worst by accuracy on the
+      # last successful full run): conv-26 (best), conv-30 (middle), conv-43
+      # (worst). Excludes conv-44, the bank with the largest unconsolidated
+      # set that has been pushing scheduled runs over the per-bank
+      # _wait_for_consolidation timeout. Override via workflow_dispatch with
+      # the locomo_conversations input.
       run: |
-        MAX_CONV_ARG=""
-        if [ "${{ inputs.locomo_max_conversations }}" != "0" ] && [ -n "${{ inputs.locomo_max_conversations }}" ]; then
-          MAX_CONV_ARG="--max-conversations ${{ inputs.locomo_max_conversations }}"
+        CONVERSATIONS="${{ inputs.locomo_conversations }}"
+        if [ -z "$CONVERSATIONS" ]; then
+          CONVERSATIONS="conv-26 conv-30 conv-43"
         fi
         uv run python hindsight-dev/benchmarks/locomo/locomo_benchmark.py \
           --wait-consolidation \
-          $MAX_CONV_ARG
+          --conversation $CONVERSATIONS
 
     - name: Upload LoComo results
       if: always()
@@ -195,3 +191,10 @@ jobs:
         name: locomo-results-${{ github.sha }}
         path: hindsight-dev/benchmarks/locomo/results/
         retention-days: 90
+
+    - name: Publish LoComo to dashboard
+      if: success() && (github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      env:
+        PERF_DASHBOARD_TOKEN: ${{ secrets.PERF_DASHBOARD_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: ./scripts/benchmarks/publish-locomo-results.sh hindsight-dev/benchmarks/locomo/results/benchmark_results.json

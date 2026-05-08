@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "hindsight": {
-      "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp_server.py"]
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run_mcp.sh"]
     }
   }
 }
