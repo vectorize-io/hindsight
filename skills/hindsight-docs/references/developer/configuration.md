@@ -332,32 +332,29 @@ Activate it like any other provider — set `HINDSIGHT_API_LLM_PROVIDER=litellmr
 
 #### Config shape
 
-Hindsight's only requirements are:
-- The value is a JSON object.
-- It contains a non-empty `model_list`.
-- Each entry in `model_list` has a `model_name`.
+Hindsight forwards your config verbatim to `litellm.Router(**config)` and does not validate the shape. The single Hindsight-imposed convention: **at least one entry in `model_list` must have `model_name: "default"`** — that's the entrypoint Hindsight issues completions against. Any additional entries become fallback / load-balance / weighted-pool members per your `fallbacks`, `routing_strategy`, `rpm`, `tpm`, `weight`, etc.
 
-Requests are routed against the **first entry's `model_name`**. If you want ordered fallback, distinct `model_name` values + a `fallbacks` map. If you want load-balanced same-tier routing, repeat the same `model_name` and pick a `routing_strategy`. Everything else (`num_retries`, `cooldown_time`, `allowed_fails`, `routing_strategy`, per-deployment `rpm`/`tpm`/`weight`/`model_info`, `context_window_fallbacks`, …) is up to you — see the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing) for the full surface.
+If your config is malformed, LiteLLM Router will raise its own error at startup. Refer to the [LiteLLM Router docs](https://docs.litellm.ai/docs/routing) for the complete surface (model_list, fallbacks, context_window_fallbacks, num_retries, cooldown_time, routing_strategy, allowed_fails, model_info, …).
 
 #### Examples
 
-Ordered fallback (primary first, fallback only on failure):
+Ordered fallback (entrypoint first, fallbacks only on failure):
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=litellmrouter
 export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
   "model_list": [
-    {"model_name": "primary",  "litellm_params": {"model": "openai/MiniMax-M2.7-highspeed", "api_base": "https://api.minimax.io/v1", "api_key": "sk-minimax-..."}},
+    {"model_name": "default",  "litellm_params": {"model": "openai/MiniMax-M2.7-highspeed", "api_base": "https://api.minimax.io/v1", "api_key": "sk-minimax-..."}},
     {"model_name": "fallback", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-openai-..."}},
     {"model_name": "local",    "litellm_params": {"model": "ollama_chat/llama3.1:8b", "api_base": "http://localhost:11434"}}
   ],
-  "fallbacks": [{"primary": ["fallback", "local"]}],
+  "fallbacks": [{"default": ["fallback", "local"]}],
   "num_retries": 0,
   "cooldown_time": 60
 }'
 ```
 
-Load-balanced with rate limits:
+Load-balanced with rate limits (multiple keys under the same entrypoint):
 
 ```bash
 export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
@@ -369,16 +366,16 @@ export HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG='{
 }'
 ```
 
-Per-operation override (retain uses a stronger primary):
+Per-operation override (retain uses a stronger entrypoint):
 
 ```bash
 export HINDSIGHT_API_RETAIN_LLM_PROVIDER=litellmrouter
 export HINDSIGHT_API_RETAIN_LLM_LITELLMROUTER_CONFIG='{
   "model_list": [
-    {"model_name": "primary",  "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}},
+    {"model_name": "default",  "litellm_params": {"model": "anthropic/claude-sonnet-4-5", "api_key": "sk-ant-..."}},
     {"model_name": "fallback", "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-openai-..."}}
   ],
-  "fallbacks": [{"primary": ["fallback"]}]
+  "fallbacks": [{"default": ["fallback"]}]
 }'
 ```
 
