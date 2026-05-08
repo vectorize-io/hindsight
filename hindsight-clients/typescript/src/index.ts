@@ -27,6 +27,7 @@
 
 import { createClient, createConfig } from "../generated/client";
 import type { Client } from "../generated/client";
+import pkg from "../package.json";
 import * as sdk from "../generated/sdk.gen";
 import type {
   RetainRequest,
@@ -53,7 +54,7 @@ import type {
   TagGroupNotInput,
 } from "../generated/types.gen";
 
-export const CLIENT_VERSION = "0.5.1";
+export const CLIENT_VERSION: string = pkg.version;
 export const DEFAULT_USER_AGENT = `hindsight-client-typescript/${CLIENT_VERSION}`;
 
 export interface HindsightClientOptions {
