@@ -4,6 +4,7 @@ description: "A design analysis of how Hindsight's memory operations scale with 
 authors: [nicoloboschi]
 date: 2026-05-08T12:00
 tags: [scaling, performance, architecture, engineering]
+image: /img/blog/how-hindsight-scales.png
 hide_table_of_contents: true
 ---
 
