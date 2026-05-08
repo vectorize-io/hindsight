@@ -822,34 +822,20 @@ def _get_default_model_for_provider(provider: str) -> str:
 
 def _parse_llm_router_config(env_var: str) -> dict | None:
     """
-    Parse a LiteLLM Router configuration from a JSON object env var.
+    Parse a LiteLLM Router configuration from a JSON env var.
 
-    The value is a JSON object passed verbatim to ``litellm.Router(**config)``.
-    The only Hindsight-imposed shape rule is that ``model_list`` is present
-    and non-empty and that each entry has a ``model_name``. Everything else —
-    ``fallbacks``, ``num_retries``, ``cooldown_time``, ``routing_strategy``,
-    per-deployment ``rpm``/``tpm``/``weight`` etc. — is forwarded as-is.
-
-    See https://docs.litellm.ai/docs/routing for the supported keys.
+    The value is forwarded verbatim to ``litellm.Router(**config)``. We only
+    check that it parses as JSON; LiteLLM Router is authoritative about the
+    shape (``model_list``, ``fallbacks``, ``routing_strategy``, …). See
+    https://docs.litellm.ai/docs/routing.
     """
     raw = os.getenv(env_var, "").strip()
     if not raw:
         return None
     try:
-        parsed = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid {env_var}: expected a JSON object, got invalid JSON: {e}") from e
-    if not isinstance(parsed, dict):
-        raise ValueError(f"Invalid {env_var}: expected a JSON object, got {type(parsed).__name__}")
-    model_list = parsed.get("model_list")
-    if not isinstance(model_list, list) or not model_list:
-        raise ValueError(f"Invalid {env_var}: 'model_list' must be a non-empty list")
-    for i, entry in enumerate(model_list):
-        if not isinstance(entry, dict):
-            raise ValueError(f"Invalid {env_var}.model_list[{i}]: expected an object, got {type(entry).__name__}")
-        if not entry.get("model_name"):
-            raise ValueError(f"Invalid {env_var}.model_list[{i}]: 'model_name' is required")
-    return parsed
+        raise ValueError(f"Invalid {env_var}: invalid JSON: {e}") from e
 
 
 def _parse_default_bank_template(raw: str | None) -> dict | None:

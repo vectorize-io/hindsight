@@ -2,28 +2,32 @@
 LiteLLM Router LLM provider — pure pass-through to ``litellm.Router``.
 
 The full configuration object is forwarded verbatim. We do not translate model
-names, infer fallbacks, or impose defaults: whatever the user puts in the
-``HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG`` env var becomes ``Router(**config)``.
-The only Hindsight-imposed convention is that requests are issued against the
-``model_name`` of the first entry in ``model_list``; chain ordering, fallbacks,
-load-balancing, retries and cooldowns are LiteLLM Router's responsibility.
+names, infer fallbacks, validate shape, or introspect Router internals:
+whatever the user puts in ``HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG`` becomes
+``Router(**config)``. If the shape is wrong, LiteLLM Router raises.
+
+The only Hindsight-imposed convention is that one entry in ``model_list``
+must have ``model_name: "default"`` — that's the entrypoint we issue
+completions against. Everything else (ordering, fallbacks, load-balancing,
+weighted picks, rate limits, retries, cooldowns) is whatever the user
+configures via LiteLLM's own keys.
 
 See https://docs.litellm.ai/docs/routing for the supported keys (``model_list``,
 ``fallbacks``, ``context_window_fallbacks``, ``num_retries``, ``cooldown_time``,
 ``routing_strategy``, ``allowed_fails``, …).
 
-The retry/parse/metrics loop is shared with ``LiteLLMLLM`` via inheritance: this
-class only overrides the small surface that differs (the completion fn, the
-deployment kwargs, and the deployment-name resolution for metrics).
+The retry/parse/metrics loop is shared with ``LiteLLMLLM`` via inheritance:
+this class only overrides the completion fn, the call kwargs, and the model
+name reported in metrics.
 
 Example ``HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG``::
 
     {
       "model_list": [
-        {"model_name": "primary",  "litellm_params": {"model": "openai/gpt-4o-mini",       "api_key": "sk-..."}},
+        {"model_name": "default",  "litellm_params": {"model": "openai/gpt-4o-mini",       "api_key": "sk-..."}},
         {"model_name": "fallback", "litellm_params": {"model": "anthropic/claude-sonnet-4", "api_key": "sk-ant-..."}}
       ],
-      "fallbacks": [{"primary": ["fallback"]}],
+      "fallbacks": [{"default": ["fallback"]}],
       "num_retries": 0,
       "cooldown_time": 60
     }
@@ -35,6 +39,14 @@ from typing import Any
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
 logger = logging.getLogger(__name__)
+
+
+# Hindsight always issues completions against this ``model_name``. Users must
+# include at least one entry with ``model_name: "default"`` in their config's
+# ``model_list``; that entry is the entrypoint, and any other entries become
+# fallback / load-balance / weighted-pool members per the user's own
+# ``fallbacks`` / ``routing_strategy`` settings.
+_ENTRYPOINT_MODEL_NAME = "default"
 
 
 class LiteLLMRouterLLM(LiteLLMLLM):
@@ -67,25 +79,17 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             timeout=timeout,
             **kwargs,
         )
-        if not isinstance(config, dict) or not config.get("model_list"):
-            raise ValueError("LiteLLMRouterLLM requires a config dict with a non-empty 'model_list'")
-        first = config["model_list"][0]
-        primary_model_name = first.get("model_name") if isinstance(first, dict) else None
-        if not primary_model_name:
-            raise ValueError("LiteLLMRouterLLM: model_list[0] must have a 'model_name'")
-
         self.config = config
-        self._primary_model_name = primary_model_name
 
         from litellm import Router
 
         logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+        # Pure pass-through: whatever the user gave goes straight to LiteLLM Router.
+        # If the shape is invalid, Router raises its own error — we don't pre-validate
+        # or introspect Router internals.
         self._router = Router(**config)
 
-        logger.info(
-            f"LiteLLM Router initialized: {len(config['model_list'])} deployment(s), "
-            f"primary model_name={primary_model_name!r}"
-        )
+        logger.info("LiteLLM Router initialized; entrypoint model_name=%r", _ENTRYPOINT_MODEL_NAME)
 
     # ── overrides for the shared retry/parse loop ───────────────────────────
 
@@ -98,7 +102,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
 
     def _resolve_completion_model(self, response: Any) -> str:
         hidden = getattr(response, "_hidden_params", None) or {}
-        return hidden.get("model") or self._primary_model_name
+        return hidden.get("model") or _ENTRYPOINT_MODEL_NAME
 
     def _build_common_kwargs(
         self,
@@ -106,10 +110,10 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         max_completion_tokens: int | None = None,
         temperature: float | None = None,
     ) -> dict[str, Any]:
-        # Always issue against the primary group; Router handles deployment selection,
+        # Always issue against the entrypoint group; Router handles deployment selection,
         # cross-group fallbacks, retries, cooldowns — whatever the user configured.
         kwargs: dict[str, Any] = {
-            "model": self._primary_model_name,
+            "model": _ENTRYPOINT_MODEL_NAME,
             "messages": messages,
         }
         if max_completion_tokens is not None:

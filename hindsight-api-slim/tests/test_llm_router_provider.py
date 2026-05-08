@@ -30,11 +30,16 @@ from hindsight_api.engine.providers.litellm_router_llm import LiteLLMRouterLLM
 
 @pytest.fixture
 def two_step_config() -> dict[str, Any]:
-    """Raw LiteLLM Router config: two deployments wired for ordered fallback."""
+    """Raw LiteLLM Router config: two deployments wired for ordered fallback.
+
+    Hindsight always issues completions against ``model_name="default"``;
+    additional groups become fallback / load-balance pool members per the
+    user's ``fallbacks`` / ``routing_strategy`` settings.
+    """
     return {
         "model_list": [
             {
-                "model_name": "primary",
+                "model_name": "default",
                 "litellm_params": {
                     "model": "openai/MiniMax-M2.7",
                     "api_key": "sk-primary",
@@ -46,7 +51,7 @@ def two_step_config() -> dict[str, Any]:
                 "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-fallback"},
             },
         ],
-        "fallbacks": [{"primary": ["fallback"]}],
+        "fallbacks": [{"default": ["fallback"]}],
         "num_retries": 0,
     }
 
@@ -87,28 +92,17 @@ class TestParseRouterConfig:
         with pytest.raises(ValueError, match="invalid JSON"):
             _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
 
-    def test_must_be_object(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps([{"model_name": "x"}]))
-        with pytest.raises(ValueError, match="JSON object"):
-            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
+    def test_no_shape_validation(self, monkeypatch):
+        """We don't validate the shape — anything that parses as JSON gets passed through.
 
-    def test_model_list_required(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps({"fallbacks": []}))
-        with pytest.raises(ValueError, match="'model_list' must be a non-empty list"):
-            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
-
-    def test_model_list_empty(self, monkeypatch):
-        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps({"model_list": []}))
-        with pytest.raises(ValueError, match="'model_list' must be a non-empty list"):
-            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
-
-    def test_entry_must_have_model_name(self, monkeypatch):
-        monkeypatch.setenv(
-            ENV_LLM_LITELLMROUTER_CONFIG,
-            json.dumps({"model_list": [{"litellm_params": {"model": "openai/gpt-4o"}}]}),
-        )
-        with pytest.raises(ValueError, match="'model_name' is required"):
-            _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG)
+        LiteLLM Router is authoritative for shape errors; we let them surface at
+        Router construction time rather than pre-validating.
+        """
+        # A list, a string, an object with junk keys — all accepted by the parser.
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps([{"hello": "world"}]))
+        assert _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG) == [{"hello": "world"}]
+        monkeypatch.setenv(ENV_LLM_LITELLMROUTER_CONFIG, json.dumps({"only": "garbage"}))
+        assert _parse_llm_router_config(ENV_LLM_LITELLMROUTER_CONFIG) == {"only": "garbage"}
 
 
 class TestFromEnvLoadsConfig:
@@ -203,13 +197,12 @@ def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRo
         provider.config = config
         provider._litellm = fake_litellm
         provider._router = mock_router
-        provider._primary_model_name = config["model_list"][0]["model_name"]
         return provider
 
 
 class TestRouterCall:
     @pytest.mark.asyncio
-    async def test_plain_text_call_targets_first_model_name(self, two_step_config, mock_router_response):
+    async def test_plain_text_call_targets_default_entrypoint(self, two_step_config, mock_router_response):
         mock_router = MagicMock()
         mock_router.acompletion = AsyncMock(return_value=mock_router_response)
         provider = _make_router_provider(two_step_config, mock_router)
@@ -220,9 +213,10 @@ class TestRouterCall:
             max_retries=0,
         )
         assert result == "ok"
-        # First entry's model_name is what we route against; Router handles fallback.
+        # Hindsight always issues against model_name="default"; Router handles fallback,
+        # load-balancing, and routing strategy from there.
         kwargs = mock_router.acompletion.await_args.kwargs
-        assert kwargs["model"] == "primary"
+        assert kwargs["model"] == "default"
 
     @pytest.mark.asyncio
     async def test_structured_output(self, two_step_config):
