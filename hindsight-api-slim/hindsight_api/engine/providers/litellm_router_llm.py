@@ -89,7 +89,30 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         # or introspect Router internals.
         self._router = Router(**config)
 
+        # Pre-compute the most conservative output-tokens cap across every configured
+        # deployment so a single max_completion_tokens value works no matter which
+        # deployment Router picks. Uses LiteLLM's own per-model registry; unknown
+        # models contribute no cap. See LiteLLMLLM._cap_max_completion_tokens.
+        self._router_output_cap = self._compute_router_output_cap(config)
+
         logger.info("LiteLLM Router initialized; entrypoint model_name=%r", _ENTRYPOINT_MODEL_NAME)
+
+    def _compute_router_output_cap(self, config: dict[str, Any]) -> int | None:
+        caps: list[int] = []
+        for deployment in (config.get("model_list") or []) if isinstance(config, dict) else []:
+            if not isinstance(deployment, dict):
+                continue
+            params = deployment.get("litellm_params") or {}
+            model_str = params.get("model") if isinstance(params, dict) else None
+            if not model_str:
+                continue
+            try:
+                cap = self._litellm.get_max_tokens(model_str)
+            except Exception:
+                cap = None
+            if cap:
+                caps.append(int(cap))
+        return min(caps) if caps else None
 
     # ── overrides for the shared retry/parse loop ───────────────────────────
 
@@ -104,6 +127,9 @@ class LiteLLMRouterLLM(LiteLLMLLM):
         hidden = getattr(response, "_hidden_params", None) or {}
         return hidden.get("model") or _ENTRYPOINT_MODEL_NAME
 
+    def _get_model_output_cap(self) -> int | None:
+        return self._router_output_cap
+
     def _build_common_kwargs(
         self,
         messages: list[dict[str, Any]],
@@ -117,7 +143,7 @@ class LiteLLMRouterLLM(LiteLLMLLM):
             "messages": messages,
         }
         if max_completion_tokens is not None:
-            kwargs["max_completion_tokens"] = max_completion_tokens
+            kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
         return kwargs

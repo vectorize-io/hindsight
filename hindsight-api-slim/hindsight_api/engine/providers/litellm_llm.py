@@ -103,11 +103,33 @@ class LiteLLMLLM(LLMInterface):
         if self.base_url:
             kwargs["api_base"] = self.base_url
         if max_completion_tokens is not None:
-            kwargs["max_completion_tokens"] = max_completion_tokens
+            kwargs["max_completion_tokens"] = self._cap_max_completion_tokens(max_completion_tokens)
         if temperature is not None:
             kwargs["temperature"] = temperature
 
         return kwargs
+
+    # ── per-model output-tokens cap (shared with Router subclass) ────────────
+    # Hindsight's defaults (e.g. retain_max_completion_tokens=64000) target
+    # high-capacity models. When a configured deployment supports fewer
+    # completion tokens (e.g. gpt-4.1-nano caps at 32768), the call would
+    # otherwise be rejected. Cap pre-emptively using LiteLLM's per-model
+    # registry so things work out of the box across the supported model set.
+
+    def _cap_max_completion_tokens(self, value: int) -> int:
+        cap = self._get_model_output_cap()
+        if cap and value > cap:
+            logger.debug("capping max_completion_tokens %d -> %d for model %s", value, cap, self.model)
+            return cap
+        return value
+
+    def _get_model_output_cap(self) -> int | None:
+        """Return the configured model's max output tokens, per LiteLLM's registry."""
+        try:
+            cap = self._litellm.get_max_tokens(self.model)
+            return int(cap) if cap else None
+        except Exception:
+            return None
 
     # ── hooks for Router-style subclasses ────────────────────────────────────
     # The retry+parse loop in call() / call_with_tools() is shared by every

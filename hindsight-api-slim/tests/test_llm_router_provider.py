@@ -197,6 +197,7 @@ def _make_router_provider(config: dict[str, Any], mock_router: Any) -> LiteLLMRo
         provider.config = config
         provider._litellm = fake_litellm
         provider._router = mock_router
+        provider._router_output_cap = None  # tests that exercise the cap override this directly
         return provider
 
 
@@ -274,6 +275,44 @@ class TestRouterCall:
                 initial_backoff=0.0,
             )
         assert mock_router.acompletion.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_caps_max_completion_tokens_to_litellm_registry(self, two_step_config, mock_router_response):
+        """Cap max_completion_tokens to the most conservative deployment limit.
+
+        Hindsight's defaults (e.g. retain_max_completion_tokens=64000) target
+        high-capacity models. When a configured deployment has a smaller cap
+        (gpt-4.1-nano = 32768), the call would otherwise be rejected — apply
+        the cap silently using LiteLLM's per-model registry.
+        """
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(return_value=mock_router_response)
+        provider = _make_router_provider(two_step_config, mock_router)
+        provider._router_output_cap = 32768  # what _compute_router_output_cap would yield
+
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_completion_tokens=64000,  # over the cap
+            max_retries=0,
+        )
+        kwargs = mock_router.acompletion.await_args.kwargs
+        assert kwargs["max_completion_tokens"] == 32768
+
+    @pytest.mark.asyncio
+    async def test_no_cap_when_litellm_registry_has_no_data(self, two_step_config, mock_router_response):
+        """If LiteLLM doesn't know any of the deployment models, pass the requested value through."""
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(return_value=mock_router_response)
+        provider = _make_router_provider(two_step_config, mock_router)
+        provider._router_output_cap = None
+
+        await provider.call(
+            messages=[{"role": "user", "content": "hi"}],
+            max_completion_tokens=64000,
+            max_retries=0,
+        )
+        kwargs = mock_router.acompletion.await_args.kwargs
+        assert kwargs["max_completion_tokens"] == 64000
 
     @pytest.mark.asyncio
     async def test_call_with_tools(self, two_step_config):

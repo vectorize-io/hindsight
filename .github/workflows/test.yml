@@ -1203,12 +1203,6 @@ jobs:
           '{model_list: [{model_name: "default", litellm_params: {model: $model, api_key: $key}}]}')
         echo "::add-mask::$cfg"
         echo "HINDSIGHT_API_LLM_LITELLMROUTER_CONFIG=$cfg" >> "$GITHUB_ENV"
-        # gpt-4.1-nano caps completion at 32768. The openai matrix row passes because
-        # OpenAICompatibleLLM has model-specific token capping; LiteLLMLLM (and Router
-        # by inheritance) don't. Lower the retain default to fit under that cap so
-        # CI exercises the Router-backed path end-to-end instead of dying on a
-        # provider-side BadRequestError unrelated to this PR.
-        echo "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=32000" >> "$GITHUB_ENV"
 
     - name: Run LLM acceptance tests
       working-directory: ./hindsight-api-slim
