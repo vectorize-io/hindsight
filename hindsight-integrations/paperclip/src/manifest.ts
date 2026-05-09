@@ -17,6 +17,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "http.outbound",
     "secrets.read-ref",
     "agents.read",
+    "issues.read",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -42,8 +43,8 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "Bank Granularity",
         description:
-          "Controls memory isolation. Default ['company', 'agent'] gives each agent its own bank per company.",
-        items: { type: "string", enum: ["company", "agent"] },
+          "Controls memory isolation. Default ['company', 'agent'] gives each agent its own bank per company. Add 'user' for per-user memory isolation (GDPR compliance).",
+        items: { type: "string", enum: ["company", "agent", "user"] },
         default: ["company", "agent"],
       },
       recallBudget: {
