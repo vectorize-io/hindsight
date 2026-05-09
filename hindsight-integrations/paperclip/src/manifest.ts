@@ -17,6 +17,8 @@ const manifest: PaperclipPluginManifestV1 = {
     "http.outbound",
     "secrets.read-ref",
     "agents.read",
+    "issues.read",
+    "issue.comments.read",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
