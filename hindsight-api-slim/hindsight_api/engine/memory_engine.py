@@ -1835,6 +1835,22 @@ class MemoryEngine(MemoryEngineInterface):
                             e,
                         )
 
+                # Validate batch API compatibility: if retain_batch_enabled is set,
+                # the retain LLM provider must actually support the batch API.
+                # Otherwise the server would silently fall back to sync mode on
+                # every retain, which is confusing and wastes a config knob.
+                config = get_config()
+                if config.retain_batch_enabled:
+                    supports_batch = await self._retain_llm_config._provider_impl.supports_batch_api()
+                    if not supports_batch:
+                        raise RuntimeError(
+                            f"Configuration error: HINDSIGHT_API_RETAIN_BATCH_ENABLED=true "
+                            f"but the retain LLM provider '{self._retain_llm_config.provider}' "
+                            f"does not support the batch API. Either switch to a provider "
+                            f"that supports batch operations (e.g. 'openai', 'groq') or "
+                            f"set HINDSIGHT_API_RETAIN_BATCH_ENABLED=false."
+                        )
+
         # Build list of initialization tasks
         init_tasks = [
             start_pg0(),

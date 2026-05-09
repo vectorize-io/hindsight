@@ -1662,13 +1662,11 @@ async def extract_facts_from_contents_batch_api(
 
     # Check if provider supports batch API
     if not await llm_config._provider_impl.supports_batch_api():
-        logger.warning(f"Batch API not supported for provider {llm_config.provider}, falling back to sync mode")
-        # Break mutual recursion: extract_facts_from_contents() routes back here
-        # when retain_batch_enabled=True, creating an infinite loop.
-        # Pass a config copy with batch disabled to force the sync path.
-        import dataclasses
-        sync_config = dataclasses.replace(config, retain_batch_enabled=False)
-        return await extract_facts_from_contents(contents, llm_config, agent_name, sync_config, pool, operation_id, schema)
+        raise RuntimeError(
+            f"retain_batch_enabled=True but provider '{llm_config.provider}' does not "
+            f"support the batch API. This should have been caught at startup — check "
+            f"HINDSIGHT_API_RETAIN_BATCH_ENABLED and your LLM provider configuration."
+        )
 
     # Check if we're resuming an existing batch (crash recovery)
     batch_id = None
