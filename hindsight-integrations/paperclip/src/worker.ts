@@ -20,7 +20,7 @@ import { deriveBankId } from "./bank.js";
 interface PluginConfig {
   hindsightApiUrl: string;
   hindsightApiKeyRef?: string;
-  bankGranularity?: Array<"company" | "agent">;
+  bankGranularity?: Array<"company" | "agent" | "user">;
   recallBudget?: "low" | "mid" | "high";
   autoRetain?: boolean;
 }
@@ -54,6 +54,26 @@ async function resolveApiKey(
   return resolved ?? undefined;
 }
 
+async function resolveUserIdFromActiveIssue(
+  ctx: { issues: { getActive(): Promise<{ originId?: string } | null> } },
+  config: PluginConfig
+): Promise<string | undefined> {
+  // Only resolve user ID if user granularity is enabled
+  if (!config.bankGranularity?.includes("user")) return undefined;
+
+  try {
+    const activeIssue = await ctx.issues.getActive();
+    if (!activeIssue?.originId) return undefined;
+
+    // Format: "slack::<channel>::<email>" or similar
+    const parts = activeIssue.originId.split("::");
+    const email = parts[parts.length - 1];
+    return email && email.includes("@") ? email : undefined;
+  } catch (err) {
+    return undefined;
+  }
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info("Hindsight memory plugin starting");
@@ -66,6 +86,7 @@ const plugin = definePlugin({
       const config = await getConfig(ctx);
       const { agentId, runId, issueTitle, issueDescription } = payload;
       const companyId = event.companyId;
+      const userId = await resolveUserIdFromActiveIssue(ctx, config);
 
       const query = [issueTitle, issueDescription].filter(Boolean).join("\n");
       if (!query.trim()) return;
@@ -73,7 +94,7 @@ const plugin = definePlugin({
       try {
         const apiKey = await resolveApiKey(ctx, config);
         const client = new HindsightClient(config.hindsightApiUrl, apiKey);
-        const bankId = deriveBankId({ companyId, agentId }, config);
+        const bankId = deriveBankId({ companyId, agentId, userId }, config);
 
         const response = await client.recall(bankId, query, config.recallBudget ?? "mid");
 
@@ -109,6 +130,7 @@ const plugin = definePlugin({
 
       const { agentId, runId, output, result } = payload;
       const companyId = event.companyId;
+      const userId = await resolveUserIdFromActiveIssue(ctx, config);
       const content = output ?? result;
 
       if (!content?.trim()) return;
@@ -116,7 +138,7 @@ const plugin = definePlugin({
       try {
         const apiKey = await resolveApiKey(ctx, config);
         const client = new HindsightClient(config.hindsightApiUrl, apiKey);
-        const bankId = deriveBankId({ companyId, agentId }, config);
+        const bankId = deriveBankId({ companyId, agentId, userId }, config);
 
         await client.retain(bankId, content, runId, { agentId, companyId, runId });
         ctx.logger.info("Retained run output to memory", { runId, bankId });
@@ -147,8 +169,9 @@ const plugin = definePlugin({
       async (params: unknown, runCtx: ToolRunContext) => {
         const { query } = params as { query: string };
         const config = await getConfig(ctx);
+        const userId = await resolveUserIdFromActiveIssue(ctx, config);
         const bankId = deriveBankId(
-          { companyId: runCtx.companyId, agentId: runCtx.agentId },
+          { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
           config
         );
 
@@ -198,8 +221,9 @@ const plugin = definePlugin({
       async (params: unknown, runCtx: ToolRunContext) => {
         const { content } = params as { content: string };
         const config = await getConfig(ctx);
+        const userId = await resolveUserIdFromActiveIssue(ctx, config);
         const bankId = deriveBankId(
-          { companyId: runCtx.companyId, agentId: runCtx.agentId },
+          { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
           config
         );
 
