@@ -55,20 +55,29 @@ async function resolveApiKey(
 }
 
 async function resolveUserIdFromActiveIssue(
-  ctx: { issues: { getActive(): Promise<{ originId?: string } | null> } },
+  ctx: { issues: { list(): Promise<Array<{ originId?: string }>> } },
   config: PluginConfig
 ): Promise<string | undefined> {
   // Only resolve user ID if user granularity is enabled
   if (!config.bankGranularity?.includes("user")) return undefined;
 
   try {
-    const activeIssue = await ctx.issues.getActive();
+    const issues = await ctx.issues.list();
+    if (!issues || issues.length === 0) return undefined;
+
+    // Get the first issue (most recently active)
+    const activeIssue = issues[0];
     if (!activeIssue?.originId) return undefined;
 
-    // Format: "slack::<channel>::<email>" or similar
+    // Format: "channel-key::user-email" — extract the email
+    // Search backwards for a part that looks like an email (contains "@")
     const parts = activeIssue.originId.split("::");
-    const email = parts[parts.length - 1];
-    return email && email.includes("@") ? email : undefined;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (parts[i].includes("@")) {
+        return parts[i];
+      }
+    }
+    return undefined;
   } catch (err) {
     return undefined;
   }
