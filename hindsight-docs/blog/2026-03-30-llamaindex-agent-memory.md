@@ -3,7 +3,7 @@ title: "Teaching the Llama to Remember"
 description: LlamaIndex agents reset memory every session. Learn how to add persistent cross-session memory using hindsight-llamaindex in 3 steps. Full code examples included.
 authors: [DK09876]
 date: 2026-03-30T12:00
-tags: [llamaindex, integrations, agents, memory, python]
+tags: [llamaindex, integrations, agents, memory, python, tutorial]
 image: /img/blog/llamaindex-agent-memory.png
 hide_table_of_contents: true
 ---

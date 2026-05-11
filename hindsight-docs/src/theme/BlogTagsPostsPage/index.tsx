@@ -43,6 +43,18 @@ const TAG_LABELS: Record<string, {title: string; subtitle: string}> = {
     title: 'Hindsight Cloud',
     subtitle: 'News and updates from Hindsight Cloud',
   },
+  'deep-dive': {
+    title: 'Deep Dives',
+    subtitle: 'Architecture, engineering, and benchmarks',
+  },
+  'release': {
+    title: 'Announcements & Releases',
+    subtitle: 'New versions, milestones, and product news',
+  },
+  'tutorial': {
+    title: 'Tutorials & Integrations',
+    subtitle: 'How to use Hindsight with your stack',
+  },
 };
 
 export default function BlogTagsPostsPage({tag, items, listMetadata}: Props): React.ReactElement {

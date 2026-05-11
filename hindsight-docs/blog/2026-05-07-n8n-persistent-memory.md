@@ -3,7 +3,7 @@ title: "The Memory Layer Every n8n Workflow Was Missing"
 description: "Hindsight's new community node adds persistent memory to any n8n workflow — Retain, Recall, Reflect. Workflows compound across runs instead of resetting."
 authors: [benfrank241]
 date: 2026-05-07
-tags: [hindsight, n8n, integration, memory, agents, workflows, no-code]
+tags: [hindsight, n8n, integration, memory, agents, workflows, no-code, tutorial]
 image: /img/blog/n8n-persistent-memory.png
 ---
 

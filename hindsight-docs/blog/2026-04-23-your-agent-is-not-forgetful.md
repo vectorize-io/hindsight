@@ -3,7 +3,7 @@ title: "Your Agent Is Not Forgetful. It Was Never Given a Memory."
 description: "Why agents seem forgetful, and why memory is different from context windows and retrieval. How Hindsight adds long-term memory to agents."
 authors: [benfrank241]
 date: 2026-04-23
-tags: [memory, agents, hindsight, learning]
+tags: [memory, agents, hindsight, learning, deep-dive]
 image: /img/blog/your-agent-is-not-forgetful.png
 ---
 
