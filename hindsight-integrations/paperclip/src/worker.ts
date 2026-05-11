@@ -13,7 +13,7 @@
  */
 
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import type { ToolRunContext } from "@paperclipai/plugin-sdk";
+import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { HindsightClient, formatMemories } from "./client.js";
 import { deriveBankId } from "./bank.js";
 
@@ -55,23 +55,29 @@ async function resolveApiKey(
 }
 
 async function resolveUserIdFromActiveIssue(
-  ctx: { issues: { list(): Promise<Array<{ originId?: string }>> } },
+  ctx: PluginContext,
+  companyId: string,
+  agentId: string,
   config: PluginConfig
 ): Promise<string | undefined> {
   // Only resolve user ID if user granularity is enabled
   if (!config.bankGranularity?.includes("user")) return undefined;
 
   try {
-    const issues = await ctx.issues.list();
+    const issues = await ctx.issues.list({
+      companyId,
+      assigneeAgentId: agentId,
+      status: "in_progress",
+      limit: 1,
+    });
     if (!issues || issues.length === 0) return undefined;
 
-    // Get the first issue (most recently active)
-    const activeIssue = issues[0];
-    if (!activeIssue?.originId) return undefined;
+    const originId = issues[0]?.originId;
+    if (!originId) return undefined;
 
     // Format: "channel-key::user-email" — extract the email
     // Search backwards for a part that looks like an email (contains "@")
-    const parts = activeIssue.originId.split("::");
+    const parts = originId.split("::");
     for (let i = parts.length - 1; i >= 0; i--) {
       if (parts[i].includes("@")) {
         return parts[i];
@@ -95,7 +101,7 @@ const plugin = definePlugin({
       const config = await getConfig(ctx);
       const { agentId, runId, issueTitle, issueDescription } = payload;
       const companyId = event.companyId;
-      const userId = await resolveUserIdFromActiveIssue(ctx, config);
+      const userId = await resolveUserIdFromActiveIssue(ctx, companyId, agentId, config);
 
       const query = [issueTitle, issueDescription].filter(Boolean).join("\n");
       if (!query.trim()) return;
@@ -139,7 +145,7 @@ const plugin = definePlugin({
 
       const { agentId, runId, output, result } = payload;
       const companyId = event.companyId;
-      const userId = await resolveUserIdFromActiveIssue(ctx, config);
+      const userId = await resolveUserIdFromActiveIssue(ctx, companyId, agentId, config);
       const content = output ?? result;
 
       if (!content?.trim()) return;
@@ -178,7 +184,7 @@ const plugin = definePlugin({
       async (params: unknown, runCtx: ToolRunContext) => {
         const { query } = params as { query: string };
         const config = await getConfig(ctx);
-        const userId = await resolveUserIdFromActiveIssue(ctx, config);
+        const userId = await resolveUserIdFromActiveIssue(ctx, runCtx.companyId, runCtx.agentId, config);
         const bankId = deriveBankId(
           { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
           config
@@ -230,7 +236,7 @@ const plugin = definePlugin({
       async (params: unknown, runCtx: ToolRunContext) => {
         const { content } = params as { content: string };
         const config = await getConfig(ctx);
-        const userId = await resolveUserIdFromActiveIssue(ctx, config);
+        const userId = await resolveUserIdFromActiveIssue(ctx, runCtx.companyId, runCtx.agentId, config);
         const bankId = deriveBankId(
           { companyId: runCtx.companyId, agentId: runCtx.agentId, userId },
           config
