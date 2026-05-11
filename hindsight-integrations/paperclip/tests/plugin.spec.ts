@@ -236,6 +236,21 @@ describe("issue.comment.created", () => {
     expect(body.items[0]?.document_id).toBe(comment.id);
   });
 
+  it("skips retain when comment has no agent author and issue has no assignee", async () => {
+    const harness = buildHarness();
+    await setupPlugin(harness);
+    const issue = await seedIssue(harness, { companyId: "co-1", title: "x" });
+    const comment = await harness.ctx.issues.createComment(issue.id, "User message", "co-1");
+
+    await harness.emit(
+      "issue.comment.created",
+      { commentId: comment.id, agentId: null },
+      { companyId: "co-1", entityId: issue.id }
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  
   it("skips retain when autoRetain is false", async () => {
     const harness = buildHarness({ ...DEFAULT_CONFIG, autoRetain: false });
     await setupPlugin(harness);
