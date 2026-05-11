@@ -6,6 +6,7 @@ Handles augmenting fact texts with temporal information and generating embedding
 
 import logging
 
+from ..embeddings import EmbeddingPurpose
 from . import embedding_utils
 from .types import ExtractedFact
 
@@ -46,13 +47,17 @@ def augment_texts_with_dates(facts: list[ExtractedFact], format_date_fn) -> list
     return augmented_texts
 
 
-async def generate_embeddings_batch(embeddings_model, texts: list[str]) -> list[list[float]]:
+async def generate_embeddings_batch(
+    embeddings_model, texts: list[str], purpose: EmbeddingPurpose = "document"
+) -> list[list[float]]:
     """
     Generate embeddings for a batch of texts.
 
     Args:
         embeddings_model: Embeddings model instance
         texts: List of text strings to embed
+        purpose: "query" or "document" — controls which configured prefix
+            (if any) the backend prepends.
 
     Returns:
         List of embedding vectors (same length as texts)
@@ -60,6 +65,6 @@ async def generate_embeddings_batch(embeddings_model, texts: list[str]) -> list[
     if not texts:
         return []
 
-    embeddings = await embedding_utils.generate_embeddings_batch(embeddings_model, texts)
+    embeddings = await embedding_utils.generate_embeddings_batch(embeddings_model, texts, purpose=purpose)
 
     return embeddings

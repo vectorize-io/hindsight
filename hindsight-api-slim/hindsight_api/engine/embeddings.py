@@ -13,6 +13,7 @@ import logging
 import os
 import warnings
 from abc import ABC, abstractmethod
+from typing import Literal
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
@@ -42,6 +43,8 @@ from ..config import (
     ENV_LLM_API_KEY,
 )
 
+EmbeddingPurpose = Literal["query", "document"]
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,7 +54,25 @@ class Embeddings(ABC):
 
     The embedding dimension is determined by the model and detected at initialization.
     The database schema is automatically adjusted to match the model's dimension.
+
+    Subclasses implement `_encode_impl(texts)` for the actual model call. The base
+    class's concrete `encode(texts, purpose)` applies the configured query/document
+    prefix (for asymmetric retrieval models) before delegating to `_encode_impl`.
     """
+
+    def __init__(self, query_prefix: str = "", doc_prefix: str = ""):
+        """
+        Initialize prefix configuration shared across all backends.
+
+        Args:
+            query_prefix: Prefix prepended to texts when `purpose="query"`. Empty
+                (default) skips prepending — preserves byte-identical pre-existing
+                behavior for backends/models that don't need asymmetric prefixes.
+            doc_prefix: Prefix prepended to texts when `purpose="document"`. Same
+                default semantics as `query_prefix`.
+        """
+        self.query_prefix = query_prefix
+        self.doc_prefix = doc_prefix
 
     @property
     @abstractmethod
@@ -75,16 +96,32 @@ class Embeddings(ABC):
         """
         pass
 
-    @abstractmethod
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def _apply_prefix(self, texts: list[str], purpose: EmbeddingPurpose) -> list[str]:
+        prefix = self.query_prefix if purpose == "query" else self.doc_prefix
+        if not prefix:
+            return texts
+        return [f"{prefix}{text}" for text in texts]
+
+    def encode(self, texts: list[str], purpose: EmbeddingPurpose = "document") -> list[list[float]]:
         """
-        Generate embeddings for a list of texts.
+        Generate embeddings for a list of texts, applying purpose-specific prefix.
 
         Args:
             texts: List of text strings to encode
+            purpose: "query" or "document" — controls which configured prefix
+                (if any) is prepended to each input text.
 
         Returns:
             List of embedding vectors (each is a list of floats)
+        """
+        return self._encode_impl(self._apply_prefix(texts, purpose))
+
+    @abstractmethod
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
+        """
+        Backend-specific embedding generation. Receives texts with any prefix
+        already applied. Subclasses must implement this; callers should use
+        the public `encode()` method instead.
         """
         pass
 
@@ -97,7 +134,15 @@ class LocalSTEmbeddings(Embeddings):
     The embedding dimension is auto-detected from the model.
     """
 
-    def __init__(self, model_name: str | None = None, force_cpu: bool = False, trust_remote_code: bool = False):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        force_cpu: bool = False,
+        trust_remote_code: bool = False,
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
+    ):
         """
         Initialize local SentenceTransformers embeddings.
 
@@ -109,7 +154,9 @@ class LocalSTEmbeddings(Embeddings):
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models with custom architectures.
                               Default: False (disabled for security)
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.model_name = model_name or DEFAULT_EMBEDDINGS_LOCAL_MODEL
         self.force_cpu = force_cpu
         self.trust_remote_code = trust_remote_code
@@ -191,16 +238,7 @@ class LocalSTEmbeddings(Embeddings):
         self._dimension = self._model.get_sentence_embedding_dimension()
         logger.info(f"Embeddings: local provider initialized (dim: {self._dimension})")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings for a list of texts.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._model is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -225,6 +263,9 @@ class RemoteTEIEmbeddings(Embeddings):
         batch_size: int = 32,
         max_retries: int = 3,
         retry_delay: float = 0.5,
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
         """
         Initialize remote TEI embeddings client.
@@ -235,7 +276,9 @@ class RemoteTEIEmbeddings(Embeddings):
             batch_size: Maximum batch size for embedding requests (default: 32)
             max_retries: Maximum number of retries for failed requests (default: 3)
             retry_delay: Initial delay between retries in seconds, doubles each retry (default: 0.5)
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.batch_size = batch_size
@@ -326,16 +369,7 @@ class RemoteTEIEmbeddings(Embeddings):
         except httpx.HTTPError as e:
             raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the remote TEI server.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -386,6 +420,9 @@ class OpenAIEmbeddings(Embeddings):
         base_url: str | None = None,
         batch_size: int = 100,
         max_retries: int = 3,
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
         """
         Initialize OpenAI embeddings client.
@@ -396,7 +433,9 @@ class OpenAIEmbeddings(Embeddings):
             base_url: Custom base URL for OpenAI-compatible API (e.g., Azure OpenAI endpoint)
             batch_size: Maximum batch size for embedding requests (default: 100)
             max_retries: Maximum number of retries for failed requests (default: 3)
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
@@ -458,16 +497,7 @@ class OpenAIEmbeddings(Embeddings):
 
         logger.info(f"Embeddings: OpenAI provider initialized (model: {self.model}, dim: {self._dimension})")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the OpenAI API.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -520,6 +550,9 @@ class CohereEmbeddings(Embeddings):
         batch_size: int = 96,
         timeout: float = 60.0,
         input_type: str = "search_document",
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
         """
         Initialize Cohere embeddings client.
@@ -533,7 +566,9 @@ class CohereEmbeddings(Embeddings):
             timeout: Request timeout in seconds (default: 60.0)
             input_type: Input type for embeddings (default: search_document).
                        Options: search_document, search_query, classification, clustering
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
@@ -590,16 +625,7 @@ class CohereEmbeddings(Embeddings):
 
         logger.info(f"Embeddings: Cohere provider initialized (model: {self.model}, dim: {self._dimension})")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the Cohere API.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -657,6 +683,9 @@ class LiteLLMEmbeddings(Embeddings):
         model: str = DEFAULT_EMBEDDINGS_LITELLM_MODEL,
         batch_size: int = 100,
         timeout: float = 60.0,
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
         """
         Initialize LiteLLM embeddings client.
@@ -668,7 +697,9 @@ class LiteLLMEmbeddings(Embeddings):
                    Use provider prefix for non-OpenAI models (e.g., cohere/embed-english-v3.0)
             batch_size: Maximum batch size for embedding requests (default: 100)
             timeout: Request timeout in seconds (default: 60.0)
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -714,16 +745,7 @@ class LiteLLMEmbeddings(Embeddings):
         except httpx.HTTPError as e:
             raise RuntimeError(f"Failed to connect to LiteLLM proxy at {self.api_base}: {e}")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the LiteLLM proxy.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -773,6 +795,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
         batch_size: int = 100,
         timeout: float = 60.0,
         encoding_format: str | None = "float",
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
         """
         Initialize LiteLLM SDK embeddings client.
@@ -786,7 +811,9 @@ class LiteLLMSDKEmbeddings(Embeddings):
             timeout: Request timeout in seconds (default: 60.0)
             encoding_format: Encoding format for embeddings (default: "float").
                 Set to None or empty string to omit (needed for Voyage AI, Gemini).
+            query_prefix / doc_prefix: see base `Embeddings` docstring.
         """
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.api_key = api_key
         self.model = model
         self.api_base = api_base
@@ -853,16 +880,7 @@ class LiteLLMSDKEmbeddings(Embeddings):
 
         logger.info(f"Embeddings: LiteLLM SDK provider initialized (model: {self.model}, dim: {self._dimension})")
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the LiteLLM SDK.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors (one per input text)
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._litellm is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -932,7 +950,11 @@ class GeminiEmbeddings(Embeddings):
         output_dimensionality: int | None = None,
         batch_size: int = 100,
         force_ipv4: bool = False,
+        *,
+        query_prefix: str = "",
+        doc_prefix: str = "",
     ):
+        super().__init__(query_prefix=query_prefix, doc_prefix=doc_prefix)
         self.model = model
         self.api_key = api_key
         self.vertexai_project_id = vertexai_project_id
@@ -1056,16 +1078,7 @@ class GeminiEmbeddings(Embeddings):
             f"model={self.model}, auth={auth_method})"
         )
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        """
-        Generate embeddings using the Google genai SDK.
-
-        Args:
-            texts: List of text strings to encode
-
-        Returns:
-            List of embedding vectors
-        """
+    def _encode_impl(self, texts: list[str]) -> list[list[float]]:
         if self._client is None:
             raise RuntimeError("Embeddings not initialized. Call initialize() first.")
 
@@ -1113,17 +1126,25 @@ def create_embeddings_from_env() -> Embeddings:
 
     config = get_config()
     provider = config.embeddings_provider.lower()
+    # Provider-common prefix kwargs — every backend constructor accepts these,
+    # so plumb uniformly. Missing one branch creates silent "prefix not applied
+    # for provider X" bugs that are invisible until benchmark time.
+    prefix_kwargs = {
+        "query_prefix": config.embeddings_query_prefix,
+        "doc_prefix": config.embeddings_doc_prefix,
+    }
 
     if provider == "tei":
         url = config.embeddings_tei_url
         if not url:
             raise ValueError(f"{ENV_EMBEDDINGS_TEI_URL} is required when {ENV_EMBEDDINGS_PROVIDER} is 'tei'")
-        return RemoteTEIEmbeddings(base_url=url)
+        return RemoteTEIEmbeddings(base_url=url, **prefix_kwargs)
     elif provider == "local":
         return LocalSTEmbeddings(
             model_name=config.embeddings_local_model,
             force_cpu=config.embeddings_local_force_cpu,
             trust_remote_code=config.embeddings_local_trust_remote_code,
+            **prefix_kwargs,
         )
     elif provider == "openai":
         # Use dedicated embeddings API key, or fall back to LLM API key
@@ -1140,6 +1161,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=model,
             base_url=base_url,
             batch_size=config.embeddings_openai_batch_size,
+            **prefix_kwargs,
         )
     elif provider == "openrouter":
         api_key = config.embeddings_openrouter_api_key
@@ -1153,6 +1175,7 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_openrouter_model,
             base_url="https://openrouter.ai/api/v1",
             batch_size=config.embeddings_openai_batch_size,
+            **prefix_kwargs,
         )
     elif provider == "cohere":
         api_key = config.embeddings_cohere_api_key
@@ -1163,12 +1186,14 @@ def create_embeddings_from_env() -> Embeddings:
             model=config.embeddings_cohere_model,
             base_url=config.embeddings_cohere_base_url,
             output_dimensions=config.embeddings_cohere_output_dimensions,
+            **prefix_kwargs,
         )
     elif provider == "litellm":
         return LiteLLMEmbeddings(
             api_base=config.embeddings_litellm_api_base,
             api_key=config.embeddings_litellm_api_key,
             model=config.embeddings_litellm_model,
+            **prefix_kwargs,
         )
     elif provider == "litellm-sdk":
         api_key = config.embeddings_litellm_sdk_api_key
@@ -1182,6 +1207,7 @@ def create_embeddings_from_env() -> Embeddings:
             api_base=config.embeddings_litellm_sdk_api_base,
             output_dimensions=config.embeddings_litellm_sdk_output_dimensions,
             encoding_format=config.embeddings_litellm_sdk_encoding_format,
+            **prefix_kwargs,
         )
     elif provider == "google":
         vertexai_project_id = config.embeddings_vertexai_project_id
@@ -1202,6 +1228,7 @@ def create_embeddings_from_env() -> Embeddings:
             vertexai_service_account_key=config.embeddings_vertexai_service_account_key,
             output_dimensionality=config.embeddings_gemini_output_dimensionality,
             force_ipv4=config.embeddings_gemini_force_ipv4,
+            **prefix_kwargs,
         )
     else:
         raise ValueError(
