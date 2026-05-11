@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import {useLocation, useHistory} from '@docusaurus/router';
@@ -7,9 +8,17 @@ import type {PropBlogPostContent} from '@docusaurus/plugin-content-blog';
 import PageHero from '@site/src/components/PageHero';
 import styles from './styles.module.css';
 
-const CLOUD_TAG = 'hindsight-cloud';
-const CLOUD_PREVIEW_COUNT = 3;
-const HINDSIGHT_PAGE_SIZE = 9;
+type Category = {slug: string; label: string; tag: string | null};
+
+const CATEGORIES: Category[] = [
+  {slug: 'all', label: 'All', tag: null},
+  {slug: 'cloud', label: 'Hindsight Cloud', tag: 'hindsight-cloud'},
+  {slug: 'deep-dives', label: 'Deep Dives', tag: 'deep-dive'},
+  {slug: 'releases', label: 'Announcements & Releases', tag: 'release'},
+  {slug: 'tutorials', label: 'Tutorials & Integrations', tag: 'tutorial'},
+];
+
+const PAGE_SIZE = 9;
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
@@ -44,20 +53,8 @@ function BlogCard({content}: {content: PropBlogPostContent}) {
   );
 }
 
-function SectionHeader({title, subtitle, viewAllHref}: {title: string; subtitle?: string; viewAllHref?: string}) {
-  return (
-    <div className={styles.sectionHeader}>
-      <div className={styles.sectionHeaderRow}>
-        <h2 className={styles.sectionTitle}>{title}</h2>
-        {viewAllHref && (
-          <Link to={viewAllHref} className={styles.sectionViewAll}>
-            View all →
-          </Link>
-        )}
-      </div>
-      {subtitle && <p className={styles.sectionSubtitle}>{subtitle}</p>}
-    </div>
-  );
+function postHasTag(content: PropBlogPostContent, tag: string): boolean {
+  return (content.metadata.tags ?? []).some((t) => t.label === tag);
 }
 
 export default function BlogListPage({items, metadata}: Props): React.ReactElement {
@@ -65,20 +62,27 @@ export default function BlogListPage({items, metadata}: Props): React.ReactEleme
   const location = useLocation();
   const history = useHistory();
 
-  const currentPage = Math.max(1, parseInt(new URLSearchParams(location.search).get('page') ?? '1', 10));
+  const searchParams = new URLSearchParams(location.search);
+  const requestedCat = searchParams.get('cat') ?? 'all';
+  const activeCategory = CATEGORIES.find((c) => c.slug === requestedCat) ?? CATEGORIES[0];
+  const currentPage = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
 
-  const cloudPosts = items.filter(({content}) =>
-    (content.metadata.tags ?? []).some((t) => t.label === CLOUD_TAG),
-  );
-  const hindsightPosts = items.filter(({content}) =>
-    !(content.metadata.tags ?? []).some((t) => t.label === CLOUD_TAG),
-  );
+  const filteredItems = activeCategory.tag
+    ? items.filter(({content}) => postHasTag(content, activeCategory.tag!))
+    : items;
 
-  const totalHindsightPages = Math.max(1, Math.ceil(hindsightPosts.length / HINDSIGHT_PAGE_SIZE));
-  const hindsightPagePosts = hindsightPosts.slice(
-    (currentPage - 1) * HINDSIGHT_PAGE_SIZE,
-    currentPage * HINDSIGHT_PAGE_SIZE,
-  );
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagePosts = filteredItems.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const selectCategory = (slug: string) => {
+    const params = new URLSearchParams();
+    if (slug !== 'all') {
+      params.set('cat', slug);
+    }
+    const search = params.toString();
+    history.push({pathname: location.pathname, search: search ? `?${search}` : ''});
+  };
 
   const goToPage = (page: number) => {
     const params = new URLSearchParams(location.search);
@@ -96,47 +100,47 @@ export default function BlogListPage({items, metadata}: Props): React.ReactEleme
       <main className={styles.blogPage}>
         <PageHero title={blogTitle} subtitle={blogDescription} />
 
-        {currentPage === 1 && cloudPosts.length > 0 && (
+        <nav className={styles.categoryStrip} aria-label="Blog categories">
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat.slug}
+              type="button"
+              onClick={() => selectCategory(cat.slug)}
+              className={clsx(
+                styles.categoryPill,
+                cat.slug === activeCategory.slug && styles.categoryPillActive,
+              )}
+              aria-pressed={cat.slug === activeCategory.slug}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </nav>
+
+        {pagePosts.length > 0 ? (
           <section className={styles.section}>
-            <SectionHeader
-              title="Hindsight Cloud"
-              subtitle="News and updates from Hindsight Cloud"
-              viewAllHref={cloudPosts.length > CLOUD_PREVIEW_COUNT ? `/blog/tags/${CLOUD_TAG}` : undefined}
-            />
             <div className={styles.grid}>
-              {cloudPosts.slice(0, CLOUD_PREVIEW_COUNT).map(({content: BlogPostContent}) => (
+              {pagePosts.map(({content: BlogPostContent}) => (
                 <BlogCard key={BlogPostContent.metadata.permalink} content={BlogPostContent} />
               ))}
             </div>
           </section>
+        ) : (
+          <p className={styles.emptyState}>No posts in this category yet.</p>
         )}
 
-        {hindsightPagePosts.length > 0 && (
-          <section className={styles.section}>
-            <SectionHeader
-              title="Hindsight"
-              subtitle="Releases, guides, and deep dives into agent memory"
-            />
-            <div className={styles.grid}>
-              {hindsightPagePosts.map(({content: BlogPostContent}) => (
-                <BlogCard key={BlogPostContent.metadata.permalink} content={BlogPostContent} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {totalHindsightPages > 1 && (
+        {totalPages > 1 && (
           <nav className={styles.pagination}>
-            {currentPage > 1 && (
-              <button onClick={() => goToPage(currentPage - 1)} className={styles.paginationButton}>
+            {safePage > 1 && (
+              <button onClick={() => goToPage(safePage - 1)} className={styles.paginationButton}>
                 ← Previous
               </button>
             )}
             <span className={styles.paginationInfo}>
-              Page {currentPage} of {totalHindsightPages}
+              Page {safePage} of {totalPages}
             </span>
-            {currentPage < totalHindsightPages && (
-              <button onClick={() => goToPage(currentPage + 1)} className={styles.paginationButton}>
+            {safePage < totalPages && (
+              <button onClick={() => goToPage(safePage + 1)} className={styles.paginationButton}>
                 Next →
               </button>
             )}

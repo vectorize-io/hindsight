@@ -2,7 +2,7 @@
 title: "How to Add Persistent Memory to OpenClaw with Hindsight"
 authors: [benfrank241]
 date: 2026-03-06T12:00
-tags: [openclaw, memory, agents, persistent-memory, knowledge-graph]
+tags: [openclaw, memory, agents, persistent-memory, knowledge-graph, tutorial]
 image: /img/blog/adding-memory-to-openclaw-with-hindsight.png
 hide_table_of_contents: true
 ---

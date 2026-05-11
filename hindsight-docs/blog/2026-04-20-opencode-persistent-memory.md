@@ -2,7 +2,7 @@
 title: "Your OpenCode Agent Forgets Everything Between Sessions. Here's the Fix."
 authors: [DK09876]
 date: 2026-04-20
-tags: [opencode, memory, integrations, typescript]
+tags: [opencode, memory, integrations, typescript, tutorial]
 description: "OpenCode sessions are stateless by default. The @vectorize-io/opencode-hindsight plugin adds persistent memory via automatic hooks and three explicit tools."
 image: /img/blog/opencode-persistent-memory.png
 hide_table_of_contents: true

@@ -41,14 +41,50 @@ from .errors import HindsightError
 logger = logging.getLogger(__name__)
 
 
+class HindsightTools(list):
+    """List-compatible container for Strands tools with optional client cleanup."""
+
+    def __init__(self, tools: list[Any], client: Hindsight, owns_client: bool):
+        super().__init__(tools)
+        self._client = client
+        self._owns_client = owns_client
+        self._closed = False
+
+    def close(self) -> None:
+        """Close internally-owned client resources."""
+        if not self._owns_client or self._closed:
+            return
+        _run_in_thread(self._client.close)
+        self._closed = True
+
+    async def aclose(self) -> None:
+        """Async close for internally-owned client resources."""
+        if not self._owns_client or self._closed:
+            return
+        await self._client.aclose()
+        self._closed = True
+
+    def __enter__(self) -> HindsightTools:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    async def __aenter__(self) -> HindsightTools:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.aclose()
+
+
 def _resolve_client(
     client: Hindsight | None,
     hindsight_api_url: str | None,
     api_key: str | None,
-) -> Hindsight:
+) -> tuple[Hindsight, bool]:
     """Resolve a Hindsight client from explicit args or global config."""
     if client is not None:
-        return client
+        return client, False
 
     config = get_config()
     url = hindsight_api_url or (config.hindsight_api_url if config else None)
@@ -62,7 +98,7 @@ def _resolve_client(
     kwargs: dict[str, Any] = {"base_url": url, "timeout": 30.0, "user_agent": _USER_AGENT}
     if key:
         kwargs["api_key"] = key
-    return Hindsight(**kwargs)
+    return Hindsight(**kwargs), True
 
 
 def create_hindsight_tools(
@@ -79,7 +115,7 @@ def create_hindsight_tools(
     enable_retain: bool = True,
     enable_recall: bool = True,
     enable_reflect: bool = True,
-) -> list:
+) -> HindsightTools:
     """Create Hindsight memory tools for a Strands agent.
 
     Returns a list of ``@tool``-decorated functions that can be passed
@@ -106,7 +142,7 @@ def create_hindsight_tools(
     Raises:
         HindsightError: If no client or API URL can be resolved.
     """
-    resolved_client = _resolve_client(client, hindsight_api_url, api_key)
+    resolved_client, owns_client = _resolve_client(client, hindsight_api_url, api_key)
 
     # Resolve defaults from global config
     config = get_config()
@@ -212,7 +248,7 @@ def create_hindsight_tools(
 
         tools.append(hindsight_reflect)
 
-    return tools
+    return HindsightTools(tools, resolved_client, owns_client)
 
 
 def memory_instructions(
@@ -254,7 +290,7 @@ def memory_instructions(
     Raises:
         HindsightError: If no client or API URL can be resolved.
     """
-    resolved_client = _resolve_client(client, hindsight_api_url, api_key)
+    resolved_client, owns_client = _resolve_client(client, hindsight_api_url, api_key)
 
     try:
         recall_kwargs: dict[str, Any] = {
@@ -277,3 +313,9 @@ def memory_instructions(
     except Exception:
         # Silently return empty — instructions failures shouldn't block the agent
         return ""
+    finally:
+        if owns_client:
+            try:
+                _run_in_thread(resolved_client.close)
+            except Exception:
+                logger.debug("Failed to close internally-created Hindsight client", exc_info=True)

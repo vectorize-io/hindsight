@@ -2,7 +2,7 @@
 title: "One Memory for Every AI Tool I Use"
 authors: [404sand808s]
 date: 2026-04-07
-tags: [mcp, memory, claude, claude-code, openai, hindsight, integration, self-hosting]
+tags: [mcp, memory, claude, claude-code, openai, hindsight, integration, self-hosting, tutorial]
 description: "How to wire Claude, ChatGPT, Claude Code, Codex, and OpenClaw to a single shared Hindsight memory bank using Cloudflare Workers as an OAuth 2.1 proxy."
 image: /img/blog/one-memory-for-every-ai-tool.png
 hide_table_of_contents: true

@@ -2,7 +2,7 @@
 title: "How We Built Time-Aware Spreading Activation for Memory Graphs"
 authors: [chrislatimer]
 date: 2026-03-12T12:00
-tags: [retrieval, graph, temporal, spreading-activation, memory]
+tags: [retrieval, graph, temporal, spreading-activation, memory, deep-dive]
 image: /img/blog/spreading-activation-memory-graphs.png
 ---
 

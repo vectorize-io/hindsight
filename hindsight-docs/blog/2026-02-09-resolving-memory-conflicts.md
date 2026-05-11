@@ -6,6 +6,7 @@ authors: [chrislatimer]
 image: /img/blog/2026-02-09/consolidation-pipeline.png
 date: 2026-02-09T12:00
 hide_table_of_contents: true
+tags: [deep-dive]
 ---
 
 # How We Solved Memory Conflicts in Hindsight

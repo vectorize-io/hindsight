@@ -3,7 +3,7 @@ title: "How Hindsight Scales"
 description: "A design analysis of how Hindsight's memory operations scale with data volume — what costs grow, what stays bounded, and why."
 authors: [nicoloboschi]
 date: 2026-05-08T12:00
-tags: [scaling, performance, architecture, engineering]
+tags: [scaling, performance, architecture, engineering, deep-dive]
 image: /img/blog/how-hindsight-scales.png
 hide_table_of_contents: true
 ---
