@@ -29,6 +29,7 @@ tools = create_hindsight_tools(
 agent = Agent(tools=tools)
 agent("Remember that I prefer dark mode")
 agent("What are my preferences?")
+tools.close()  # Close only if hindsight-strands created the client internally
 ```
 
 The agent now has three tools it can call:
@@ -59,6 +60,44 @@ agent = Agent(
     system_prompt=f"You are a helpful assistant.\n\n{memories}",
 )
 ```
+
+## FastAPI Lifecycle (Recommended)
+
+Prefer creating one shared Hindsight client in app lifespan and passing `client=...`.
+This gives explicit ownership and clean shutdown via `await client.aclose()`.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from hindsight_client import Hindsight
+from hindsight_strands import create_hindsight_tools, memory_instructions
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    client = Hindsight(base_url="http://localhost:8888", api_key="test-key")
+    app.state.hindsight_client = client
+    try:
+        yield
+    finally:
+        await client.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/chat")
+async def chat():
+    client = app.state.hindsight_client
+    tools = create_hindsight_tools(bank_id="user-123", client=client)
+    memories = memory_instructions(bank_id="user-123", client=client)
+    ...
+```
+
+If you pass `hindsight_api_url`/`api_key` directly to `create_hindsight_tools()`,
+`hindsight-strands` creates the client internally. In that case call
+`await tools.aclose()` (or `tools.close()`) during shutdown.
 
 ## Selecting Tools
 
@@ -102,8 +141,8 @@ tools = create_hindsight_tools(bank_id="user-123")
 | Parameter | Default | Description |
 |---|---|---|
 | `bank_id` | *required* | Hindsight memory bank ID |
-| `client` | `None` | Pre-configured Hindsight client |
-| `hindsight_api_url` | `None` | API URL (used if no client provided) |
+| `client` | `None` | Pre-configured Hindsight client (caller owns lifecycle) |
+| `hindsight_api_url` | `None` | API URL (if used, integration creates/owns client) |
 | `api_key` | `None` | API key (used if no client provided) |
 | `budget` | `"mid"` | Recall/reflect budget level (low/mid/high) |
 | `max_tokens` | `4096` | Maximum tokens for recall results |

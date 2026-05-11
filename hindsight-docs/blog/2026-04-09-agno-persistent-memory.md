@@ -2,7 +2,7 @@
 title: "Agno Persistent Memory: Long-Term Memory for Agno Agents"
 authors: [benfrank241]
 date: 2026-04-09T09:00
-tags: [agno, integrations, agents, memory, persistent-memory, python]
+tags: [agno, integrations, agents, memory, persistent-memory, python, tutorial]
 description: "Agno agents start each run fresh. hindsight-agno adds HindsightTools and memory_instructions so they can retain, recall, and reflect across sessions."
 image: /img/blog/agno-persistent-memory.png
 hide_table_of_contents: true

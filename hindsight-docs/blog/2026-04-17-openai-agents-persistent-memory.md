@@ -2,7 +2,7 @@
 title: "OpenAI Agents Forget Everything Between Runs. Here's the Fix."
 authors: [DK09876]
 date: 2026-04-17
-tags: [openai, integrations, agents, memory, python]
+tags: [openai, integrations, agents, memory, python, tutorial]
 description: "OpenAI Agents SDK agents lose all state when a run ends. hindsight-openai-agents adds three tools and auto-injected memory instructions that give your agents persistent memory across sessions."
 image: /img/blog/openai-agents-persistent-memory.png
 hide_table_of_contents: true
