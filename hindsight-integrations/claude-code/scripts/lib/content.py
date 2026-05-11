@@ -221,10 +221,13 @@ def format_memories(results: list) -> str:
 def format_current_time() -> str:
     """Format current UTC time for recall context.
 
+    The "UTC" suffix is explicit so client LLMs do not misread the
+    value as local time when reasoning about wall-clock context.
+
     Port of: formatCurrentTimeForRecall() in index.js
     """
     now = datetime.now(timezone.utc)
-    return now.strftime("%Y-%m-%d %H:%M")
+    return now.strftime("%Y-%m-%d %H:%M UTC")
 
 
 # ---------------------------------------------------------------------------
