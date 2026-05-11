@@ -2,7 +2,7 @@
 title: "Persistent Memory for AutoGen Agents with Hindsight"
 authors: [DK09876]
 date: 2026-04-06
-tags: [autogen, integrations, agents, memory, python, microsoft]
+tags: [autogen, integrations, agents, memory, python, microsoft, tutorial]
 description: "AutoGen agents lose all state when a session ends. hindsight-autogen adds three tools — retain, recall, reflect — that give your agents persistent memory across sessions."
 image: /img/blog/autogen-persistent-memory.png
 hide_table_of_contents: true

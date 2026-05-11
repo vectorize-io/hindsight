@@ -3,7 +3,7 @@ title: "Adding Long-Term Memory to LangGraph and LangChain Agents"
 description: Learn how to add long-term memory to LangGraph and LangChain agents using three integration patterns — tools, nodes, and BaseStore — with per-user memory banks and semantic recall.
 authors: [DK09876]
 date: 2026-03-24T12:00
-tags: [langgraph, langchain, integrations, agents, memory]
+tags: [langgraph, langchain, integrations, agents, memory, tutorial]
 image: /img/blog/langgraph-longterm-memory.png
 hide_table_of_contents: true
 ---

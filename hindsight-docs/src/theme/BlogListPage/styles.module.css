@@ -4,6 +4,79 @@
   padding: 2rem 2rem 6rem;
 }
 
+/* ── Category strip ──────────────────────────────── */
+.categoryStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 2.5rem;
+  padding-bottom: 0.25rem;
+}
+
+@media (max-width: 640px) {
+  .categoryStrip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-left: -2rem;
+    margin-right: -2rem;
+    padding: 0 2rem 0.5rem;
+    scrollbar-width: thin;
+  }
+}
+
+.categoryPill {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-700);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+
+.categoryPill:hover {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+}
+
+.categoryPillActive,
+.categoryPillActive:hover {
+  background: #0074d9;
+  border-color: #0074d9;
+  color: #ffffff;
+}
+
+.emptyState {
+  text-align: center;
+  color: var(--ifm-color-emphasis-600);
+  padding: 3rem 0;
+  font-size: 0.95rem;
+}
+
+/* ── Tag archive header ──────────────────────────── */
+.header {
+  margin-bottom: 2.5rem;
+}
+
+.headerTitle {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+  color: var(--ifm-heading-color);
+}
+
+.headerSubtitle {
+  font-size: 1rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0;
+  line-height: 1.6;
+}
+
 /* ── Section ─────────────────────────────────────── */
 .section {
   margin-bottom: 4rem;

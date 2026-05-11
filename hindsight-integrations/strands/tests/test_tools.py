@@ -1,7 +1,7 @@
 """Unit tests for Hindsight Strands tools."""
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from hindsight_strands import (
     reset_config,
 )
 from hindsight_strands.errors import HindsightError
-from hindsight_strands.tools import _resolve_client
+from hindsight_strands.tools import _USER_AGENT, _resolve_client
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +27,8 @@ def _mock_client():
     client.recall = MagicMock()
     client.reflect = MagicMock()
     client.create_bank = MagicMock()
+    client.close = MagicMock()
+    client.aclose = AsyncMock()
     return client
 
 
@@ -70,64 +72,88 @@ class TestResolveClient:
 
     def test_returns_explicit_client(self):
         client = _mock_client()
-        assert _resolve_client(client, None, None) is client
+        resolved, owns_client = _resolve_client(client, None, None)
+        assert resolved is client
+        assert owns_client is False
 
     def test_explicit_client_ignores_url_and_key(self):
         client = _mock_client()
-        result = _resolve_client(client, "http://ignored", "ignored-key")
-        assert result is client
+        resolved, owns_client = _resolve_client(client, "http://ignored", "ignored-key")
+        assert resolved is client
+        assert owns_client is False
 
     def test_creates_client_from_url(self):
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, "http://localhost:8888", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            _, owns_client = _resolve_client(None, "http://localhost:8888", None)
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://localhost:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_creates_client_with_api_key(self):
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, "http://localhost:8888", "my-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0, api_key="my-key"
-            )
+            _, owns_client = _resolve_client(None, "http://localhost:8888", "my-key")
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://localhost:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["api_key"] == "my-key"
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_falls_back_to_global_config_url(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0
-            )
+            _, owns_client = _resolve_client(None, None, None)
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://config:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_falls_back_to_global_config_api_key(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, None, None)
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="config-key"
-            )
+            _, owns_client = _resolve_client(None, None, None)
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://config:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["api_key"] == "config-key"
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_explicit_url_overrides_config(self):
         configure(hindsight_api_url="http://config:8888")
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, "http://explicit:9999", None)
-            mock_cls.assert_called_once_with(
-                base_url="http://explicit:9999", timeout=30.0
-            )
+            _, owns_client = _resolve_client(None, "http://explicit:9999", None)
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://explicit:9999"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_explicit_api_key_overrides_config(self):
         configure(hindsight_api_url="http://config:8888", api_key="config-key")
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
             mock_cls.return_value = _mock_client()
-            _resolve_client(None, None, "explicit-key")
-            mock_cls.assert_called_once_with(
-                base_url="http://config:8888", timeout=30.0, api_key="explicit-key"
-            )
+            _, owns_client = _resolve_client(None, None, "explicit-key")
+            assert owns_client is True
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://config:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["api_key"] == "explicit-key"
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_raises_without_url_or_config(self):
         with pytest.raises(HindsightError, match="No Hindsight API URL"):
@@ -222,9 +248,11 @@ class TestCreateHindsightTools:
             mock_cls.return_value = _mock_client()
             tools = create_hindsight_tools(bank_id="test")
             assert len(tools) == 3
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0
-            )
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://localhost:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["user_agent"] == _USER_AGENT
 
     def test_api_key_passed_to_client(self):
         with patch("hindsight_strands.tools.Hindsight") as mock_cls:
@@ -234,9 +262,49 @@ class TestCreateHindsightTools:
                 hindsight_api_url="http://localhost:8888",
                 api_key="secret",
             )
-            mock_cls.assert_called_once_with(
-                base_url="http://localhost:8888", timeout=30.0, api_key="secret"
+            mock_cls.assert_called_once()
+            kwargs = mock_cls.call_args.kwargs
+            assert kwargs["base_url"] == "http://localhost:8888"
+            assert kwargs["timeout"] == 30.0
+            assert kwargs["api_key"] == "secret"
+            assert kwargs["user_agent"] == _USER_AGENT
+
+    def test_returns_list_compatible_tools_container(self):
+        client = _mock_client()
+        tools = create_hindsight_tools(bank_id="test", client=client)
+        assert isinstance(tools, list)
+        assert hasattr(tools, "close")
+        assert hasattr(tools, "aclose")
+
+    def test_close_closes_internally_owned_client(self):
+        with patch("hindsight_strands.tools.Hindsight") as mock_cls:
+            internal_client = _mock_client()
+            mock_cls.return_value = internal_client
+            tools = create_hindsight_tools(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
             )
+            tools.close()
+            internal_client.close.assert_called_once()
+
+    def test_close_does_not_close_externally_owned_client(self):
+        external_client = _mock_client()
+        tools = create_hindsight_tools(bank_id="test", client=external_client)
+        tools.close()
+        external_client.close.assert_not_called()
+
+    def test_aclose_closes_internally_owned_client(self):
+        with patch("hindsight_strands.tools.Hindsight") as mock_cls:
+            internal_client = _mock_client()
+            mock_cls.return_value = internal_client
+            tools = create_hindsight_tools(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+            )
+            import asyncio
+
+            asyncio.run(tools.aclose())
+            internal_client.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -614,3 +682,33 @@ class TestMemoryInstructions:
             mock_cls.return_value = mock_instance
             result = memory_instructions(bank_id="test")
             assert "fact" in result
+
+    def test_closes_internally_created_client_on_success(self):
+        with patch("hindsight_strands.tools.Hindsight") as mock_cls:
+            mock_instance = _mock_client()
+            mock_instance.recall.return_value = _mock_recall_response(["fact"])
+            mock_cls.return_value = mock_instance
+            result = memory_instructions(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+            )
+            assert "fact" in result
+            mock_instance.close.assert_called_once()
+
+    def test_closes_internally_created_client_on_exception(self):
+        with patch("hindsight_strands.tools.Hindsight") as mock_cls:
+            mock_instance = _mock_client()
+            mock_instance.recall.side_effect = RuntimeError("network error")
+            mock_cls.return_value = mock_instance
+            result = memory_instructions(
+                bank_id="test",
+                hindsight_api_url="http://localhost:8888",
+            )
+            assert result == ""
+            mock_instance.close.assert_called_once()
+
+    def test_does_not_close_externally_owned_client(self):
+        client = _mock_client()
+        client.recall.return_value = _mock_recall_response(["fact"])
+        memory_instructions(bank_id="test", client=client)
+        client.close.assert_not_called()

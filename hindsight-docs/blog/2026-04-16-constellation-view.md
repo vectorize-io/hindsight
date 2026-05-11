@@ -2,7 +2,7 @@
 title: "Your AI's Memory Is a Black Box. Constellation View Makes It Visible."
 authors: [benfrank241]
 date: 2026-04-16
-tags: [hindsight, control-plane, memory, visualization]
+tags: [hindsight, control-plane, memory, visualization, release]
 description: "Constellation View and the Entity Co-occurrence Graph let you inspect the structure of a Hindsight bank as an interactive graph — debug memory quality, spot noisy hubs, and explain agent recall visually."
 image: /img/blog/constellation-view.png
 hide_table_of_contents: true

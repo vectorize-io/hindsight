@@ -5,6 +5,7 @@ authors: [nicoloboschi]
 image: /img/reflect-operation.webp
 date: 2026-01-28T12:00
 hide_table_of_contents: true
+tags: [release]
 ---
 
 Today we're releasing Hindsight 0.4.0, which introduces two powerful learning capabilities for AI agents: **Observations** for automatic knowledge consolidation, and **Mental Models** for user-curated summaries.

@@ -2,7 +2,7 @@
 title: "Agent Memory in SmolAgents: Retain, Recall, and Reflect"
 authors: [benfrank241]
 date: 2026-04-29T15:00:00Z
-tags: [integrations, agents, smolagents, memory, guide]
+tags: [integrations, agents, smolagents, memory, guide, tutorial]
 description: "Add persistent memory to SmolAgents with Hindsight. Retain facts, recall context, and reflect on agent decisions across sessions."
 image: /img/blog/smolagents-memory-tools.png
 hide_table_of_contents: true
