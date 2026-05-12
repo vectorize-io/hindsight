@@ -4,8 +4,11 @@ description: "Most 'add memory to your agent' tutorials start with installing a 
 authors: [benfrank241]
 date: 2026-05-12T12:00
 tags: [memory, agents, hindsight, architecture, postgres, pgvector, vector-database]
+image: /img/blog/case-against-external-vector-dbs.png
 hide_table_of_contents: true
 ---
+
+![The Case Against External Vector DBs for Agent Memory](/img/blog/case-against-external-vector-dbs.png)
 
 Open the docs for almost any agent-memory framework and the quickstart starts the same way: install a vector database. [Mem0](https://mem0.ai) wants Qdrant or Pinecone. Self-hosted Zep, or rather, what survives of it, wants [Neo4j](https://neo4j.com), FalkorDB, or Kuzu. LangChain's memory examples reach for Chroma by default. The pattern is consistent enough that "agent memory means vector database" has become a kind of folk wisdom.
 
