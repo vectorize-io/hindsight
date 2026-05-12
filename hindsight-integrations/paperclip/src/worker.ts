@@ -20,6 +20,7 @@ import { deriveBankId } from "./bank.js";
 interface PluginConfig {
   hindsightApiUrl: string;
   hindsightApiKeyRef?: string;
+  sharedBankName?: string;
   bankGranularity?: Array<"company" | "agent">;
   recallBudget?: "low" | "mid" | "high";
   autoRetain?: boolean;

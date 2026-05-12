@@ -38,11 +38,17 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "Name of the Paperclip secret holding your Hindsight Cloud API key. Leave empty for self-hosted.",
       },
+      sharedBankName: {
+        type: "string",
+        title: "Shared Bank Name",
+        description:
+          "Optional. When set, all agents read/write this single bank, overriding bankGranularity. Use for cross-agent collaboration on a shared memory pool (e.g. 'spool-farm').",
+      },
       bankGranularity: {
         type: "array",
         title: "Bank Granularity",
         description:
-          "Controls memory isolation. Default ['company', 'agent'] gives each agent its own bank per company.",
+          "Controls memory isolation when sharedBankName is unset. Default ['company', 'agent'] gives each agent its own bank per company.",
         items: { type: "string", enum: ["company", "agent"] },
         default: ["company", "agent"],
       },

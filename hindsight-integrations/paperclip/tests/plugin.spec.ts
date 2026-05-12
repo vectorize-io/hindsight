@@ -77,6 +77,39 @@ describe("bank ID derivation", () => {
       deriveBankId({ companyId: "co-1", agentId: "ag-1" }, { bankGranularity: ["agent"] })
     ).toBe("paperclip::ag-1");
   });
+
+  it("sharedBankName overrides granularity and identity", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { sharedBankName: "spool-farm", bankGranularity: ["company", "agent"] }
+      )
+    ).toBe("spool-farm");
+  });
+
+  it("sharedBankName is trimmed", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId({ companyId: "co-1", agentId: "ag-1" }, { sharedBankName: "  spool-farm  " })
+    ).toBe("spool-farm");
+  });
+
+  it("empty/whitespace sharedBankName falls through to granularity", async () => {
+    const { deriveBankId } = await import("../src/bank.js");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { sharedBankName: "   ", bankGranularity: ["company"] }
+      )
+    ).toBe("paperclip::co-1");
+    expect(
+      deriveBankId(
+        { companyId: "co-1", agentId: "ag-1" },
+        { sharedBankName: "", bankGranularity: ["agent"] }
+      )
+    ).toBe("paperclip::ag-1");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -152,6 +185,24 @@ describe("agent.run.started", () => {
         { companyId: "co-1" }
       )
     ).resolves.not.toThrow();
+  });
+
+  it("routes recall to sharedBankName when configured (cross-agent shared pool)", async () => {
+    const harness = buildHarness({ ...DEFAULT_CONFIG, sharedBankName: "spool-farm" });
+    await setupPlugin(harness);
+
+    await harness.emit(
+      "agent.run.started",
+      { agentId: "ag-1", runId: "run-shared-1", issueTitle: "Plan sprint" },
+      { companyId: "co-1" }
+    );
+
+    const recallCall = fetchMock.mock.calls.find(([url]: [string]) => url.includes("recall"));
+    expect(recallCall).toBeDefined();
+    // Bank ID should be "spool-farm" — URL-encoded as "spool-farm" (hyphen is safe).
+    expect(recallCall?.[0]).toContain("/banks/spool-farm/");
+    // And explicitly NOT the granularity-derived ID for this agent/company.
+    expect(recallCall?.[0]).not.toContain("paperclip%3A%3Aco-1");
   });
 });
 

@@ -33,13 +33,14 @@ Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosti
 
 ## Configuration
 
-| Field                | Default                 | Description                                                    |
-| -------------------- | ----------------------- | -------------------------------------------------------------- |
-| `hindsightApiUrl`    | `http://localhost:8888` | Hindsight server URL                                           |
-| `hindsightApiKeyRef` | —                       | Paperclip secret name holding Hindsight Cloud API key          |
-| `bankGranularity`    | `["company", "agent"]`  | Memory isolation: per company+agent, per company, or per agent |
-| `recallBudget`       | `mid`                   | `low` = fastest, `mid` = balanced, `high` = most thorough      |
-| `autoRetain`         | `true`                  | Automatically retain run output after every run                |
+| Field                | Default                 | Description                                                            |
+| -------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `hindsightApiUrl`    | `http://localhost:8888` | Hindsight server URL                                                   |
+| `hindsightApiKeyRef` | —                       | Paperclip secret name holding Hindsight Cloud API key                  |
+| `sharedBankName`     | —                       | Fixed bank name override — all agents share this single bank when set  |
+| `bankGranularity`    | `["company", "agent"]`  | Memory isolation when `sharedBankName` is unset                        |
+| `recallBudget`       | `mid`                   | `low` = fastest, `mid` = balanced, `high` = most thorough              |
+| `autoRetain`         | `true`                  | Automatically retain run output after every run                        |
 
 ## Bank ID Format
 
@@ -47,7 +48,15 @@ Or [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) — no self-hosti
 paperclip::{companyId}::{agentId}    ← default (company + agent granularity)
 paperclip::{companyId}               ← company granularity (shared across agents)
 paperclip::{agentId}                 ← agent granularity (agent memory across companies)
+{sharedBankName}                     ← fixed name override (all agents read/write the same bank)
 ```
+
+### Shared bank for cross-agent collaboration
+
+Set `sharedBankName` to a fixed string (e.g. `"spool-farm"`) when you want every agent in
+the company to read and write the same bank — useful when a multi-agent cohort (CEO/CTO/
+Staff/QA/Researcher etc.) needs to collaborate on a single pool of project context,
+decisions, and lessons. Overrides `bankGranularity` and the `paperclip::…` prefix.
 
 ## Agent Tools
 
