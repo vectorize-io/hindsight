@@ -3,7 +3,7 @@ title: "The Case Against External Vector DBs for Agent Memory"
 description: "Most 'add memory to your agent' tutorials start with installing a vector database. They shouldn't. Why vector DBs are the wrong default for agent memory."
 authors: [benfrank241]
 date: 2026-05-12T12:00
-tags: [memory, agents, hindsight, architecture, postgres, pgvector, vector-database]
+tags: [memory, agents, hindsight, architecture, postgres, pgvector, vector-database, deep-dive]
 image: /img/blog/case-against-external-vector-dbs.png
 hide_table_of_contents: true
 ---
