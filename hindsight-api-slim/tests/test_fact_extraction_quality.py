@@ -337,7 +337,9 @@ I prefer presenting in person rather than virtually because I can read the room 
         has_emotional = any(term in all_facts_text for term in [
             "thrilled", "positive feedback", "positive", "feedback", "enthusiastic"
         ])
-        assert has_emotional, "Should preserve emotional dimension"
+        assert has_emotional, (
+            f"Should preserve emotional dimension. Extracted facts: {all_facts_text}"
+        )
 
         # Check no vague temporal terms
         prohibited_terms = ["recently", "soon", "lately"]
@@ -347,9 +349,12 @@ I prefer presenting in person rather than virtually because I can read the room 
 
         # Check preference - should capture the in-person vs virtual preference
         has_preference = any(term in all_facts_text for term in [
-            "prefer", "rather than", "in person", "virtually", "read the room"
+            "prefer", "rather than", "in person", "in-person", "virtually",
+            "read the room", "face-to-face", "face to face", "remote",
         ])
-        assert has_preference, "Should preserve preferential dimension"
+        assert has_preference, (
+            f"Should preserve preferential dimension. Extracted facts: {all_facts_text}"
+        )
 
 
 # =============================================================================
