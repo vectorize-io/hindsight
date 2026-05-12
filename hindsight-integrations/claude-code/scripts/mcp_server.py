@@ -46,7 +46,11 @@ except Exception as e:
 
 _hook_input = {"cwd": os.getcwd(), "session_id": ""}
 _default_bank_id = derive_bank_id(_hook_input, _config)
-_client = HindsightClient(_api_url, _config.get("hindsightApiToken"))
+_client = HindsightClient(
+    _api_url,
+    _config.get("hindsightApiToken"),
+    request_timeout_override=_config.get("requestTimeoutSeconds"),
+)
 
 _dbg(f"MCP server starting — API: {_api_url}, bank: {_default_bank_id}")
 

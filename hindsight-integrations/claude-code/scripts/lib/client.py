@@ -44,9 +44,19 @@ def _validate_api_url(url: str) -> str:
 class HindsightClient:
     """HTTP client for the Hindsight API."""
 
-    def __init__(self, api_url: str, api_token: Optional[str] = None):
+    def __init__(
+        self,
+        api_url: str,
+        api_token: Optional[str] = None,
+        request_timeout_override: Optional[int] = None,
+    ):
         self.api_url = _validate_api_url(api_url)
         self.api_token = api_token
+        self.request_timeout_override = request_timeout_override
+
+    def _resolve_timeout(self, timeout: int) -> int:
+        """Return the override if configured, otherwise the caller's timeout."""
+        return self.request_timeout_override if self.request_timeout_override is not None else timeout
 
     def _headers(self) -> dict:
         headers = {
@@ -58,6 +68,7 @@ class HindsightClient:
         return headers
 
     def request(self, method: str, path: str, body: Optional[dict] = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
+        timeout = self._resolve_timeout(timeout)
         url = f"{self.api_url}{path}"
         data = json.dumps(body).encode() if body else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)

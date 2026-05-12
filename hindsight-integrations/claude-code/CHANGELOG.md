@@ -8,6 +8,13 @@
   from the `HINDSIGHT_USER_ID` env var (empty string if unset). Enables
   machine-independent per-user memory scoping without hardcoding user ids in
   `settings.json`.
+- `requestTimeoutSeconds` config (env: `HINDSIGHT_REQUEST_TIMEOUT_SECONDS`) to
+  override the per-call HTTP timeout used by recall (10s), retain (15s) and the
+  knowledge MCP tools. Defaults to `null`, which preserves current per-call
+  behavior. Set this when self-hosted Hindsight legitimately takes longer than
+  10s under contention (e.g. parallel recalls) so the client doesn't surface
+  `read operation timed out` on requests the server completes successfully.
+  Does not affect the health check, which stays at 5s. Fixes #1575.
 
 ### Changed
 
