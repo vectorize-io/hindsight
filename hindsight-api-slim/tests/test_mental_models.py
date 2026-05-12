@@ -808,6 +808,48 @@ class TestMentalModelHistory:
 
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_history_capped_to_max_entries(self, memory: MemoryEngine, request_context, monkeypatch):
+        """History array is trimmed to the most recent N entries on each write.
+
+        Without a cap, sustained updates grow the jsonb array unboundedly and
+        eventually cross Postgres's 256MB jsonb hard limit, after which any
+        further UPDATE fails with SQLSTATE 54000 and the row is stuck.
+        """
+        from hindsight_api.config import clear_config_cache
+
+        monkeypatch.setenv("HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES", "3")
+        clear_config_cache()
+
+        bank_id = f"test-mm-history-cap-{uuid.uuid4().hex[:8]}"
+        await memory.get_bank_profile(bank_id, request_context=request_context)
+
+        mm = await memory.create_mental_model(
+            bank_id=bank_id,
+            name="Test Model",
+            source_query="What is the test?",
+            content="v1",
+            request_context=request_context,
+        )
+
+        # 5 content updates → 5 history entries appended → trimmed to last 3
+        for i in range(2, 7):
+            await memory.update_mental_model(
+                bank_id=bank_id,
+                mental_model_id=mm["id"],
+                content=f"v{i}",
+                request_context=request_context,
+            )
+
+        history = await memory.get_mental_model_history(bank_id, mm["id"], request_context=request_context)
+        # Most recent first ordering (per test_history_ordered_most_recent_first):
+        # the trimmed window keeps the newest 3 — v5, v4, v3 — and drops v2, v1.
+        assert len(history) == 3
+        assert history[0]["previous_content"] == "v5"
+        assert history[1]["previous_content"] == "v4"
+        assert history[2]["previous_content"] == "v3"
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
 
 class TestMentalModelStaleness:
     """Tests for compute_mental_model_is_stale scope semantics.

@@ -7978,7 +7978,14 @@ class MemoryEngine(MemoryEngineInterface):
                 params.append(content)
                 param_idx += 1
                 updates.append("last_refreshed_at = NOW()")
-                # Record history entry with the previous content
+                # Record history entry with the previous content.
+                #
+                # Cap the array to the most recent N entries at write time. Each
+                # entry snapshots previous_reflect_response, which can be hundreds
+                # of KB; without a cap, sustained refresh load grows the jsonb
+                # array unboundedly until it crosses Postgres's hard 256MB jsonb
+                # limit and the UPDATE fails with SQLSTATE 54000, making the row
+                # permanently un-writable until manually trimmed.
                 if get_config().enable_mental_model_history:
                     history_entry = json.dumps(
                         [
@@ -7989,7 +7996,19 @@ class MemoryEngine(MemoryEngineInterface):
                             }
                         ]
                     )
-                    updates.append(f"history = COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb")
+                    max_entries = get_config().mental_model_history_max_entries
+                    updates.append(
+                        "history = ("
+                        "  SELECT COALESCE(jsonb_agg(elem ORDER BY idx), '[]'::jsonb) "
+                        "  FROM jsonb_array_elements("
+                        f"    COALESCE(history, '[]'::jsonb) || ${param_idx}::jsonb"
+                        "  ) WITH ORDINALITY a(elem, idx) "
+                        "  WHERE idx > GREATEST("
+                        "    jsonb_array_length(COALESCE(history, '[]'::jsonb)) + 1"
+                        f"    - {max_entries}, 0"
+                        "  )"
+                        ")"
+                    )
                     params.append(history_entry)
                     param_idx += 1
                 # Also update embedding (convert to string for asyncpg vector type)
