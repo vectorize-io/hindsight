@@ -171,6 +171,16 @@
       "icon": "/img/icons/nemoclaw.png"
     },
     {
+      "id": "right-agent",
+      "name": "Right Agent",
+      "description": "Persistent memory for Right Agent — closed-box AI agents that run Claude Code inside OpenShell sandboxes. Hindsight is the native memory provider, selected during initialization.",
+      "type": "official",
+      "by": "hindsight",
+      "category": "framework",
+      "link": "/sdks/integrations/right-agent",
+      "icon": "/img/icons/right-agent.svg"
+    },
+    {
       "id": "strands",
       "name": "Strands Agents",
       "description": "Give Strands agents persistent long-term memory with Hindsight retain, recall, and reflect tools.",
