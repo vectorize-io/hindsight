@@ -15,7 +15,7 @@ Most of the time, none of that is necessary.
 
 This isn't an argument against vector databases. [Pinecone](https://www.pinecone.io), [Weaviate](https://weaviate.io), and [Qdrant](https://qdrant.tech) are well-engineered for the workload they were designed for: read-heavy similarity search over large, mostly-static corpora. That workload is usually called RAG. Agent memory is something else, and treating the two as the same problem is what produced the bad default in the first place.
 
-The argument is narrower: for most agent-memory workloads, the operational complexity of running a second stateful service does not pay for itself. Worse, the vector database is not doing the part of [agent memory](https://vectorize.io/what-is-agent-memory) that matters most.
+The argument is narrower: for most agent-memory workloads, the operational complexity of running a second stateful service does not pay for itself. And what the tax buys — a fast similarity search — is the wrong layer to optimize. Most of the work that turns a stream of conversations into useful [agent memory](https://vectorize.io/what-is-agent-memory) happens on the write side: fact extraction, entity resolution, contradiction handling, invalidation, and synthesis. A vector database sees none of that. It sees embeddings going in and embeddings coming out. The actual memory lives above it.
 
 ---
 
@@ -32,7 +32,7 @@ Start with the workload, because everything else follows from it.
 
 RAG is read-heavy. A corpus is built once, embeddings are computed in batch, indexes are built, and the system spends the rest of its life serving similarity queries against a mostly-static index. Updates happen, but they are not the hot path. The hot path is "user types a question, return the most semantically similar chunks." Throughput on approximate nearest-neighbor search is the headline number.
 
-Agent memory inverts most of that. Every turn of every conversation produces facts that need to be extracted, embedded, and written. Entities mentioned in those facts need to be resolved against existing entities: "the auth service," "our login system," and "the OAuth microservice" should land on one canonical node. Contradictions need to be reconciled. Facts go stale and get invalidated. The write path is constantly active, and most writes also trigger reads to resolve, to dedupe, or to update.
+Agent memory inverts most of that, and not just because writes happen "more often." Each write runs through a learning pipeline. Raw conversation turns are decomposed into atomic facts. Entities mentioned across those facts are resolved against existing entities: "the auth service," "our login system," and "the OAuth microservice" should land on one canonical node. New facts that contradict existing ones trigger contradiction resolution. Facts that have been superseded get invalidated. Periodically, a synthesis step reads accumulated facts and writes higher-order observations back. None of that exists in RAG ingestion, and none of it is what a vector database is built to do.
 
 The retrieval pattern is different too. RAG queries are mostly one-shot semantic lookups. Agent memory queries are mixed. "What did the user decide about pricing last Tuesday?" is temporal and entity-anchored. "Show me everything related to the database migration thread" is graph-shaped. "Has the user mentioned any concerns about the new dashboard?" needs semantic search but also entity resolution to catch synonyms. None of those are pure ANN problems.
 
@@ -62,6 +62,26 @@ Managed vector databases have minimums. Pinecone's serverless and pod tiers both
 
 ---
 
+## The Learning Layer a Vector Database Doesn't Have
+
+If you peel back the retrieval argument, the more fundamental problem is upstream of retrieval entirely.
+
+Useful agent memory isn't a pile of conversation chunks. It's a structured representation that gets built and rebuilt as conversations accumulate. The architectural primitives that make that work are not vectors:
+
+- **Fact extraction.** A model decomposes each conversation turn into atomic, retrievable claims, with provenance back to the originating message.
+- **Entity resolution.** New mentions get linked to existing entities. The same customer, project, or service resolves to one canonical node regardless of how it was named.
+- **Contradiction handling.** When a new fact conflicts with an existing one, the system has to decide what wins, what gets invalidated, and what gets preserved as history.
+- **Invalidation.** Facts have lifespans. "The dashboard is in beta" should stop being retrieved once the dashboard ships.
+- **Reflection.** Periodically, the system reads accumulated facts and writes synthesized observations back — patterns, summaries, recurring themes that aren't explicit in any single conversation but emerge from many.
+
+A vector database has no opinion about any of this. It accepts an `id` and a `vector`. The structure, the relationships, the temporal validity, the dedupe logic — all of that has to live somewhere else. In practice, "somewhere else" usually means a second database (or a sprawl of application logic and caches), with the vector store reduced to one column of a larger schema you're already maintaining.
+
+At that point, you have not removed a database from your stack. You have added one.
+
+Putting the learning layer and the retrieval substrate in the same transactional database collapses the architecture. The fact extraction pipeline writes to the same Postgres that pgvector indexes. Entity resolution is a join. Contradiction resolution is a transaction. Reflect outputs are facts like any other, indexed alongside their inputs. The retrieval mix the agent actually needs falls out of the data model, instead of being assembled across services.
+
+---
+
 ## Single-Strategy Retrieval Is the Real Ceiling
 
 A vector database does one thing well: approximate nearest-neighbor search over embeddings. Even if the operational arguments above didn't apply, a vector-only system would still be the wrong substrate for agent memory, because most agent-memory queries don't decompose to pure semantic similarity.
@@ -77,6 +97,8 @@ The empirical result follows the architecture. On the [LongMemEval benchmark](ht
 ## Vector Databases Are Optimized for the Wrong Workload
 
 Vector index structures (HNSW, IVF, ScaNN) are read-optimized. They are expensive to build and expensive to update incrementally. Some implementations support delete-and-rebuild patterns; others require full re-indexing for non-trivial mutation. None of them love a workload that writes, updates, and invalidates as frequently as agent memory does.
+
+Worse, the writes a vector index sees aren't even the substantive ones. The meaningful work — extraction, resolution, contradiction, reflect — happens upstream and produces many small derived records that the vector store only ever sees in their final embedded form. Most of the learning logic doesn't touch the vector index at all, which is the point: the vector store is one substrate in a system whose center of gravity is somewhere else.
 
 PostgreSQL has spent thirty years getting good at transactional workloads. MVCC, WAL, point-in-time recovery, online schema changes, mature replication. None of that was built for vectors, but it was built for the access patterns (writes, updates, deletes, concurrent reads) that agent memory actually has. Adding vector search via pgvector inherits all of it.
 
@@ -152,8 +174,8 @@ None of these are the default. They are the cases where the workload has crossed
 
 The default that fits most agent-memory workloads:
 
-- One Postgres, with pgvector for semantic search, graph and entity tables in the same schema, and time-indexed fact storage
-- Multi-strategy retrieval implemented as parallel queries against that database, merged in the application layer
+- A learning pipeline that writes facts, entities, edges, and synthesized observations into one Postgres — with pgvector for embeddings, graph tables for edges, and temporal indexes for fact lifespans
+- Multi-strategy retrieval implemented as parallel queries against that same database, merged in the application layer
 - Cross-encoder reranking on the merged results, run in the application
 - Deployed as one container, backed up like any other Postgres
 
@@ -163,9 +185,9 @@ This is the architecture Hindsight ships, and it isn't a coincidence. The archit
 
 ## Conclusion
 
-The right question isn't "which vector database should I run for agent memory?" It's "what does my retrieval mix actually look like?" For most teams, the answer is mostly not semantic similarity, mostly not billion-scale, mostly write-heavy, and mostly small enough to fit alongside the application data. A single Postgres handles that workload better than a separate vector database does, and at lower operational cost.
+The right question isn't "which vector database should I run for agent memory?" It's two questions. What does the learning pipeline upstream of retrieval actually do? And what does my retrieval mix actually look like? For most teams, the answers are: fact extraction, entity resolution, contradiction handling, and reflect; and a mix that's mostly not semantic similarity, mostly not billion-scale, mostly write-heavy, and mostly small enough to fit alongside the application data. A single Postgres handles both layers better than a separate vector database does, and at lower operational cost.
 
-External vector databases remain excellent at what they were built for. Agent memory just isn't usually it.
+External vector databases remain excellent at what they were built for. Agent memory just isn't usually it — and the part that least resembles RAG is the learning layer, not the search.
 
 **Further reading:**
 - [What Is Agent Memory?](https://vectorize.io/what-is-agent-memory) for the foundational concepts
