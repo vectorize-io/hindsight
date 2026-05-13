@@ -2981,6 +2981,13 @@ def _register_routes(app: FastAPI):
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Get graph data from database, filtered by bank_id and optionally by type."""
+        # Edge count scales quadratically with node count for densely-linked banks.
+        # Empirical measurement on a 14k-memory bank: limit=200 → 23 MiB,
+        # limit=500 → 147 MiB, limit=1000 → 596 MiB. The Control Plane fetches
+        # via Next.js which deserializes the response as a single JS string,
+        # and V8 caps string length at ~512 MiB. Cap server-side so giant banks
+        # remain visualizable instead of erroring out the UI entirely.
+        limit = min(max(1, limit), 200)
         try:
             data = await app.state.memory.get_graph_data(
                 bank_id,
