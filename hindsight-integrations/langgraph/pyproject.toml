@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "langchain-core>=0.3.0",
+    "langchain-core>=1.2.22",
     "hindsight-client>=0.4.0",
     # Transitive dependency security fixes
     "langchain-core>=1.2.22",  # Path traversal in legacy load_prompt functions fix
