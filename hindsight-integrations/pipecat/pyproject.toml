@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "pipecat-ai>=0.0.100",
+    "pipecat-ai>=0.0.100,<1.0",  # 1.0+ restructured modules; needs migration
     "hindsight-client>=0.4.0",
 ]
 
