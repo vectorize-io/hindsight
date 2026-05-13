@@ -47,7 +47,7 @@ dependencies = [
     "anthropic>=0.40.0",
     "typer>=0.9.0",
     "cohere>=5.0.0",
-    "litellm>=1.83.0", # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789
+    "litellm>=1.83.14", # 1.82.7/1.82.8 had a supply chain compromise (yanked); 1.83.0+ also fixes GHSA-jjhc-v7c2-5hh6 / GHSA-53mr-6c8q-9789 / GHSA-pq44-5pcq-4r5g / GHSA-8cjq-wjmh-q42r
     "markitdown[pdf,docx,pptx,xlsx,xls]>=0.1.4", # File to markdown conversion
     "obstore>=0.4.0", # S3/GCS/Azure object storage client (Rust-backed)
     "winloop>=0.1.0; sys_platform == 'win32'",
