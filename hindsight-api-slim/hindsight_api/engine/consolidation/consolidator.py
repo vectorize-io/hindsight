@@ -216,20 +216,14 @@ class ConsolidationPerfLog:
         self.total_obs_in_context += obs_count
         self.total_prompt_chars += prompt_chars
 
-    def merge(self, other: "ConsolidationPerfLog") -> None:
-        """Merge another perf log's contributions into this one.
-
-        Used to safely aggregate per-batch perf state collected by concurrent
-        consolidation tasks (see _execute_one_llm_batch). Each task gets its own
-        ConsolidationPerfLog so timings/llm_calls/prompt_chars are not racing
-        on the shared parent perf during asyncio.gather, then merged in-order
-        after gather completes.
-        """
+    def __iadd__(self, other: "ConsolidationPerfLog") -> "ConsolidationPerfLog":
+        """Add another log's timings, llm_calls, and char counts into this one."""
         for key, val in other.timings.items():
             self.timings[key] = self.timings.get(key, 0) + val
         self.llm_calls += other.llm_calls
         self.total_obs_in_context += other.total_obs_in_context
         self.total_prompt_chars += other.total_prompt_chars
+        return self
 
     def flush(self) -> None:
         """Flush all log lines to the logger."""
@@ -243,13 +237,7 @@ class ConsolidationPerfLog:
 
 @dataclass
 class _BatchExecutionResult:
-    """Self-contained result of one llm_batch execution.
-
-    Returned by ``_execute_one_llm_batch`` so the parent ``run_consolidation_job``
-    can aggregate stats, perf, and DB writes from concurrent batch tasks after
-    asyncio.gather completes. Each field is independent — no shared mutable state
-    is touched during batch execution; aggregation is single-threaded after gather.
-    """
+    """Per-llm_batch outputs for parent aggregation after asyncio.gather."""
 
     batch_num: int
     memories_count: int
@@ -262,6 +250,62 @@ class _BatchExecutionResult:
     elapsed: float
 
 
+def _apply_action_to_stats(stats: dict[str, int], result: dict[str, Any]) -> dict[str, int]:
+    """Apply one consolidation result to ``stats`` and return per-batch counters.
+
+    Returns a small dict of ``{created, updated, skipped, failed}`` deltas so
+    callers can both update aggregate stats and emit per-batch log lines from a
+    single pass over results.
+    """
+    counters = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
+    stats["memories_processed"] += 1
+    action = result.get("action")
+    if action == "created":
+        stats["observations_created"] += 1
+        stats["actions_executed"] += 1
+        counters["created"] = 1
+    elif action == "updated":
+        stats["observations_updated"] += 1
+        stats["actions_executed"] += 1
+        counters["updated"] = 1
+    elif action == "merged":
+        stats["observations_merged"] += 1
+        stats["actions_executed"] += 1
+    elif action == "multiple":
+        c = result.get("created", 0)
+        u = result.get("updated", 0)
+        stats["observations_created"] += c
+        stats["observations_updated"] += u
+        stats["observations_merged"] += result.get("merged", 0)
+        stats["actions_executed"] += result.get("total_actions", 0)
+        counters["created"] = c
+        counters["updated"] = u
+    elif action == "skipped":
+        stats["skipped"] += 1
+        counters["skipped"] = 1
+    elif action == "failed":
+        stats["memories_failed"] += 1
+        counters["failed"] = 1
+    return counters
+
+
+def _resolve_obs_tags_list(memory_tags: list[str], scope_spec: Any) -> list[list[str]] | None:
+    """Translate a memory's ``observation_scopes`` value into concrete tag-set passes.
+
+    Returns ``None`` for single-pass (combined) consolidation, or a list of tag
+    sets for multi-pass consolidation (one observation pass per returned tag set).
+    """
+    if scope_spec == "per_tag":
+        return [[tag] for tag in memory_tags] if memory_tags else None
+    if scope_spec == "all_combinations":
+        if not memory_tags:
+            return None
+        return [list(combo) for r in range(1, len(memory_tags) + 1) for combo in combinations(memory_tags, r)]
+    if scope_spec == "combined" or scope_spec is None:
+        return None
+    return scope_spec  # explicit list[list[str]]
+
+
 async def _execute_one_llm_batch(
     *,
     bank_id: str,
@@ -272,18 +316,16 @@ async def _execute_one_llm_batch(
     llm_config: Any,
     request_context: "RequestContext",
     config: Any,
+    operation_id: str | None = None,
 ) -> _BatchExecutionResult:
-    """Execute one llm_batch with adaptive split-on-failure, returning a self-contained result.
+    """Execute one llm_batch with adaptive split-on-failure.
 
-    Designed to be safely run concurrently with other batches via asyncio.gather
-    under a Semaphore at config.consolidation_llm_max_concurrent. All mutable
-    state (perf, succeeded_ids, failed_ids, tags) is local to this invocation;
-    nothing is shared with other concurrent invocations. The caller merges
-    these results into shared state after gather completes.
+    All mutable state is local — safe to run concurrently via asyncio.gather.
+    Adaptive split (halve sub-batch on LLM failure, mark failed only at size=1)
+    remains serial within this batch; ordering is required by the split protocol.
 
-    The adaptive split logic (halve sub-batch on LLM failure, retry, mark failed
-    only at sub_batch=1) remains serial within this batch — that ordering is a
-    correctness requirement of the split protocol.
+    ``operation_id`` enables per-sub-batch cancellation polling so a deleted bank
+    is honored mid-batch instead of waiting for the whole gather wave to drain.
     """
     batch_start = time.time()
     batch_perf = ConsolidationPerfLog(bank_id)
@@ -292,50 +334,26 @@ async def _execute_one_llm_batch(
     all_deleted = 0
     succeeded_ids: list[Any] = []
     failed_ids: list[Any] = []
-    batch_tags: set[str] = set()
 
-    # Track tags for mental model refresh filtering (per-batch local set)
-    for memory in llm_batch:
-        memory_tags = memory.get("tags") or []
-        if memory_tags:
-            batch_tags.update(memory_tags)
+    # All memories in one llm_batch share the same tag set (enforced by tag_groups upstream),
+    # so observation_scopes is identical too — parse once for the whole batch.
+    shared_tags: list[str] = list(llm_batch[0].get("tags") or []) if llm_batch else []
+    batch_tags: set[str] = set(shared_tags)
+    _obs_raw = llm_batch[0].get("observation_scopes") if llm_batch else None
+    _obs_parsed = json.loads(_obs_raw) if isinstance(_obs_raw, str) else _obs_raw
+    obs_tags_list = _resolve_obs_tags_list(shared_tags, _obs_parsed)
 
-    # Process llm_batch with adaptive splitting: on LLM failure, halve the sub-batch
-    # and retry, down to batch_size=1. Only if a single-memory batch still fails is
-    # the memory marked with consolidation_failed_at and excluded from future runs
-    # until explicitly retried via the API.
     pending: list[list[dict[str, Any]]] = [llm_batch]
     while pending:
+        # Per-sub-batch cancellation: a deleted bank is honored mid-wave rather
+        # than waiting for the whole gather to drain.
+        if operation_id and not await memory_engine._check_op_alive(operation_id):
+            break
+
         sub_batch = pending.pop(0)
 
+        # One conn per sub_batch (multi-pass consolidation reuses it across passes).
         async with acquire_with_retry(pool) as conn:
-            # Determine observation_scopes for this sub-batch. All memories share
-            # the same tags (enforced by tag_groups), so we only check the first memory.
-            # asyncpg returns JSONB columns as raw JSON strings, so parse if needed.
-            _obs_raw = sub_batch[0].get("observation_scopes") if sub_batch else None
-            _obs_parsed = json.loads(_obs_raw) if isinstance(_obs_raw, str) else _obs_raw
-
-            # Resolve the scope spec into a concrete list[list[str]] (or None for combined).
-            if _obs_parsed == "per_tag":
-                _memory_tags = sub_batch[0].get("tags") or []
-                obs_tags_list = [[tag] for tag in _memory_tags] if _memory_tags else None
-            elif _obs_parsed == "all_combinations":
-                _memory_tags = sub_batch[0].get("tags") or []
-                obs_tags_list = (
-                    [
-                        list(combo)
-                        for r in range(1, len(_memory_tags) + 1)
-                        for combo in combinations(_memory_tags, r)
-                    ]
-                    if _memory_tags
-                    else None
-                )
-            elif _obs_parsed == "combined" or _obs_parsed is None:
-                obs_tags_list = None  # single combined pass (default behaviour)
-            else:
-                # explicit list[list[str]]
-                obs_tags_list = _obs_parsed
-
             sub_deleted: int = 0
             sub_llm_failed = False
             if obs_tags_list:
@@ -566,43 +584,38 @@ async def run_consolidation_job(
             for i in range(0, len(group), llm_batch_size):
                 llm_batches.append(group[i : i + llm_batch_size])
 
-        # Parallel batch execution with semaphore at consolidation_llm_max_concurrent.
-        # Each llm_batch operates on disjoint memories (the outer SELECT … LIMIT
-        # query returns a fixed set this round; tag-group slicing produces
-        # non-overlapping subsets), so concurrent execution is safe — no two
-        # batches can touch the same memory_id. The tag-group security boundary
-        # is preserved unchanged: cross-tag memories never share an LLM call.
+        # Each llm_batch operates on disjoint memories (tag-group slicing produces
+        # non-overlapping subsets), so concurrent execution cannot race on memory_id.
+        # The tag-group security boundary is preserved: cross-tag memories never
+        # share an LLM call.
         #
-        # Pre-refactor (serial for-loop) left consolidation_llm_max_concurrent
-        # unused for single-bank workloads, bottlenecking on single-LLM-call
-        # latency. With asyncio.gather + Semaphore we saturate up to N parallel
-        # LLM calls within one consolidation op for an N× throughput gain.
+        # The bound here stacks on top of the global LLM semaphore in
+        # llm_wrapper.py — effective concurrency is min(this, the global cap).
         sem = asyncio.Semaphore(max(1, config.consolidation_llm_max_concurrent))
-        batch_base_num = llm_batch_num
+        start_num = llm_batch_num  # captured because llm_batch_num is reassigned below
 
-        async def _bounded_batch(idx: int, b: list[dict[str, Any]]) -> _BatchExecutionResult:
+        async def _bounded_batch(idx: int, batch: list[dict[str, Any]]) -> _BatchExecutionResult:
             async with sem:
                 return await _execute_one_llm_batch(
                     bank_id=bank_id,
-                    llm_batch=b,
-                    llm_batch_num=batch_base_num + idx + 1,
+                    llm_batch=batch,
+                    llm_batch_num=start_num + idx + 1,
                     pool=pool,
                     memory_engine=memory_engine,
                     llm_config=llm_config,
                     request_context=request_context,
                     config=config,
+                    operation_id=operation_id,
                 )
 
-        batch_results = await asyncio.gather(
-            *(_bounded_batch(i, b) for i, b in enumerate(llm_batches))
-        )
+        batch_results = await asyncio.gather(*(_bounded_batch(i, batch) for i, batch in enumerate(llm_batches)))
         llm_batch_num += len(llm_batches)
 
-        # Aggregate succeeded/failed IDs across all batches into a single DB
-        # commit per fetch round. Each batch's IDs are disjoint, so this is
-        # functionally equivalent to the previous per-batch commits.
-        all_succeeded_ids: list[Any] = [mid for br in batch_results for mid in br.succeeded_ids]
-        all_failed_ids: list[Any] = [mid for br in batch_results for mid in br.failed_ids]
+        # Single DB commit for all succeeded/failed IDs across the wave.
+        # Each batch's IDs are disjoint by tag-grouping, so this matches the
+        # previous per-batch commits' effect with one round-trip instead of N.
+        all_succeeded_ids: list[Any] = [mid for batch_result in batch_results for mid in batch_result.succeeded_ids]
+        all_failed_ids: list[Any] = [mid for batch_result in batch_results for mid in batch_result.failed_ids]
         async with acquire_with_retry(pool) as conn:
             if all_succeeded_ids:
                 await conn.executemany(
@@ -615,75 +628,42 @@ async def run_consolidation_job(
                     [(mem_id,) for mem_id in all_failed_ids],
                 )
 
-        # Merge per-batch perf into the shared parent perf, accumulate tags + stats.
-        # Per-batch perf was captured into a local ConsolidationPerfLog inside each
-        # task so timings/llm_calls aren't raced across concurrent gather participants.
-        for br in batch_results:
-            perf.merge(br.perf)
-            consolidated_tags.update(br.tags)
-            stats["observations_deleted"] += br.deleted
-            for result in br.results:
-                stats["memories_processed"] += 1
-                action = result.get("action")
-                if action == "created":
-                    stats["observations_created"] += 1
-                    stats["actions_executed"] += 1
-                elif action == "updated":
-                    stats["observations_updated"] += 1
-                    stats["actions_executed"] += 1
-                elif action == "merged":
-                    stats["observations_merged"] += 1
-                    stats["actions_executed"] += 1
-                elif action == "multiple":
-                    stats["observations_created"] += result.get("created", 0)
-                    stats["observations_updated"] += result.get("updated", 0)
-                    stats["observations_merged"] += result.get("merged", 0)
-                    stats["actions_executed"] += result.get("total_actions", 0)
-                elif action == "skipped":
-                    stats["skipped"] += 1
-                elif action == "failed":
-                    stats["memories_failed"] += 1
+        # Single pass: merge per-batch perf, accumulate tags + stats, and emit
+        # the per-batch log line. Each batch's perf was captured locally so
+        # timings/llm_calls don't race across concurrent gather participants.
+        for batch_result in batch_results:
+            perf += batch_result.perf
+            consolidated_tags.update(batch_result.tags)
+            stats["observations_deleted"] += batch_result.deleted
 
-        # Per-batch logs (ordered by batch_num — accurate per-batch timings
-        # from each batch's own perf snapshot, no cross-batch contamination
-        # of the kind the previous snap-delta pattern would have produced
-        # under parallel execution).
-        for br in batch_results:
+            batch_counters = {"created": 0, "updated": 0, "skipped": 0, "failed": 0}
+            for result in batch_result.results:
+                deltas = _apply_action_to_stats(stats, result)
+                for k, v in deltas.items():
+                    batch_counters[k] += v
+
             timing_parts = [
-                f"{k}={br.perf.timings[k]:.3f}s"
+                f"{k}={batch_result.perf.timings[k]:.3f}s"
                 for k in ("recall", "llm", "embedding", "db_write")
-                if k in br.perf.timings
+                if k in batch_result.perf.timings
             ]
-            input_tokens = int(br.perf.total_prompt_chars / 4)
-            batch_created = sum(
-                (1 if r.get("action") == "created" else 0)
-                + (r.get("created", 0) if r.get("action") == "multiple" else 0)
-                for r in br.results
-            )
-            batch_updated = sum(
-                (1 if r.get("action") == "updated" else 0)
-                + (r.get("updated", 0) if r.get("action") == "multiple" else 0)
-                for r in br.results
-            )
-            batch_skipped = sum(1 for r in br.results if r.get("action") == "skipped")
-            batch_failed = sum(1 for r in br.results if r.get("action") == "failed")
-            denom = max(1, br.memories_count)
+            input_tokens = int(batch_result.perf.total_prompt_chars / 4)
+            failed_part = f" failed={batch_counters['failed']}" if batch_counters["failed"] else ""
             logger.info(
-                f"[CONSOLIDATION] bank={bank_id} llm_batch #{br.batch_num}"
-                f" ({br.memories_count} memories, {br.perf.llm_calls} llm calls)"
+                f"[CONSOLIDATION] bank={bank_id} llm_batch #{batch_result.batch_num}"
+                f" ({batch_result.memories_count} memories, {batch_result.perf.llm_calls} llm calls)"
                 f" | {stats['memories_processed']}/{total_count} processed"
                 f" | {', '.join(timing_parts)}"
-                f" | created={batch_created} updated={batch_updated} skipped={batch_skipped}"
-                + (f" failed={batch_failed}" if batch_failed else "")
-                + f" | input_tokens=~{input_tokens}"
-                f" | avg={br.elapsed / denom:.3f}s/memory"
+                f" | created={batch_counters['created']}"
+                f" updated={batch_counters['updated']}"
+                f" skipped={batch_counters['skipped']}"
+                f"{failed_part}"
+                f" | input_tokens=~{input_tokens}"
+                f" | avg={batch_result.elapsed / (batch_result.memories_count or 1):.3f}s/memory"
             )
 
-        # Checkpoint: abort if the operation (and thus the bank) was deleted
-        # during this gather wave. Granularity is per-wave instead of per-batch
-        # in the previous design; acceptable since waves are bounded by
-        # consolidation_batch_size memories (default 50) and waves typically
-        # complete in seconds once thinking is off.
+        # End-of-wave checkpoint (per-sub-batch checks inside _execute_one_llm_batch
+        # already shorten the in-wave cancellation window).
         if operation_id and not await memory_engine._check_op_alive(operation_id):
             logger.info(
                 f"[CONSOLIDATION] bank={bank_id} operation {operation_id} cancelled (bank deleted), stopping early"
